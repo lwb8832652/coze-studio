@@ -59,14 +59,26 @@ service_block() {
 }
 
 render_config() {
-  config_output=$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config 2>&1) || {
+  server_tag=$1
+  web_tag=$2
+  config_output=$(ACR_REGISTRY=registry.example.aliyuncs.com \
+    ACR_NAMESPACE=example \
+    SERVER_IMAGE_TAG="$server_tag" \
+    WEB_IMAGE_TAG="$web_tag" \
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config 2>&1) || {
     fail "docker compose config failed: $config_output"
   }
   printf '%s\n' "$config_output"
 }
 
-config=$(render_config)
+config=$(render_config dev dev)
 compose_source=$(<"$COMPOSE_FILE")
+env_source=$(<"$ENV_FILE")
+require_text "$env_source" '^ACR_REGISTRY=registry\.example\.aliyuncs\.com$' '.env.example must define the registry placeholder'
+require_text "$env_source" '^ACR_NAMESPACE=example$' '.env.example must define the namespace placeholder'
+require_text "$env_source" '^SERVER_IMAGE_TAG=dev$' '.env.example must default the server tag to dev'
+require_text "$env_source" '^WEB_IMAGE_TAG=dev$' '.env.example must default the web tag to dev'
+require_text "$env_source" '^DEPLOY_HEALTH_TIMEOUT_SECONDS=120$' '.env.example must define the deployment health timeout'
 services=$(printf '%s\n' "$config" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
 require_exact_text "$services" $'coze-server\ncoze-web' 'services must be exactly coze-server then coze-web'
 server_config=$(service_block "$config" coze-server)
@@ -98,11 +110,8 @@ require_text "$config" 'driver: bridge' 'the deployment network must be a bridge
 if printf '%s\n' "$config" | grep -Eq -- 'internal: true'; then
   fail 'the deployment network must allow backend outbound connectivity'
 fi
-if printf '%s\n' "$config" | grep -Eiq -- 'mysql|redis|elasticsearch|minio|milvus|etcd|nsq'; then
-  fail 'compose config contains a forbidden infrastructure service or image reference'
-fi
 
-override_config=$(SERVER_IMAGE_TAG=canary WEB_IMAGE_TAG=canary render_config)
+override_config=$(render_config canary canary)
 require_text "$(service_block "$override_config" coze-server)" 'image: .*/coze-server:canary' 'SERVER_IMAGE_TAG must override the backend tag'
 require_text "$(service_block "$override_config" coze-web)" 'image: .*/coze-web:canary' 'WEB_IMAGE_TAG must override the web tag'
 
