@@ -22,7 +22,6 @@ func RegisterCustomRoutes(r *server.Hertz) {
 	registerWorkbenchCustomRoutes(api)
 	registerWorkspaceCustomRoutes(api)
 	registerSpaceCompatibilityRoutes(api)
-	registerLangGraphStatelessRunRoutes(api)
 }
 
 func registerAdminCustomRoutes(api *route.RouterGroup) {
@@ -131,18 +130,4 @@ func registerSpaceCompatibilityRoutes(api *route.RouterGroup) {
 	playgroundAPI := api.Group("/playground_api", _playground_apiMw()...)
 	space := playgroundAPI.Group("/space", _spaceMw()...)
 	space.POST("/save", handler.SaveSpaceV2)
-}
-
-func registerLangGraphStatelessRunRoutes(api *route.RouterGroup) {
-	api.POST("/runs", handler.CreateLangGraphStatelessRun)
-	api.POST("/runs/stream", handler.CreateLangGraphStatelessRunStream)
-	api.POST("/runs/wait", handler.WaitLangGraphStatelessRun)
-	statelessRun := api.Group("/runs/:run_id")
-	statelessRun.GET("", handler.GetLangGraphStatelessRun)
-	statelessRun.GET("/messages", handler.ListLangGraphStatelessRunMessages)
-	statelessRun.GET("/feedback", handler.ListLangGraphStatelessRunFeedback)
-	statelessRun.POST("/cancel", handler.CancelLangGraphStatelessRun)
-	statelessRun.GET("/stream", handler.StreamLangGraphStatelessRun)
-	statelessRun.POST("/join", handler.JoinLangGraphStatelessRun)
-	statelessRun.GET("/join", handler.JoinLangGraphStatelessRunStream)
 }

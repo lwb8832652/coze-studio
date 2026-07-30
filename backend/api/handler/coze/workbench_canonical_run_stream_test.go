@@ -53,7 +53,7 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
 	appended := false
 	writer.onEvent = func(_ string, eventType string, data []byte) {
-		if appended || eventType != langGraphRunStreamMetadata {
+		if appended || eventType != canonicalRunStreamEventMetadata {
 			return
 		}
 		var metadata struct {
@@ -645,7 +645,7 @@ func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents(t *testing.T) {
 	require.NotContains(t, body, "event: messages-tuple")
 	require.NotContains(t, body, "SECRET_MESSAGE_PROVIDER")
 	require.NotContains(t, body, "SECRET_CHUNK_PROVIDER")
-	payloads := canonicalRunStreamPayloads(t, body, langGraphRunStreamMessages)
+	payloads := canonicalRunStreamPayloads(t, body, canonicalRunStreamEventMessages)
 	require.Len(t, payloads, 2)
 	for i, expected := range []struct {
 		event *appagentthread.RunEventSummary

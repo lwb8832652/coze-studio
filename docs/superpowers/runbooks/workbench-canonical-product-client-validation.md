@@ -7,21 +7,22 @@
 
 本手册验证 Workbench、任务列表和任务详情已经完整使用
 `/api/workbench/threads/**`，且切换没有改变现有产品行为。它同时验证旧 Thread
-路由不可达、Scheduled Task 未被误删、stateless `/api/runs/**` 保持当前受控状态，
+路由不可达、Scheduled Task 未被误删、stateless `/api/runs/**` 也已完整退役，
 以及认证、租户隔离、SSE、错误映射和日志脱敏满足生产边界。
 
 本手册不提供旧 client 回退步骤。出现失败时停止发布并修复 canonical 链路，不得
 恢复 `/api/workbench/task_threads/**`、`/api/threads/**` 或 ChatTask。
+不得恢复 `/api/runs/**` 或将 canonical SSE wire compatibility 实现为旧路由 fallback。
 
 ## 固定事实
 
-| 路由面 | 数量 | 预期状态 | 所有者 |
-| --- | ---: | --- | --- |
-| `/api/workbench/threads/**` | 47 | 注册且 always-on | `idl/workbench/thread.thrift` |
-| `/api/workbench/task_threads/**` | 36 | 全部不可达 | 已退役 |
-| `/api/threads/**` | 23 | 全部不可达 | 已退役 |
-| Scheduled Task | 11 | 保留 | `idl/workbench/task.thrift` |
-| stateless `/api/runs/**` | 10 | 暂时保留 | zero-use gate blocked |
+| 路由面                           | 数量 | 预期状态         | 所有者                                       |
+| -------------------------------- | ---: | ---------------- | -------------------------------------------- |
+| `/api/workbench/threads/**`      |   47 | 注册且 always-on | `idl/workbench/thread.thrift`                |
+| `/api/workbench/task_threads/**` |   36 | 全部不可达       | 已退役                                       |
+| `/api/threads/**`                |   23 | 全部不可达       | 已退役                                       |
+| Scheduled Task                   |   11 | 保留             | `idl/workbench/task.thrift`                  |
+| stateless `/api/runs/**`         |   10 | 全部不可达       | owner override 后已退役；审计 3/4 仍 blocked |
 
 路由数量和 method/path 对由
 `backend/api/router/coze/workbench_canonical_thread_route_test.go` 固定。任何数量变化
@@ -66,7 +67,7 @@ rushx dev
 cd backend
 GOCACHE=/private/tmp/coze-workbench-route-cache \
   go test -p 1 -gcflags='all=-l -N' ./api/router/coze \
-  -run '^TestWorkbench(CanonicalThreadRoutes|StatelessRunRouteResolution)$' \
+  -run '^TestWorkbenchCanonicalThreadRoutes$' \
   -count=1
 ```
 
@@ -76,7 +77,8 @@ GOCACHE=/private/tmp/coze-workbench-route-cache \
 - 36 条 TaskThread V1 method/path 对都不能进入 handler chain；
 - 23 条本地 LangGraph Thread method/path 对都不能进入 handler chain；
 - 11 条 Scheduled Task method/path 对完整保留；
-- 10 条 stateless Run method/path 对完整保留，静态路径不会误匹配动态 `:run_id`；
+- 10 条 stateless Run method/path 对都不能进入 handler chain，静态路径也不能
+  误匹配 canonical 动态 `:run_id`；
 - `/api/workbench/chat` 和 `/api/workbench/tasks` 仍不可达；
 - 未定义的 POST stream/join 变体不能被动态路由误接收。
 
@@ -101,17 +103,17 @@ rushx test src/__tests__/workbench-thread-contract.test.ts
 
 至少验证以下结果：
 
-| 场景 | 预期 |
-| --- | --- |
-| 无 session | `401` |
-| 无效或无权限 workspace | `403` 或资源隔离错误 |
-| 不属于当前 workspace 的 Thread/Run | `403` 或 `404`，不得泄露归属 |
-| 不存在的资源 | 稳定 `404` |
-| 同幂等键、同 payload | 回放原 Run/Message，不重复写入 |
-| 同幂等键、不同 payload/operation | 稳定 `409` |
-| 无效参数、非法状态、超限 body | 对应 `400/413/422` |
-| 服务端错误 | 稳定 `500`，响应和日志不含内部载荷 |
-| 限流 | `429`，前端显示可恢复错误且 telemetry 不含正文 |
+| 场景                               | 预期                                           |
+| ---------------------------------- | ---------------------------------------------- |
+| 无 session                         | `401`                                          |
+| 无效或无权限 workspace             | `403` 或资源隔离错误                           |
+| 不属于当前 workspace 的 Thread/Run | `403` 或 `404`，不得泄露归属                   |
+| 不存在的资源                       | 稳定 `404`                                     |
+| 同幂等键、同 payload               | 回放原 Run/Message，不重复写入                 |
+| 同幂等键、不同 payload/operation   | 稳定 `409`                                     |
+| 无效参数、非法状态、超限 body      | 对应 `400/413/422`                             |
+| 服务端错误                         | 稳定 `500`，响应和日志不含内部载荷             |
+| 限流                               | `429`，前端显示可恢复错误且 telemetry 不含正文 |
 
 探针只使用测试数据。不得将线上 credential、真实用户正文、工具参数或对象存储
 地址写入验证材料。
@@ -121,20 +123,20 @@ rushx test src/__tests__/workbench-thread-contract.test.ts
 使用有效 workspace 完成下列操作，每项记录 URL、Thread ID、Run ID、可见状态和
 控制台结果；不得记录消息全文或附件内容。
 
-| 区域 | 必测行为 |
-| --- | --- |
-| 任务列表 | 首次加载、状态筛选、搜索、刷新、空态、错误态 |
-| 无附件创建 | 提交、流式进度、终态、标题更新、刷新后保留 |
-| 单附件创建 | 选择、上传、移除、重新上传、执行 |
-| 多附件创建 | 一次选择多个文件、上传完成后只创建一个 Run |
-| 任务详情 | 消息、步骤、建议、Token Usage、详情面板 |
-| Follow-up | 当前轮提交、附件先上传、只创建一个顶层 Run |
-| Cancel | 运行中停止，刷新后仍显示取消状态 |
-| Resume/Retry | 有资格的数据上创建新 Run，不改写历史 Run |
-| Artifact | 列表、内容/签名 URL、删除、恢复、扫描审核/重试 |
-| Memory | 列表、更新、删除、恢复、清空、导入导出、审计 |
-| 诊断 | Guardrail、MCP Runtime、依赖正常/未知/不可用状态 |
-| 隔离 | 不存在资源与无权限 workspace 都不能展示数据 |
+| 区域         | 必测行为                                         |
+| ------------ | ------------------------------------------------ |
+| 任务列表     | 首次加载、状态筛选、搜索、刷新、空态、错误态     |
+| 无附件创建   | 提交、流式进度、终态、标题更新、刷新后保留       |
+| 单附件创建   | 选择、上传、移除、重新上传、执行                 |
+| 多附件创建   | 一次选择多个文件、上传完成后只创建一个 Run       |
+| 任务详情     | 消息、步骤、建议、Token Usage、详情面板          |
+| Follow-up    | 当前轮提交、附件先上传、只创建一个顶层 Run       |
+| Cancel       | 运行中停止，刷新后仍显示取消状态                 |
+| Resume/Retry | 有资格的数据上创建新 Run，不改写历史 Run         |
+| Artifact     | 列表、内容/签名 URL、删除、恢复、扫描审核/重试   |
+| Memory       | 列表、更新、删除、恢复、清空、导入导出、审计     |
+| 诊断         | Guardrail、MCP Runtime、依赖正常/未知/不可用状态 |
+| 隔离         | 不存在资源与无权限 workspace 都不能展示数据      |
 
 没有可操作记录的 destructive 场景，可用确定性 handler/component 测试补充，但必须
 在证据中明确“页面未构造该数据”，不能伪称完成页面操作。
@@ -221,16 +223,17 @@ node --test scripts/workbench-execution-graph.test.mjs
 
 ## 验收证据
 
-Gate B 证据至少包含：
+最终合同退役证据至少包含：
 
 - 分支、提交 SHA、基线 SHA 和数据库环境分类；
-- `47 present / 36 absent / 23 absent / 11 present / 10 retained-blocked`；
+- `47 present / 36 absent / 23 absent / 11 present / 10 absent under owner override`；
 - 浏览器矩阵、正常工作流控制台和故意隔离探针结果；
 - canonical 网络路径、唯一写入/唯一 SSE 证据；
 - request/error/log 脱敏结果；
 - 所有执行命令和退出状态；
 - 页面无法构造而由确定性测试替代的场景；
-- 基线失败对照和未消除的外部依赖风险。
+- 基线失败对照，以及 `/api/runs/**` 外部日志和消费者登记仍不可查询的 owner
+  override 剩余风险。
 
 ## 停止条件
 

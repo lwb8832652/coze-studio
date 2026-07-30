@@ -103,8 +103,6 @@ handwritten_files=(
 # below api/model is generator-owned and participates in the clean manifest.
 handwritten_generated_excludes=(
   api/router/register.go
-  api/model/agent/langgraph/run.go
-  api/model/agent/langgraph/thread.go
   api/model/workbench/diagnostic/diagnostic.go
   api/model/workbench/skill/skill_extension.go
   api/model/workbench/tool/tool.go

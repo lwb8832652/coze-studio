@@ -66,6 +66,7 @@ Workbench 辅助能力相关的 Runtime Doctor 和建议生成。
 - `/api/workbench/tasks` 及其详情、事件、取消和重试子路由；
 - `/api/workbench/task_threads/**` 的 36 条 V1 路由；
 - `/api/threads/**` 的 23 条本地 LangGraph Thread 路由；
+- `/api/runs/**` 的 10 条本地 stateless LangGraph Run 路由；
 - `WorkbenchChatRequest`、`WorkbenchChatResponse`、`ChatTask`、`TaskEvent`、
   `TaskStatus`；
 - `backend/application/task`、`backend/domain/task` 和旧 Workbench runner/gateway；
@@ -73,9 +74,13 @@ Workbench 辅助能力相关的 Runtime Doctor 和建议生成。
 - `agent_threads.legacy_task_id` 及 metadata 中的同名旧键；
 - `chat_tasks`、`chat_task_attempts`、`chat_task_events`。
 
-`/api/workbench/scheduled_tasks/**` 等 11 条 Scheduled Task 路由仍是当前产品合同；
-`/api/runs/**` 的 10 条 stateless LangGraph 路由因 zero-use gate blocked 暂时保留。
-二者都不得与已退役的 Thread 路由混为一谈。
+`/api/workbench/scheduled_tasks/**` 等 11 条 Scheduled Task 路由仍是当前产品合同，
+不属于上述退役范围。canonical Run SSE 保留经审核的 SDK-compatible
+event shape 不等于保留旧 `/api/runs/**` 合同或 fallback。
+
+最终合同退役与页面回归证据见
+`docs/superpowers/evidence/2026-07-30-workbench-final-contract-retirement.md`。历史 Gate A、
+Gate B 文档只描述各自提交时点，不再代表当前 route surface。
 
 历史 Atlas migration 保留为不可改写的演进记录，不代表表仍属于最新 schema。
 

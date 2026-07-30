@@ -77,11 +77,11 @@ canonical handler 只负责严格 HTTP 合同、公开投影、错误映射和�
 `idl/workbench/task.thrift` 只保留 11 条 Scheduled Task 合同。
 
 旧 `/api/workbench/task_threads/**` 的 36 条路由和本地 LangGraph Thread
-`/api/threads/**` 的 23 条路由均已不可达；ChatTask 全栈已退役，三者都不得恢复为
-fallback。stateless LangGraph `/api/runs/**` 的 10 条路由因 zero-use gate 尚未通过而
-暂时保留；它们不是 Workbench UI 合同。内部 `CreateTaskThread` 应用用例仍被
-canonical 首次提交、Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL
-合同。
+`/api/threads/**` 的 23 条路由、stateless LangGraph `/api/runs/**` 的 10 条路由均已
+不可达；ChatTask 全栈已退役，这些合同都不得恢复为 fallback。canonical
+Run SSE 仅保留经审核的 LangGraph SDK-compatible event shape，不保留旧 HTTP
+路由或 LangGraph runtime。内部 `CreateTaskThread` 应用用例仍被 canonical 首次提交、
+Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合同。
 
 ## 事实来源
 

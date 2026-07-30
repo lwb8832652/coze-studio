@@ -182,7 +182,7 @@ var retiredLangGraphThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/threads/:thread_id/state"},
 }
 
-var retainedLangGraphStatelessRunRoutes = []routeExpectation{
+var retiredLangGraphStatelessRunRoutes = []routeExpectation{
 	{http.MethodPost, "/api/runs"},
 	{http.MethodPost, "/api/runs/stream"},
 	{http.MethodPost, "/api/runs/wait"},
@@ -254,9 +254,21 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("retains stateless LangGraph runs while the zero-use gate is blocked", func(t *testing.T) {
-		require.Len(t, retainedLangGraphStatelessRunRoutes, 10)
-		requireExactRouteSnapshot(t, h, "/api/runs", retainedLangGraphStatelessRunRoutes)
+	t.Run("keeps all stateless LangGraph run method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphStatelessRunRoutes, 10)
+		requireExactRouteSnapshot(t, h, "/api/runs", nil)
+		for _, route := range retiredLangGraphStatelessRunRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
 	})
 
 	t.Run("keeps all TaskThread V1 method and path pairs unreachable", func(t *testing.T) {
@@ -301,45 +313,6 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 		require.Zero(t, handlerBoundary.matchedHandlerCount)
 	})
-}
-
-func TestWorkbenchStatelessRunRouteResolution(t *testing.T) {
-	tests := []struct {
-		name         string
-		method       string
-		requestPath  string
-		wantTemplate string
-	}{
-		{
-			name:         "stateless run stream stays on the static route",
-			method:       http.MethodPost,
-			requestPath:  "/api/runs/stream",
-			wantTemplate: "/api/runs/stream",
-		},
-		{
-			name:         "stateless run wait stays on the static route",
-			method:       http.MethodPost,
-			requestPath:  "/api/runs/wait",
-			wantTemplate: "/api/runs/wait",
-		},
-	}
-
-	h := server.Default()
-	matchedTemplate := ""
-	h.Use(func(_ context.Context, c *app.RequestContext) {
-		matchedTemplate = c.FullPath()
-		c.Abort()
-	})
-	Register(h)
-	RegisterCustomRoutes(h)
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			matchedTemplate = ""
-			ut.PerformRequest(h.Engine, test.method, test.requestPath, nil)
-			require.Equal(t, test.wantTemplate, matchedTemplate)
-		})
-	}
 }
 
 func requireUnreachableRoute(

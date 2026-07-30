@@ -7,8 +7,10 @@
 
 **Goal:** 将 Workbench/Tasks UI 和仓库内 NewX parity client 完整切换到
 `/api/workbench/threads/**`，在功能等价和线上页面回归通过后，物理删除
-`/api/workbench/task_threads/**`、`/api/threads/**`，并在零使用审计通过后删除
-`/api/runs/**`。最终只保留一个 canonical 前端 client 和一套现有
+`/api/workbench/task_threads/**`、`/api/threads/**` 和 `/api/runs/**`。`/api/runs/**`
+的外部零使用审计未通过，最终删除依据 2026-07-30 明确的
+`OWNER_OVERRIDE / RETIRE` 决定，未知外部消费者风险持续记录。最终只保留
+一个 canonical 前端 client 和一套现有
 `agentthread.ApplicationService -> domain -> repository -> MySQL -> Eino ADK` 主链。
 
 **Architecture:** React 页面只依赖 app-owned request/view model；唯一生产 transport
@@ -24,16 +26,18 @@ Thrift/Hz、Eino ADK、MySQL、`@coze-arch/fetch-stream`、Codex in-app browser
 
 ## Fixed Baseline And Hard Boundaries
 
-- Worktree：`/private/tmp/coze-studio-workbench-canonical-ui-cutover-retirement`
-- Branch：`codex/workbench-canonical-ui-cutover-retirement`
-- Baseline：`dev@1b663df3449f3bd2849b37b33ae2755c109269cd`
+- 原始 Worktree：`/private/tmp/coze-studio-workbench-canonical-ui-cutover-retirement`
+- 当前 Worktree：`/private/tmp/coze-studio-workbench-canonical-final-retirement`
+- 当前 Branch：`codex/workbench-canonical-final-retirement`
+- 最终退役 Baseline：`dev@0766095721db99479b53269b8687d81a21931ada`
 - Approved design：
   `docs/superpowers/specs/2026-07-28-workbench-canonical-ui-cutover-retirement-design.md`
 - Canonical contract：47 个 `/api/workbench/threads/**` 方法与路径组合，保持请求、
   响应、权限、公开投影和错误语义不变。
 - Source contracts：36 个 `/api/workbench/task_threads/**`、23 个
   `/api/threads/**`，Gate B 全量删除。
-- Stateless compatibility：10 个 `/api/runs/**`，只有五项零使用证据齐全后删除。
+- Stateless compatibility：10 个 `/api/runs/**` 按已记录的 owner override 物理删除；
+  五项审计第 3、4 项仍为 `BLOCKED`，不得伪写为外部零使用。
 - `idl/workbench/task.thrift` 同时拥有 Scheduled Task 合同。只删除 TaskThread DTO 和
   service 方法；`/api/workbench/scheduled_tasks/**`、Task Center 页面及其生成 client
   必须原样保留。
@@ -53,36 +57,37 @@ Thrift/Hz、Eino ADK、MySQL、`@coze-arch/fetch-stream`、Codex in-app browser
 
 ## Route Outcome Matrix
 
-| Route family | Gate A | Gate B final state |
-| --- | --- | --- |
-| `/api/workbench/threads/**` | 47 routes available | 47 routes available and primary |
-| `/api/workbench/task_threads/**` | 36 routes retained for comparison | 36 routes absent/404 |
-| `/api/threads/**` | 23 routes retained for comparison | 23 routes absent/404 |
-| `/api/runs/**` | 10 routes retained while audit runs | absent/404 only after five-part audit |
-| `/api/workbench/tasks*`, `/api/workbench/chat` | absent/404 | absent/404 |
-| `/api/workbench/scheduled_tasks/**` | unchanged | unchanged |
+| Route family                                   | Gate A                              | Gate B final state                                 |
+| ---------------------------------------------- | ----------------------------------- | -------------------------------------------------- |
+| `/api/workbench/threads/**`                    | 47 routes available                 | 47 routes available and primary                    |
+| `/api/workbench/task_threads/**`               | 36 routes retained for comparison   | 36 routes absent/404                               |
+| `/api/threads/**`                              | 23 routes retained for comparison   | 23 routes absent/404                               |
+| `/api/runs/**`                                 | 10 routes retained while audit runs | 10 routes absent/404 under recorded owner override |
+| `/api/workbench/tasks*`, `/api/workbench/chat` | absent/404                          | absent/404                                         |
+| `/api/workbench/scheduled_tasks/**`            | unchanged                           | unchanged                                          |
 
 ## Target File Ownership
 
-| Area | Files | Final responsibility |
-| --- | --- | --- |
-| Frontend app contract | `frontend/apps/coze-studio/src/pages/workbench/thread-client/types.ts`, `workbench-thread-client.ts` | App-owned requests, resources, pages, commands, errors, SSE events |
-| Canonical transport | `canonical-fetch.ts`, `canonical-thread-client.ts`, `run-event-cursor.ts` | The only production Workbench Thread HTTP/SSE owner |
-| Canonical projection | `adapters/canonical-thread-adapter.ts`, `legacy-page-response.ts` | Transport-to-app and app-to-current-page structures |
-| Safe telemetry | `client-telemetry.ts` | Operation-level logs without content-bearing values |
-| Page delegation | `pages/workbench/service.ts`, `pages/tasks/service.ts`, `task-memory-service.ts`, `task-usage-service.ts` | Preserve current exports while delegating to canonical client |
-| Run stream | `pages/tasks/task-run-event-stream.ts`, `task-detail-hooks.ts`, `task-run-actions-hook.ts` | One stream for one committed active Run |
-| Backend primary API | `backend/api/handler/coze/workbench_canonical_*.go` | Strict canonical HTTP adapter and public projection |
-| Shared HTTP access | `backend/api/handler/coze/workbench_thread_access.go` | Authentication-derived viewer, Thread access context, terminal-state helper |
-| Source retirement | `idl/workbench/task.thrift`, generated model/router/schema, `workbench_thread_service.go`, `langgraph_*_service.go` | Remove old HTTP contracts without touching application/domain code |
-| Internal consumer | `backend/internal/deerflowparity/newx_client.go` | Use local canonical routes and workspace header |
-| Evidence and runbook | `docs/superpowers/evidence`, `docs/superpowers/context`, `docs/superpowers/runbooks` | Auditable Gate A/Gate B results and current project truth |
+| Area                  | Files                                                                                                               | Final responsibility                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Frontend app contract | `frontend/apps/coze-studio/src/pages/workbench/thread-client/types.ts`, `workbench-thread-client.ts`                | App-owned requests, resources, pages, commands, errors, SSE events          |
+| Canonical transport   | `canonical-fetch.ts`, `canonical-thread-client.ts`, `run-event-cursor.ts`                                           | The only production Workbench Thread HTTP/SSE owner                         |
+| Canonical projection  | `adapters/canonical-thread-adapter.ts`, `legacy-page-response.ts`                                                   | Transport-to-app and app-to-current-page structures                         |
+| Safe telemetry        | `client-telemetry.ts`                                                                                               | Operation-level logs without content-bearing values                         |
+| Page delegation       | `pages/workbench/service.ts`, `pages/tasks/service.ts`, `task-memory-service.ts`, `task-usage-service.ts`           | Preserve current exports while delegating to canonical client               |
+| Run stream            | `pages/tasks/task-run-event-stream.ts`, `task-detail-hooks.ts`, `task-run-actions-hook.ts`                          | One stream for one committed active Run                                     |
+| Backend primary API   | `backend/api/handler/coze/workbench_canonical_*.go`                                                                 | Strict canonical HTTP adapter and public projection                         |
+| Shared HTTP access    | `backend/api/handler/coze/workbench_thread_access.go`                                                               | Authentication-derived viewer, Thread access context, terminal-state helper |
+| Source retirement     | `idl/workbench/task.thrift`, generated model/router/schema, `workbench_thread_service.go`, `langgraph_*_service.go` | Remove old HTTP contracts without touching application/domain code          |
+| Internal consumer     | `backend/internal/deerflowparity/newx_client.go`                                                                    | Use local canonical routes and workspace header                             |
+| Evidence and runbook  | `docs/superpowers/evidence`, `docs/superpowers/context`, `docs/superpowers/runbooks`                                | Auditable Gate A/Gate B results and current project truth                   |
 
 ---
 
 ### Task 1: Freeze The Baseline And Complete The Usage-Audit Inputs
 
 **Files:**
+
 - Create: `docs/superpowers/evidence/2026-07-28-workbench-source-contract-usage-audit.md`
 - Create: `docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-a.md`
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
@@ -188,6 +193,7 @@ git commit -m "test: freeze workbench source contract baseline"
 ### Task 2: Define The App-Owned Canonical Client Boundary
 
 **Files:**
+
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/types.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/workbench-thread-client.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/index.ts`
@@ -229,9 +235,15 @@ Every client call requires `space_id` at the app boundary. Thread calls add `thr
 add `run_id`. Define page, cursor, abort and idempotency options once:
 
 ```ts
-export interface WorkbenchScopedRequest { space_id: string }
-export interface WorkbenchThreadRequest extends WorkbenchScopedRequest { thread_id: string }
-export interface WorkbenchRunRequest extends WorkbenchThreadRequest { run_id: string }
+export interface WorkbenchScopedRequest {
+  space_id: string;
+}
+export interface WorkbenchThreadRequest extends WorkbenchScopedRequest {
+  thread_id: string;
+}
+export interface WorkbenchRunRequest extends WorkbenchThreadRequest {
+  run_id: string;
+}
 export interface WorkbenchPage<T> {
   items: T[];
   total: number;
@@ -278,6 +290,7 @@ git commit -m "feat: define canonical workbench client boundary"
 ### Task 2A: Add The Server-Reviewed Canonical Edit Capability
 
 **Files:**
+
 - Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_thread_service_test.go`
@@ -320,6 +333,7 @@ git commit -m "feat: expose canonical thread edit capability"
 ### Task 3: Implement Canonical Fetch, Errors And Core Operations
 
 **Files:**
+
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-fetch.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/adapters/canonical-thread-adapter.ts`
@@ -330,19 +344,19 @@ git commit -m "feat: expose canonical thread edit capability"
 
 Freeze method, path, query, body and headers for:
 
-| App action | Canonical request |
-| --- | --- |
-| Search | `POST /api/workbench/threads/search`, `limit`, integral `offset` |
-| Create without files | `POST /api/workbench/threads`, `coze.initial_run` |
-| Create before file upload | `POST /api/workbench/threads`, `coze.deferred_initial_run` |
-| Get | `GET /api/workbench/threads/:thread_id` |
-| Messages | `GET .../messages?limit&before_seq|after_seq` |
-| Runs | `GET .../runs?parent_run_id&status&limit&offset` |
-| Follow-up/new Run | `POST .../runs`, atomic User Message plus Run |
-| Get Run | `GET .../runs/:run_id` |
-| Cancel | `POST .../runs/:run_id/cancel` |
-| Resume | `POST .../runs/:run_id/resume` |
-| Events | `GET .../runs/:run_id/events` |
+| App action                | Canonical request                                                |
+| ------------------------- | ---------------------------------------------------------------- | ---------- |
+| Search                    | `POST /api/workbench/threads/search`, `limit`, integral `offset` |
+| Create without files      | `POST /api/workbench/threads`, `coze.initial_run`                |
+| Create before file upload | `POST /api/workbench/threads`, `coze.deferred_initial_run`       |
+| Get                       | `GET /api/workbench/threads/:thread_id`                          |
+| Messages                  | `GET .../messages?limit&before_seq                               | after_seq` |
+| Runs                      | `GET .../runs?parent_run_id&status&limit&offset`                 |
+| Follow-up/new Run         | `POST .../runs`, atomic User Message plus Run                    |
+| Get Run                   | `GET .../runs/:run_id`                                           |
+| Cancel                    | `POST .../runs/:run_id/cancel`                                   |
+| Resume                    | `POST .../runs/:run_id/resume`                                   |
+| Events                    | `GET .../runs/:run_id/events`                                    |
 
 Every request sets `X-Coze-Space-ID`, `x-requested-with: XMLHttpRequest` and
 `credentials: same-origin`. JSON writes set `content-type: application/json`. Idempotent writes
@@ -410,6 +424,7 @@ new Run without appending a duplicate User Message. Neither branch may be silent
 the client cutover.
 
 **Files:**
+
 - Modify: `idl/workbench/thread.thrift`
 - Modify generated IDL outputs under `backend/api/model/workbench/thread_contract` and
   `frontend/packages/arch/api-schema/src/idl/workbench`
@@ -435,7 +450,7 @@ Freeze the canonical Run request extension as:
 ```json
 {
   "coze": {
-    "message_metadata": {"source": "workbench_detail_followup"}
+    "message_metadata": { "source": "workbench_detail_followup" }
   }
 }
 ```
@@ -553,6 +568,7 @@ all remaining Task 3 review findings before Task 3 can be marked complete.
 ### Task 4: Implement All Canonical Product Operations
 
 **Files:**
+
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-fetch.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/adapters/canonical-thread-adapter.ts`
@@ -605,6 +621,7 @@ git commit -m "feat: implement canonical workbench product client"
 ### Task 5: Add Run-Bound Canonical SSE And Safe Client Telemetry
 
 **Files:**
+
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/run-event-cursor.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/client-telemetry.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`
@@ -675,6 +692,7 @@ git commit -m "feat: add canonical run stream client"
 ### Task 6: Delegate Existing Page Services To The Canonical Client
 
 **Files:**
+
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/legacy-page-response.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/page-service-parity.test.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/service.ts`
@@ -745,6 +763,7 @@ git commit -m "refactor: delegate workbench pages to canonical client"
 ### Task 7: Remove Thread Transport Types From The Component Tree
 
 **Files:**
+
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts`
 - Create: `frontend/apps/coze-studio/src/pages/tasks/task-service-contract.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/service.ts`
@@ -841,6 +860,7 @@ git commit -m "refactor: isolate workbench page models"
 ### Task 8: Bind The Detail Stream To Stable Run Identity
 
 **Files:**
+
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts`
@@ -898,6 +918,7 @@ git commit -m "refactor: bind task stream to canonical run"
 ### Task 9: Pass Gate A With Source Contracts Still Present
 
 **Files:**
+
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts`
 - Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_thread_service.go`
@@ -982,6 +1003,7 @@ git commit -m "fix: close canonical workbench parity gaps"
 ### Task 10: Migrate The Internal NewX Parity Client
 
 **Files:**
+
 - Modify: `backend/internal/deerflowparity/newx_client.go`
 - Modify: `backend/internal/deerflowparity/client_test.go`
 - Preserve: `backend/internal/deerflowparity/deerflow_client.go`
@@ -1032,6 +1054,7 @@ git commit -m "refactor: migrate newx parity client to canonical api"
 ### Task 11: Make Canonical Routes The Always-On Primary Contract
 
 **Files:**
+
 - Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_contract_test.go`
 - Delete: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
@@ -1092,6 +1115,7 @@ pre-existing verification risk rather than a Task 11 regression.
 ### Task 12: Retire The TaskThread V1 HTTP Contract
 
 **Files:**
+
 - Modify: `idl/workbench/task.thrift`
 - Modify/regenerate: `backend/api/model/workbench/task/task.go`
 - Modify/regenerate: `backend/api/model/workbench/chat/workbench.go`
@@ -1243,6 +1267,7 @@ absent; all 47 canonical routes, 11 Scheduled Task routes, 23 `/api/threads/**` 
 ### Task 13: Retire The Local LangGraph Thread Contract
 
 **Files:**
+
 - Modify: `backend/api/router/coze/custom_routes.go`
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
 - Delete: `backend/api/handler/coze/langgraph_thread_service.go`
@@ -1310,6 +1335,7 @@ quality reviews both passed.
 ### Task 14: Apply The Stateless Run Zero-Use Gate And Retire It
 
 **Files:**
+
 - Modify: `docs/superpowers/evidence/2026-07-28-workbench-source-contract-usage-audit.md`
 - Modify: `backend/api/router/coze/custom_routes.go`
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
@@ -1318,6 +1344,8 @@ quality reviews both passed.
 - Delete when audit PASS: `backend/api/handler/coze/langgraph_http_contract.go`
 - Delete when audit PASS and no caller remains: `backend/api/model/agent/langgraph/run.go`
 - Delete when audit PASS and no caller remains: `backend/api/model/agent/langgraph/thread.go`
+- Create for shared canonical wire behavior:
+  `backend/api/handler/coze/workbench_canonical_run_stream_protocol.go`
 
 - [x] **Step 1: Enforce the five-item decision**
 
@@ -1335,18 +1363,32 @@ queryable. The decision is **BLOCKED / RETAIN**. All ten `/api/runs/**` routes a
 adapter/model/tests remain unchanged; Steps 2-5 are intentionally not executed. The evidence file
 records the retained code owner and the exact conditions required to reopen retirement.
 
-- [ ] **Step 2: Make all 10 negative route assertions fail**
+Decision amendment on `2026-07-30`: the project decision owner explicitly accepted the residual
+risk that an unobservable external consumer may exist and authorized complete retirement with no
+compatibility tail. This is `OWNER_OVERRIDE / RETIRE`; items 3 and 4 remain `BLOCKED` and are not
+misreported as zero traffic. The amendment supersedes only the stop condition above and authorizes
+Steps 2-5 while preserving the recorded audit limitation.
+
+- [x] **Step 2: Make all 10 negative route assertions fail**
 
 Add exact absence checks for POST create/stream/wait and GET/POST resource, messages, feedback,
 cancel, stream and join combinations. Run the router test to prove routes still exist before edit.
 
-- [ ] **Step 3: Delete stateless route and adapter ownership**
+Red evidence captured: the exact ten-route snapshot failed because every method/path pair was still
+registered. After production deletion, the same exact snapshot passes with all ten pairs absent.
+
+- [x] **Step 3: Delete stateless route and adapter ownership**
 
 Delete registrations, handlers, bindings, tests and helpers used only by stateless Run. Once both
 local LangGraph families are gone, delete the empty registration function and both handwritten
 `backend/api/model/agent/langgraph` files. Re-run caller scans before each file deletion.
 
-- [ ] **Step 4: Run route and package tests**
+Completed on the final-retirement branch. The stateless route registration, handler, HTTP binding,
+dedicated tests and handwritten models were deleted. Canonical SSE's reviewed SDK-compatible event
+names and public payload shapes moved to `workbench_canonical_run_stream_protocol.go`, so the
+canonical contract no longer depends on the retired adapter.
+
+- [x] **Step 4: Run route and package tests**
 
 ```bash
 cd backend
@@ -1355,8 +1397,16 @@ GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
   -count=1
 ```
 
-Expected when audit PASS: all 10 routes absent, canonical routes pass, and no local LangGraph API
-adapter package/file remains.
+Expected under the recorded owner override: all 10 routes absent, canonical routes pass, and no
+local LangGraph API adapter package/file remains.
+
+Fresh final-retirement evidence: router exact snapshots, canonical SSE focused tests,
+application/domain/repository/deerflowparity packages, codegen verification, focused vet and both
+backend builds passed. The full handler package has the same 23 Workflow/Mockey failures as the
+unchanged latest `dev` baseline and no Workbench/canonical failure. Frontend Workbench/Tasks
+`429/429`, schema `13/13`, lint and build passed. Runtime page logs contain only canonical
+`/api/workbench/threads/**` requests. Full evidence is recorded in
+`docs/superpowers/evidence/2026-07-30-workbench-final-contract-retirement.md`.
 
 - [ ] **Step 5: Commit the stateless retirement**
 
@@ -1369,11 +1419,13 @@ git add -A \
 git commit -m "refactor: retire unused stateless run api"
 ```
 
-Skip this commit when the audit is not PASS.
+Commit only after fresh verification. The owner override permits this commit despite the audit
+remaining `BLOCKED`; the commit and final audit must retain that residual-risk statement.
 
 ### Task 15: Run The Canonical-Only Automated Verification
 
 **Files:**
+
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts`
 - Modify: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
@@ -1475,7 +1527,8 @@ Completed in `0b0abbe3`. The final contract tests scan the full frontend product
 AST-aware canonical/Core client construction checks, all seven generated Workbench schema modules,
 the complete backend production source owner set for external `/api/threads/**` strings, and exact
 empty route-prefix snapshots for retired TaskThread, LangGraph Thread and ChatTask families. Task 14
-remains blocked, so the exact ten-route `/api/runs/**` snapshot is intentionally retained.
+was still blocked at that commit, so the exact ten-route `/api/runs/**` snapshot was intentionally
+retained. The later 2026-07-30 owner override and Task 14 continuation supersede that route state.
 
 Fresh frontend evidence: API schema `17/17`, focused canonical contract `4/4`, ESLint and production
 build passed. The full app report was `886/899` with 13 failures in five `pages/system` files; a
@@ -1491,12 +1544,14 @@ The final repository-wide Go run exited one only for
 an unchanged detached-baseline full run produced the same two-package, six-test set exactly. One
 intermediate full run observed a non-repeating canonical message-sequence assertion; it disappeared
 in the final full run and the planned focused suite passed. Production legacy scans returned no old
-TaskThread/selector/flag match; only the Task 14-retained stateless Run owner remains. Independent
+TaskThread/selector/flag match; at that commit only the Task 14-retained stateless Run owner
+remained. Independent
 specification and quality reviews found no Critical or Important issue.
 
 ### Task 16: Run Gate B Browser Regression And Update Current Project Truth
 
 **Files:**
+
 - Create: `docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-b.md`
 - Modify: `docs/superpowers/context/project-context.md`
 - Modify: `docs/superpowers/context/workbench-chat.md`
@@ -1537,8 +1592,9 @@ network summaries without cookies, bodies, signed URLs or content.
 
 Through the authenticated local backend, verify all 47 canonical method/path templates are
 registered. Probe representative methods from all 36 TaskThread and 23 LangGraph Thread templates
-and assert 404/route absence. Because Task 14's five-part zero-use gate remained blocked, verify
-that all 10 stateless templates are still registered and explicitly record that retained boundary.
+and assert 404/route absence. This historical Task 16 run occurred before the owner override and
+therefore verified all 10 stateless templates as registered; the Task 14 continuation must replace
+that result with exact ten-route absence evidence.
 
 Do not treat a handler validation error as route absence; the router snapshot is the authoritative
 all-method proof.
@@ -1611,7 +1667,8 @@ follow-up, suggestions, cancel, empty Artifact/Memory/audit states and token usa
 could not be safely constructed online are named deterministic substitutes in the Gate B evidence.
 The exact route result is 47 canonical present, 36 TaskThread V1 absent, 23 local LangGraph Thread
 absent, 11 Scheduled Task present and 10 stateless Run retained because its zero-use gate remains
-blocked.
+blocked. This sentence records the historical Task 16 run; the later owner-authorized retirement
+requires a new final route snapshot before completion.
 
 Fresh verification passed for 42 frontend files / 429 tests, 3 generated-schema files / 13 tests,
 the two focused Go packages, the strengthened login session-log regression, execution-graph
@@ -1627,6 +1684,7 @@ the evidence file and intentionally does not self-reference.
 ### Task 17: Run The Required `dev` Integration Gates
 
 **Files:**
+
 - Read and follow: `docs/superpowers/runbooks/dev-integration-audit.md`
 - No implementation file changes unless the audit finds a real defect
 
@@ -1670,9 +1728,9 @@ final SHA. If remote `dev` moved at any point, restart the first integration aud
 
 - Final production frontend contains one canonical client and no runtime selector/V1 adapter.
 - 47 canonical routes remain registered and always-on behind normal auth/authorization.
-- 36 TaskThread V1 and 23 local LangGraph Thread routes are absent.
-- Ten stateless Run routes are absent only when the five-item audit passed; otherwise the retained
-  owner and risk are explicit.
+- 36 TaskThread V1, 23 local LangGraph Thread and ten stateless Run routes are absent.
+- The stateless Run audit's items 3 and 4 remain `BLOCKED`; the explicit owner override and unknown
+  external-consumer risk are recorded rather than described as an audit pass.
 - Scheduled Task routes, generated types and Task Center tests remain intact.
 - NewX parity uses canonical local routes; external DeerFlow reference keeps its own route dialect.
 - TaskThread application/domain/repository/MySQL/Eino ADK behavior is unchanged.

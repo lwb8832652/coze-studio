@@ -42,7 +42,7 @@ type canonicalRunEventStreamConfig struct {
 }
 
 type canonicalRunStreamWriterHandle struct {
-	writer langGraphRunStreamWriter
+	writer canonicalRunStreamProtocolWriter
 	close  func() error
 }
 
@@ -135,7 +135,7 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("canonical run stream writer is unavailable"))
 		return
 	}
-	setLangGraphRunStreamHeaders(c)
+	setCanonicalRunStreamHeaders(c)
 	defer func() {
 		if streamWriter.close != nil && streamWriter.close() != nil {
 			logs.CtxWarnf(ctx, "event_name=workbench.run.stream.close_failed client_contract=%s thread_id=%d run_id=%d", canonicalContractVersion, threadID, run.RunID)
@@ -292,7 +292,7 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("canonical run stream writer is unavailable"))
 		return
 	}
-	setLangGraphRunStreamHeaders(c)
+	setCanonicalRunStreamHeaders(c)
 	defer func() {
 		if streamWriter.close != nil && streamWriter.close() != nil {
 			logs.CtxWarnf(ctx, "event_name=workbench.run.stream.close_failed client_contract=%s thread_id=%d run_id=%d", canonicalContractVersion, threadID, runID)
@@ -305,11 +305,11 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 
 func canonicalReconnectRunEventCursor(c *app.RequestContext) (int64, *canonicalError) {
 	queryRaw, _ := c.GetQuery("after_event_id")
-	queryCursor, ok := parseRunEventCursor(queryRaw)
+	queryCursor, ok := parseCanonicalRunEventCursor(queryRaw)
 	if !ok {
 		return 0, canonicalInvalidRequest("after_event_id must be a non-negative decimal ID", "invalid_event_cursor")
 	}
-	headerCursor, ok := parseRunEventCursor(string(c.GetHeader("Last-Event-ID")))
+	headerCursor, ok := parseCanonicalRunEventCursor(string(c.GetHeader("Last-Event-ID")))
 	if !ok {
 		return 0, canonicalInvalidRequest("Last-Event-ID must be a non-negative decimal ID", "invalid_event_cursor")
 	}
@@ -344,7 +344,7 @@ func canonicalReconnectRunStreamModes(
 	}
 	modes := make([]string, 0, len(rawValues))
 	for _, raw := range rawValues {
-		modes = append(modes, langGraphStreamModeQueryValues(string(raw))...)
+		modes = append(modes, canonicalRunStreamModeQueryValues(string(raw))...)
 	}
 	return validateCanonicalRunStreamModes(modes)
 }
@@ -354,7 +354,7 @@ func canonicalReconnectRunStreamModes(
 // the client is gone; context completion and normal stream timeout are not proof.
 func streamCanonicalRunEvents(
 	ctx context.Context,
-	writer langGraphRunStreamWriter,
+	writer canonicalRunStreamProtocolWriter,
 	run *appagentthread.RunSummary,
 	config canonicalRunEventStreamConfig,
 ) {
@@ -387,28 +387,28 @@ func streamCanonicalRunEvents(
 		config.CancelRun(cancelCtx, run.RunID)
 	}()
 
-	if !writeLangGraphRunStreamMetadata(ctx, trackedWriter, run) {
+	if !writeCanonicalRunStreamMetadata(ctx, trackedWriter, run) {
 		return
 	}
 	afterEventID := config.AfterEventID
-	streamModes := langGraphRequestedStreamModes("", config.StreamModes)
+	streamModes := canonicalRequestedRunStreamModes("", config.StreamModes)
 
 	sendNewEvents := func() bool {
 		for {
 			cursorBeforePage := afterEventID
 			response, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
 				ThreadID: run.ThreadID, RunID: run.RunID, AfterEventID: afterEventID,
-				Page: 1, PageSize: langGraphRunStreamPageSize,
+				Page: 1, PageSize: canonicalRunStreamPageSize,
 			})
 			if err != nil {
 				logCanonicalRunStreamFailure(ctx, "list_events", run, err)
-				writeLangGraphRunStreamError(ctx, trackedWriter, err)
+				writeCanonicalRunStreamError(ctx, trackedWriter, err)
 				return false
 			}
 			if response == nil {
 				err = fmt.Errorf("agent thread application returned empty run event page")
 				logCanonicalRunStreamFailure(ctx, "list_events", run, err)
-				writeLangGraphRunStreamError(ctx, trackedWriter, err)
+				writeCanonicalRunStreamError(ctx, trackedWriter, err)
 				return false
 			}
 
@@ -429,7 +429,7 @@ func streamCanonicalRunEvents(
 				if event.ThreadID != run.ThreadID || event.RunID != run.RunID {
 					err = fmt.Errorf("agent thread application returned mismatched run event")
 					logCanonicalRunStreamFailure(ctx, "project_event", run, err)
-					writeLangGraphRunStreamError(ctx, trackedWriter, err)
+					writeCanonicalRunStreamError(ctx, trackedWriter, err)
 					return false
 				}
 				if !writeCanonicalRunStreamEvent(ctx, trackedWriter, event, streamModes) {
@@ -437,7 +437,7 @@ func streamCanonicalRunEvents(
 				}
 				afterEventID = event.EventID
 			}
-			if len(response.Events) < int(langGraphRunStreamPageSize) || afterEventID == cursorBeforePage {
+			if len(response.Events) < int(canonicalRunStreamPageSize) || afterEventID == cursorBeforePage {
 				return true
 			}
 		}
@@ -505,30 +505,30 @@ func streamCanonicalRunEvents(
 // adapting the canonical messages-tuple request mode to the fixed SDK wire form.
 func writeCanonicalRunStreamEvent(
 	ctx context.Context,
-	writer langGraphRunStreamWriter,
+	writer canonicalRunStreamProtocolWriter,
 	event *appagentthread.RunEventSummary,
 	streamModes map[string]struct{},
 ) bool {
-	if _, generic := streamModes[langGraphRunStreamEvents]; generic {
-		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+	if _, generic := streamModes[canonicalRunStreamEventEvents]; generic {
+		return writeCanonicalRunStreamProtocolEvent(ctx, writer, event, streamModes)
 	}
 	if _, tuple := streamModes["messages-tuple"]; !tuple {
-		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+		return writeCanonicalRunStreamProtocolEvent(ctx, writer, event, streamModes)
 	}
 	projected := appagentthread.ProjectPublicRunEvent(event)
 	if projected == nil {
 		return true
 	}
-	mode := langGraphPublicRunStreamEventMode(projected)
-	if mode != langGraphRunStreamMessages && mode != "messages-tuple" {
-		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+	mode := canonicalPublicRunStreamEventMode(projected)
+	if mode != canonicalRunStreamEventMessages && mode != "messages-tuple" {
+		return writeCanonicalRunStreamProtocolEvent(ctx, writer, event, streamModes)
 	}
-	payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))
+	payload, err := sonic.Marshal(canonicalPublicRunMessageEventPayload(projected, true))
 	if err != nil {
-		writeLangGraphRunStreamError(ctx, writer, err)
+		writeCanonicalRunStreamError(ctx, writer, err)
 		return false
 	}
-	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), langGraphRunStreamMessages, payload); err != nil {
+	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), canonicalRunStreamEventMessages, payload); err != nil {
 		logs.CtxWarnf(ctx, "event_name=workbench.run.stream.write_failed client_contract=%s stage=message thread_id=%d run_id=%d", canonicalContractVersion, event.ThreadID, event.RunID)
 		return false
 	}
@@ -560,20 +560,20 @@ func cancelCanonicalRunAfterStreamDisconnect(ctx context.Context, runID int64) {
 
 func finishCanonicalRunStreamWhenTerminal(
 	ctx context.Context,
-	writer langGraphRunStreamWriter,
+	writer canonicalRunStreamProtocolWriter,
 	threadID, runID int64,
 	flushEvents func() bool,
 ) (terminal bool, stop bool) {
 	current, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		logCanonicalRunStreamFailure(ctx, "get_terminal_run", &appagentthread.RunSummary{ThreadID: threadID, RunID: runID}, err)
-		writeLangGraphRunStreamError(ctx, writer, err)
+		writeCanonicalRunStreamError(ctx, writer, err)
 		return false, true
 	}
 	if current == nil {
 		err = fmt.Errorf("canonical run stream lost its authorized run")
 		logCanonicalRunStreamFailure(ctx, "get_terminal_run", &appagentthread.RunSummary{ThreadID: threadID, RunID: runID}, err)
-		writeLangGraphRunStreamError(ctx, writer, err)
+		writeCanonicalRunStreamError(ctx, writer, err)
 		return false, true
 	}
 	if !isWorkbenchRunTerminal(current.Status) {
@@ -584,7 +584,7 @@ func finishCanonicalRunStreamWhenTerminal(
 	if flushEvents != nil && !flushEvents() {
 		return true, true
 	}
-	writeLangGraphRunStreamEnd(ctx, writer, current)
+	writeCanonicalRunStreamEnd(ctx, writer, current)
 	return true, true
 }
 

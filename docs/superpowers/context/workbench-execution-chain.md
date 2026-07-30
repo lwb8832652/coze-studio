@@ -110,11 +110,11 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
 
 ### 其它入口
 
-- LangGraph-compatible API：本地 `/api/threads/**` Thread 路由已全部退役；仅保留
-  stateless `/api/runs/**` 10 条路由。它先经
-  `createLangGraphStatelessBackingThread` 调用 `ApplicationService.CreateThread`，
-  再创建 Run。zero-use gate 当前 blocked，因此暂不删除；它不是 Workbench UI
-  合同，也不是 LangGraph 执行器。
+- 本地 LangGraph-compatible HTTP API：`/api/threads/**` 23 条和
+  stateless `/api/runs/**` 10 条路由均已退役，不再是任何生产入口。
+  canonical Run SSE 仅在自有 protocol 实现中保留经审核的
+  LangGraph SDK-compatible event name 与 payload shape，不保留 backing Thread
+  入口，也不导入 LangGraph SDK/runtime。
 - Scheduled Task：
   `AgentTaskExecutor.Execute` 根据 `KeepConversation` 和 `ConversationID` 分支；
   `StartNew` 调用 `CreateTaskThread`，`StartInThread` 复用专属会话并调用
@@ -125,7 +125,7 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
   已有 `session.ThreadID` 时调用 `CreateRun`。
 
 这些入口只生产 Run，不拥有 Run 状态机，也不是独立执行器。
-`query.integration_ingress` 独立验收 stateless LangGraph、Scheduled 和飞书的
+`query.integration_ingress` 独立验收 Scheduled 和飞书的
 新建/复用 Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 
 ## 持久化与异步执行
@@ -223,9 +223,9 @@ fallback。
 
 当前 Workbench、任务列表和任务详情 UI 均经唯一 canonical client 使用上述合同。
 `/api/workbench/task_threads/**` 36 条 V1 路由和 `/api/threads/**` 23 条本地
-LangGraph Thread 路由已不可达。Scheduled Task 的 11 条路由继续由
-`idl/workbench/task.thrift` 拥有；stateless `/api/runs/**` 10 条路由因 zero-use gate
-blocked 暂时保留，不能写成已退役或作为 UI fallback 使用。
+LangGraph Thread 路由以及 stateless `/api/runs/**` 10 条路由已全部不可达。
+Scheduled Task 的 11 条路由继续由 `idl/workbench/task.thrift` 拥有。三组已退役
+路由都不得作为 UI fallback 或新功能依赖恢复。
 
 ### MySQL 队列与 lease
 
@@ -385,8 +385,9 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 
 ## 明确边界
 
-- LangGraph：只保留 stateless `/api/runs/**` 兼容 HTTP/API 语义；本地
-  `/api/threads/**` 已退役，不导入或运行 LangGraph SDK。
+- LangGraph：本地 `/api/threads/**` 与 `/api/runs/**` 兼容 HTTP 路由均已退役；
+  canonical SSE 仅保留经审核的 SDK-compatible wire shape，不导入或运行
+  LangGraph SDK/runtime。
 - DeerFlow：只有 mode、config、指令与行为兼容语义，由当前 Go/Eino 实现；
   不存在 DeerFlow runtime。
 - legacy executor：只处理历史无 runtime 标记记录和显式迁移测试；新 Run 拒绝

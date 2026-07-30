@@ -1,5 +1,11 @@
 # Workbench Canonical Cutover Gate B
 
+> **历史证据说明（2026-07-30）：** 本文件记录的是原 Gate B 当时的状态，其中
+> `/api/runs/**` 因外部证据缺口暂时保留。项目决策者后续明确授权
+> `OWNER_OVERRIDE / RETIRE`，最终现状与验证结果见
+> `docs/superpowers/evidence/2026-07-30-workbench-final-contract-retirement.md`；后者覆盖本
+> 文件的 route-state 结论，但不改写当时审计缺口的事实。
+
 ## Decision
 
 Gate B 的 Workbench 产品切换结论为 **PASS**，但只覆盖已经满足证据的边界：
@@ -39,13 +45,13 @@ git log -1 --format=%H -- docs/superpowers/evidence/2026-07-28-workbench-canonic
 权威证据是 Hertz router 的完整 method 加 template 精确集合和逐路由
 `FullPath()` 解析测试，不以 handler 的参数校验错误代替路由存在性判断。
 
-| Route family | 最终数量 | Gate B 状态 |
-| --- | ---: | --- |
-| `/api/workbench/threads/**` | 47 | 注册、always-on、主产品合同 |
-| `/api/workbench/task_threads/**` | 36 | 全部不可达 |
-| `/api/threads/**` | 23 | 全部不可达 |
-| `/api/workbench/scheduled_tasks/**` 及相邻资源 | 11 | 保留 |
-| `/api/runs/**` | 10 | 审计阻塞，明确保留 |
+| Route family                                   | 最终数量 | Gate B 状态                 |
+| ---------------------------------------------- | -------: | --------------------------- |
+| `/api/workbench/threads/**`                    |       47 | 注册、always-on、主产品合同 |
+| `/api/workbench/task_threads/**`               |       36 | 全部不可达                  |
+| `/api/threads/**`                              |       23 | 全部不可达                  |
+| `/api/workbench/scheduled_tasks/**` 及相邻资源 |       11 | 保留                        |
+| `/api/runs/**`                                 |       10 | 审计阻塞，明确保留          |
 
 最终定向命令：
 
@@ -60,14 +66,14 @@ GOCACHE=/private/tmp/coze-task16-final-go-cache go test -p 1 -gcflags="all=-l -N
 
 已登录本地后端的代表性只读探测与 router snapshot 一致：
 
-| Probe | HTTP 结果 | 解释 |
-| --- | ---: | --- |
-| 现有 canonical Thread 详情 | 200 | canonical 业务链可访问 |
-| 旧 TaskThread V1 详情 | 404 | 来源产品合同已移除 |
-| 旧本地 LangGraph Thread 详情 | 404 | 来源兼容合同已移除 |
-| 旧 ChatTask 详情 | 404 | ChatTask 继续不存在 |
-| 已知 stateless Run 详情 | 200 | 按阻塞审计结论保留 |
-| Scheduled Task 列表 | 403 | 路由和权限中间件存在；当前测试账号无该资源权限 |
+| Probe                        | HTTP 结果 | 解释                                           |
+| ---------------------------- | --------: | ---------------------------------------------- |
+| 现有 canonical Thread 详情   |       200 | canonical 业务链可访问                         |
+| 旧 TaskThread V1 详情        |       404 | 来源产品合同已移除                             |
+| 旧本地 LangGraph Thread 详情 |       404 | 来源兼容合同已移除                             |
+| 旧 ChatTask 详情             |       404 | ChatTask 继续不存在                            |
+| 已知 stateless Run 详情      |       200 | 按阻塞审计结论保留                             |
+| Scheduled Task 列表          |       403 | 路由和权限中间件存在；当前测试账号无该资源权限 |
 
 `403` 只用于确认 Scheduled Task 没有被误删；11 个方法的完整存在性由 router
 snapshot 提供。
@@ -77,26 +83,26 @@ snapshot 提供。
 使用 Codex in-app browser 对同一在线空间执行 Gate B。动态标识在本文中统一替换为
 `{workspace_id}`、`{thread_id}` 和 `{run_id}`。
 
-| 场景 | 结论 | 证据类型 |
-| --- | --- | --- |
-| 登录、session、有效空间 | PASS | 页面实测；登录 200，重启后重新登录可用 |
-| 空间隔离 | PASS | 页面实测；无权限空间显示权限拒绝，不展示业务数据 |
-| 列表、详情、标题、状态、Thread 切换 | PASS | 页面实测；列表进入既有与新建详情均正常 |
-| 分页与 cursor | AUTOMATED SUBSTITUTE | 页面实测默认列表；翻页/cursor 边界由 client/schema 定向测试覆盖 |
-| 无附件首次提交 | PASS | 页面实测；Run 完成且刷新后持久化 |
-| 单附件 | PARTIAL | 页面实测选择与移除；完整提交、失败和重试由 deterministic tests 覆盖 |
-| 多附件首次提交 | PASS | 页面实测；一次选择两个文件并完成一个 Run，页面显示三步 |
-| streaming、终态和刷新 | PASS | 页面实测；回复只出现一次，刷新后仍为完成态 |
-| reconnect 与 unknown-result | AUTOMATED SUBSTITUTE | 正常 stream 页面实测；断线和未知结果由 run-stream/client tests 覆盖 |
-| follow-up 与 suggestions | PASS | 页面实测；追问完成，建议入口与返回正常 |
-| cancel | PASS | 页面实测；既有长 Run 最终显示 canceled |
-| resume、顶层 retry、subagent retry | AUTOMATED SUBSTITUTE | 当前在线数据没有可安全复用的 interrupted/failed/subagent Run |
-| Artifact | PASS EMPTY + SUBSTITUTE | 页面显示 0 个产物；预览、下载、删除、恢复、扫描与 retry 用定向测试 |
-| Token usage | PASS | 页面实测；usage 弹层和刷新后的聚合数据可见 |
-| Memory 与审计 | PASS EMPTY + SUBSTITUTE | 页面显示 Memory/Guardrail/MCP audit 空态；破坏性动作使用定向测试 |
-| missing resource | PASS | 页面实测；显示 `Resource not found` |
-| 401/403/404/409/413/422/429/500 | PASS | 401/403/404 有页面或 route probe；其余使用 canonical client/handler tests |
-| dependency unavailable | PASS WITH ENV LIMIT | Runtime doctor 显示 Sandbox disabled、MCP unknown；Artifact scanner Docker unhealthy |
+| 场景                                | 结论                    | 证据类型                                                                             |
+| ----------------------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| 登录、session、有效空间             | PASS                    | 页面实测；登录 200，重启后重新登录可用                                               |
+| 空间隔离                            | PASS                    | 页面实测；无权限空间显示权限拒绝，不展示业务数据                                     |
+| 列表、详情、标题、状态、Thread 切换 | PASS                    | 页面实测；列表进入既有与新建详情均正常                                               |
+| 分页与 cursor                       | AUTOMATED SUBSTITUTE    | 页面实测默认列表；翻页/cursor 边界由 client/schema 定向测试覆盖                      |
+| 无附件首次提交                      | PASS                    | 页面实测；Run 完成且刷新后持久化                                                     |
+| 单附件                              | PARTIAL                 | 页面实测选择与移除；完整提交、失败和重试由 deterministic tests 覆盖                  |
+| 多附件首次提交                      | PASS                    | 页面实测；一次选择两个文件并完成一个 Run，页面显示三步                               |
+| streaming、终态和刷新               | PASS                    | 页面实测；回复只出现一次，刷新后仍为完成态                                           |
+| reconnect 与 unknown-result         | AUTOMATED SUBSTITUTE    | 正常 stream 页面实测；断线和未知结果由 run-stream/client tests 覆盖                  |
+| follow-up 与 suggestions            | PASS                    | 页面实测；追问完成，建议入口与返回正常                                               |
+| cancel                              | PASS                    | 页面实测；既有长 Run 最终显示 canceled                                               |
+| resume、顶层 retry、subagent retry  | AUTOMATED SUBSTITUTE    | 当前在线数据没有可安全复用的 interrupted/failed/subagent Run                         |
+| Artifact                            | PASS EMPTY + SUBSTITUTE | 页面显示 0 个产物；预览、下载、删除、恢复、扫描与 retry 用定向测试                   |
+| Token usage                         | PASS                    | 页面实测；usage 弹层和刷新后的聚合数据可见                                           |
+| Memory 与审计                       | PASS EMPTY + SUBSTITUTE | 页面显示 Memory/Guardrail/MCP audit 空态；破坏性动作使用定向测试                     |
+| missing resource                    | PASS                    | 页面实测；显示 `Resource not found`                                                  |
+| 401/403/404/409/413/422/429/500     | PASS                    | 401/403/404 有页面或 route probe；其余使用 canonical client/handler tests            |
+| dependency unavailable              | PASS WITH ENV LIMIT     | Runtime doctor 显示 Sandbox disabled、MCP unknown；Artifact scanner Docker unhealthy |
 
 Sandbox、MCP 和 Artifact scanner 的状态来自当前环境，不是 canonical transport
 回归。没有为了让页面“变绿”而伪造依赖或静默 fallback。
@@ -158,16 +164,16 @@ Workbench 请求合同，但会破坏生产日志安全边界，因此在进入�
 
 ## Automated Verification
 
-| Verification | Fresh result |
-| --- | --- |
-| Workbench/Tasks frontend | `42/42` files，`429/429` tests PASS |
-| Workbench generated schema | `3/3` files，`13/13` tests PASS |
-| Backend route and login security | `2/2` packages PASS |
-| Execution graph source contract | PASS，115 nodes / 132 edges / 28 chains |
-| Execution graph tests | `53/53` PASS |
-| Graphify build | PASS，派生图写入 ignored graphify-out |
-| Derived graph verification | PASS |
-| `git diff --check` | PASS |
+| Verification                     | Fresh result                            |
+| -------------------------------- | --------------------------------------- |
+| Workbench/Tasks frontend         | `42/42` files，`429/429` tests PASS     |
+| Workbench generated schema       | `3/3` files，`13/13` tests PASS         |
+| Backend route and login security | `2/2` packages PASS                     |
+| Execution graph source contract  | PASS，115 nodes / 132 edges / 28 chains |
+| Execution graph tests            | `53/53` PASS                            |
+| Graphify build                   | PASS，派生图写入 ignored graphify-out   |
+| Derived graph verification       | PASS                                    |
+| `git diff --check`               | PASS                                    |
 
 前端命令：
 

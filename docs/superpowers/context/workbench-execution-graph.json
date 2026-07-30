@@ -23,7 +23,6 @@
       "backend/api/router/coze/api.go",
       "backend/api/router/coze/workbench_canonical_thread_route_test.go",
       "backend/api/handler/coze/workbench_canonical_*.go",
-      "backend/api/handler/coze/langgraph_run_service*.go",
       "backend/api/model/workbench/task/task.go",
       "backend/api/model/workbench/thread_contract/**",
       "backend/api/model/workbench/thread_product_contract/**",
@@ -153,49 +152,6 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts",
           "locator": "it('creates one atomic follow-up and keeps only uploaded file_id references'"
-        }
-      ]
-    },
-    {
-      "id": "compat.langgraph.stateless_run",
-      "label": "Retained stateless /api/runs adapter (zero-use gate blocked)",
-      "layer": "compatibility_api",
-      "kind": "function",
-      "production_status": "current",
-      "runtime_scope": "compatibility_contract",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "symbol": "createLangGraphStatelessRun",
-          "locator": "func createLangGraphStatelessRun("
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
-        }
-      ],
-      "retention_status": "retained_zero_use_gate_blocked"
-    },
-    {
-      "id": "compat.langgraph.stateless_backing_thread",
-      "label": "LangGraph stateless backing thread",
-      "layer": "compatibility_api",
-      "kind": "function",
-      "production_status": "current",
-      "runtime_scope": "compatibility_contract",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "symbol": "createLangGraphStatelessBackingThread",
-          "locator": "func createLangGraphStatelessBackingThread("
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
         }
       ]
     },
@@ -1847,7 +1803,7 @@
       "source_anchors": [
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
-          "locator": "payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))"
+          "locator": "payload, err := sonic.Marshal(canonicalPublicRunMessageEventPayload(projected, true))"
         }
       ],
       "evidence": [
@@ -2671,7 +2627,7 @@
     },
     {
       "id": "contract.workbench.route_surface",
-      "label": "Workbench route surface 47/36/23/11/10",
+      "label": "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
       "layer": "transport_contract",
       "kind": "route_snapshot",
       "production_status": "current",
@@ -2693,8 +2649,8 @@
         },
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "symbol": "retainedLangGraphStatelessRunRoutes",
-          "locator": "var retainedLangGraphStatelessRunRoutes = []routeExpectation{"
+          "symbol": "retiredLangGraphStatelessRunRoutes",
+          "locator": "var retiredLangGraphStatelessRunRoutes = []routeExpectation{"
         }
       ],
       "evidence": [
@@ -2818,57 +2774,6 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
           "locator": "const uploadResponse = await uploadTaskThreadFiles({"
-        }
-      ]
-    },
-    {
-      "id": "edge.langgraph_stateless_calls_backing_thread",
-      "from": "compat.langgraph.stateless_run",
-      "to": "compat.langgraph.stateless_backing_thread",
-      "relation": "calls",
-      "chain_ids": [
-        "entry.langgraph_stateless",
-        "boundary.runtime_compatibility"
-      ],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "thread, err := createLangGraphStatelessBackingThread(ctx, req.Metadata)"
-        }
-      ]
-    },
-    {
-      "id": "edge.langgraph_backing_calls_create_thread",
-      "from": "compat.langgraph.stateless_backing_thread",
-      "to": "application.create_thread",
-      "relation": "delegates_to",
-      "chain_ids": [
-        "entry.langgraph_stateless",
-        "boundary.runtime_compatibility"
-      ],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "return appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{"
-        }
-      ]
-    },
-    {
-      "id": "edge.langgraph_stateless_thread_precedes_run",
-      "from": "application.create_thread",
-      "to": "application.create_run",
-      "relation": "precedes",
-      "chain_ids": [
-        "entry.langgraph_stateless",
-        "boundary.runtime_compatibility"
-      ],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "return appagentthread.SVC.CreateRun(ctx, createReq)"
         }
       ]
     },
@@ -4619,20 +4524,6 @@
     },
     {
       "confidence": "extracted",
-      "id": "edge.stateless_route_surface_maps_adapter",
-      "from": "contract.workbench.route_surface",
-      "relation": "maps_to",
-      "to": "compat.langgraph.stateless_run",
-      "chain_ids": ["entry.langgraph_stateless"],
-      "evidence": [
-        {
-          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "retains stateless LangGraph runs while the zero-use gate is blocked"
-        }
-      ]
-    },
-    {
-      "confidence": "extracted",
       "id": "edge.contract_uses_thriftgo",
       "from": "contract.workbench_canonical_thread.thrift",
       "relation": "implemented_with",
@@ -4683,7 +4574,7 @@
       "evidence": [
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
-          "locator": "payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))"
+          "locator": "payload, err := sonic.Marshal(canonicalPublicRunMessageEventPayload(projected, true))"
         }
       ]
     }
@@ -4807,32 +4698,6 @@
         "edge.upload_uses_singleton",
         "edge.create_run_uses_singleton"
       ]
-    },
-    {
-      "id": "entry.langgraph_stateless",
-      "name": "Retained stateless /api/runs backing Thread creation (zero-use gate blocked)",
-      "entry": "compat.langgraph.stateless_run",
-      "terminal": "application.create_run",
-      "ordered_node_ids": [
-        "compat.langgraph.stateless_run",
-        "compat.langgraph.stateless_backing_thread",
-        "application.create_thread",
-        "application.create_run"
-      ],
-      "ordered_edge_ids": [
-        "edge.langgraph_stateless_calls_backing_thread",
-        "edge.langgraph_backing_calls_create_thread",
-        "edge.langgraph_stateless_thread_precedes_run"
-      ],
-      "production_status": "current",
-      "canonical_executor": false,
-      "test_evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
-        }
-      ],
-      "required_side_edge_ids": ["edge.stateless_route_surface_maps_adapter"]
     },
     {
       "id": "entry.scheduled_task",
@@ -5414,28 +5279,19 @@
     },
     {
       "id": "boundary.runtime_compatibility",
-      "name": "Retained compatibility boundaries converge on Eino ADK",
-      "entry": "compat.langgraph.stateless_run",
+      "name": "Compatibility configuration and historical boundaries converge on Eino ADK",
+      "entry": "compat.deerflow_config",
       "terminal": "runtime.adk_executor.execute",
       "ordered_node_ids": [
-        "compat.langgraph.stateless_run",
-        "compat.langgraph.stateless_backing_thread",
-        "application.create_thread",
-        "application.create_run",
-        "runtime.new_run_policy",
+        "compat.deerflow_config",
         "runtime.selector.execute",
         "runtime.adk_executor.execute"
       ],
       "ordered_edge_ids": [
-        "edge.langgraph_stateless_calls_backing_thread",
-        "edge.langgraph_backing_calls_create_thread",
-        "edge.langgraph_stateless_thread_precedes_run",
-        "edge.app_run_calls_new_run_policy",
-        "edge.new_run_policy_precedes_selector",
+        "edge.deerflow_configures_eino",
         "edge.selector_executes_adk"
       ],
       "required_side_edge_ids": [
-        "edge.deerflow_configures_eino",
         "edge.legacy_is_historical_only",
         "edge.legacy_excluded_from_new_runs"
       ],
@@ -5443,8 +5299,8 @@
       "canonical_executor": false,
       "test_evidence": [
         {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "func TestNormalizeNewDeerFlowRunConfigCanonicalizesEinoAndPreservesFeatures"
         },
         {
           "path": "backend/application/agentthread/runtime_selector_test.go",
@@ -5634,11 +5490,15 @@
       "id": "exclude.langgraph_sdk",
       "term": "LangGraph SDK",
       "status": "not_used",
-      "reason": "Only stateless /api/runs compatibility routes remain; they delegate to agentthread and no LangGraph runtime executes Runs.",
+      "reason": "All local /api/threads and /api/runs compatibility routes are retired. Canonical Workbench SSE preserves reviewed SDK-compatible event shapes, but no LangGraph runtime executes Runs.",
       "evidence": [
         {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "return appagentthread.SVC.CreateRun(ctx, createReq)"
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "keeps all stateless LangGraph run method and path pairs unreachable"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_protocol.go",
+          "locator": "The canonical Workbench stream keeps reviewed SDK-compatible event names"
         }
       ]
     },
@@ -5704,13 +5564,17 @@
     },
     {
       "id": "exclude.langgraph_thread_routes",
-      "term": "Local LangGraph Thread HTTP routes",
+      "term": "Local LangGraph-compatible HTTP routes",
       "status": "retired",
-      "reason": "All 23 /api/threads method/path pairs are unreachable; only the separately tracked stateless /api/runs surface is retained.",
+      "reason": "All 23 /api/threads and all 10 /api/runs method/path pairs are unreachable; only the canonical /api/workbench/threads contract remains.",
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
           "locator": "keeps all retired LangGraph thread method and path pairs unreachable"
+        },
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "keeps all stateless LangGraph run method and path pairs unreachable"
         }
       ]
     }
@@ -5926,9 +5790,8 @@
     },
     {
       "id": "query.integration_ingress",
-      "question": "保留的 stateless LangGraph、Scheduled 和飞书如何创建或复用 Thread 并进入共享 Run 主链？",
+      "question": "Scheduled 和飞书如何创建或复用 Thread 并进入共享 Run 主链？",
       "expanded_terms": [
-        "Retained stateless /api/runs adapter (zero-use gate blocked)",
         "Scheduled AgentTaskExecutor.Execute",
         "Feishu RuntimeManager.processEvent",
         "calls",
@@ -5937,13 +5800,10 @@
         "precedes"
       ],
       "smoke_node_ids": [
-        "compat.langgraph.stateless_run",
         "integration.scheduled.execute",
         "integration.feishu.process_event"
       ],
       "required_node_ids": [
-        "compat.langgraph.stateless_run",
-        "compat.langgraph.stateless_backing_thread",
         "integration.scheduled.execute",
         "integration.scheduled.start_new",
         "integration.scheduled.start_in_thread",
@@ -5955,9 +5815,6 @@
         "application.create_run"
       ],
       "required_edge_ids": [
-        "edge.langgraph_stateless_calls_backing_thread",
-        "edge.langgraph_backing_calls_create_thread",
-        "edge.langgraph_stateless_thread_precedes_run",
         "edge.scheduled_execute_routes_new",
         "edge.scheduled_calls_create_thread",
         "edge.scheduled_execute_routes_existing",
@@ -5970,9 +5827,10 @@
     },
     {
       "id": "query.runtime_boundaries",
-      "question": "保留的 stateless LangGraph、DeerFlow 配置语义和 legacy 是否形成并行生产运行时？",
+      "question": "DeerFlow 配置语义和 legacy 是否形成并行生产运行时？",
       "expanded_terms": [
-        "Retained stateless /api/runs adapter (zero-use gate blocked)",
+        "DeerFlow parity and configuration semantics",
+        "Historical unmarked-run legacy executor",
         "normalizeNewDeerFlowRunConfig new-run policy",
         "compatibility_contract",
         "historical_compatibility",
@@ -5981,10 +5839,8 @@
         "excludes",
         "eino_adk"
       ],
-      "smoke_node_ids": ["compat.langgraph.stateless_run"],
+      "smoke_node_ids": ["compat.deerflow_config", "historical.legacy_runtime"],
       "required_node_ids": [
-        "compat.langgraph.stateless_run",
-        "compat.langgraph.stateless_backing_thread",
         "compat.deerflow_config",
         "historical.legacy_runtime",
         "runtime.new_run_policy",
@@ -5992,9 +5848,6 @@
         "runtime.adk_executor.execute"
       ],
       "required_edge_ids": [
-        "edge.langgraph_stateless_calls_backing_thread",
-        "edge.langgraph_backing_calls_create_thread",
-        "edge.langgraph_stateless_thread_precedes_run",
         "edge.deerflow_configures_eino",
         "edge.legacy_is_historical_only",
         "edge.legacy_excluded_from_new_runs"
@@ -6004,7 +5857,7 @@
       "id": "query.canonical_thread_http",
       "question": "Workbench canonical UI、47 条 HTTP 路由和五组保留/退役边界如何对齐？",
       "expanded_terms": [
-        "Workbench route surface 47/36/23/11/10",
+        "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
         "canonicalThreadClient singleton",
         "Canonical Workbench Thread and product Thrift contract",
         "Always-on canonical Thread HTTP handlers",
@@ -6029,7 +5882,6 @@
         "frontend.events.run_subscription",
         "contract.workbench_canonical_thread.thrift",
         "contract.workbench_scheduled_task.thrift",
-        "compat.langgraph.stateless_run",
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
         "http.workbench.canonical_run_stream",
@@ -6045,7 +5897,6 @@
       "required_edge_ids": [
         "edge.canonical_route_surface_maps_contract",
         "edge.scheduled_route_surface_maps_contract",
-        "edge.stateless_route_surface_maps_adapter",
         "edge.create_thread_uses_singleton",
         "edge.canonical_create_thread_routes_handler",
         "edge.canonical_contract_routes_thread",
