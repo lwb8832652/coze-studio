@@ -236,6 +236,39 @@ func canonicalSpaceID(ctx context.Context, c *app.RequestContext) (int64, *canon
 	return 0, &mapped
 }
 
+type canonicalSpaceAccessContextKey struct{}
+
+// requireCanonicalSpaceAccess validates the declared workspace before carrying
+// it into the existing Thread authorization request.
+func requireCanonicalSpaceAccess(
+	ctx context.Context,
+	c *app.RequestContext,
+) (context.Context, bool) {
+	spaceID, public := canonicalSpaceID(ctx, c)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return ctx, false
+	}
+	return context.WithValue(ctx, canonicalSpaceAccessContextKey{}, spaceID), true
+}
+
+func canonicalSpaceIDFromContext(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	spaceID, _ := ctx.Value(canonicalSpaceAccessContextKey{}).(int64)
+	return spaceID
+}
+
+func canonicalThreadAccessContext(ctx context.Context, threadID, runID int64) context.Context {
+	return appagentthread.WithThreadAccessRequest(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		SpaceID:  canonicalSpaceIDFromContext(ctx),
+		ThreadID: threadID,
+		RunID:    runID,
+	})
+}
+
 func writeCanonicalError(
 	ctx context.Context,
 	c *app.RequestContext,

@@ -104,6 +104,25 @@ func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
 	require.Equal(t, consts.StatusNotFound, c.Response.StatusCode())
 }
 
+func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	require.GreaterOrEqual(t, len(canonicalEntrypoints), 21)
+
+	for _, entrypoint := range canonicalEntrypoints[:21] {
+		entrypoint := entrypoint
+		t.Run(entrypoint.name, func(t *testing.T) {
+			var c app.RequestContext
+			entrypoint.handler(canonicalViewerContext(2), &c)
+
+			require.Equal(t, consts.StatusBadRequest, c.Response.StatusCode())
+			var response canonicalError
+			require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
+			require.Equal(t, "invalid_space_id", response.Code)
+		})
+	}
+}
+
 func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 

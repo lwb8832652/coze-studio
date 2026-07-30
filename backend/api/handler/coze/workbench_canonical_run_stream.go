@@ -78,15 +78,20 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
 	requestLog.ThreadID = threadID
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	if err := appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
 		ViewerID: workbenchViewerIDFromCtx(ctx),
+		SpaceID:  canonicalSpaceIDFromContext(ctx),
 		ThreadID: threadID,
 	}); err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -122,7 +127,7 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.RunID = run.RunID
-	ctx = workbenchThreadAccessContext(ctx, threadID, run.RunID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, run.RunID)
 	c.Header("Content-Location", canonicalRunPath(threadID, run.RunID))
 	c.Header("Location", canonicalRunStreamPath(threadID, run.RunID))
 
@@ -169,7 +174,7 @@ func createCanonicalStreamRun(
 		if projected == nil || run == nil || run.ThreadID != threadID {
 			return nil, nil, fmt.Errorf("canonical resume stream projection returned invalid run")
 		}
-		accessCtx := workbenchThreadAccessContext(ctx, threadID, run.RunID)
+		accessCtx := canonicalThreadAccessContext(ctx, threadID, run.RunID)
 		message, err := getCanonicalRunUserMessage(accessCtx, threadID, run.RunID)
 		if err != nil {
 			return nil, nil, err
@@ -225,6 +230,10 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -246,7 +255,7 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	}
 	requestLog.AfterEventID = afterEventID
 
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)

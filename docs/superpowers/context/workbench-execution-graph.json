@@ -2553,6 +2553,40 @@
       ]
     },
     {
+      "id": "http.workbench.canonical_space_access",
+      "label": "Canonical workspace declaration and resource ownership authorization",
+      "layer": "http_handler",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_contract.go",
+          "symbol": "requireCanonicalSpaceAccess",
+          "locator": "func requireCanonicalSpaceAccess("
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_contract.go",
+          "symbol": "canonicalThreadAccessContext",
+          "locator": "func canonicalThreadAccessContext(ctx context.Context, threadID, runID int64) context.Context {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_entrypoints_test.go",
+          "locator": "func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestGetCanonicalThreadRejectsThreadOutsideDeclaredSpace"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+        }
+      ]
+    },
+    {
       "id": "http.workbench.canonical_product_contract",
       "label": "Canonical product IDL wire validation, projection and safe logging",
       "layer": "http_handler",
@@ -4361,6 +4395,20 @@
       ]
     },
     {
+      "id": "edge.canonical_thread_handler_validates_space",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_space_access",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
       "id": "edge.canonical_app_delegates_domain_contract",
       "from": "application.canonical_thread_contract",
       "to": "domain.canonical_thread_contract",
@@ -4441,6 +4489,20 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
           "locator": "response, err := appagentthread.SVC.CreateRun(ctx, canonicalApplicationCreateRunRequest(threadID, submission))"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_handler_validates_space",
+      "from": "http.workbench.canonical_run",
+      "to": "http.workbench.canonical_space_access",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
         }
       ]
     },
@@ -4564,6 +4626,20 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
           "locator": "response, err := appagentthread.SVC.CreateRun(ctx, canonicalApplicationCreateRunRequest(threadID, submission))"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_validates_space",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "http.workbench.canonical_space_access",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
         }
       ]
     },
@@ -5399,12 +5475,21 @@
         "edge.canonical_domain_persists_repo_contract"
       ],
       "required_side_edge_ids": [
+        "edge.canonical_thread_handler_validates_space",
         "edge.canonical_thread_create_calls_create_thread",
         "edge.canonical_thread_submission_calls_create_task_thread"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_entrypoints_test.go",
+          "locator": "func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestGetCanonicalThreadRejectsThreadOutsideDeclaredSpace"
+        },
         {
           "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
           "locator": "func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically"
@@ -5434,6 +5519,7 @@
         "edge.create_run_domain_persists_bundle"
       ],
       "required_side_edge_ids": [
+        "edge.canonical_run_handler_validates_space",
         "edge.canonical_run_handler_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_idempotency_race_validates_fingerprint",
@@ -5444,6 +5530,10 @@
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_entrypoints_test.go",
+          "locator": "func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader"
+        },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
           "locator": "func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency"
@@ -5481,6 +5571,7 @@
         "edge.create_run_domain_persists_bundle"
       ],
       "required_side_edge_ids": [
+        "edge.canonical_run_stream_validates_space",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_run_stream_calls_app_query",
@@ -5490,6 +5581,14 @@
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_entrypoints_test.go",
+          "locator": "func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+        },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
           "locator": "func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents"

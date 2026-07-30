@@ -166,9 +166,32 @@ func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
 		http.MethodPost,
 		"/api/workbench/threads/1/runs/stream",
 		`{`,
+		ut.Header{Key: canonicalSpaceIDHeader, Value: "1"},
 	)
 
 	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Empty(t, writers.writers)
+}
+
+func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
+	h.POST("/api/workbench/threads/:thread_id/runs/stream", StreamCanonicalRun)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		`{`,
+	)
+
+	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "resource_not_found", public.Code)
 	require.Empty(t, writers.writers)
 }
 
@@ -710,8 +733,7 @@ func (w *callbackCanonicalRunStreamWriter) WriteEvent(id, eventType string, data
 }
 
 func canonicalRunStreamTestServer(timeout time.Duration) *server.Hertz {
-	h := server.Default()
-	h.Use(workbenchSessionMiddlewareForTest(2))
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1)
 	if timeout > 0 {
 		h.Use(func(ctx context.Context, c *app.RequestContext) {
 			streamCtx, cancel := context.WithTimeout(ctx, timeout)

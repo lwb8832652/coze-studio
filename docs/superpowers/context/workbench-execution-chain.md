@@ -142,9 +142,10 @@ admission 状态。
 `/api/workbench/threads...` 的 Thread create/search/get/patch/delete、state、history
 和 messages handler 已接入真实 HTTP 路由，但由
 `COZE_WORKBENCH_CANONICAL_API_ENABLED` 默认关闭。当前入口只接受 session principal；
-create/search 必须提交 `X-Coze-Space-ID`，服务端再用认证主体校验 workspace。其余资源
-路由从 path Thread/Run 读取服务端归属并执行 Thread 授权，拒绝依赖客户端提交 owner、
-`user_id` 或 `space_id`。
+所有 canonical 请求都必须提交 `X-Coze-Space-ID`，服务端先用认证主体校验 workspace。
+create/search 直接在声明空间内执行；其余资源路由还会从 path Thread/Run 读取服务端归属，
+把声明空间、资源实际空间和 Thread 授权一起校验。任何路由都拒绝依赖客户端 body 中的
+owner、`user_id` 或 `space_id`。
 
 canonical handler 只做严格 SDK 参数、公开投影和稳定错误适配，随后调用同一个
 `agentthread.ApplicationService`。create 继续进入既有 `CreateThread` 或
