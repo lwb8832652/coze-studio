@@ -1340,7 +1340,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	require.Equal(t, `["messages","updates"]`, resp.Run.StreamMode)
 }
 
-func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
+func TestApplicationCreateRunMessageMetadataUsesAtomicBundle(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		messages: []*entity.Message{
 			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "第一轮问题"},
@@ -1393,6 +1393,149 @@ func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
 	require.Equal(t, entity.MessageRoleUser, domainSVC.createRunBundleReq.Message.Role)
 	require.Equal(t, "继续分析", domainSVC.createRunBundleReq.Message.Content)
 	require.Equal(t, `{"source":"workbench_detail_followup"}`, domainSVC.createRunBundleReq.Message.Metadata)
+	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRunsByID: map[int64]*entity.Run{
+			3001: {
+				ID:          3001,
+				ThreadID:    10,
+				ParentRunID: 0,
+				RunKind:     entity.RunKindTask,
+				Status:      entity.RunStatusFailed,
+			},
+		},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID:       3002,
+				ThreadID: 10,
+				RunKind:  entity.RunKindTask,
+				Status:   entity.RunStatusPending,
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:                 10,
+		TopLevelRetrySourceRunID: 3001,
+		AssistantID:              "default",
+		Command:                  `{"retry":"current_task"}`,
+		Input:                    `{"messages":[{"role":"user","content":"继续分析"}]}`,
+		Config:                   `{"runtime":"eino_adk","mode":"pro"}`,
+		Context:                  `{"request":"context"}`,
+		Metadata:                 `{"caller":"keep"}`,
+		StreamMode:               `["messages-tuple","updates"]`,
+		MultitaskStrategy:        "reject",
+		OnDisconnect:             "continue",
+		Durability:               "async",
+		IdempotencyKey:           "retry-key",
+		IdempotencyOperation:     "workbench.run.retry.v1",
+		IdempotencyFingerprint:   strings.Repeat("a", 64),
+		PersistMessageReference:  false,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3001), domainSVC.getRunID)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.Nil(t, domainSVC.createRunBundleReq.Message)
+	require.Zero(t, domainSVC.createRunBundleReq.Run.ParentRunID)
+	require.Equal(t, entity.RunKindTask, domainSVC.createRunBundleReq.Run.RunKind)
+	require.Equal(t, "default", domainSVC.createRunBundleReq.Run.AssistantID)
+	require.JSONEq(t, `{"retry":"current_task"}`, domainSVC.createRunBundleReq.Run.Command)
+	require.Equal(t, `{"messages":[{"role":"user","content":"继续分析"}]}`, domainSVC.createRunBundleReq.Run.Input)
+	require.JSONEq(t, `{"runtime":"eino_adk","mode":"pro"}`, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, `{"request":"context"}`, domainSVC.createRunBundleReq.Run.Context)
+	require.JSONEq(t, `{"caller":"keep","attempt_kind":"retry","source_run_id":3001}`, domainSVC.createRunBundleReq.Run.Metadata)
+	require.Equal(t, `["messages-tuple","updates"]`, domainSVC.createRunBundleReq.Run.StreamMode)
+	require.Equal(t, "reject", domainSVC.createRunBundleReq.Run.MultitaskStrategy)
+	require.Equal(t, "continue", domainSVC.createRunBundleReq.Run.OnDisconnect)
+	require.Equal(t, "async", domainSVC.createRunBundleReq.Run.Durability)
+	require.Equal(t, "retry-key", domainSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.Equal(t, "workbench.run.retry.v1", domainSVC.createRunBundleReq.Run.IdempotencyOperation)
+	require.Equal(t, strings.Repeat("a", 64), domainSVC.createRunBundleReq.Run.IdempotencyFingerprint)
+	require.False(t, domainSVC.createRunBundleReq.PersistMessageReference)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Equal(t, int64(3002), resp.Run.RunID)
+	require.Nil(t, resp.Message)
+}
+
+func TestApplicationCreateRunTopLevelRetryRejectsInvalidSubmission(t *testing.T) {
+	validSource := func() *entity.Run {
+		return &entity.Run{
+			ID: 3001, ThreadID: 10, ParentRunID: 0,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusFailed,
+		}
+	}
+	tests := []struct {
+		name      string
+		source    *entity.Run
+		mutateReq func(*CreateRunRequest)
+	}{
+		{name: "missing source", source: nil},
+		{name: "cross thread source", source: &entity.Run{ID: 3001, ThreadID: 11, RunKind: entity.RunKindTask, Status: entity.RunStatusFailed}},
+		{name: "child source", source: &entity.Run{ID: 3001, ThreadID: 10, ParentRunID: 99, RunKind: entity.RunKindTask, Status: entity.RunStatusFailed}},
+		{name: "non task source", source: &entity.Run{ID: 3001, ThreadID: 10, RunKind: entity.RunKindSubagent, Status: entity.RunStatusFailed}},
+		{name: "non failed source", source: &entity.Run{ID: 3001, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusCanceled}},
+		{name: "message content", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.MessageContent = "duplicate" }},
+		{name: "message metadata", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.MessageMetadata = `{"source":"duplicate"}` }},
+		{name: "message reference", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.PersistMessageReference = true }},
+		{name: "child retry run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.ParentRunID = 99 }},
+		{name: "non task retry run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.RunKind = RunKindSubagent }},
+		{name: "invalid metadata", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `[]` }},
+		{name: "caller attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"attempt_kind":"turn"}` }},
+		{name: "caller mixed case attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"Attempt_Kind":"turn"}` }},
+		{name: "caller source run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"source_run_id":7}` }},
+		{name: "caller message reference", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"_message":{"message_id":7}}` }},
+		{name: "caller idempotency state", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"_idempotency":{"operation":"forged"}}` }},
+		{name: "caller resume marker", source: validSource(), mutateReq: func(req *CreateRunRequest) {
+			req.Metadata = `{"human_interaction":{"schema":"coze.human_interaction_resolved.v1"}}`
+		}},
+		{name: "caller checkpoint marker", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"checkpoint_resume":{"source_run_id":7}}` }},
+		{name: "caller subagent marker", source: validSource(), mutateReq: func(req *CreateRunRequest) {
+			req.Metadata = `{"subagent_retry":{"schema":"coze.subagent_retry.metadata.v1"}}`
+		}},
+		{name: "caller appended message", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"appended_message_id":7}` }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{gotRunsByID: map[int64]*entity.Run{3001: tt.source}}
+			app := &ApplicationService{ThreadSVC: domainSVC}
+			req := &CreateRunRequest{
+				ThreadID: 10, TopLevelRetrySourceRunID: 3001,
+				Input: `{"messages":[{"role":"user","content":"retry"}]}`,
+			}
+			if tt.mutateReq != nil {
+				tt.mutateReq(req)
+			}
+
+			resp, err := app.CreateRun(context.Background(), req)
+
+			require.Error(t, err)
+			require.Nil(t, resp)
+			require.Nil(t, domainSVC.createRunBundleReq)
+			require.Nil(t, domainSVC.createRunReq)
+		})
+	}
+}
+
+func TestApplicationCreateRunTopLevelRetryRejectsNegativeSourceID(t *testing.T) {
+	domainSVC := &recordingThreadService{}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10, TopLevelRetrySourceRunID: -1,
+		Input: `{"messages":[{"role":"user","content":"retry"}]}`,
+	})
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Zero(t, domainSVC.getRunID)
+	require.Nil(t, domainSVC.createRunBundleReq)
 	require.Nil(t, domainSVC.createRunReq)
 }
 

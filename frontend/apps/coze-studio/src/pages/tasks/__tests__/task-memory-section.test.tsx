@@ -214,7 +214,13 @@ const renderSection = async (
 
   await act(async () => {
     root = createRoot(container);
-    root.render(<TaskMemorySection threadId={threadId} readOnly={readOnly} />);
+    root.render(
+      <TaskMemorySection
+        spaceId="space-1"
+        threadId={threadId}
+        readOnly={readOnly}
+      />,
+    );
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -331,6 +337,7 @@ describe('TaskMemorySection', () => {
     expect(mockListTaskThreadMemories).toHaveBeenCalledWith({
       page: 1,
       page_size: 20,
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(container.textContent).toContain('任务记忆');
@@ -370,6 +377,7 @@ describe('TaskMemorySection', () => {
       page_size: 20,
       q: '偏好',
       scope: 'thread',
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
 
@@ -486,6 +494,7 @@ describe('TaskMemorySection', () => {
       score: 0.7,
       source_id: 'source-1',
       source_type: 'extractor',
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(mockListTaskThreadMemories).toHaveBeenCalledTimes(2);
@@ -509,6 +518,7 @@ describe('TaskMemorySection', () => {
 
     expect(mockDeleteTaskThreadMemory).toHaveBeenCalledWith({
       memory_id: 'memory-1',
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
 
@@ -525,6 +535,7 @@ describe('TaskMemorySection', () => {
 
     expect(mockClearTaskThreadMemories).toHaveBeenCalledWith({
       scopes: ['thread', 'run', 'long_term'],
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(mockListTaskThreadMemories).toHaveBeenCalledTimes(3);
@@ -575,6 +586,7 @@ describe('TaskMemorySection', () => {
       include_deleted: true,
       page: 1,
       page_size: 20,
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(container.textContent).toContain('已删除的任务记忆');
@@ -595,6 +607,7 @@ describe('TaskMemorySection', () => {
 
     expect(mockRestoreTaskThreadMemory).toHaveBeenCalledWith({
       memory_id: 'memory-1',
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
 
@@ -613,6 +626,7 @@ describe('TaskMemorySection', () => {
       memory_id: 'memory-1',
       page: 1,
       page_size: 20,
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(container.textContent).toContain('记忆审计');
@@ -707,6 +721,7 @@ describe('TaskMemorySection', () => {
 
       expect(mockExportTaskThreadMemories).toHaveBeenCalledWith({
         limit: 100,
+        space_id: 'space-1',
         thread_id: 'thread-memory-1',
       });
       expect(createObjectURL).toHaveBeenCalledTimes(1);
@@ -800,6 +815,7 @@ describe('TaskMemorySection', () => {
           source_type: 'manual_import',
         },
       ],
+      space_id: 'space-1',
       thread_id: 'thread-memory-1',
     });
     expect(mockListTaskThreadMemories).toHaveBeenCalledTimes(2);

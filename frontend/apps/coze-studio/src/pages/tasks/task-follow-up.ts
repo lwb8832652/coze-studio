@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type {
+  WorkbenchMessage,
+  WorkbenchRun,
+} from '../workbench/thread-client';
 import {
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
@@ -30,8 +32,8 @@ const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
 
 export interface CanonicalThreadFollowUpResult {
   kind: 'thread';
-  message?: workbenchTask.TaskThreadMessage;
-  run?: workbenchTask.TaskThreadRun;
+  message?: WorkbenchMessage;
+  run?: WorkbenchRun;
 }
 
 interface ThreadFollowUpRunInputOptions {
@@ -66,19 +68,23 @@ export const createFollowUpIdempotencyKey = (threadId: string) => {
 
 export const sendFollowUpMessage = async ({
   payload,
+  spaceId,
   threadId,
   idempotencyKey,
 }: {
   payload: WorkbenchComposerSubmitPayload;
+  spaceId: string;
   threadId: string;
   idempotencyKey?: string;
 }) => {
   const uploadResponse = await uploadTaskThreadFiles({
     thread_id: threadId,
+    space_id: spaceId,
     files: payload.files ?? [],
   });
   const runResponse = await createTaskThreadRun({
     thread_id: threadId,
+    space_id: spaceId,
     input: getThreadFollowUpRunInput({
       payload,
       uploadedFiles: uploadResponse.data?.files ?? [],

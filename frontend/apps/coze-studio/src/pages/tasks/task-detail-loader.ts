@@ -14,8 +14,13 @@
  * limitations under the License.
  */
 
-import { type workbenchTask } from '@coze-studio/api-schema';
-
+import type {
+  WorkbenchArtifact,
+  WorkbenchMessage,
+  WorkbenchRun,
+  WorkbenchThread,
+  WorkbenchTodo,
+} from '../workbench/thread-client';
 import {
   TaskThreadDetailStatus,
   type TaskThreadDetailEvent,
@@ -24,7 +29,9 @@ import {
 import type { TaskDetailTokenUsage } from './task-detail-token-usage';
 import {
   fetchTaskThreadSubagentRuns,
+  getRunLifecycleByRunID,
   getSubagentLifecycleByChildRunID,
+  getSubagentRetrySourceRunID,
   getSubagentTimelineByChildRunID,
   type TaskDetailSubagentRun,
 } from './task-detail-subagents';
@@ -49,16 +56,20 @@ export type {
 export type { TaskDetailTokenUsage } from './task-detail-token-usage';
 export type { TaskTokenUsageViewMode } from './task-detail-token-usage';
 
-type TaskThread = workbenchTask.TaskThread;
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
-type TaskThreadRun = workbenchTask.TaskThreadRun;
-type TaskThreadTodo = workbenchTask.TaskThreadTodo;
+type TaskThread = WorkbenchThread & { creator_id?: string };
+type TaskThreadArtifact = WorkbenchArtifact;
+type TaskThreadMessage = WorkbenchMessage;
+type TaskThreadRun = WorkbenchRun & { config?: string };
+type TaskThreadTodo = WorkbenchTodo;
+
+const COMPLETED_TASK_PROGRESS = 100;
+const PRIMARY_RUN_PAGE_SIZE = 20;
 
 export interface TaskDetail {
   task?: TaskThreadDetailModel;
   events: TaskThreadDetailEvent[];
   artifacts?: TaskThreadArtifact[];
+  latestTaskRunCreatedAt?: number;
   latestTaskRunID?: string;
   latestTaskRunStatus?: string;
   messages?: TaskThreadMessage[];
@@ -96,9 +107,9 @@ const mapTaskThreadStatus = (status: string) => {
   }
 };
 
-const mapTaskThreadRunStatus = (status?: string) => {
+const mapTaskThreadRunStatus = (run?: TaskThreadRun) => {
   switch (
-    String(status ?? '')
+    String(run?.status ?? '')
       .trim()
       .toLowerCase()
   ) {
@@ -107,12 +118,22 @@ const mapTaskThreadRunStatus = (status?: string) => {
       return TaskThreadDetailStatus.Queued;
     case 'running':
       return TaskThreadDetailStatus.Running;
+    case 'success':
     case 'succeeded':
       return TaskThreadDetailStatus.Succeeded;
+    case 'error':
     case 'failed':
       return TaskThreadDetailStatus.Failed;
     case 'canceled':
       return TaskThreadDetailStatus.Canceled;
+    case 'interrupted':
+      return ['canceled', 'cancelled'].includes(
+        String(run?.terminal_reason ?? '')
+          .trim()
+          .toLowerCase(),
+      )
+        ? TaskThreadDetailStatus.Canceled
+        : undefined;
     default:
       return undefined;
   }
@@ -152,17 +173,20 @@ const mapTaskThreadToDetailModel = (
   const assistantMessage =
     getLatestThreadMessageContent(messages, 'assistant') ||
     thread.last_agent_message;
-  const latestRunStatus = mapTaskThreadRunStatus(latestRun?.status);
+  const latestRunStatus = mapTaskThreadRunStatus(latestRun);
   const status = latestRunStatus ?? mapTaskThreadStatus(thread.status);
   const progress =
     status === TaskThreadDetailStatus.Succeeded
-      ? 100
+      ? COMPLETED_TASK_PROGRESS
       : Math.max(thread.progress, 0);
 
   return {
     id: thread.thread_id,
     space_id: thread.space_id,
-    creator_id: thread.creator_id,
+    ...(thread.creator_id ? { creator_id: thread.creator_id } : {}),
+    ...(typeof thread.can_edit === 'boolean'
+      ? { can_edit: thread.can_edit }
+      : {}),
     title: thread.title,
     status,
     progress,
@@ -195,7 +219,8 @@ const parseJSONObject = (
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
-  } catch {
+  } catch (error) {
+    void error;
     return undefined;
   }
 
@@ -217,11 +242,50 @@ const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
   };
 };
 
+const findLatestPrimaryTaskRun = async ({
+  firstPage,
+  spaceId,
+  threadId,
+}: {
+  firstPage: Awaited<ReturnType<typeof listTaskThreadRuns>>;
+  spaceId: string;
+  threadId: string;
+}): Promise<TaskThreadRun | undefined> => {
+  let page = 1;
+  let response = firstPage;
+
+  for (;;) {
+    const runs = response.data?.runs ?? [];
+    const primaryRun = runs.find(run => !getSubagentRetrySourceRunID(run));
+    if (primaryRun) {
+      return primaryRun;
+    }
+
+    const total = response.data?.total ?? 0;
+    if (!runs.length || page * PRIMARY_RUN_PAGE_SIZE >= total) {
+      return undefined;
+    }
+
+    page += 1;
+    response = await listTaskThreadRuns({
+      thread_id: threadId,
+      space_id: spaceId,
+      parent_run_id: '0',
+      page,
+      page_size: PRIMARY_RUN_PAGE_SIZE,
+    });
+  }
+};
+
+// eslint-disable-next-line complexity -- Keeps one coherent detail snapshot across parallel page reads.
 const fetchTaskThreadDetail = async (
   id: string,
-  { spaceId }: { spaceId?: string } = {},
+  { spaceId }: { spaceId: string },
 ): Promise<TaskDetail | undefined> => {
-  const threadResponse = await getTaskThread({ thread_id: id });
+  const threadResponse = await getTaskThread({
+    thread_id: id,
+    space_id: spaceId,
+  });
   const thread = threadResponse.data;
 
   if (!thread) {
@@ -229,44 +293,52 @@ const fetchTaskThreadDetail = async (
   }
 
   const threadID = thread.thread_id;
-  const [
-    messagesResponse,
-    topLevelRunsResponse,
-    runEventsResponse,
-    artifactsResponse,
-  ] = await Promise.all([
-    listTaskThreadMessages({
-      thread_id: threadID,
-      page: 1,
-      page_size: 50,
-    }),
-    listTaskThreadRuns({
-      thread_id: threadID,
-      parent_run_id: '0',
-      page: 1,
-      page_size: 1,
-    }),
-    listTaskThreadRunEvents({
-      thread_id: threadID,
-      page: 1,
-      page_size: 100,
-    }),
-    listTaskThreadArtifacts({
-      thread_id: threadID,
-      space_id: spaceId,
-      page: 1,
-      page_size: 50,
-    }),
-  ]);
-  const rawRunEvents = runEventsResponse.data?.events ?? [];
-  const latestTopLevelRun: TaskThreadRun | undefined =
-    topLevelRunsResponse.data?.runs?.[0];
+  const [messagesResponse, topLevelRunsResponse, artifactsResponse] =
+    await Promise.all([
+      listTaskThreadMessages({
+        thread_id: threadID,
+        space_id: spaceId,
+        page: 1,
+        page_size: 50,
+      }),
+      listTaskThreadRuns({
+        thread_id: threadID,
+        space_id: spaceId,
+        parent_run_id: '0',
+        page: 1,
+        page_size: PRIMARY_RUN_PAGE_SIZE,
+      }),
+      listTaskThreadArtifacts({
+        thread_id: threadID,
+        space_id: spaceId,
+        page: 1,
+        page_size: 50,
+      }),
+    ]);
+  const latestTopLevelRun = await findLatestPrimaryTaskRun({
+    firstPage: topLevelRunsResponse,
+    spaceId,
+    threadId: threadID,
+  });
+  const runEventsResponse = latestTopLevelRun
+    ? await listTaskThreadRunEvents({
+        thread_id: threadID,
+        run_id: latestTopLevelRun.run_id,
+        space_id: spaceId,
+        page: 1,
+        page_size: 100,
+      })
+    : undefined;
+  const rawRunEvents = runEventsResponse?.data?.events ?? [];
   const suggestionModel = getLatestRunSuggestionModel(latestTopLevelRun);
-  const subagentRuns = await fetchTaskThreadSubagentRuns(
-    threadID,
-    getSubagentLifecycleByChildRunID(rawRunEvents),
-    getSubagentTimelineByChildRunID(rawRunEvents),
-  );
+  const subagentRuns = await fetchTaskThreadSubagentRuns({
+    eventSourceRunId: latestTopLevelRun?.run_id,
+    threadId: threadID,
+    lifecycleByChildRunID: getSubagentLifecycleByChildRunID(rawRunEvents),
+    runLifecycleByRunID: getRunLifecycleByRunID(rawRunEvents),
+    timelineByChildRunID: getSubagentTimelineByChildRunID(rawRunEvents),
+    spaceId,
+  });
 
   return {
     threadId: thread.thread_id,
@@ -278,10 +350,8 @@ const fetchTaskThreadDetail = async (
       latestTopLevelRun,
     ),
     artifacts: artifactsResponse.data?.artifacts ?? [],
-    events: mergeJournalTaskThreadEvents({
-      journalMessages: runEventsResponse.data?.journal_messages,
-      runEvents: rawRunEvents,
-    }),
+    events: mergeJournalTaskThreadEvents({ runEvents: rawRunEvents }),
+    latestTaskRunCreatedAt: latestTopLevelRun?.created_at,
     latestTaskRunID: latestTopLevelRun?.run_id ?? '',
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     suggestionModelName: suggestionModel.suggestionModelName,
@@ -295,7 +365,7 @@ export const fetchTaskDetail = async ({
   spaceId,
 }: {
   id: string;
-  spaceId?: string;
+  spaceId: string;
 }): Promise<TaskDetail> => {
   const threadDetail = await fetchTaskThreadDetail(id, { spaceId });
 

@@ -44,7 +44,6 @@ const canonicalRunStreamRequestBody = `{
 }`
 
 func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	writer := &callbackCanonicalRunStreamWriter{}
@@ -54,7 +53,7 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
 	appended := false
 	writer.onEvent = func(_ string, eventType string, data []byte) {
-		if appended || eventType != langGraphRunStreamMetadata {
+		if appended || eventType != canonicalRunStreamEventMetadata {
 			return
 		}
 		var metadata struct {
@@ -97,8 +96,49 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 	require.NotContains(t, body, "tool_arguments")
 }
 
+func TestStreamCanonicalRunTopLevelRetryCreatesNoSecondMessage(t *testing.T) {
+	installAgentThreadTestService(t)
+	source := createCanonicalRunFixture(t, 1, "stream retry source")
+	failCanonicalRunFixture(t, source, "runtime_failed", "failed")
+	installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+	body := fmt.Sprintf(`{
+		"assistant_id":"agent",
+		"input":{"messages":[{"role":"user","content":"stream retry"}]},
+		"stream_mode":["events"],
+		"on_disconnect":"continue",
+		"coze":{"attempt_kind":"retry","source_run_id":"%d"}
+	}`, source.RunID)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		body,
+		ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-top-level-retry"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	messages, runs := canonicalThreadMessagesAndRuns(t, 1)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+	var retryRun *appagentthread.RunSummary
+	for _, run := range runs {
+		if run != nil && run.RunID != source.RunID {
+			retryRun = run
+			break
+		}
+	}
+	require.NotNil(t, retryRun)
+	require.Contains(t, retryRun.Input, "stream retry")
+	require.Contains(t, retryRun.Metadata, `"attempt_kind":"retry"`)
+	require.Contains(t, retryRun.Metadata, `"source_run_id":`+strconv.FormatInt(source.RunID, 10))
+	require.NotContains(t, retryRun.Metadata, `"_message"`)
+	require.Equal(t, canonicalRunStreamPath(1, retryRun.RunID), response.Result().Header.Get("Location"))
+}
+
 func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalRunStreamTestServer(20 * time.Millisecond)
@@ -153,7 +193,6 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 }
 
 func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := server.Default()
@@ -174,7 +213,6 @@ func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
 }
 
 func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
@@ -196,7 +234,6 @@ func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *tes
 }
 
 func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	beforeMessages, beforeRuns := canonicalThreadMessagesAndRuns(t, 1)
@@ -241,7 +278,6 @@ func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T
 }
 
 func TestStreamCanonicalRunCommandResumeValidatesMessageProjectionBeforeSSE(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	appagentthread.SVC.ThreadSVC = invalidCanonicalResumeMessageThreadService{
@@ -302,7 +338,6 @@ func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents(t *testi
 	require.Contains(t, writer.String(), `"thread_id":"1"`)
 	require.Contains(t, writer.String(), `"run_id":"`+strconv.FormatInt(run.RunID, 10)+`"`)
 
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := canonicalRunStreamTestServer(5 * time.Millisecond)
 	response := ut.PerformRequest(
 		h.Engine,
@@ -315,7 +350,6 @@ func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents(t *testi
 }
 
 func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	run := createCanonicalRunStreamFixture(t, 1, "header cursor", "continue")
 	first := appendCanonicalRunStreamEvent(t, run, "step.started", `{"step_name":"one"}`)
@@ -461,7 +495,6 @@ func TestCanonicalRunStreamContinueDoesNotCancelOnDisconnect(t *testing.T) {
 }
 
 func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
@@ -489,7 +522,6 @@ func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue
 }
 
 func TestReconnectCanonicalRunStreamFalseCancelEncodingOverridesPersistedCancel(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
@@ -613,7 +645,7 @@ func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents(t *testing.T) {
 	require.NotContains(t, body, "event: messages-tuple")
 	require.NotContains(t, body, "SECRET_MESSAGE_PROVIDER")
 	require.NotContains(t, body, "SECRET_CHUNK_PROVIDER")
-	payloads := canonicalRunStreamPayloads(t, body, langGraphRunStreamMessages)
+	payloads := canonicalRunStreamPayloads(t, body, canonicalRunStreamEventMessages)
 	require.Len(t, payloads, 2)
 	for i, expected := range []struct {
 		event *appagentthread.RunEventSummary

@@ -97,7 +97,7 @@ var forbiddenCanonicalThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/join"},
 }
 
-var workbenchTaskThreadRouteSnapshot = []routeExpectation{
+var retiredTaskThreadV1Routes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/task_threads"},
 	{http.MethodPost, "/api/workbench/task_threads"},
 	{http.MethodGet, "/api/workbench/task_threads/:thread_id"},
@@ -136,7 +136,27 @@ var workbenchTaskThreadRouteSnapshot = []routeExpectation{
 	{http.MethodDelete, "/api/workbench/task_threads/:thread_id/uploads/:filename"},
 }
 
-var langGraphThreadRouteSnapshot = []routeExpectation{
+var scheduledTaskRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_tasks"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPut, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodDelete, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/enable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/disable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/execute"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id/executions"},
+}
+
+var scheduledTaskTargetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_targets"},
+}
+
+var scheduledTaskCronPresetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_cron_presets"},
+}
+
+var retiredLangGraphThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/threads"},
 	{http.MethodPost, "/api/threads/search"},
 	{http.MethodGet, "/api/threads/:thread_id"},
@@ -160,6 +180,19 @@ var langGraphThreadRouteSnapshot = []routeExpectation{
 	{http.MethodPost, "/api/threads/:thread_id/runs/:run_id/stream"},
 	{http.MethodGet, "/api/threads/:thread_id/state"},
 	{http.MethodPost, "/api/threads/:thread_id/state"},
+}
+
+var retiredLangGraphStatelessRunRoutes = []routeExpectation{
+	{http.MethodPost, "/api/runs"},
+	{http.MethodPost, "/api/runs/stream"},
+	{http.MethodPost, "/api/runs/wait"},
+	{http.MethodGet, "/api/runs/:run_id"},
+	{http.MethodGet, "/api/runs/:run_id/messages"},
+	{http.MethodGet, "/api/runs/:run_id/feedback"},
+	{http.MethodPost, "/api/runs/:run_id/cancel"},
+	{http.MethodGet, "/api/runs/:run_id/stream"},
+	{http.MethodPost, "/api/runs/:run_id/join"},
+	{http.MethodGet, "/api/runs/:run_id/join"},
 }
 
 var retiredChatTaskPaths = []string{
@@ -188,7 +221,71 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	RegisterCustomRoutes(h)
 
 	t.Run("registers the canonical route surface", func(t *testing.T) {
+		require.Len(t, canonicalRouteSnapshot(), 47)
 		requireExactRouteSnapshot(t, h, "/api/workbench/threads", canonicalRouteSnapshot())
+	})
+
+	t.Run("keeps the Scheduled Task route surface", func(t *testing.T) {
+		require.Len(t, scheduledTaskRoutes, 9)
+		require.Equal(
+			t,
+			11,
+			len(scheduledTaskRoutes)+len(scheduledTaskTargetRoutes)+len(scheduledTaskCronPresetRoutes),
+		)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_tasks", scheduledTaskRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_targets", scheduledTaskTargetRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_cron_presets", scheduledTaskCronPresetRoutes)
+	})
+
+	t.Run("keeps all retired LangGraph thread method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphThreadRoutes, 23)
+		requireExactRouteSnapshot(t, h, "/api/threads", nil)
+		for _, route := range retiredLangGraphThreadRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
+	})
+
+	t.Run("keeps all stateless LangGraph run method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphStatelessRunRoutes, 10)
+		requireExactRouteSnapshot(t, h, "/api/runs", nil)
+		for _, route := range retiredLangGraphStatelessRunRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
+	})
+
+	t.Run("keeps all TaskThread V1 method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredTaskThreadV1Routes, 36)
+		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", nil)
+		for _, route := range retiredTaskThreadV1Routes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
 	})
 
 	t.Run("excludes forbidden canonical POST variants", func(t *testing.T) {
@@ -206,15 +303,9 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves the workbench task thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", workbenchTaskThreadRouteSnapshot)
-	})
-
-	t.Run("preserves the LangGraph thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
-	})
-
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
+		requireExactRouteSnapshot(t, h, "/api/workbench/tasks", nil)
+		requireExactRouteSnapshot(t, h, "/api/workbench/chat", nil)
 		for _, path := range retiredChatTaskPaths {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				requireUnreachableRoute(t, h, handlerBoundary, method, path)
@@ -274,6 +365,16 @@ func sortedRouteExpectations(routes []routeExpectation) []routeExpectation {
 }
 
 func concreteRoutePath(path string) string {
-	path = strings.ReplaceAll(path, ":thread_id", "1")
-	return strings.ReplaceAll(path, ":run_id", "2")
+	replacements := map[string]string{
+		":thread_id":   "1",
+		":run_id":      "2",
+		":artifact_id": "3",
+		":job_id":      "4",
+		":memory_id":   "5",
+		":filename":    "file.txt",
+	}
+	for parameter, value := range replacements {
+		path = strings.ReplaceAll(path, parameter, value)
+	}
+	return path
 }

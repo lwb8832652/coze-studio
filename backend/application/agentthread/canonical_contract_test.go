@@ -213,6 +213,7 @@ func TestCanonicalApplicationQueryMethodsAuthorizeAndProject(t *testing.T) {
 		searchRuns:         []*entity.Run{{ID: 40, ThreadID: 10}},
 		searchRunsTotal:    1,
 		events:             []*entity.RunEvent{{ID: 50, ThreadID: 10, RunID: 40}},
+		eventsTotal:        2,
 		eventsHasMore:      true,
 		checkpoints:        []*entity.Checkpoint{{ID: 60, ThreadID: 10, RunID: 40}},
 		checkpointsHasMore: true,
@@ -237,6 +238,7 @@ func TestCanonicalApplicationQueryMethodsAuthorizeAndProject(t *testing.T) {
 		EventTypes: []string{"message"}, Limit: 2,
 	})
 	require.NoError(t, err)
+	require.Equal(t, int64(2), events.Total)
 	require.True(t, events.HasMore)
 	require.Equal(t, int64(50), events.Events[0].EventID)
 
@@ -542,6 +544,7 @@ type recordingCanonicalQueryThreadService struct {
 	searchRunsTotal         int64
 	searchRunsReq           *domainservice.SearchRunsRequest
 	events                  []*entity.RunEvent
+	eventsTotal             int64
 	eventsHasMore           bool
 	eventsReq               *domainservice.ListRunEventsByCursorRequest
 	checkpoints             []*entity.Checkpoint
@@ -583,9 +586,9 @@ func (s *recordingCanonicalQueryThreadService) SearchRuns(
 func (s *recordingCanonicalQueryThreadService) ListRunEventsByCursor(
 	_ context.Context,
 	req *domainservice.ListRunEventsByCursorRequest,
-) ([]*entity.RunEvent, bool, error) {
+) ([]*entity.RunEvent, int64, bool, error) {
 	s.eventsReq = req
-	return s.events, s.eventsHasMore, nil
+	return s.events, s.eventsTotal, s.eventsHasMore, nil
 }
 
 func (s *recordingCanonicalQueryThreadService) ListCheckpointsBefore(

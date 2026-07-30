@@ -16,10 +16,10 @@
 
 import { useMemo, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import { IconCozDocument } from '@coze-arch/coze-design/icons';
 import { Button, List, SideSheet } from '@coze-arch/coze-design';
 
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import { TaskDeletedArtifactsSection } from './task-deleted-artifacts-section';
 import { RemovedArtifactUndoNotice } from './task-artifact-undo-notice';
 import { TaskArtifactScanJobsSection } from './task-artifact-scan-jobs-section';
@@ -27,7 +27,7 @@ import { TaskArtifactListItem } from './task-artifact-list-item';
 import { TaskArtifactInlinePreview } from './task-artifact-inline-preview';
 import { useTaskArtifactActions } from './task-artifact-actions';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 type ArtifactPanelMode = 'active' | 'deleted';
 
 interface TaskArtifactsPanelProps {

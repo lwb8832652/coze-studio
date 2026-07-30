@@ -23,11 +23,11 @@ import {
   useState,
 } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import { Loading } from '@coze-arch/coze-design';
 
+import type { WorkbenchThread } from '../../pages/workbench/thread-client';
 import {
   WORKSPACE_TASK_THREAD_UPSERT_EVENT,
   type WorkspaceTaskThreadUpsertDetail,
@@ -37,7 +37,7 @@ import { listTaskThreads } from '../../pages/tasks/service';
 import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
-type TaskThread = workbenchTask.TaskThread;
+type TaskThread = WorkbenchThread;
 
 const RECENT_TASK_PAGE_SIZE = 20;
 

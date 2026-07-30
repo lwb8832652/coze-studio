@@ -168,7 +168,9 @@ describe('task usage pagination consistency and cancellation', () => {
         }),
       );
 
-    const result = await loadTaskThreadUsage('thread-usage');
+    const result = await loadTaskThreadUsage('thread-usage', {
+      spaceID: 'space-1',
+    });
 
     expect(
       mockGetTaskThreadTokenUsage.mock.calls.map(([request]) => request.page),
@@ -197,6 +199,7 @@ describe('task usage pagination consistency and cancellation', () => {
     const resultPromise = loadTaskThreadUsage('thread-usage', {
       isCurrentScope: () => true,
       signal: controller.signal,
+      spaceID: 'space-1',
     });
 
     controller.abort();
@@ -246,6 +249,7 @@ describe('task usage pagination consistency and cancellation', () => {
     const Harness = ({ threadID }: { threadID: string }) => {
       usageState = useTaskUsageData({
         enabled: true,
+        spaceID: 'space-1',
         threadID,
       });
       return null;
@@ -386,6 +390,7 @@ describe('task usage pagination consistency and cancellation', () => {
     const Harness = () => {
       usageState = useTaskUsageData({
         enabled: true,
+        spaceID: 'space-1',
         threadID: 'thread-usage',
       });
       return null;

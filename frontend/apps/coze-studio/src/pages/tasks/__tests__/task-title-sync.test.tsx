@@ -160,11 +160,65 @@ describe('task title synchronization', () => {
         space_id: 'space-1',
         thread: {
           thread_id: 'thread-1',
-          status: TaskThreadDetailStatus.Succeeded,
+          status: 'succeeded',
           updated_at: 1717000100000,
         },
       },
     ]);
+
+    window.removeEventListener(
+      WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+      handleUpsert,
+    );
+  });
+
+  it('uses the route workspace instead of an untrusted task payload scope', () => {
+    const emittedDetails: WorkspaceTaskThreadUpsertDetail[] = [];
+    let controls: TitleSyncControls | undefined;
+    const handleUpsert = (event: Event) => {
+      emittedDetails.push(
+        (event as CustomEvent<WorkspaceTaskThreadUpsertDetail>).detail,
+      );
+    };
+    const Harness = () => {
+      const [, setTask] = useState<TaskThreadDetailModel>();
+      controls = useTaskThreadTitleSync({
+        setTask,
+        spaceID: 'space-route',
+      });
+      return null;
+    };
+
+    window.addEventListener(WORKSPACE_TASK_THREAD_UPSERT_EVENT, handleUpsert);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(<Harness />);
+    });
+    act(() => {
+      controls?.setCurrentTask({
+        id: 'thread-1',
+        space_id: 'space-stale',
+        title: '旧标题',
+        status: TaskThreadDetailStatus.Running,
+        updated_at: 1717000000000,
+      } as TaskThreadDetailModel);
+    });
+    act(() => {
+      controls?.setCurrentTask(currentTask =>
+        currentTask
+          ? {
+              ...currentTask,
+              title: '新标题',
+              updated_at: 1717000100000,
+            }
+          : currentTask,
+      );
+    });
+
+    expect(emittedDetails[0]?.space_id).toBe('space-route');
 
     window.removeEventListener(
       WORKSPACE_TASK_THREAD_UPSERT_EVENT,

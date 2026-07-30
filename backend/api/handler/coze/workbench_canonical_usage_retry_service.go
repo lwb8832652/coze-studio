@@ -39,10 +39,10 @@ type canonicalTokenUsageResponse struct {
 	RunAggregates []*canonicalProductRunTokenUsageAggregate `json:"run_aggregates"`
 }
 
-// GetCanonicalThreadTokenUsage exposes a read-only product view over runtime
-// token usage. It validates the public thread/run pair before querying the
-// application layer so clients receive stable canonical errors instead of the
-// legacy task envelope.
+// GetCanonicalThreadTokenUsage serves GET /api/workbench/threads/:thread_id/token_usage.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and requested Run when present. It calls
+// ApplicationService.GetThreadTokenUsage or GetRunTokenUsage, and returns usage JSON.
 func GetCanonicalThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("token_usage.get", "/api/workbench/threads/:thread_id/token_usage")
 	requestLog.ResponseBodyKind = "values"
@@ -114,10 +114,10 @@ func GetCanonicalThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, publicResp)
 }
 
-// RetryCanonicalSubagentRun creates a new top-level retry Run for a failed or
-// canceled subagent Run. The handler scopes client idempotency keys to the
-// authenticated principal and rejects replay attempts that target a different
-// source Run.
+// RetryCanonicalSubagentRun serves POST /api/workbench/threads/:thread_id/runs/:run_id/retry.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and source Run. It calls
+// ApplicationService.RetrySubagentRun, and returns canonical Run JSON.
 func RetryCanonicalSubagentRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("subagent_retry.create", "/api/workbench/threads/:thread_id/runs/:run_id/retry")
 	requestLog.ResponseBodyKind = "run"
@@ -208,7 +208,7 @@ func canonicalUsageRetryThreadScope(
 	c *app.RequestContext,
 	requestLog *canonicalRequestLog,
 ) (context.Context, int64, int64, bool) {
-	if !requireCanonicalAPI(ctx, c) || !requireCanonicalAgentThreadService(ctx, c) {
+	if !requireCanonicalAgentThreadService(ctx, c) {
 		return ctx, 0, 0, false
 	}
 	threadID, public := canonicalPathID(c, "thread_id")

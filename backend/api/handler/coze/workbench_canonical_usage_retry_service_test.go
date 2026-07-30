@@ -32,7 +32,6 @@ import (
 )
 
 func TestCanonicalThreadTokenUsageReadsAreSafe(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "usage reads", `{}`)
 	parent := createCanonicalRunForUsageRetry(t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusPending)
@@ -106,7 +105,6 @@ func TestCanonicalThreadTokenUsageReadsAreSafe(t *testing.T) {
 }
 
 func TestCanonicalThreadTokenUsageErrors(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "usage errors", `{}`)
 	other := createCanonicalTestThread(t, 1001, "usage other", `{}`)
@@ -159,7 +157,6 @@ func TestCanonicalThreadTokenUsageErrors(t *testing.T) {
 }
 
 func TestCanonicalSubagentRunRetryContract(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "retry contract", `{}`)
 	parent := createCanonicalRunForUsageRetry(t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued)
@@ -206,7 +203,6 @@ func TestCanonicalSubagentRunRetryContract(t *testing.T) {
 }
 
 func TestCanonicalSubagentRunRetryErrors(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "retry errors", `{}`)
 	parent := createCanonicalRunForUsageRetry(t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued)

@@ -54,7 +54,7 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ## 主要产品域
 
-- 任务与 Agent Workbench：唯一事实模型为 TaskThread、Message、Run 和
+- 任务与 Agent Workbench：唯一公共事实模型为 Thread、Message、Run 和
   RunEvent，详细边界见 `docs/superpowers/context/workbench-chat.md`；
 - 工作空间与系统管理：成员、角色、系统配置、模型和管理员能力；
 - Skill 与 MCP：配置、版本、授权、健康状态和运行时装配；
@@ -64,18 +64,24 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ## Workbench Canonical API
 
-`/api/workbench/threads` 已包含 canonical Thread/Run core 路由和当前 Workbench
-所需的产品扩展路由，二者共用 `COZE_WORKBENCH_CANONICAL_API_ENABLED` 默认关闭
-gate、session principal 和 `X-Coze-Space-ID` workspace 校验。canonical handler
-只做严格 HTTP 合同、公开投影、错误映射和结构化日志，继续调用现有
-`agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。
-Checkpoint A 复用现有持久化表；唯一数据库变更是 suggestions 最近公开消息查询
-所需的幂等索引 `idx_agent_thread_messages_thread_role_created`，不改变记录语义。
+`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 47 条 always-on
+Thread、Run、Message、Upload、Artifact、Memory、Token Usage、Guardrail 和 MCP
+Runtime Audit 路由。前端页面服务统一委托给进程内唯一
+`canonicalThreadClient`；不存在运行时 client selector、canonical 路由开关或旧 HTTP
+fallback。session principal 和 path resource 决定身份与资源归属，workspace 请求
+使用 `X-Coze-Space-ID` 并由服务端再次授权。
 
-当前来源路由 `/api/workbench/task_threads` 与兼容 `/api/threads` 仍保持可用；
-当前生产 UI 仍走 V1 来源 client。只有 Checkpoint B 的双 client、adapter、页面回归
-和审计通过后，才允许切换 UI 默认 client。ChatTask 路由、IDL、client、application
-和 domain 已退役，不作为 fallback 恢复。
+canonical handler 只负责严格 HTTP 合同、公开投影、错误映射和脱敏结构化日志，
+继续调用现有 `agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。
+公共合同由 `idl/workbench/thread.thrift` 与 `thread_product.thrift` 定义；
+`idl/workbench/task.thrift` 只保留 11 条 Scheduled Task 合同。
+
+旧 `/api/workbench/task_threads/**` 的 36 条路由和本地 LangGraph Thread
+`/api/threads/**` 的 23 条路由、stateless LangGraph `/api/runs/**` 的 10 条路由均已
+不可达；ChatTask 全栈已退役，这些合同都不得恢复为 fallback。canonical
+Run SSE 仅保留经审核的 LangGraph SDK-compatible event shape，不保留旧 HTTP
+路由或 LangGraph runtime。内部 `CreateTaskThread` 应用用例仍被 canonical 首次提交、
+Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合同。
 
 ## 事实来源
 

@@ -29,15 +29,21 @@ import {
   type PointerEvent,
 } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
 
+import type {
+  HumanInteractionResponse,
+  WorkbenchArtifact,
+  WorkbenchMessage,
+  WorkbenchSuggestionMessage,
+} from '../workbench/thread-client';
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
 import { TaskUsagePopover } from './task-usage-popover';
-import type {
-  TaskThreadDetailEvent,
-  TaskThreadDetailModel,
+import {
+  isTaskThreadDetailReadOnly,
+  type TaskThreadDetailEvent,
+  type TaskThreadDetailModel,
 } from './task-thread-detail-model';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
 import {
@@ -99,9 +105,8 @@ import {
   TaskUserTurn,
 } from './conversation-turn';
 
-type HumanInteractionResponse = workbenchTask.HumanInteractionResponse;
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadMessage = WorkbenchMessage;
+type TaskThreadArtifact = WorkbenchArtifact;
 
 type ThreadTranscriptMessage = TaskThreadMessage & {
   role: 'user' | 'assistant';
@@ -124,6 +129,7 @@ const TASK_DETAIL_RESPONSIVE_PAGE_CLASS = 'coze-task-detail-responsive-page';
 const ARTIFACT_SPLIT_DEFAULT_WIDTH = 40;
 const ARTIFACT_SPLIT_MIN_WIDTH = 30;
 const ARTIFACT_SPLIT_MAX_WIDTH = 55;
+const PERCENTAGE_SCALE = 100;
 const TASK_DETAIL_SUGGESTION_COUNT = 3;
 const TASK_DETAIL_SUGGESTION_HISTORY_LIMIT = 6;
 
@@ -380,7 +386,7 @@ const getLatestAssistantTranscriptKey = (
 
 const getThreadSuggestionMessages = (
   transcript: ThreadTranscriptMessage[],
-): workbenchTask.TaskThreadSuggestionMessage[] =>
+): WorkbenchSuggestionMessage[] =>
   transcript
     .slice(-TASK_DETAIL_SUGGESTION_HISTORY_LIMIT)
     .map(message => ({
@@ -393,14 +399,6 @@ const normalizeTaskFollowUpSuggestions = (suggestions?: string[]) =>
   [
     ...new Set((suggestions ?? []).map(item => item.trim()).filter(Boolean)),
   ].slice(0, TASK_DETAIL_SUGGESTION_COUNT);
-
-const isTaskMemoryReadOnly = ({
-  task,
-  userID,
-}: {
-  task?: TaskThreadDetailModel;
-  userID?: string;
-}) => Boolean(task?.creator_id && userID && task.creator_id !== userID);
 
 const TaskDetailSkeletonBar = ({
   className,
@@ -729,7 +727,7 @@ const TaskTranscript = ({
   onRetrySubagentRun,
   onRetryTaskRun,
 }: {
-  artifacts: workbenchTask.TaskThreadArtifact[];
+  artifacts: WorkbenchArtifact[];
   artifactActions: TaskArtifactActions;
   events: TaskThreadDetailEvent[];
   humanInteractionError?: string;
@@ -819,7 +817,7 @@ const TaskTranscript = ({
   </section>
 );
 
-// eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps task detail orchestration together.
+// eslint-disable-next-line max-lines-per-function, @coze-arch/max-line-per-function -- Existing boundary.
 const TaskDetailPage = () => {
   const { space_id, thread_id } = useParams();
   const userInfo = useUserInfo();
@@ -841,6 +839,7 @@ const TaskDetailPage = () => {
     applyOptimisticFollowUp,
     artifacts,
     captureTaskDetailRequestToken,
+    commitTopLevelRun,
     error,
     events,
     latestTaskRunID,
@@ -932,7 +931,7 @@ const TaskDetailPage = () => {
     [messages],
   );
   const pendingHumanInteraction = getPendingHumanInteraction(events);
-  const memoryReadOnly = isTaskMemoryReadOnly({
+  const memoryReadOnly = isTaskThreadDetailReadOnly({
     task,
     userID: userInfo?.user_id_str,
   });
@@ -960,6 +959,7 @@ const TaskDetailPage = () => {
     applyTaskDetail,
     applyOptimisticFollowUp,
     captureTaskDetailRequestToken,
+    commitTopLevelRun,
     artifacts,
     events,
     messages,
@@ -993,6 +993,7 @@ const TaskDetailPage = () => {
   useEffect(() => {
     if (
       !activeTaskDetailId ||
+      !space_id ||
       !task ||
       loading ||
       !isTaskTerminalStatus(task.status)
@@ -1031,6 +1032,7 @@ const TaskDetailPage = () => {
 
     void generateTaskThreadSuggestions({
       thread_id: activeTaskDetailId,
+      space_id,
       messages: suggestionMessages,
       n: TASK_DETAIL_SUGGESTION_COUNT,
       ...(suggestionModelName ? { model_name: suggestionModelName } : {}),
@@ -1061,6 +1063,7 @@ const TaskDetailPage = () => {
     activeTaskDetailId,
     loading,
     messages,
+    space_id,
     suggestionModelName,
     suggestionModelType,
     task,
@@ -1093,7 +1096,8 @@ const TaskDetailPage = () => {
         if (rect.width <= 0) {
           return;
         }
-        const nextWidth = ((rect.right - moveEvent.clientX) / rect.width) * 100;
+        const nextWidth =
+          ((rect.right - moveEvent.clientX) / rect.width) * PERCENTAGE_SCALE;
         setArtifactPanelWidth(
           Math.min(
             ARTIFACT_SPLIT_MAX_WIDTH,
@@ -1114,7 +1118,7 @@ const TaskDetailPage = () => {
 
   return (
     <main className="coze-prototype-page coze-prototype-task-detail-page">
-      {task ? (
+      {task && space_id ? (
         <TaskDetailHeader
           artifacts={artifacts}
           memoryReadOnly={memoryReadOnly}

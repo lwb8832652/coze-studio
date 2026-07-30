@@ -14,19 +14,24 @@
  * limitations under the License.
  */
 
-import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import { canonicalThreadClient } from '../workbench/thread-client/canonical-thread-client-singleton';
+import type { WorkbenchRunEvent } from '../workbench/thread-client';
 import type { TaskThreadDetailEvent } from './task-thread-detail-model';
 import {
   parseTaskTokenUsageSnapshotEvent,
   type TaskTokenUsageSnapshot,
 } from './task-detail-token-usage';
 import { mapTaskThreadRunEventToDetailEvent } from './task-detail-loader';
-import { getTaskThreadRunEventsStreamURL } from './service';
 
-type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
+type TaskThreadRunEvent = WorkbenchRunEvent;
 
 interface ThreadTitleUpdate {
   threadId: string;
@@ -50,29 +55,6 @@ const mergeTaskThreadDetailEvents = (
 
     return left.id.localeCompare(right.id);
   });
-};
-
-const parseTaskThreadRunEvent = (
-  event: MessageEvent,
-): TaskThreadRunEvent | undefined => {
-  try {
-    const parsed: unknown = JSON.parse(event.data);
-
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      'event_id' in parsed &&
-      'thread_id' in parsed &&
-      'run_id' in parsed &&
-      'event_type' in parsed
-    ) {
-      return parsed as TaskThreadRunEvent;
-    }
-  } catch (error) {
-    console.warn('Failed to parse task thread run event stream payload', error);
-  }
-
-  return undefined;
 };
 
 const parseEventPayload = (payload?: string): Record<string, unknown> => {
@@ -110,11 +92,21 @@ const getThreadTitleUpdate = (
   };
 };
 
+const TERMINAL_RUN_EVENT_TYPES = new Set([
+  'run.completed',
+  'run.failed',
+  'run.canceled',
+  'run.cancelled',
+  'run.interrupted',
+]);
+
 export const useTaskThreadRunEventStream = ({
   enabled,
   onTokenUsageSnapshot,
   onThreadTitleUpdated,
+  runId,
   setEvents,
+  spaceId,
   threadId,
 }: {
   enabled: boolean;
@@ -123,20 +115,62 @@ export const useTaskThreadRunEventStream = ({
     event: TaskThreadRunEvent,
   ) => void;
   onThreadTitleUpdated?: (update: ThreadTitleUpdate) => void;
+  runId?: string;
   setEvents: Dispatch<SetStateAction<TaskThreadDetailEvent[]>>;
+  spaceId?: string;
   threadId?: string;
 }) => {
-  useEffect(() => {
-    if (!enabled || !threadId || typeof EventSource === 'undefined') {
+  const generationRef = useRef(0);
+  const streamScopeKey = JSON.stringify([
+    enabled,
+    spaceId ?? '',
+    threadId ?? '',
+    runId ?? '',
+  ]);
+  const committedScopeKeyRef = useRef(streamScopeKey);
+
+  useLayoutEffect(() => {
+    if (committedScopeKeyRef.current === streamScopeKey) {
       return;
     }
 
-    const eventSource = new EventSource(
-      getTaskThreadRunEventsStreamURL({ threadId }),
-    );
-    const handleRunEvent = (event: MessageEvent) => {
-      const runEvent = parseTaskThreadRunEvent(event);
-      if (!runEvent) {
+    committedScopeKeyRef.current = streamScopeKey;
+    generationRef.current += 1;
+  }, [streamScopeKey]);
+
+  useEffect(() => {
+    if (!enabled || !spaceId || !threadId || !runId) {
+      return;
+    }
+
+    const generation = ++generationRef.current;
+    const capturedScope = { generation, runId, spaceId, threadId };
+    const controller = new AbortController();
+    const subscriptionRef: {
+      current?: ReturnType<typeof canonicalThreadClient.subscribeRunEvents>;
+    } = {};
+    let closed = false;
+    let terminalEventSeen = false;
+    const isCurrentScope = () =>
+      !closed &&
+      !controller.signal.aborted &&
+      generationRef.current === capturedScope.generation;
+    const close = () => {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      controller.abort();
+      subscriptionRef.current?.close();
+    };
+    const handleRunEvent = (runEvent: TaskThreadRunEvent) => {
+      if (
+        !isCurrentScope() ||
+        terminalEventSeen ||
+        runEvent.thread_id !== capturedScope.threadId ||
+        runEvent.run_id !== capturedScope.runId
+      ) {
         return;
       }
 
@@ -148,32 +182,48 @@ export const useTaskThreadRunEventStream = ({
       const tokenUsageSnapshot = parseTaskTokenUsageSnapshotEvent(runEvent);
       if (tokenUsageSnapshot) {
         onTokenUsageSnapshot?.(tokenUsageSnapshot, runEvent);
-        return;
+      } else {
+        setEvents(current =>
+          mergeTaskThreadDetailEvents(current, [
+            mapTaskThreadRunEventToDetailEvent(runEvent),
+          ]),
+        );
       }
 
-      setEvents(current =>
-        mergeTaskThreadDetailEvents(current, [
-          mapTaskThreadRunEventToDetailEvent(runEvent),
-        ]),
-      );
+      if (TERMINAL_RUN_EVENT_TYPES.has(runEvent.event_type)) {
+        terminalEventSeen = true;
+        close();
+      }
     };
-    const handleDone = () => {
-      eventSource.close();
-    };
+    subscriptionRef.current = canonicalThreadClient.subscribeRunEvents({
+      space_id: capturedScope.spaceId,
+      thread_id: capturedScope.threadId,
+      run_id: capturedScope.runId,
+      signal: controller.signal,
+      onEvent: handleRunEvent,
+      onEnd: () => {
+        if (isCurrentScope()) {
+          close();
+        }
+      },
+      onError: () => {
+        if (isCurrentScope()) {
+          close();
+        }
+      },
+    });
+    if (closed) {
+      subscriptionRef.current.close();
+    }
 
-    eventSource.addEventListener('run.event', handleRunEvent);
-    eventSource.addEventListener('done', handleDone);
-
-    return () => {
-      eventSource.removeEventListener('run.event', handleRunEvent);
-      eventSource.removeEventListener('done', handleDone);
-      eventSource.close();
-    };
+    return close;
   }, [
     enabled,
     onThreadTitleUpdated,
     onTokenUsageSnapshot,
+    runId,
     setEvents,
+    spaceId,
     threadId,
   ]);
 };

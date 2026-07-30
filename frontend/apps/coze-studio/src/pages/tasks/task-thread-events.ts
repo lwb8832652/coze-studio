@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchThread } from '../workbench/thread-client';
 
-type TaskThread = workbenchTask.TaskThread;
+type TaskThread = WorkbenchThread;
 type TaskThreadPatch = Partial<TaskThread> & Pick<TaskThread, 'thread_id'>;
 
 export const WORKSPACE_TASK_THREAD_UPSERT_EVENT =

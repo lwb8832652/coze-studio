@@ -96,6 +96,10 @@ type canonicalMCPRuntimeAuditEventListResponse struct {
 	NextCursor *string                            `json:"next_cursor,omitempty"`
 }
 
+// ListCanonicalThreadMemories serves GET /api/workbench/threads/:thread_id/memories.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListMemories, and returns canonical memory-list JSON.
 func ListCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.list", "/api/workbench/threads/:thread_id/memories")
 	requestLog.ResponseBodyKind = "values"
@@ -161,6 +165,10 @@ func ListCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// UpdateCanonicalThreadMemory serves PUT /api/workbench/threads/:thread_id/memories/:memory_id.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and memory. It calls
+// ApplicationService.UpdateMemory, and returns canonical update-result JSON.
 func UpdateCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.update", "/api/workbench/threads/:thread_id/memories/:memory_id")
 	requestLog.ResponseBodyKind = "values"
@@ -198,6 +206,10 @@ func UpdateCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &canonicalMemoryUpdateResponse{Memory: memory, Updated: resp.Updated})
 }
 
+// DeleteCanonicalThreadMemory serves DELETE /api/workbench/threads/:thread_id/memories/:memory_id.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and memory. It calls
+// ApplicationService.DeleteMemory, and returns 204 with an empty body.
 func DeleteCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.delete", "/api/workbench/threads/:thread_id/memories/:memory_id")
 	requestLog.ResponseBodyKind = "empty"
@@ -226,6 +238,10 @@ func DeleteCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	c.Status(consts.StatusNoContent)
 }
 
+// RestoreCanonicalThreadMemory serves POST /api/workbench/threads/:thread_id/memories/:memory_id/restore.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and memory. It calls
+// ApplicationService.RestoreMemory, and returns canonical restore-result JSON.
 func RestoreCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.restore", "/api/workbench/threads/:thread_id/memories/:memory_id/restore")
 	requestLog.ResponseBodyKind = "values"
@@ -259,6 +275,10 @@ func RestoreCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &canonicalMemoryRestoreResponse{Memory: memory, Restored: resp.Restored})
 }
 
+// ClearCanonicalThreadMemories serves POST /api/workbench/threads/:thread_id/memories/clear.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ClearMemories, and returns canonical deleted-count JSON.
 func ClearCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.clear", "/api/workbench/threads/:thread_id/memories/clear")
 	requestLog.ResponseBodyKind = "values"
@@ -302,6 +322,10 @@ func ClearCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &canonicalMemoryClearResponse{Deleted: resp.Deleted})
 }
 
+// ExportCanonicalThreadMemories serves GET /api/workbench/threads/:thread_id/memories/export.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ExportMemories, and returns canonical memory-export JSON.
 func ExportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.export", "/api/workbench/threads/:thread_id/memories/export")
 	requestLog.ResponseBodyKind = "values"
@@ -373,6 +397,10 @@ func ExportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// ImportCanonicalThreadMemories serves POST /api/workbench/threads/:thread_id/memories/import.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ImportMemories, and returns canonical memory-import JSON.
 func ImportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory.import", "/api/workbench/threads/:thread_id/memories/import")
 	requestLog.ResponseBodyKind = "values"
@@ -416,6 +444,10 @@ func ImportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// ListCanonicalThreadMemoryAuditEvents serves GET /api/workbench/threads/:thread_id/memories/audit_events.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListMemoryAuditEvents, and returns canonical audit-event-list JSON.
 func ListCanonicalThreadMemoryAuditEvents(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("memory_audit.list", "/api/workbench/threads/:thread_id/memories/audit_events")
 	requestLog.ResponseBodyKind = "values"
@@ -458,14 +490,26 @@ func ListCanonicalThreadMemoryAuditEvents(ctx context.Context, c *app.RequestCon
 	})
 }
 
+// ListCanonicalThreadGuardrailAuditEvents serves GET /api/workbench/threads/:thread_id/guardrail_audit_events.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListGuardrailAuditEvents, and returns canonical audit-event-list JSON.
 func ListCanonicalThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
 	canonicalListGuardrailAuditEvents(ctx, c, false)
 }
 
+// ExportCanonicalThreadGuardrailAuditEvents serves GET /api/workbench/threads/:thread_id/guardrail_audit_events/export.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ExportGuardrailAuditEvents, and returns canonical audit-export JSON.
 func ExportCanonicalThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
 	canonicalListGuardrailAuditEvents(ctx, c, true)
 }
 
+// ListCanonicalThreadMCPRuntimeAuditEvents serves GET /api/workbench/threads/:thread_id/mcp_runtime_audit_events.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListMCPRuntimeAuditEvents, and returns canonical audit-event-list JSON.
 func ListCanonicalThreadMCPRuntimeAuditEvents(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("mcp_runtime_audit.list", "/api/workbench/threads/:thread_id/mcp_runtime_audit_events")
 	requestLog.ResponseBodyKind = "values"
@@ -698,7 +742,7 @@ func canonicalMemoryThreadScope(
 	c *app.RequestContext,
 	requestLog *canonicalRequestLog,
 ) (context.Context, int64, bool) {
-	if !requireCanonicalAPI(ctx, c) || !requireCanonicalAgentThreadService(ctx, c) {
+	if !requireCanonicalAgentThreadService(ctx, c) {
 		return ctx, 0, false
 	}
 	threadID, public := canonicalPathID(c, "thread_id")

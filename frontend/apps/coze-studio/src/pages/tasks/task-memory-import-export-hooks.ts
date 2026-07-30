@@ -33,11 +33,13 @@ const buildExportRequest = ({
   includeDeleted,
   query,
   scope,
+  spaceId,
   threadId,
 }: {
   includeDeleted: boolean;
   query: string;
   scope: MemoryScopeFilter;
+  spaceId: string;
   threadId: string;
 }) => {
   const request: {
@@ -45,9 +47,11 @@ const buildExportRequest = ({
     limit: number;
     q?: string;
     scope?: string;
+    space_id: string;
     thread_id: string;
   } = {
     limit: MEMORY_EXPORT_LIMIT,
+    space_id: spaceId,
     thread_id: threadId,
   };
   const trimmedQuery = query.trim();
@@ -100,6 +104,7 @@ export const useTaskMemoryImportExport = ({
   setActiveAction,
   setError,
   setNotice,
+  spaceId,
   threadId,
 }: {
   includeDeleted: boolean;
@@ -110,6 +115,7 @@ export const useTaskMemoryImportExport = ({
   setActiveAction: (action: string) => void;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [importError, setImportError] = useState('');
@@ -117,7 +123,7 @@ export const useTaskMemoryImportExport = ({
   const [importVisible, setImportVisible] = useState(false);
 
   const handleExportMemories = async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       return;
     }
     setActiveAction('export');
@@ -129,6 +135,7 @@ export const useTaskMemoryImportExport = ({
           includeDeleted,
           query,
           scope,
+          spaceId,
           threadId,
         }),
       );
@@ -157,7 +164,7 @@ export const useTaskMemoryImportExport = ({
     setImportVisible(false);
   };
   const handleImportMemories = async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       return;
     }
     if (readOnly) {
@@ -177,6 +184,7 @@ export const useTaskMemoryImportExport = ({
     try {
       const response = await importTaskThreadMemories({
         memories: parsed.memories,
+        space_id: spaceId,
         thread_id: threadId,
       });
       setImportText('');

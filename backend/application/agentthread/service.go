@@ -47,6 +47,9 @@ var (
 	ErrActiveRunExists              = domainservice.ErrActiveRunExists
 	ErrUnsupportedMultitaskStrategy = domainservice.ErrUnsupportedMultitaskStrategy
 	ErrRunIdempotencyConflict       = domainservice.ErrRunIdempotencyConflict
+	ErrTopLevelRetryInvalid         = errors.New("top-level retry is invalid")
+	ErrTopLevelRetrySourceNotFound  = errors.New("top-level retry source is not found")
+	ErrTopLevelRetryConflict        = errors.New("top-level retry source is not retryable")
 )
 
 var ErrArtifactScanReviewDecisionInvalid = errors.New(
@@ -809,6 +812,9 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	if req == nil {
 		return nil, fmt.Errorf("create run request is required")
 	}
+	if req.TopLevelRetrySourceRunID < 0 {
+		return nil, fmt.Errorf("%w: source run id is invalid", ErrTopLevelRetryInvalid)
+	}
 	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
 		ThreadID: req.ThreadID,
 	}); err != nil {
@@ -817,6 +823,9 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
 	if err != nil {
 		return nil, err
+	}
+	if req.TopLevelRetrySourceRunID > 0 {
+		return s.createTopLevelRetryRun(ctx, req, runConfig)
 	}
 	messageContent := strings.TrimSpace(req.MessageContent)
 	if messageContent == "" && strings.TrimSpace(req.MessageMetadata) != "" {
@@ -912,6 +921,105 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}
 
 	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) createTopLevelRetryRun(
+	ctx context.Context,
+	req *CreateRunRequest,
+	runConfig string,
+) (*CreateRunResponse, error) {
+	if req.ParentRunID != 0 || (req.RunKind != "" && req.RunKind != RunKindTask) {
+		return nil, fmt.Errorf("%w: new run must be a top-level task", ErrTopLevelRetryInvalid)
+	}
+	if strings.TrimSpace(req.MessageContent) != "" || strings.TrimSpace(req.MessageMetadata) != "" {
+		return nil, fmt.Errorf("%w: retry cannot create a message", ErrTopLevelRetryInvalid)
+	}
+	if req.PersistMessageReference {
+		return nil, fmt.Errorf("%w: retry cannot persist a message reference", ErrTopLevelRetryInvalid)
+	}
+
+	sourceRun, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{
+		RunID: req.TopLevelRetrySourceRunID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sourceRun == nil || sourceRun.ID != req.TopLevelRetrySourceRunID {
+		return nil, ErrTopLevelRetrySourceNotFound
+	}
+	if sourceRun.ThreadID != req.ThreadID {
+		return nil, ErrTopLevelRetrySourceNotFound
+	}
+	if sourceRun.ParentRunID != 0 || sourceRun.RunKind != domainentity.RunKindTask {
+		return nil, fmt.Errorf("%w: source must be a top-level task", ErrTopLevelRetryInvalid)
+	}
+	if sourceRun.Status != domainentity.RunStatusFailed {
+		return nil, ErrTopLevelRetryConflict
+	}
+
+	metadata, err := topLevelRetryRunMetadata(req.Metadata, sourceRun.ID)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		Run: domainservice.CreateRunRequest{
+			ThreadID: req.ThreadID, AssistantID: req.AssistantID,
+			RunKind: domainentity.RunKindTask, Status: domainentity.RunStatus(req.Status),
+			Command: req.Command, Input: req.Input, Config: runConfig, Context: req.Context,
+			Metadata: metadata, StreamMode: req.StreamMode,
+			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			IdempotencyOperation:   req.IdempotencyOperation,
+			IdempotencyFingerprint: req.IdempotencyFingerprint,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if bundle == nil || bundle.Run == nil || bundle.Message != nil ||
+		bundle.Run.ThreadID != req.ThreadID || bundle.Run.ParentRunID != 0 ||
+		bundle.Run.RunKind != domainentity.RunKindTask {
+		return nil, fmt.Errorf("agent thread service returned invalid top-level retry bundle")
+	}
+	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
+	return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
+}
+
+func topLevelRetryRunMetadata(metadata string, sourceRunID int64) (string, error) {
+	metadata = strings.TrimSpace(metadata)
+	if metadata == "" {
+		metadata = `{}`
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &payload); err != nil {
+		return "", fmt.Errorf("%w: metadata must be a JSON object: %v", ErrTopLevelRetryInvalid, err)
+	}
+	if payload == nil {
+		return "", fmt.Errorf("%w: metadata must be a JSON object", ErrTopLevelRetryInvalid)
+	}
+	for key := range payload {
+		if topLevelRetryProtectedMetadataKey(key) {
+			return "", fmt.Errorf("%w: metadata contains a server-owned field", ErrTopLevelRetryInvalid)
+		}
+	}
+	payload["attempt_kind"] = json.RawMessage(`"retry"`)
+	payload["source_run_id"] = json.RawMessage(strconv.FormatInt(sourceRunID, 10))
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal top-level retry metadata: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func topLevelRetryProtectedMetadataKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "appended_message_id", "source_run_id", "attempt_kind",
+		"human_interaction", "checkpoint_resume", "subagent_retry",
+		"_idempotency", "_message":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *ApplicationService) cancelMultitaskInterruptedADKRuns(

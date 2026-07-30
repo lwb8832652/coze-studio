@@ -72,7 +72,12 @@ describe('TaskMemorySection icon integration', () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<TaskMemorySection threadId="thread-memory-icons" />);
+      root.render(
+        <TaskMemorySection
+          spaceId="space-memory-icons"
+          threadId="thread-memory-icons"
+        />,
+      );
       await Promise.resolve();
       await Promise.resolve();
     });

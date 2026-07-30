@@ -37,7 +37,6 @@ import (
 )
 
 func TestCanonicalThreadArtifactListReturnsProjectedArtifactsAndPagination(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "artifacts", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "artifact fixture")
@@ -84,7 +83,6 @@ func TestCanonicalThreadArtifactListReturnsProjectedArtifactsAndPagination(t *te
 }
 
 func TestCanonicalThreadArtifactContentAndSignedURLAreSafe(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	storage := &recordingWorkbenchArtifactStorage{
 		objects:   map[string][]byte{},
@@ -142,7 +140,6 @@ func TestCanonicalThreadArtifactContentAndSignedURLAreSafe(t *testing.T) {
 }
 
 func TestCanonicalThreadArtifactScanReviewAndRetry(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	storage := &recordingWorkbenchArtifactStorage{objects: map[string][]byte{}}
 	appagentthread.SVC.ArtifactObjectStorage = storage
@@ -232,7 +229,6 @@ func TestCanonicalThreadArtifactScanReviewAndRetry(t *testing.T) {
 }
 
 func TestCanonicalThreadArtifactDeleteRestoreAndCrossThreadIsolation(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	ownerThread := createCanonicalTestThread(t, 1001, "artifact owner", `{}`)
 	otherThread := createCanonicalTestThread(t, 1001, "artifact other", `{}`)
@@ -293,7 +289,6 @@ func TestCanonicalThreadArtifactDeleteRestoreAndCrossThreadIsolation(t *testing.
 
 func TestCanonicalThreadArtifactDependenciesFailClosed(t *testing.T) {
 	t.Run("artifact service", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact dependency", `{}`)
 		appagentthread.SVC.ArtifactSVC = nil
@@ -314,7 +309,6 @@ func TestCanonicalThreadArtifactDependenciesFailClosed(t *testing.T) {
 	})
 
 	t.Run("object storage", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact storage dependency", `{}`)
 		fixture := createCanonicalArtifactFixture(
@@ -341,7 +335,6 @@ func TestCanonicalThreadArtifactDependenciesFailClosed(t *testing.T) {
 	})
 
 	t.Run("signed url signer", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact signer dependency", `{}`)
 		fixture := createCanonicalArtifactFixture(
@@ -372,7 +365,6 @@ func TestCanonicalThreadArtifactDependenciesFailClosed(t *testing.T) {
 
 func TestCanonicalThreadArtifactErrors(t *testing.T) {
 	t.Run("malformed path id", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		h := canonicalArtifactTestServer()
 
@@ -383,7 +375,6 @@ func TestCanonicalThreadArtifactErrors(t *testing.T) {
 	})
 
 	t.Run("wrong workspace", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact denied", `{}`)
 		h := canonicalArtifactTestServer()
@@ -402,7 +393,6 @@ func TestCanonicalThreadArtifactErrors(t *testing.T) {
 	})
 
 	t.Run("artifact authorizer denial", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact denied", `{}`)
 		appagentthread.SVC.ArtifactAuthorizer = &recordingWorkbenchArtifactAuthorizer{
@@ -423,7 +413,6 @@ func TestCanonicalThreadArtifactErrors(t *testing.T) {
 	})
 
 	t.Run("unsupported signed preview", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		storage := &recordingWorkbenchArtifactStorage{objects: map[string][]byte{}}
 		appagentthread.SVC.ArtifactObjectStorage = storage
@@ -452,7 +441,6 @@ func TestCanonicalThreadArtifactErrors(t *testing.T) {
 	})
 
 	t.Run("retry non failed scan job", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "artifact retry conflict", `{}`)
 		createCanonicalArtifactFixture(t, thread.ThreadID, "pending.txt", "text/plain; charset=utf-8", []byte("pending"), "")

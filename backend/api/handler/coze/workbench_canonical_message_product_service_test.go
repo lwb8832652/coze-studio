@@ -43,7 +43,6 @@ func TestAppendCanonicalThreadMessageRejectsOrdinaryUserTurnBeforeMutation(t *te
 	for _, role := range []string{"user", "human"} {
 		role := role
 		t.Run(role, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 			run := createCanonicalRunFixture(t, thread.ThreadID, "initial user turn")
@@ -69,7 +68,6 @@ func TestAppendCanonicalThreadMessageRejectsOrdinaryUserTurnBeforeMutation(t *te
 
 func TestAppendCanonicalThreadMessageRequiresInternalCompatModeAndOwnedRun(t *testing.T) {
 	t.Run("requires internal compat mode", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 		run := createCanonicalRunFixture(t, thread.ThreadID, "initial user turn")
@@ -90,7 +88,6 @@ func TestAppendCanonicalThreadMessageRequiresInternalCompatModeAndOwnedRun(t *te
 	})
 
 	t.Run("requires positive run id", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 		h := canonicalMessageTestServer()
@@ -110,7 +107,6 @@ func TestAppendCanonicalThreadMessageRequiresInternalCompatModeAndOwnedRun(t *te
 	})
 
 	t.Run("rejects run from another thread", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 		otherThread := createCanonicalTestThread(t, 1001, "other message append", `{}`)
@@ -135,7 +131,6 @@ func TestAppendCanonicalThreadMessageRequiresInternalCompatModeAndOwnedRun(t *te
 }
 
 func TestCanonicalThreadMessageRequestsRejectBodyRouteIdentifiers(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "message identifiers", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "initial user turn")
@@ -174,7 +169,6 @@ func TestCanonicalThreadMessageRequestsRejectBodyRouteIdentifiers(t *testing.T) 
 }
 
 func TestAppendCanonicalThreadMessageReturnsPublicMessage(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "initial user turn")
@@ -204,7 +198,6 @@ func TestAppendCanonicalThreadMessageReturnsPublicMessage(t *testing.T) {
 }
 
 func TestAppendCanonicalThreadMessageAllowsToolWithoutLeakingToolContent(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "message append", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "initial user turn")
@@ -232,7 +225,6 @@ func TestAppendCanonicalThreadMessageAllowsToolWithoutLeakingToolContent(t *test
 }
 
 func TestGenerateCanonicalThreadSuggestionsUsesPersistedPublicMessages(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "suggestions", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "persisted user question")
@@ -284,7 +276,6 @@ func TestGenerateCanonicalThreadSuggestionsUsesPersistedPublicMessages(t *testin
 }
 
 func TestGenerateCanonicalThreadSuggestionsKeepsNewestFortyPublicMessages(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "suggestions", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "public-00")
@@ -336,7 +327,6 @@ func TestGenerateCanonicalThreadSuggestionsKeepsNewestFortyPublicMessages(t *tes
 }
 
 func TestGenerateCanonicalThreadSuggestionsReturnsEmptyListWhenProviderFails(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "suggestions", `{}`)
 	createCanonicalRunFixture(t, thread.ThreadID, "persisted user question")
@@ -360,7 +350,6 @@ func TestGenerateCanonicalThreadSuggestionsReturnsEmptyListWhenProviderFails(t *
 }
 
 func TestGenerateCanonicalThreadSuggestionsNeverLogsMessageContent(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "suggestions", `{}`)
 	createCanonicalRunFixture(t, thread.ThreadID, "message-content-secret")

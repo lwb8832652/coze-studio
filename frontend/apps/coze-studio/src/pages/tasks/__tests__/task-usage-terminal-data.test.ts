@@ -72,7 +72,9 @@ describe('task usage terminal data contracts', () => {
           }),
       );
 
-      const result = await loadTaskThreadUsage('thread-total');
+      const result = await loadTaskThreadUsage('thread-total', {
+        spaceID: 'space-1',
+      });
 
       expect(
         mockGetTaskThreadTokenUsage.mock.calls.map(([request]) => request.page),
@@ -97,7 +99,9 @@ describe('task usage terminal data contracts', () => {
         }),
     );
 
-    const result = await loadTaskThreadUsage('thread-total');
+    const result = await loadTaskThreadUsage('thread-total', {
+      spaceID: 'space-1',
+    });
 
     expect(result.loadedCount).toBe(1000);
     expect(result.isPartial).toBe(true);

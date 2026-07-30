@@ -72,7 +72,7 @@ type ListCheckpointsBeforeRequest struct {
 type CanonicalQueryRepository interface {
 	SearchThreads(context.Context, SearchThreadsRequest) ([]*entity.Thread, int64, error)
 	SearchRuns(context.Context, SearchRunsRequest) ([]*entity.Run, int64, error)
-	ListRunEventsByCursor(context.Context, ListRunEventsByCursorRequest) ([]*entity.RunEvent, bool, error)
+	ListRunEventsByCursor(context.Context, ListRunEventsByCursorRequest) ([]*entity.RunEvent, int64, bool, error)
 	ListCheckpointsBefore(context.Context, ListCheckpointsBeforeRequest) ([]*entity.Checkpoint, bool, error)
 }
 

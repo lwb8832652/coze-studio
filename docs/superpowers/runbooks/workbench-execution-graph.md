@@ -100,7 +100,7 @@ CodeGraph 查询当前 checkout 的函数、调用者、被调用者和影响范
 codegraph status "$PWD"
 codegraph init "$PWD" # 仅在 status 显示 Not initialized 时运行
 codegraph sync "$PWD" # 已初始化且有源码变化时运行
-codegraph explore -p "$PWD" --max-files 20 Workbench TaskThread RunWorker ADKExecutor EventSource
+codegraph explore -p "$PWD" --max-files 20 Workbench CanonicalThreadClient RunWorker ADKExecutor RunEventStream
 ```
 
 Graphify 与 CodeGraph 结论冲突时，以当前源码、IDL、迁移、测试和运行时现象为
@@ -122,8 +122,8 @@ Graphify 与 CodeGraph 结论冲突时，以当前源码、IDL、迁移、测试
 - React、Thriftgo、Hertz、Go、GORM/MySQL、Eino/Eino-ext、mcp-go、Sonic、
   Prometheus、cron、飞书 SDK 的版本或职责；
 - LangGraph、DeerFlow、legacy、K2、ChatTask 的边界事实。
-- LangGraph stateless backing thread、Scheduled 新建/复用会话、飞书新建/复用
-  session 的任一分支。
+- 本地 LangGraph-compatible HTTP 退役边界、Scheduled 新建/复用会话、飞书
+  新建/复用 session 的任一分支。
 
 更新时遵循：
 
@@ -198,14 +198,15 @@ prompt、completion、tool 参数/结果、凭据、对象地址、checkpoint by
 
 每次主链变化至少确认：
 
-- Workbench immediate submit 能到 pending Run、worker、Eino、EventSource；
+- Workbench immediate submit 能到 pending Run、worker、Eino、canonical SSE、
+  `@coze-arch/fetch-stream` 和 TaskDetail projection；
 - 带文件的 Workbench 和 TaskDetail 路径保持先上传再创建 Run；
-- LangGraph stateless 先创建 backing Thread 再创建 Run；Scheduled 与飞书的
-  新建会话、复用会话两条分支都可检索；
+- Scheduled 与飞书的新建会话、复用会话两条分支都可检索；
 - Eino 查询返回 Runner、ChatModelAgent、middleware/tool/MCP 和 EventSink；
 - cancel、human resume、subagent retry、lease recovery 可分别遍历；
 - Memory、Artifact、Token、Guardrail、MCP audit 有独立持久化边；
-- LangGraph/DeerFlow/legacy 查询明确返回兼容边界，而不是并行运行时；
+- LangGraph 查询明确返回本地 HTTP 路由已退役且仅有 canonical SSE wire
+  compatibility；DeerFlow/legacy 查询返回兼容边界，而不是并行运行时；
 - K2 和 ChatTask 的 current production node 数为 0。
 
 业务问题先在检索图返回合同要求的节点；查询结果中的有向业务边和执行路径必须
