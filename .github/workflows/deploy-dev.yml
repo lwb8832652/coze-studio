@@ -1,0 +1,258 @@
+name: Publish and deploy dev images
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Full 40-character Git commit SHA from origin/dev
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+      migration_changed: ${{ steps.resolve.outputs.migration_changed }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target and migration state
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target_sha="${{ inputs.target_sha }}"
+            if [[ ! "$target_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "target_sha must be a full 40-character hexadecimal SHA" >&2
+              exit 1
+            fi
+
+            git fetch --no-tags origin dev
+            if ! git merge-base --is-ancestor "$target_sha" refs/remotes/origin/dev; then
+              echo "target_sha is not in the origin/dev history" >&2
+              exit 1
+            fi
+            migration_changed=false
+          else
+            target_sha="${{ github.sha }}"
+            before="${{ github.event.before }}"
+            zero_sha=0000000000000000000000000000000000000000
+            migration_changed=true
+
+            if [[ "$before" =~ ^[0-9a-fA-F]{40}$ ]] &&
+              [ "$before" != "$zero_sha" ] &&
+              git cat-file -e "${before}^{commit}" 2>/dev/null &&
+              git cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+              if git diff --quiet "$before" "$target_sha" -- 'docker/atlas/migrations/**'; then
+                migration_changed=false
+              else
+                diff_status=$?
+                if [ "$diff_status" -ne 1 ]; then
+                  echo "migration diff failed; holding deployment" >&2
+                fi
+                migration_changed=true
+              fi
+            else
+              echo "migration comparison base is unavailable; holding deployment" >&2
+            fi
+          fi
+
+          target_sha=$(printf '%s' "$target_sha" | tr '[:upper:]' '[:lower:]')
+          printf 'target_sha=%s\n' "$target_sha" >> "$GITHUB_OUTPUT"
+          printf 'migration_changed=%s\n' "$migration_changed" >> "$GITHUB_OUTPUT"
+
+  build-server:
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - name: Check out target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push immutable server image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}
+          build-args: |
+            GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+
+  build-web:
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - name: Check out target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push immutable web image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}
+          build-args: |
+            GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+
+  migration-hold:
+    runs-on: ubuntu-latest
+    needs: [preflight, build-server, build-web]
+    if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
+    steps:
+      - name: Record manual migration hold
+        shell: bash
+        run: |
+          target_sha="${{ needs.preflight.outputs.target_sha }}"
+          {
+            echo "## Dev deployment held for migrations"
+            echo
+            echo "- Target SHA: \`$target_sha\`"
+            echo "- Apply pending Atlas migrations manually on the remote dev environment."
+            echo "- Then run this workflow with workflow_dispatch and target_sha set to the same SHA."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-images:
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+      SERVER_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}
+      WEB_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}
+    steps:
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Verify immutable image revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in "$SERVER_IMAGE" "$WEB_IMAGE"; do
+            docker pull "$image"
+            revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+            if [ "$revision" != "$TARGET_SHA" ]; then
+              echo "image revision does not match target SHA: $image" >&2
+              exit 1
+            fi
+          done
+
+  promote:
+    runs-on: ubuntu-latest
+    needs: [preflight, build-server, build-web, verify-images]
+    outputs:
+      target_sha: ${{ needs.preflight.outputs.target_sha }}
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.migration_changed != 'true' &&
+      (
+        (
+          github.event_name == 'push' &&
+          needs.build-server.result == 'success' &&
+          needs.build-web.result == 'success' &&
+          needs.verify-images.result == 'skipped'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          needs.build-server.result == 'skipped' &&
+          needs.build-web.result == 'skipped' &&
+          needs.verify-images.result == 'success'
+        )
+      )
+    steps:
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Promote server image
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev" \
+            "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}"
+
+      - name: Promote web image
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev" \
+            "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: promote
+    if: ${{ needs.promote.result == 'success' }}
+    env:
+      BAOTA_WEBHOOK_URL: ${{ secrets.BAOTA_WEBHOOK_URL }}
+      BAOTA_WEBHOOK_TOKEN: ${{ secrets.BAOTA_WEBHOOK_TOKEN }}
+      TARGET_SHA: ${{ needs.promote.outputs.target_sha }}
+    steps:
+      - name: Trigger dev deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl_headers=()
+          if [ -n "${BAOTA_WEBHOOK_TOKEN:-}" ]; then
+            curl_headers+=(--header "Authorization: Bearer $BAOTA_WEBHOOK_TOKEN")
+          fi
+          payload=$(printf '{"target_sha":"%s"}' "$TARGET_SHA")
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            "${curl_headers[@]}" \
+            --data "$payload" \
+            "$BAOTA_WEBHOOK_URL"
