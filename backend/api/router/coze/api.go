@@ -562,6 +562,7 @@ func Register(r *server.Hertz) {
 			_artifacts := _thread_id.Group("/artifacts", _artifactsMw()...)
 			_artifacts.DELETE("/:artifact_id", append(_deletecanonicalthreadartifactMw(), coze.DeleteCanonicalThreadArtifact)...)
 			_artifact_id := _artifacts.Group("/:artifact_id", _artifact_idMw()...)
+			_artifact_id.POST("/copy_link", append(_copycanonicalthreadartifactlinkMw(), coze.CopyCanonicalThreadArtifactLink)...)
 			_artifact_id.POST("/restore", append(_restorecanonicalthreadartifactMw(), coze.RestoreCanonicalThreadArtifact)...)
 			_artifact_id.POST("/scan_review", append(_reviewcanonicalthreadartifactscanMw(), coze.ReviewCanonicalThreadArtifactScan)...)
 			{
@@ -594,10 +595,18 @@ func Register(r *server.Hertz) {
 			_run_id.POST("/cancel", append(_cancelcanonicalrunMw(), coze.CancelCanonicalRun)...)
 			_run_id.GET("/events", append(_listcanonicalruneventsMw(), coze.ListCanonicalRunEvents)...)
 			_run_id.GET("/join", append(_joincanonicalrunMw(), coze.JoinCanonicalRun)...)
+			_run_id.GET("/journal", append(_getcanonicalrunjournalMw(), coze.GetCanonicalRunJournal)...)
 			_run_id.GET("/messages", append(_listcanonicalrunmessagesMw(), coze.ListCanonicalRunMessages)...)
+			_run_id.POST("/recover", append(_recovercanonicalrunjournalMw(), coze.RecoverCanonicalRunJournal)...)
 			_run_id.POST("/resume", append(_resumecanonicalrunMw(), coze.ResumeCanonicalRun)...)
 			_run_id.POST("/retry", append(_retrycanonicalsubagentrunMw(), coze.RetryCanonicalSubagentRun)...)
 			_run_id.GET("/stream", append(_reconnectcanonicalrunstreamMw(), coze.ReconnectCanonicalRunStream)...)
+			{
+				_snapshots0 := _run_id.Group("/snapshots", _snapshots0Mw()...)
+				_snapshots0.GET("/:snapshot_id", append(_getcanonicalrunsnapshotMw(), coze.GetCanonicalRunSnapshot)...)
+				_snapshot_id0 := _snapshots0.Group("/:snapshot_id", _snapshot_id0Mw()...)
+				_snapshot_id0.POST("/actions", append(_auditcanonicalrunsnapshotactionMw(), coze.AuditCanonicalRunSnapshotAction)...)
+			}
 			_runs.POST("/stream", append(_streamcanonicalrunMw(), coze.StreamCanonicalRun)...)
 			_runs.POST("/wait", append(_waitcanonicalrunMw(), coze.WaitCanonicalRun)...)
 			_thread_id.POST("/runs", append(_createcanonicalrunMw(), coze.CreateCanonicalRun)...)
@@ -611,6 +620,11 @@ func Register(r *server.Hertz) {
 			_thread_id.POST("/uploads", append(_uploadcanonicalthreadfilesMw(), coze.UploadCanonicalThreadFiles)...)
 			_threads.GET("/:thread_id", append(_getcanonicalthreadMw(), coze.GetCanonicalThread)...)
 			_threads.PATCH("/:thread_id", append(_patchcanonicalthreadMw(), coze.PatchCanonicalThread)...)
+			{
+				_journal := _workbench.Group("/journal", _journalMw()...)
+				_journal.GET("/settings", append(_getcanonicaljournalsettingsMw(), coze.GetCanonicalJournalSettings)...)
+				_journal.PATCH("/settings", append(_patchcanonicaljournalsettingsMw(), coze.PatchCanonicalJournalSettings)...)
+			}
 		}
 		{
 			_workflow_api := _api.Group("/workflow_api", _workflow_apiMw()...)

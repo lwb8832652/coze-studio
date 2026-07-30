@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
+	projectconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 var canonicalEntrypoints = []struct {
@@ -83,10 +84,17 @@ var canonicalEntrypoints = []struct {
 	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents},
 	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents},
 	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun},
+	{"GetCanonicalRunJournal", GetCanonicalRunJournal},
+	{"GetCanonicalRunSnapshot", GetCanonicalRunSnapshot},
+	{"AuditCanonicalRunSnapshotAction", AuditCanonicalRunSnapshotAction},
+	{"RecoverCanonicalRunJournal", RecoverCanonicalRunJournal},
+	{"GetCanonicalJournalSettings", GetCanonicalJournalSettings},
+	{"PatchCanonicalJournalSettings", PatchCanonicalJournalSettings},
+	{"CopyCanonicalThreadArtifactLink", CopyCanonicalThreadArtifactLink},
 }
 
 func TestCanonicalEntrypointsAreAlwaysActive(t *testing.T) {
-	require.Len(t, canonicalEntrypoints, 47)
+	require.Len(t, canonicalEntrypoints, 54)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		entrypoint := entrypoint
@@ -97,12 +105,33 @@ func TestCanonicalEntrypointsAreAlwaysActive(t *testing.T) {
 				consts.StatusBadRequest,
 				consts.StatusUnauthorized,
 				consts.StatusNotFound,
+				consts.StatusNotImplemented,
 				consts.StatusServiceUnavailable,
 			}, c.Response.StatusCode())
 			require.False(t,
 				c.Response.StatusCode() == consts.StatusNotFound && len(c.Response.Body()) == 0,
 				"handler returned the retired empty-body migration-gate response",
 			)
+		})
+	}
+}
+
+func TestCanonicalJournalEntrypointsFailClosed(t *testing.T) {
+	ctx := context.WithValue(context.Background(), projectconsts.CtxLogIDKey, "trace-journal")
+	for _, entrypoint := range canonicalEntrypoints[47:] {
+		entrypoint := entrypoint
+		t.Run(entrypoint.name, func(t *testing.T) {
+			var c app.RequestContext
+			entrypoint.handler(ctx, &c)
+
+			require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
+			var response canonicalError
+			require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
+			require.Equal(t, "journal_not_implemented", response.ErrorCode)
+			require.Equal(t, response.ErrorCode, response.Code)
+			require.Equal(t, "trace-journal", response.TraceID)
+			require.False(t, response.Retryable)
+			require.NotContains(t, string(c.Response.Body()), "internal_reason")
 		})
 	}
 }

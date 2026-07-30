@@ -17301,18 +17301,895 @@ func (p *SandboxConfig) String() string {
 
 }
 
+type JournalRuntimeConfiguration struct {
+	JournalProjection                    bool   `thrift:"journal_projection,1" form:"journal_projection" json:"journal_projection" query:"journal_projection"`
+	JournalUI                            bool   `thrift:"journal_ui,2" form:"journal_ui" json:"journal_ui" query:"journal_ui"`
+	JournalSnapshots                     bool   `thrift:"journal_snapshots,3" form:"journal_snapshots" json:"journal_snapshots" query:"journal_snapshots"`
+	CheckpointRecovery                   bool   `thrift:"checkpoint_recovery,4" form:"checkpoint_recovery" json:"checkpoint_recovery" query:"checkpoint_recovery"`
+	JournalProjectionRolloutBasisPoints  int32  `thrift:"journal_projection_rollout_basis_points,5" form:"journal_projection_rollout_basis_points" json:"journal_projection_rollout_basis_points" query:"journal_projection_rollout_basis_points"`
+	JournalUIRolloutBasisPoints          int32  `thrift:"journal_ui_rollout_basis_points,6" form:"journal_ui_rollout_basis_points" json:"journal_ui_rollout_basis_points" query:"journal_ui_rollout_basis_points"`
+	JournalSnapshotsRolloutBasisPoints   int32  `thrift:"journal_snapshots_rollout_basis_points,7" form:"journal_snapshots_rollout_basis_points" json:"journal_snapshots_rollout_basis_points" query:"journal_snapshots_rollout_basis_points"`
+	CheckpointRecoveryRolloutBasisPoints int32  `thrift:"checkpoint_recovery_rollout_basis_points,8" form:"checkpoint_recovery_rollout_basis_points" json:"checkpoint_recovery_rollout_basis_points" query:"checkpoint_recovery_rollout_basis_points"`
+	SseTenantConnectionCap               int32  `thrift:"sse_tenant_connection_cap,9" form:"sse_tenant_connection_cap" json:"sse_tenant_connection_cap" query:"sse_tenant_connection_cap"`
+	SseClusterConnectionCap              int32  `thrift:"sse_cluster_connection_cap,10" form:"sse_cluster_connection_cap" json:"sse_cluster_connection_cap" query:"sse_cluster_connection_cap"`
+	SseSendQueueHighWatermark            int32  `thrift:"sse_send_queue_high_watermark,11" form:"sse_send_queue_high_watermark" json:"sse_send_queue_high_watermark" query:"sse_send_queue_high_watermark"`
+	SseSendQueueMax                      int32  `thrift:"sse_send_queue_max,12" form:"sse_send_queue_max" json:"sse_send_queue_max" query:"sse_send_queue_max"`
+	ShortRequestQPS                      int32  `thrift:"short_request_qps,13" form:"short_request_qps" json:"short_request_qps" query:"short_request_qps"`
+	ShortRequestBurst                    int32  `thrift:"short_request_burst,14" form:"short_request_burst" json:"short_request_burst" query:"short_request_burst"`
+	LeaseTTLSeconds                      int32  `thrift:"lease_ttl_seconds,15" form:"lease_ttl_seconds" json:"lease_ttl_seconds" query:"lease_ttl_seconds"`
+	SnapshotFragmentThresholdBytes       int64  `thrift:"snapshot_fragment_threshold_bytes,16" form:"snapshot_fragment_threshold_bytes" json:"snapshot_fragment_threshold_bytes" query:"snapshot_fragment_threshold_bytes"`
+	ConfigRevision                       string `thrift:"config_revision,17" form:"config_revision" json:"config_revision" query:"config_revision"`
+}
+
+func NewJournalRuntimeConfiguration() *JournalRuntimeConfiguration {
+	return &JournalRuntimeConfiguration{}
+}
+
+func (p *JournalRuntimeConfiguration) InitDefault() {
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalProjection() (v bool) {
+	return p.JournalProjection
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalUI() (v bool) {
+	return p.JournalUI
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalSnapshots() (v bool) {
+	return p.JournalSnapshots
+}
+
+func (p *JournalRuntimeConfiguration) GetCheckpointRecovery() (v bool) {
+	return p.CheckpointRecovery
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalProjectionRolloutBasisPoints() (v int32) {
+	return p.JournalProjectionRolloutBasisPoints
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalUIRolloutBasisPoints() (v int32) {
+	return p.JournalUIRolloutBasisPoints
+}
+
+func (p *JournalRuntimeConfiguration) GetJournalSnapshotsRolloutBasisPoints() (v int32) {
+	return p.JournalSnapshotsRolloutBasisPoints
+}
+
+func (p *JournalRuntimeConfiguration) GetCheckpointRecoveryRolloutBasisPoints() (v int32) {
+	return p.CheckpointRecoveryRolloutBasisPoints
+}
+
+func (p *JournalRuntimeConfiguration) GetSseTenantConnectionCap() (v int32) {
+	return p.SseTenantConnectionCap
+}
+
+func (p *JournalRuntimeConfiguration) GetSseClusterConnectionCap() (v int32) {
+	return p.SseClusterConnectionCap
+}
+
+func (p *JournalRuntimeConfiguration) GetSseSendQueueHighWatermark() (v int32) {
+	return p.SseSendQueueHighWatermark
+}
+
+func (p *JournalRuntimeConfiguration) GetSseSendQueueMax() (v int32) {
+	return p.SseSendQueueMax
+}
+
+func (p *JournalRuntimeConfiguration) GetShortRequestQPS() (v int32) {
+	return p.ShortRequestQPS
+}
+
+func (p *JournalRuntimeConfiguration) GetShortRequestBurst() (v int32) {
+	return p.ShortRequestBurst
+}
+
+func (p *JournalRuntimeConfiguration) GetLeaseTTLSeconds() (v int32) {
+	return p.LeaseTTLSeconds
+}
+
+func (p *JournalRuntimeConfiguration) GetSnapshotFragmentThresholdBytes() (v int64) {
+	return p.SnapshotFragmentThresholdBytes
+}
+
+func (p *JournalRuntimeConfiguration) GetConfigRevision() (v string) {
+	return p.ConfigRevision
+}
+
+var fieldIDToName_JournalRuntimeConfiguration = map[int16]string{
+	1:  "journal_projection",
+	2:  "journal_ui",
+	3:  "journal_snapshots",
+	4:  "checkpoint_recovery",
+	5:  "journal_projection_rollout_basis_points",
+	6:  "journal_ui_rollout_basis_points",
+	7:  "journal_snapshots_rollout_basis_points",
+	8:  "checkpoint_recovery_rollout_basis_points",
+	9:  "sse_tenant_connection_cap",
+	10: "sse_cluster_connection_cap",
+	11: "sse_send_queue_high_watermark",
+	12: "sse_send_queue_max",
+	13: "short_request_qps",
+	14: "short_request_burst",
+	15: "lease_ttl_seconds",
+	16: "snapshot_fragment_threshold_bytes",
+	17: "config_revision",
+}
+
+func (p *JournalRuntimeConfiguration) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 15:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField15(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 16:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField16(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 17:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField17(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_JournalRuntimeConfiguration[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalProjection = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalUI = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalSnapshots = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CheckpointRecovery = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalProjectionRolloutBasisPoints = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalUIRolloutBasisPoints = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.JournalSnapshotsRolloutBasisPoints = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CheckpointRecoveryRolloutBasisPoints = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SseTenantConnectionCap = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField10(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SseClusterConnectionCap = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SseSendQueueHighWatermark = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SseSendQueueMax = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField13(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ShortRequestQPS = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField14(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ShortRequestBurst = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField15(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.LeaseTTLSeconds = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField16(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SnapshotFragmentThresholdBytes = _field
+	return nil
+}
+func (p *JournalRuntimeConfiguration) ReadField17(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ConfigRevision = _field
+	return nil
+}
+
+func (p *JournalRuntimeConfiguration) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("JournalRuntimeConfiguration"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
+			goto WriteFieldError
+		}
+		if err = p.writeField15(oprot); err != nil {
+			fieldId = 15
+			goto WriteFieldError
+		}
+		if err = p.writeField16(oprot); err != nil {
+			fieldId = 16
+			goto WriteFieldError
+		}
+		if err = p.writeField17(oprot); err != nil {
+			fieldId = 17
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_projection", thrift.BOOL, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.JournalProjection); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_ui", thrift.BOOL, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.JournalUI); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_snapshots", thrift.BOOL, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.JournalSnapshots); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("checkpoint_recovery", thrift.BOOL, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.CheckpointRecovery); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_projection_rollout_basis_points", thrift.I32, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.JournalProjectionRolloutBasisPoints); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_ui_rollout_basis_points", thrift.I32, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.JournalUIRolloutBasisPoints); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("journal_snapshots_rollout_basis_points", thrift.I32, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.JournalSnapshotsRolloutBasisPoints); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField8(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("checkpoint_recovery_rollout_basis_points", thrift.I32, 8); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.CheckpointRecoveryRolloutBasisPoints); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField9(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("sse_tenant_connection_cap", thrift.I32, 9); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.SseTenantConnectionCap); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField10(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("sse_cluster_connection_cap", thrift.I32, 10); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.SseClusterConnectionCap); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField11(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("sse_send_queue_high_watermark", thrift.I32, 11); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.SseSendQueueHighWatermark); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField12(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("sse_send_queue_max", thrift.I32, 12); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.SseSendQueueMax); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField13(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("short_request_qps", thrift.I32, 13); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.ShortRequestQPS); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField14(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("short_request_burst", thrift.I32, 14); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.ShortRequestBurst); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField15(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("lease_ttl_seconds", thrift.I32, 15); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.LeaseTTLSeconds); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField16(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("snapshot_fragment_threshold_bytes", thrift.I64, 16); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SnapshotFragmentThresholdBytes); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) writeField17(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config_revision", thrift.STRING, 17); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.ConfigRevision); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 end error: ", p), err)
+}
+
+func (p *JournalRuntimeConfiguration) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("JournalRuntimeConfiguration(%+v)", *p)
+
+}
+
 type BasicConfiguration struct {
-	AdminEmails             string               `thrift:"admin_emails,1" form:"admin_emails" json:"admin_emails" query:"admin_emails"`
-	DisableUserRegistration bool                 `thrift:"disable_user_registration,2" form:"disable_user_registration" json:"disable_user_registration" query:"disable_user_registration"`
-	AllowRegistrationEmail  string               `thrift:"allow_registration_email,3" form:"allow_registration_email" json:"allow_registration_email" query:"allow_registration_email"`
-	PluginConfiguration     *PluginConfiguration `thrift:"plugin_configuration,4" form:"plugin_configuration" json:"plugin_configuration" query:"plugin_configuration"`
-	CodeRunnerType          CodeRunnerType       `thrift:"code_runner_type,5,default,CodeRunnerType" form:"code_runner_type" json:"code_runner_type" query:"code_runner_type"`
-	SandboxConfig           *SandboxConfig       `thrift:"sandbox_config,6,optional" form:"sandbox_config" json:"sandbox_config,omitempty" query:"sandbox_config"`
-	ServerHost              string               `thrift:"server_host,7" form:"server_host" json:"server_host" query:"server_host"`
-	SiteName                *string              `thrift:"site_name,8,optional" form:"site_name" json:"site_name,omitempty" query:"site_name"`
-	SiteDescription         *string              `thrift:"site_description,9,optional" form:"site_description" json:"site_description,omitempty" query:"site_description"`
-	SiteLogoURI             *string              `thrift:"site_logo_uri,10,optional" form:"site_logo_uri" json:"site_logo_uri,omitempty" query:"site_logo_uri"`
-	FaviconURI              *string              `thrift:"favicon_uri,11,optional" form:"favicon_uri" json:"favicon_uri,omitempty" query:"favicon_uri"`
+	AdminEmails                 string                       `thrift:"admin_emails,1" form:"admin_emails" json:"admin_emails" query:"admin_emails"`
+	DisableUserRegistration     bool                         `thrift:"disable_user_registration,2" form:"disable_user_registration" json:"disable_user_registration" query:"disable_user_registration"`
+	AllowRegistrationEmail      string                       `thrift:"allow_registration_email,3" form:"allow_registration_email" json:"allow_registration_email" query:"allow_registration_email"`
+	PluginConfiguration         *PluginConfiguration         `thrift:"plugin_configuration,4" form:"plugin_configuration" json:"plugin_configuration" query:"plugin_configuration"`
+	CodeRunnerType              CodeRunnerType               `thrift:"code_runner_type,5,default,CodeRunnerType" form:"code_runner_type" json:"code_runner_type" query:"code_runner_type"`
+	SandboxConfig               *SandboxConfig               `thrift:"sandbox_config,6,optional" form:"sandbox_config" json:"sandbox_config,omitempty" query:"sandbox_config"`
+	ServerHost                  string                       `thrift:"server_host,7" form:"server_host" json:"server_host" query:"server_host"`
+	SiteName                    *string                      `thrift:"site_name,8,optional" form:"site_name" json:"site_name,omitempty" query:"site_name"`
+	SiteDescription             *string                      `thrift:"site_description,9,optional" form:"site_description" json:"site_description,omitempty" query:"site_description"`
+	SiteLogoURI                 *string                      `thrift:"site_logo_uri,10,optional" form:"site_logo_uri" json:"site_logo_uri,omitempty" query:"site_logo_uri"`
+	FaviconURI                  *string                      `thrift:"favicon_uri,11,optional" form:"favicon_uri" json:"favicon_uri,omitempty" query:"favicon_uri"`
+	JournalRuntimeConfiguration *JournalRuntimeConfiguration `thrift:"journal_runtime_configuration,12,optional" form:"journal_runtime_configuration" json:"journal_runtime_configuration,omitempty" query:"journal_runtime_configuration"`
 }
 
 func NewBasicConfiguration() *BasicConfiguration {
@@ -17396,6 +18273,15 @@ func (p *BasicConfiguration) GetFaviconURI() (v string) {
 	return *p.FaviconURI
 }
 
+var BasicConfiguration_JournalRuntimeConfiguration_DEFAULT *JournalRuntimeConfiguration
+
+func (p *BasicConfiguration) GetJournalRuntimeConfiguration() (v *JournalRuntimeConfiguration) {
+	if !p.IsSetJournalRuntimeConfiguration() {
+		return BasicConfiguration_JournalRuntimeConfiguration_DEFAULT
+	}
+	return p.JournalRuntimeConfiguration
+}
+
 var fieldIDToName_BasicConfiguration = map[int16]string{
 	1:  "admin_emails",
 	2:  "disable_user_registration",
@@ -17408,6 +18294,7 @@ var fieldIDToName_BasicConfiguration = map[int16]string{
 	9:  "site_description",
 	10: "site_logo_uri",
 	11: "favicon_uri",
+	12: "journal_runtime_configuration",
 }
 
 func (p *BasicConfiguration) IsSetPluginConfiguration() bool {
@@ -17432,6 +18319,10 @@ func (p *BasicConfiguration) IsSetSiteLogoURI() bool {
 
 func (p *BasicConfiguration) IsSetFaviconURI() bool {
 	return p.FaviconURI != nil
+}
+
+func (p *BasicConfiguration) IsSetJournalRuntimeConfiguration() bool {
+	return p.JournalRuntimeConfiguration != nil
 }
 
 func (p *BasicConfiguration) Read(iprot thrift.TProtocol) (err error) {
@@ -17536,6 +18427,14 @@ func (p *BasicConfiguration) Read(iprot thrift.TProtocol) (err error) {
 		case 11:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField12(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -17685,6 +18584,14 @@ func (p *BasicConfiguration) ReadField11(iprot thrift.TProtocol) error {
 	p.FaviconURI = _field
 	return nil
 }
+func (p *BasicConfiguration) ReadField12(iprot thrift.TProtocol) error {
+	_field := NewJournalRuntimeConfiguration()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.JournalRuntimeConfiguration = _field
+	return nil
+}
 
 func (p *BasicConfiguration) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -17734,6 +18641,10 @@ func (p *BasicConfiguration) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField11(oprot); err != nil {
 			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
 			goto WriteFieldError
 		}
 	}
@@ -17949,6 +18860,25 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *BasicConfiguration) writeField12(oprot thrift.TProtocol) (err error) {
+	if p.IsSetJournalRuntimeConfiguration() {
+		if err = oprot.WriteFieldBegin("journal_runtime_configuration", thrift.STRUCT, 12); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.JournalRuntimeConfiguration.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
 }
 
 func (p *BasicConfiguration) String() string {

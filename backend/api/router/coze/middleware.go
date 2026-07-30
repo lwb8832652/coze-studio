@@ -1891,6 +1891,11 @@ func _deletecanonicalthreadartifactMw() []app.HandlerFunc {
 	return nil
 }
 
+func _copycanonicalthreadartifactlinkMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _restorecanonicalthreadartifactMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -2041,7 +2046,17 @@ func _joincanonicalrunMw() []app.HandlerFunc {
 	return nil
 }
 
+func _getcanonicalrunjournalMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _listcanonicalrunmessagesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _recovercanonicalrunjournalMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -2057,6 +2072,26 @@ func _retrycanonicalsubagentrunMw() []app.HandlerFunc {
 }
 
 func _reconnectcanonicalrunstreamMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _snapshots0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _snapshot_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalrunsnapshotMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _auditcanonicalrunsnapshotactionMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -2122,6 +2157,21 @@ func _getcanonicalthreadMw() []app.HandlerFunc {
 }
 
 func _patchcanonicalthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _journalMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicaljournalsettingsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _patchcanonicaljournalsettingsMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }

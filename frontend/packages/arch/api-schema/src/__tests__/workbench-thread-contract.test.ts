@@ -19,8 +19,44 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
+import type * as journalContract from '../workbench-journal';
 import * as api from '../idl/workbench/thread';
 import * as scheduledTaskAPI from '../idl/workbench/task';
+import * as journal from '../idl/workbench/journal';
+
+const untypedVersionedJournalEvent = {
+  event_id: 'event-1',
+  thread_id: 'thread-1',
+  run_id: 'run-1',
+  event_type: 'action.started',
+  payload: { unexpected: true },
+  payload_version: journal.JOURNAL_PAYLOAD_VERSION,
+  created_at: '2026-07-30T14:32:10.123456789Z',
+};
+
+// @ts-expect-error versioned Journal events require a typed payload branch
+const rejectedUntypedJournalEvent: journalContract.JournalEvent =
+  untypedVersionedJournalEvent;
+void rejectedUntypedJournalEvent;
+
+const mismatchedSnapshotEnvelope = {
+  content_type: journal.JournalSnapshotContentType.Document,
+  snapshot_id: 'snapshot-1',
+  event_id: 'event-1',
+  attempt_id: 'attempt-1',
+  is_fragmented: false,
+  status: journal.JournalContentStatus.Ready,
+  created_at: '2026-07-30T14:32:10.123456789Z',
+  visibility: journal.JournalVisibility.User,
+  fragments: [],
+  has_more: false,
+  content: { terminal: { command: 'pwd' } },
+};
+
+// @ts-expect-error content_type must match the exclusive snapshot content branch
+const rejectedMismatchedSnapshot: journalContract.JournalSnapshotEnvelope =
+  mismatchedSnapshotEnvelope;
+void rejectedMismatchedSnapshot;
 
 const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
@@ -28,6 +64,18 @@ const generatedSource = readFileSync(
 );
 const generatedProductSource = readFileSync(
   new URL('../idl/workbench/thread_product.ts', import.meta.url),
+  'utf8',
+);
+const generatedJournalSource = readFileSync(
+  new URL('../idl/workbench/journal.ts', import.meta.url),
+  'utf8',
+);
+const journalContractSource = readFileSync(
+  new URL('../workbench-journal.ts', import.meta.url),
+  'utf8',
+);
+const adminConfigThriftSource = readFileSync(
+  new URL('../../../../../../idl/admin/config.thrift', import.meta.url),
   'utf8',
 );
 const generatedTaskSource = readFileSync(
@@ -44,6 +92,20 @@ const threadSourceFile = ts.createSourceFile(
 const threadProductSourceFile = ts.createSourceFile(
   'thread_product.ts',
   generatedProductSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const journalSourceFile = ts.createSourceFile(
+  'journal.ts',
+  generatedJournalSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const journalContractSourceFile = ts.createSourceFile(
+  'workbench-journal.ts',
+  journalContractSource,
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TS,
@@ -127,6 +189,16 @@ const productMethods = [
   'ExportCanonicalThreadGuardrailAuditEvents',
   'ListCanonicalThreadMCPRuntimeAuditEvents',
   'RetryCanonicalSubagentRun',
+] as const;
+
+const journalMethods = [
+  'GetCanonicalRunJournal',
+  'GetCanonicalRunSnapshot',
+  'AuditCanonicalRunSnapshotAction',
+  'RecoverCanonicalRunJournal',
+  'GetCanonicalJournalSettings',
+  'PatchCanonicalJournalSettings',
+  'CopyCanonicalThreadArtifactLink',
 ] as const;
 
 const scheduledTaskAPIFunctions = [
@@ -385,7 +457,12 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     method: 'GET',
     reqMapping: {
       path: ['thread_id', 'run_id'],
-      query: ['after_event_id', 'cancel_on_disconnect', 'stream_mode'],
+      query: [
+        'after_event_id',
+        'cancel_on_disconnect',
+        'stream_mode',
+        'journal_protocol_version',
+      ],
       header: ['Last-Event-ID', 'X-Coze-Space-ID'],
     },
   },
@@ -425,7 +502,13 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     method: 'GET',
     reqMapping: {
       path: ['thread_id', 'run_id'],
-      query: ['after_event_id', 'event_types', 'limit'],
+      query: [
+        'after_event_id',
+        'event_types',
+        'limit',
+        'attempt_id',
+        'after_sequence',
+      ],
       header: ['X-Coze-Space-ID'],
     },
   },
@@ -496,7 +579,7 @@ const productAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       header: ['X-Coze-Space-ID'],
-      query: ['run_id', 'deleted_only', 'limit', 'offset'],
+      query: ['run_id', 'deleted_only', 'limit', 'offset', 'collection_id'],
     },
   },
   {
@@ -724,6 +807,78 @@ const productAPIConfigs: CanonicalAPIExpectation[] = [
   },
 ];
 
+const journalAPIConfigs: CanonicalAPIExpectation[] = [
+  {
+    name: 'GetCanonicalRunJournal',
+    url: '/api/workbench/threads/:thread_id/runs/:run_id/journal',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id', 'run_id'],
+      header: ['X-Coze-Space-ID'],
+      query: [
+        'attempt_id',
+        'after_sequence',
+        'limit',
+        'journal_protocol_version',
+        'after_event_id',
+      ],
+    },
+  },
+  {
+    name: 'GetCanonicalRunSnapshot',
+    url: '/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id', 'run_id', 'snapshot_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['cursor', 'limit'],
+    },
+  },
+  {
+    name: 'AuditCanonicalRunSnapshotAction',
+    url: '/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id/actions',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'run_id', 'snapshot_id'],
+      header: ['X-Coze-Space-ID', 'Idempotency-Key'],
+      body: ['action'],
+    },
+  },
+  {
+    name: 'RecoverCanonicalRunJournal',
+    url: '/api/workbench/threads/:thread_id/runs/:run_id/recover',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'run_id'],
+      header: ['X-Coze-Space-ID', 'Idempotency-Key'],
+      body: ['source_attempt_id', 'action', 'confirmed'],
+    },
+  },
+  {
+    name: 'GetCanonicalJournalSettings',
+    url: '/api/workbench/journal/settings',
+    method: 'GET',
+    reqMapping: {},
+  },
+  {
+    name: 'PatchCanonicalJournalSettings',
+    url: '/api/workbench/journal/settings',
+    method: 'PATCH',
+    reqMapping: {
+      body: ['split_ratio', 'revision'],
+    },
+  },
+  {
+    name: 'CopyCanonicalThreadArtifactLink',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+];
+
 const canonicalRunBody = [
   'assistant_id',
   'input',
@@ -750,11 +905,42 @@ const canonicalRunBody = [
 ] as const;
 
 function interfaceSource(name: string): string {
-  const match = generatedSource.match(
+  return interfaceSourceFrom(generatedSource, name);
+}
+
+function interfaceSourceFrom(source: string, name: string): string {
+  const match = source.match(
     new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`),
   );
 
   expect(match, `${name} must be generated`).not.toBeNull();
+  return match?.[1] ?? '';
+}
+
+function declarationSourceFrom(
+  sourceFile: ts.SourceFile,
+  source: string,
+  name: string,
+): string {
+  const declaration = sourceFile.statements.find(
+    statement =>
+      (ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement)) &&
+      statement.name.text === name,
+  );
+
+  expect(declaration, `${name} must be generated`).not.toBeUndefined();
+  return declaration
+    ? source.slice(declaration.getStart(sourceFile), declaration.end)
+    : '';
+}
+
+function thriftStructSourceFrom(source: string, name: string): string {
+  const match = source.match(
+    new RegExp(`struct\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`),
+  );
+
+  expect(match, `${name} must be declared`).not.toBeNull();
   return match?.[1] ?? '';
 }
 
@@ -1023,7 +1209,7 @@ describe('canonical Workbench thread generated contract', () => {
     });
   });
 
-  it('exports exactly the 47 canonical createAPI functions', () => {
+  it('exports exactly the 54 canonical createAPI functions', () => {
     const generatedAPIFunctions = Array.from(
       generatedSource.matchAll(
         /export const (\w+) = \/\*#__PURE__\*\/createAPI</g,
@@ -1034,11 +1220,15 @@ describe('canonical Workbench thread generated contract', () => {
     expect(generatedAPIFunctions).toEqual([
       ...canonicalAPIFunctions,
       ...productMethods,
+      ...journalMethods,
     ]);
     for (const functionName of canonicalAPIFunctions) {
       expect(api[functionName]).toBeTypeOf('function');
     }
     for (const method of productMethods) {
+      expect(api[method]).toBeTypeOf('function');
+    }
+    for (const method of journalMethods) {
       expect(api[method]).toBeTypeOf('function');
     }
   });
@@ -1092,21 +1282,28 @@ describe('canonical Workbench thread generated contract', () => {
               : expected.reqMapping,
       })),
       ...productAPIConfigs,
+      ...journalAPIConfigs,
     ];
-    const actualConfigs = [...canonicalAPIFunctions, ...productMethods].map(
-      name => {
-        const actual = apiConfig(name);
-        return {
-          name: actual.name,
-          url: actual.url,
-          method: actual.method,
-          reqMapping: actual.reqMapping,
-        };
-      },
-    );
+    const actualConfigs = [
+      ...canonicalAPIFunctions,
+      ...productMethods,
+      ...journalMethods,
+    ].map(name => {
+      const actual = apiConfig(name);
+      return {
+        name: actual.name,
+        url: actual.url,
+        method: actual.method,
+        reqMapping: actual.reqMapping,
+      };
+    });
 
     expect(actualConfigs).toEqual(expectedConfigs);
-    for (const config of actualConfigs) {
+    for (const config of actualConfigs.filter(
+      item =>
+        item.name !== 'GetCanonicalJournalSettings' &&
+        item.name !== 'PatchCanonicalJournalSettings',
+    )) {
       expect(config.reqMapping?.header).toContain('X-Coze-Space-ID');
     }
 
@@ -1120,5 +1317,235 @@ describe('canonical Workbench thread generated contract', () => {
     expect(generatedSource).not.toMatch(
       /"url": "\/api\/workbench\/threads\/:thread_id\/runs\/:run_id\/join"[\s\S]{0,100}"method": "POST"/,
     );
+  });
+
+  it('freezes typed Journal events, payloads, snapshots, and settings', () => {
+    expect(journal.JOURNAL_SCHEMA_VERSION).toBe('1.1');
+    expect(journal.JOURNAL_PAYLOAD_VERSION).toBe('1.0');
+    expect(journal.JOURNAL_PROTOCOL_VERSION).toBe('1.1');
+    expect(journal.JOURNAL_SPLIT_RATIO_MIN).toBe(0.4);
+    expect(journal.JOURNAL_SPLIT_RATIO_MAX).toBe(0.7);
+
+    const event = interfaceSourceFrom(generatedJournalSource, 'JournalEvent');
+    expect(event).toMatch(/event_id:\s*string[,;]/);
+    expect(event).toMatch(/thread_id:\s*string[,;]/);
+    expect(event).toMatch(/run_id:\s*string[,;]/);
+    expect(event).toMatch(/event_type:\s*string[,;]/);
+    expect(event).toMatch(/payload:\s*any[,;]/);
+    expect(event).toMatch(/created_at:\s*string[,;]/);
+    expect(event).toMatch(/schema_version\?:\s*string[,;]/);
+    expect(event).toMatch(/payload_version\?:\s*string[,;]/);
+    expect(event).toMatch(/attempt_id\?:\s*string[,;]/);
+    expect(event).toMatch(/sequence\?:\s*number[,;]/);
+
+    for (const payloadName of [
+      'JournalMilestoneEventPayload',
+      'JournalActionEventPayload',
+      'JournalArtifactEventPayload',
+      'JournalVerificationEventPayload',
+      'JournalConfirmationEventPayload',
+    ]) {
+      const payload = declarationSourceFrom(
+        journalSourceFile,
+        generatedJournalSource,
+        payloadName,
+      );
+      expect(payload, payloadName).toMatch(
+        /type:\s*Journal(?:Milestone|Action|Artifact|Verification|Confirmation)PayloadType[,;]/,
+      );
+      expect(payload, payloadName).toMatch(/data:\s*Journal\w+EventData[,;]/);
+      expect(payload, payloadName).not.toMatch(/data\??:\s*any[,;]/);
+    }
+    expect(journalContractSource).toContain(
+      'export type JournalTypedEventPayload =',
+    );
+    expect(journalContractSource).toContain('export type JournalEvent =');
+    expect(journalContractSource).toContain("'payload' | 'payload_version'");
+    expect(generatedJournalSource).not.toContain(
+      'export enum JournalPayloadType',
+    );
+    expect(journal.JournalActionPayloadType.Terminal).toBe('terminal');
+    expect(journal.JournalActionPayloadType.Document).toBe('document');
+    expect(journal.JournalActionPayloadType.Generic).toBe('generic');
+
+    const actionPayload = declarationSourceFrom(
+      journalContractSourceFile,
+      journalContractSource,
+      'JournalActionPayload',
+    );
+    for (const kind of ['Document', 'Terminal', 'Code', 'Skill', 'Browser']) {
+      expect(actionPayload, `${kind} action branch`).toMatch(
+        new RegExp(
+          `JournalActionPayloadType\\.${kind},[\\s\\S]*?JournalSnapshotContentType\\.${kind}`,
+        ),
+      );
+    }
+    expect(actionPayload).toContain('JournalActionPayloadType.Generic');
+    expect(actionPayload).toContain('content_type?: never');
+
+    const snapshot = declarationSourceFrom(
+      journalSourceFile,
+      generatedJournalSource,
+      'JournalSnapshotEnvelope',
+    );
+    for (const field of [
+      'content_type',
+      'snapshot_id',
+      'event_id',
+      'attempt_id',
+      'is_fragmented',
+      'status',
+      'created_at',
+      'visibility',
+      'error_code',
+      'fragments',
+      'has_more',
+      'next_cursor',
+      'content',
+    ]) {
+      expect(snapshot, field).toContain(field);
+    }
+    expect(snapshot).not.toMatch(/\bdata\??:\s*any[,;]/);
+    expect(snapshot).toMatch(/content:\s*JournalSnapshotContent[,;]/);
+    expect(snapshot).not.toMatch(
+      /\n\s*(document|terminal|code|skill|browser)\??:/,
+    );
+
+    const snapshotContent = declarationSourceFrom(
+      journalContractSourceFile,
+      journalContractSource,
+      'JournalSnapshotContent',
+    );
+    expect(snapshotContent).toContain('export type JournalSnapshotContent =');
+    expect(journalContractSource).toContain(
+      'Exclude<keyof JournalSnapshotContentMap, TKey>]?: never',
+    );
+    expect(journalContractSource).toContain("'content_type' | 'content'");
+    for (const branchName of [
+      'Document',
+      'Terminal',
+      'Code',
+      'Skill',
+      'Browser',
+    ]) {
+      expect(journalContractSource).toContain(
+        `[JournalSnapshotContentType.${branchName}]:`,
+      );
+    }
+
+    for (const controlType of [
+      'journal_disabled',
+      'journal_degraded',
+      'capability_unavailable',
+      'protocol_incompatible',
+    ]) {
+      expect(Object.values(journal.JournalControlFrameType)).toContain(
+        controlType,
+      );
+    }
+    expect(journalContractSource).toContain('export type JournalStreamFrame =');
+
+    expect(Object.values(journal.JournalErrorCode)).toEqual([
+      'JOURNAL_CURSOR_EXPIRED',
+      'JOURNAL_EVENT_GAP',
+      'SNAPSHOT_UNAVAILABLE',
+      'RESOURCE_NOT_FOUND',
+      'RECOVERY_CONFLICT',
+      'RECOVERY_CONFIRM_REQUIRED',
+      'JOURNAL_RATE_LIMITED',
+      'SCHEMA_INCOMPATIBLE',
+      'NO_PERMISSION',
+    ]);
+
+    const skill = interfaceSourceFrom(generatedJournalSource, 'JournalSkill');
+    expect(skill).toMatch(/skill_id:\s*string[,;]/);
+    expect(skill).toMatch(/name:\s*string[,;]/);
+    for (const field of [
+      'invocation_status',
+      'input_summary',
+      'output_artifacts',
+      'purpose_summary',
+      'description',
+    ]) {
+      expect(skill, field).toContain(`${field}?`);
+    }
+
+    const patchSettings = interfaceSourceFrom(
+      generatedJournalSource,
+      'PatchCanonicalJournalSettingsRequest',
+    );
+    expect(patchSettings).toMatch(/split_ratio:\s*number[,;]/);
+    expect(patchSettings).toMatch(/revision:\s*string[,;]/);
+    expect(patchSettings).not.toMatch(/user_id/i);
+    const bootstrapRequest = interfaceSourceFrom(
+      generatedJournalSource,
+      'GetCanonicalRunJournalRequest',
+    );
+    expect(bootstrapRequest).toMatch(/after_event_id\?:\s*string[,;]/);
+    expect(generatedJournalSource).not.toMatch(/Support|Oncall|Ticket/);
+  });
+
+  it('freezes artifact enums, collection ordering, and runtime gates', () => {
+    for (const enumName of [
+      'CanonicalArtifactSource',
+      'CanonicalArtifactGenerationStatus',
+      'CanonicalArtifactPreviewMode',
+      'CanonicalArtifactCapability',
+    ]) {
+      expect(generatedProductSource).toContain(`export enum ${enumName}`);
+    }
+    const artifact = interfaceSourceFrom(
+      generatedProductSource,
+      'CanonicalArtifact',
+    );
+    expect(artifact).toMatch(/source\?:\s*CanonicalArtifactSource[,;]/);
+    expect(artifact).toMatch(
+      /generation_status\?:\s*CanonicalArtifactGenerationStatus[,;]/,
+    );
+    expect(artifact).toMatch(
+      /capabilities\?:\s*CanonicalArtifactCapability\[\][,;]/,
+    );
+    expect(artifact).toMatch(/collection_id\?:\s*string[,;]/);
+    expect(artifact).toMatch(/collection_order\?:\s*number[,;]/);
+    const collection = interfaceSourceFrom(
+      generatedProductSource,
+      'CanonicalArtifactCollection',
+    );
+    expect(collection).toMatch(/collection_id:\s*string[,;]/);
+    expect(collection).toMatch(/artifact_ids:\s*string\[\][,;]/);
+
+    const artifactList = interfaceSourceFrom(
+      generatedProductSource,
+      'CanonicalArtifactListResponse',
+    );
+    expect(artifactList).toMatch(
+      /collections\?:\s*CanonicalArtifactCollection\[\][,;]/,
+    );
+
+    const runtimeConfig = thriftStructSourceFrom(
+      adminConfigThriftSource,
+      'JournalRuntimeConfiguration',
+    );
+    for (const field of [
+      'journal_projection',
+      'journal_ui',
+      'journal_snapshots',
+      'checkpoint_recovery',
+      'journal_projection_rollout_basis_points',
+      'journal_ui_rollout_basis_points',
+      'journal_snapshots_rollout_basis_points',
+      'checkpoint_recovery_rollout_basis_points',
+      'sse_tenant_connection_cap',
+      'sse_cluster_connection_cap',
+      'sse_send_queue_high_watermark',
+      'sse_send_queue_max',
+      'short_request_qps',
+      'short_request_burst',
+      'lease_ttl_seconds',
+      'snapshot_fragment_threshold_bytes',
+      'config_revision',
+    ]) {
+      expect(runtimeConfig, field).toContain(field);
+    }
   });
 });

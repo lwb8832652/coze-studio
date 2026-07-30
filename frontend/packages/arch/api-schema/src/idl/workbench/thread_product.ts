@@ -16,6 +16,35 @@
 
 import * as base from './../base';
 export { base };
+export enum CanonicalArtifactSource {
+  AgentGenerated = "agent_generated",
+  UserUpload = "user_upload",
+  ToolOutput = "tool_output",
+  ExternalReference = "external_reference",
+}
+export enum CanonicalArtifactGenerationStatus {
+  Processing = "processing",
+  Ready = "ready",
+  Failed = "failed",
+  Expired = "expired",
+  Blocked = "blocked",
+}
+export enum CanonicalArtifactPreviewMode {
+  Text = "text",
+  Image = "image",
+  PDF = "pdf",
+  Audio = "audio",
+  Video = "video",
+  MediaCollection = "media_collection",
+  Download = "download",
+  Unsupported = "unsupported",
+}
+export enum CanonicalArtifactCapability {
+  Open = "open",
+  Preview = "preview",
+  Download = "download",
+  Copy = "copy",
+}
 export interface CanonicalProductEmptyResponse {}
 export interface CanonicalProductThreadRequest {
   thread_id: string,
@@ -45,11 +74,20 @@ export interface CanonicalArtifact {
   virtual_path: string,
   content_type: string,
   size_bytes: number,
-  preview_mode: string,
+  preview_mode: CanonicalArtifactPreviewMode,
   metadata: any,
   created_at: string,
   updated_at: string,
   deleted_at?: string,
+  source?: CanonicalArtifactSource,
+  generation_status?: CanonicalArtifactGenerationStatus,
+  capabilities?: CanonicalArtifactCapability[],
+  collection_id?: string,
+  collection_order?: number,
+}
+export interface CanonicalArtifactCollection {
+  collection_id: string,
+  artifact_ids: string[],
 }
 export interface CanonicalArtifactScanJob {
   job_id: string,
@@ -172,6 +210,7 @@ export interface CanonicalArtifactListResponse {
   total: number,
   has_more: boolean,
   next_cursor?: string,
+  collections?: CanonicalArtifactCollection[],
 }
 export interface CanonicalArtifactScanJobListResponse {
   jobs: CanonicalArtifactScanJob[],
@@ -226,7 +265,7 @@ export interface CanonicalArtifactSignedURLResponse {
   url: string,
   expires_in_seconds: number,
   content_type: string,
-  preview_mode: string,
+  preview_mode: CanonicalArtifactPreviewMode,
 }
 export interface CanonicalArtifactRestoreResponse {
   artifact: CanonicalArtifact,
@@ -304,6 +343,17 @@ export interface ListCanonicalThreadArtifactsRequest {
   deleted_only?: boolean,
   limit?: number,
   offset?: number,
+  collection_id?: string,
+}
+export interface CopyCanonicalThreadArtifactLinkRequest {
+  thread_id: string,
+  "X-Coze-Space-ID": string,
+  artifact_id: string,
+}
+export interface CopyCanonicalThreadArtifactLinkResponse {
+  artifact_id: string,
+  copy_url: string,
+  expires_at: string,
 }
 export interface CanonicalArtifactRouteRequest {
   thread_id: string,

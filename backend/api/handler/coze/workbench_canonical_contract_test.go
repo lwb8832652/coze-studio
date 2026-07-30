@@ -18,15 +18,19 @@ package coze
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/cloudwego/hertz/pkg/app"
 	hertzconsts "github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/route/param"
 	"github.com/stretchr/testify/require"
 
+	journalcontract "github.com/coze-dev/coze-studio/backend/api/model/workbench/journal_contract"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
@@ -234,6 +238,325 @@ func TestCanonicalErrorNeverLeaksCauseOrPayload(t *testing.T) {
 	require.NotContains(t, body, "sk-secret")
 	require.NotContains(t, body, "provider payload")
 	require.NotContains(t, body, "database failed")
+}
+
+func TestCanonicalJournalContractVersionsAndLegacyEvents(t *testing.T) {
+	require.Equal(t, "1.1", journalcontract.JOURNALSCHEMAVERSION)
+	require.Equal(t, "1.0", journalcontract.JOURNALPAYLOADVERSION)
+	require.Equal(t, "1.1", journalcontract.JOURNALPROTOCOLVERSION)
+	require.Equal(t, 0.40, journalcontract.JOURNALSPLITRATIOMIN)
+	require.Equal(t, 0.70, journalcontract.JOURNALSPLITRATIOMAX)
+
+	legacyJSON := []byte(`{
+		"event_id":"101",
+		"thread_id":"202",
+		"run_id":"303",
+		"event_type":"values",
+		"payload":{"answer":"kept for legacy clients"},
+		"created_at":"2026-07-30T14:32:10.123456789Z",
+		"future_optional_field":"ignored"
+	}`)
+	event, err := parseCanonicalJournalEvent(legacyJSON)
+	require.NoError(t, err)
+	require.Equal(t, "101", event.EventID)
+	require.Equal(t, "202", event.ThreadID)
+	require.Equal(t, "303", event.RunID)
+	require.Equal(t, "values", event.EventType)
+	require.JSONEq(t, `{"answer":"kept for legacy clients"}`, event.Payload)
+	require.Equal(t, "2026-07-30T14:32:10.123456789Z", event.CreatedAt)
+	require.Nil(t, event.SchemaVersion)
+	require.Nil(t, event.PayloadVersion)
+
+	for _, field := range []string{"EventID", "ThreadID", "RunID"} {
+		contractField, ok := reflect.TypeOf(*event).FieldByName(field)
+		require.True(t, ok, field)
+		require.Equal(t, reflect.String, contractField.Type.Kind(), field)
+	}
+
+	bootstrapRequestType := reflect.TypeOf(journalcontract.GetCanonicalRunJournalRequest{})
+	afterEventIDField, ok := bootstrapRequestType.FieldByName("AfterEventID")
+	require.True(t, ok, "bootstrap request must preserve the legacy event cursor")
+	require.Equal(t, reflect.Int64, afterEventIDField.Type.Elem().Kind())
+	require.Contains(t, afterEventIDField.Tag.Get("json"), ",string")
+}
+
+func TestCanonicalJournalContractTypedPayloadsAndSnapshots(t *testing.T) {
+	action := journalcontract.JournalActionEventPayload{
+		Type: journalcontract.JournalActionPayloadTypeTerminal,
+		Data: &journalcontract.JournalActionEventData{
+			ActionID:             "action-1",
+			MilestoneID:          canonicalTestStringPointer("milestone-1"),
+			Operation:            "read",
+			Target:               "requirements.md",
+			DisplayVerbRunning:   "正在读取 requirements.md",
+			DisplayVerbCompleted: "已读取 requirements.md",
+			ContentType:          canonicalTestStringPointer(journalcontract.JournalSnapshotContentTypeTerminal),
+		},
+	}
+	encoded, err := json.Marshal(action)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"type":"terminal",
+		"data":{
+			"action_id":"action-1",
+			"milestone_id":"milestone-1",
+			"operation":"read",
+			"target":"requirements.md",
+			"display_verb_running":"正在读取 requirements.md",
+			"display_verb_completed":"已读取 requirements.md",
+			"content_type":"terminal"
+		}
+	}`, string(encoded))
+	require.Nil(t, validateCanonicalJournalActionPayload(&action))
+
+	mismatchedAction := action
+	mismatchedAction.Data = &journalcontract.JournalActionEventData{
+		ActionID:             "action-2",
+		Operation:            "read",
+		Target:               "requirements.md",
+		DisplayVerbRunning:   "正在读取 requirements.md",
+		DisplayVerbCompleted: "已读取 requirements.md",
+		ContentType:          canonicalTestStringPointer(journalcontract.JournalSnapshotContentTypeDocument),
+	}
+	public := validateCanonicalJournalActionPayload(&mismatchedAction)
+	require.NotNil(t, public)
+	require.Equal(t, "SCHEMA_INCOMPATIBLE", public.Code)
+
+	require.Nil(t, validateCanonicalJournalActionPayload(&journalcontract.JournalActionEventPayload{
+		Type: journalcontract.JournalActionPayloadTypeGeneric,
+		Data: &journalcontract.JournalActionEventData{
+			ActionID:             "action-3",
+			Operation:            "wait",
+			Target:               "run",
+			DisplayVerbRunning:   "正在等待任务",
+			DisplayVerbCompleted: "已等待任务",
+		},
+	}))
+
+	require.Equal(t, "milestone", journalcontract.JournalMilestonePayloadTypeMilestone)
+	require.Equal(t, []journalcontract.JournalActionPayloadType{
+		"generic", "document", "terminal", "code", "skill", "browser",
+	}, []journalcontract.JournalActionPayloadType{
+		journalcontract.JournalActionPayloadTypeGeneric,
+		journalcontract.JournalActionPayloadTypeDocument,
+		journalcontract.JournalActionPayloadTypeTerminal,
+		journalcontract.JournalActionPayloadTypeCode,
+		journalcontract.JournalActionPayloadTypeSkill,
+		journalcontract.JournalActionPayloadTypeBrowser,
+	})
+	require.Equal(t, "artifact", journalcontract.JournalArtifactPayloadTypeArtifact)
+	require.Equal(t, "verification", journalcontract.JournalVerificationPayloadTypeVerification)
+	require.Equal(t, "confirmation", journalcontract.JournalConfirmationPayloadTypeConfirmation)
+
+	typedPayloads := []any{
+		journalcontract.JournalMilestoneEventPayload{},
+		journalcontract.JournalActionEventPayload{},
+		journalcontract.JournalArtifactEventPayload{},
+		journalcontract.JournalVerificationEventPayload{},
+		journalcontract.JournalConfirmationEventPayload{},
+	}
+	for _, payload := range typedPayloads {
+		payloadType := reflect.TypeOf(payload)
+		typeField, ok := payloadType.FieldByName("Type")
+		require.True(t, ok, payloadType.Name())
+		require.NotEqual(t, "JournalPayloadType", typeField.Type.Name(), payloadType.Name())
+		dataField, ok := payloadType.FieldByName("Data")
+		require.True(t, ok, payloadType.Name())
+		require.NotEqual(t, reflect.Interface, dataField.Type.Kind(), payloadType.Name())
+		require.NotEqual(t, reflect.Map, dataField.Type.Kind(), payloadType.Name())
+	}
+
+	stableFields := []struct {
+		value  any
+		fields []string
+	}{
+		{journalcontract.JournalMilestoneEventData{}, []string{
+			"MilestoneID", "Title",
+		}},
+		{journalcontract.JournalActionEventData{}, []string{
+			"ActionID", "MilestoneID", "Operation", "Target",
+			"DisplayVerbRunning", "DisplayVerbCompleted", "ContentType",
+		}},
+		{journalcontract.JournalArtifactEventData{}, []string{
+			"ArtifactID", "CollectionID",
+		}},
+		{journalcontract.JournalVerificationEventData{}, []string{
+			"VerificationID", "Title", "ResultSummary",
+		}},
+		{journalcontract.JournalConfirmationEventData{}, []string{
+			"ConfirmationID", "ConfirmationType", "Prompt", "AllowedActionKeys",
+		}},
+	}
+	for _, contract := range stableFields {
+		contractType := reflect.TypeOf(contract.value)
+		for _, field := range contract.fields {
+			_, ok := contractType.FieldByName(field)
+			require.True(t, ok, "%s.%s", contractType.Name(), field)
+		}
+	}
+
+	snapshotType := reflect.TypeOf(journalcontract.JournalSnapshotEnvelope{})
+	for _, field := range []string{
+		"ContentType", "SnapshotID", "EventID", "AttemptID", "IsFragmented",
+		"Status", "CreatedAt", "Visibility", "ErrorCode", "Fragments",
+		"HasMore", "NextCursor", "Content",
+	} {
+		_, ok := snapshotType.FieldByName(field)
+		require.True(t, ok, field)
+	}
+	snapshotContentType := reflect.TypeOf(journalcontract.JournalSnapshotContent{})
+	for _, field := range []string{"Document", "Terminal", "Code", "Skill", "Browser"} {
+		_, ok := snapshotContentType.FieldByName(field)
+		require.True(t, ok, field)
+	}
+
+	validContent := &journalcontract.JournalSnapshotContent{
+		Terminal: &journalcontract.JournalTerminalSnapshotContent{Command: "pwd"},
+	}
+	require.Equal(t, 1, validContent.CountSetFieldsJournalSnapshotContent())
+	require.NoError(t, validContent.Write(thrift.NewTBinaryProtocolTransport(
+		thrift.NewTMemoryBufferLen(128),
+	)))
+
+	invalidContent := &journalcontract.JournalSnapshotContent{
+		Document: &journalcontract.JournalDocumentSnapshotContent{Title: "requirements"},
+		Terminal: &journalcontract.JournalTerminalSnapshotContent{Command: "pwd"},
+	}
+	require.Equal(t, 2, invalidContent.CountSetFieldsJournalSnapshotContent())
+	require.Error(t, invalidContent.Write(thrift.NewTBinaryProtocolTransport(
+		thrift.NewTMemoryBufferLen(128),
+	)))
+
+	require.Equal(t, "copy_command", journalcontract.JournalSnapshotActionCopyCommand)
+	require.Equal(t, "copy_output", journalcontract.JournalSnapshotActionCopyOutput)
+	require.Equal(t, "copy_code", journalcontract.JournalSnapshotActionCopyCode)
+	require.Equal(t, "open_original", journalcontract.JournalSnapshotActionOpenOriginal)
+	require.Equal(t, "download_fragment", journalcontract.JournalSnapshotActionDownloadFragment)
+}
+
+func TestCanonicalJournalContractControlFramesAndErrorCodes(t *testing.T) {
+	controlTypes := []journalcontract.JournalControlFrameType{
+		journalcontract.JournalControlFrameTypeJournalDisabled,
+		journalcontract.JournalControlFrameTypeJournalDegraded,
+		journalcontract.JournalControlFrameTypeCapabilityUnavailable,
+		journalcontract.JournalControlFrameTypeProtocolIncompatible,
+	}
+	require.Equal(t, []journalcontract.JournalControlFrameType{
+		"journal_disabled", "journal_degraded", "capability_unavailable", "protocol_incompatible",
+	}, controlTypes)
+
+	streamFrameTypes := []any{
+		journalcontract.JournalEventStreamFrame{},
+		journalcontract.JournalHeartbeatStreamFrame{},
+		journalcontract.JournalControlStreamFrame{},
+	}
+	for _, frame := range streamFrameTypes {
+		frameType := reflect.TypeOf(frame)
+		_, hasKind := frameType.FieldByName("Kind")
+		require.True(t, hasKind, frameType.Name())
+	}
+
+	errorCodes := []journalcontract.JournalErrorCode{
+		journalcontract.JournalErrorCodeJournalCursorExpired,
+		journalcontract.JournalErrorCodeJournalEventGap,
+		journalcontract.JournalErrorCodeSnapshotUnavailable,
+		journalcontract.JournalErrorCodeResourceNotFound,
+		journalcontract.JournalErrorCodeRecoveryConflict,
+		journalcontract.JournalErrorCodeRecoveryConfirmRequired,
+		journalcontract.JournalErrorCodeJournalRateLimited,
+		journalcontract.JournalErrorCodeSchemaIncompatible,
+		journalcontract.JournalErrorCodeNoPermission,
+	}
+	require.Equal(t, []journalcontract.JournalErrorCode{
+		"JOURNAL_CURSOR_EXPIRED",
+		"JOURNAL_EVENT_GAP",
+		"SNAPSHOT_UNAVAILABLE",
+		"RESOURCE_NOT_FOUND",
+		"RECOVERY_CONFLICT",
+		"RECOVERY_CONFIRM_REQUIRED",
+		"JOURNAL_RATE_LIMITED",
+		"SCHEMA_INCOMPATIBLE",
+		"NO_PERMISSION",
+	}, errorCodes)
+}
+
+func canonicalTestStringPointer(value string) *string {
+	return &value
+}
+
+func TestCanonicalJournalContractProtocolNegotiation(t *testing.T) {
+	mode, selected, public := negotiateCanonicalJournalProtocolVersion("")
+	require.Nil(t, public)
+	require.Equal(t, canonicalJournalProtocolLegacy, mode)
+	require.Empty(t, selected)
+
+	mode, selected, public = negotiateCanonicalJournalProtocolVersion("1.0")
+	require.Nil(t, public)
+	require.Equal(t, canonicalJournalProtocolLegacy, mode)
+	require.Equal(t, "1.0", selected)
+
+	mode, selected, public = negotiateCanonicalJournalProtocolVersion("1.1")
+	require.Nil(t, public)
+	require.Equal(t, canonicalJournalProtocolV11, mode)
+	require.Equal(t, "1.1", selected)
+
+	mode, selected, public = negotiateCanonicalJournalProtocolVersion("1.7")
+	require.Nil(t, public)
+	require.Equal(t, canonicalJournalProtocolV11, mode)
+	require.Equal(t, "1.1", selected)
+
+	for _, incompatible := range []string{"2.0", "0.9", "invalid"} {
+		_, _, public = negotiateCanonicalJournalProtocolVersion(incompatible)
+		require.NotNil(t, public, incompatible)
+		require.Equal(t, "SCHEMA_INCOMPATIBLE", public.Code, incompatible)
+		require.False(t, public.Retryable, incompatible)
+	}
+
+	require.Nil(t, validateCanonicalJournalPayloadVersion(""))
+	require.Nil(t, validateCanonicalJournalPayloadVersion("1.0"))
+	require.Nil(t, validateCanonicalJournalPayloadVersion("1.9"))
+	require.Equal(t, "SCHEMA_INCOMPATIBLE", validateCanonicalJournalPayloadVersion("2.0").Code)
+}
+
+func TestCanonicalErrorCompatibility(t *testing.T) {
+	tests := []struct {
+		code      string
+		retryable bool
+	}{
+		{"JOURNAL_CURSOR_EXPIRED", true},
+		{"JOURNAL_EVENT_GAP", true},
+		{"SNAPSHOT_UNAVAILABLE", false},
+		{"RESOURCE_NOT_FOUND", false},
+		{"RECOVERY_CONFLICT", true},
+		{"RECOVERY_CONFIRM_REQUIRED", false},
+		{"JOURNAL_RATE_LIMITED", true},
+		{"SCHEMA_INCOMPATIBLE", false},
+		{"NO_PERMISSION", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.code, func(t *testing.T) {
+			public := canonicalJournalError(tt.code)
+			require.NotNil(t, public)
+			require.Equal(t, tt.code, public.Code)
+			require.Equal(t, tt.retryable, public.Retryable)
+
+			ctx := context.WithValue(context.Background(), projectconsts.CtxLogIDKey, "trace-journal")
+			var c app.RequestContext
+			writeCanonicalJournalError(ctx, &c, public.status, *public)
+
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(c.Response.Body(), &body))
+			require.Equal(t, tt.code, body["error_code"])
+			require.Equal(t, tt.code, body["code"])
+			require.Equal(t, "trace-journal", body["trace_id"])
+			require.Equal(t, tt.retryable, body["retryable"])
+			require.NotContains(t, body, "internal_reason")
+		})
+	}
+
+	require.Nil(t, canonicalJournalError("UNKNOWN"))
 }
 
 func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
