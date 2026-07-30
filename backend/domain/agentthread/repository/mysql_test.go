@@ -140,6 +140,7 @@ func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
 		&threadPO{},
 		&messagePO{},
 		&runPO{},
+		&runAttemptPO{},
 		&runEventPO{},
 		&checkpointPO{},
 		&memoryPO{},
@@ -186,6 +187,7 @@ func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
 		&threadPO{},
 		&messagePO{},
 		&runPO{},
+		&runAttemptPO{},
 		&runEventPO{},
 		&checkpointPO{},
 		&memoryPO{},
@@ -4007,7 +4009,9 @@ func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.
 func TestThreadRepositoryCreateRunBundleCommitsAndReplaysAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &runAttemptPO{},
+	))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ const (
 	memoryAuditEventImported = "memory.imported"
 )
 
-func NewService(c *Components) ThreadService {
+func NewService(c *Components) Service {
 	if c == nil {
 		return &threadService{}
 	}
@@ -522,6 +523,19 @@ func (s *threadService) CreateRunBundle(
 	if err != nil {
 		return nil, err
 	}
+	if req.EnrollJournal && (runKind != entity.RunKindTask || req.Run.ParentRunID != 0) {
+		return nil, InvalidArgumentErrorf("only a root task run can enroll in journal")
+	}
+	if req.EnrollJournal {
+		if req.JournalEnrollment == nil {
+			return nil, InvalidArgumentErrorf("journal enrollment options are required")
+		}
+		if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) == "" {
+			return nil, InvalidArgumentErrorf("journal enrollment version is required")
+		}
+	} else if req.JournalEnrollment != nil {
+		return nil, InvalidArgumentErrorf("journal enrollment options require journal enrollment")
+	}
 	strategy, err := normalizeMultitaskStrategy(req.Run.MultitaskStrategy, runKind)
 	if err != nil {
 		return nil, err
@@ -565,6 +579,9 @@ func (s *threadService) CreateRunBundle(
 		entityCount++
 	}
 	if req.Event != nil {
+		entityCount++
+	}
+	if req.EnrollJournal {
 		entityCount++
 	}
 	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
@@ -615,10 +632,41 @@ func (s *threadService) CreateRunBundle(
 			Payload:   defaultJSON(req.Event.PayloadBuilder(run.ID), "{}"),
 			CreatedAt: now,
 		}
+		nextID++
+	}
+	var attempt *entity.RunAttempt
+	if req.EnrollJournal {
+		attemptStatus, err := journalAttemptStatusForRun(status)
+		if err != nil {
+			return nil, err
+		}
+		attemptID := ids[nextID]
+		activeSlot := uint8(1)
+		traceID := strings.TrimSpace(req.JournalEnrollment.TraceID)
+		attempt = &entity.RunAttempt{
+			ID: attemptID, ThreadID: run.ThreadID,
+			JournalRunID: run.ID, ExecutionRunID: run.ID,
+			AttemptID: fmt.Sprintf("att_%d", attemptID), Ordinal: 1,
+			Status: attemptStatus, ActiveSlot: &activeSlot,
+			NextSequence: 1, LastCommittedSequence: 0,
+			EnrollmentVersion: strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion),
+			SnapshotsEnabled:  req.JournalEnrollment.SnapshotsEnabled,
+			ProjectionState:   entity.JournalProjectionStateHealthy,
+			TraceID:           journalStringPointer(traceID),
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		}
+		if attemptStatus == entity.RunAttemptStatusRunning {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = now
+			}
+			attempt.StartedAt = &startedAt
+		}
 	}
 
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
-		Run: run, Message: message, Event: event,
+		Run: run, Message: message, Event: event, Attempt: attempt,
 		SkipTopLevelAdmission:     req.SkipTopLevelAdmission,
 		ValidateIdempotencyReplay: strings.TrimSpace(req.Run.IdempotencyOperation) != "",
 		AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
@@ -626,13 +674,19 @@ func (s *threadService) CreateRunBundle(
 		},
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrUnsupportedJournalEnrollmentVersion) {
+			return nil, InvalidArgumentErrorf(
+				"unsupported journal enrollment version %q",
+				strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion),
+			)
+		}
 		return nil, err
 	}
 	if result == nil || result.Run == nil {
 		return nil, fmt.Errorf("agent thread repository returned empty run bundle")
 	}
 	return &CreateRunBundleResult{
-		Run: result.Run, Message: result.Message, Event: result.Event,
+		Run: result.Run, Message: result.Message, Event: result.Event, Attempt: result.Attempt,
 		InterruptedRuns: result.InterruptedRuns, InterruptedEvents: result.InterruptedEvents,
 		Created: result.Created,
 	}, nil
@@ -725,6 +779,42 @@ func normalizeInitialRunStatus(
 	default:
 	}
 	return "", InvalidArgumentErrorf("initial run status %q is not supported", status)
+}
+
+func journalAttemptStatusForRun(status entity.RunStatus) (entity.RunAttemptStatus, error) {
+	switch status {
+	case entity.RunStatusPending, entity.RunStatusQueued:
+		return entity.RunAttemptStatusPending, nil
+	case entity.RunStatusRunning:
+		return entity.RunAttemptStatusRunning, nil
+	default:
+		return "", InvalidArgumentErrorf("run status %q cannot start a journal attempt", status)
+	}
+}
+
+func journalAttemptStatusForRecoveryReplay(status entity.RunStatus) (entity.RunAttemptStatus, error) {
+	if mapped, err := journalAttemptStatusForRun(status); err == nil {
+		return mapped, nil
+	}
+	switch status {
+	case entity.RunStatusInterrupted:
+		return entity.RunAttemptStatusRunning, nil
+	case entity.RunStatusSucceeded:
+		return entity.RunAttemptStatusCompleted, nil
+	case entity.RunStatusFailed:
+		return entity.RunAttemptStatusFailed, nil
+	case entity.RunStatusCanceled:
+		return entity.RunAttemptStatusCancelled, nil
+	default:
+		return "", InvalidArgumentErrorf("run status %q cannot identify a journal recovery attempt", status)
+	}
+}
+
+func journalStringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func normalizeRunKind(
@@ -853,6 +943,171 @@ func (s *threadService) AppendRunEvent(ctx context.Context, req *AppendRunEventR
 	}
 
 	return event, nil
+}
+
+func (s *threadService) CreateJournalAttempt(
+	ctx context.Context,
+	req *CreateJournalAttemptRequest,
+) (*entity.RunAttempt, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil || req.JournalRunID <= 0 || req.ExecutionRunID <= 0 {
+		return nil, InvalidArgumentErrorf("journal run id and execution run id are required")
+	}
+	recoveryKey := strings.TrimSpace(req.RecoveryIdempotencyKey)
+	if recoveryKey == "" {
+		return nil, InvalidArgumentErrorf("recovery idempotency key is required")
+	}
+	journalRepo, err := s.journalRepository()
+	if err != nil {
+		return nil, err
+	}
+	run, err := s.repo.GetRun(ctx, req.ExecutionRunID)
+	if err != nil {
+		return nil, err
+	}
+	runKind, err := normalizeRunKind(run.RunKind, run.ParentRunID)
+	if err != nil || runKind != entity.RunKindTask {
+		return nil, InvalidArgumentErrorf("journal recovery execution run must be a top-level task")
+	}
+	status, err := journalAttemptStatusForRecoveryReplay(run.Status)
+	if err != nil {
+		return nil, err
+	}
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UnixMilli()
+	activeSlot := uint8(1)
+	attempt := &entity.RunAttempt{
+		ID: id, ThreadID: run.ThreadID,
+		JournalRunID: req.JournalRunID, ExecutionRunID: req.ExecutionRunID,
+		AttemptID: fmt.Sprintf("att_%d", id), Status: status, ActiveSlot: &activeSlot,
+		NextSequence: 1, LastCommittedSequence: 0,
+		SourceCheckpointID:     req.SourceCheckpointID,
+		SourceAttemptID:        req.SourceAttemptID,
+		RecoveryIdempotencyKey: &recoveryKey,
+		ProjectionState:        entity.JournalProjectionStateHealthy,
+		TraceID:                journalStringPointer(strings.TrimSpace(req.TraceID)),
+		CreatedAt:              now,
+		UpdatedAt:              now,
+	}
+	if status == entity.RunAttemptStatusRunning {
+		startedAt := run.StartedAt
+		if startedAt <= 0 {
+			startedAt = now
+		}
+		attempt.StartedAt = &startedAt
+	}
+	return journalRepo.CreateJournalAttempt(ctx, attempt)
+}
+
+func (s *threadService) AppendJournalEvent(
+	ctx context.Context,
+	req *AppendJournalEventRequest,
+) (*entity.JournalEvent, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil || req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	journalRepo, err := s.journalRepository()
+	if err != nil {
+		return nil, err
+	}
+	run, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if req.ThreadID > 0 && req.ThreadID != run.ThreadID {
+		return nil, InvalidArgumentErrorf("journal event thread id does not match run thread id")
+	}
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	event := journalEventFromServiceRequest(req, id, run.ThreadID)
+	return journalRepo.AppendJournalEvent(ctx, event)
+}
+
+func (s *threadService) FinalizeJournalAttempt(
+	ctx context.Context,
+	req *FinalizeJournalAttemptRequest,
+) (*entity.JournalEvent, bool, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, false, err
+	}
+	if req == nil || req.Event.RunID <= 0 || !req.Status.IsTerminal() {
+		return nil, false, InvalidArgumentErrorf("terminal run id and attempt status are required")
+	}
+	journalRepo, err := s.journalRepository()
+	if err != nil {
+		return nil, false, err
+	}
+	run, err := s.repo.GetRun(ctx, req.Event.RunID)
+	if err != nil {
+		return nil, false, err
+	}
+	if req.Event.ThreadID > 0 && req.Event.ThreadID != run.ThreadID {
+		return nil, false, InvalidArgumentErrorf("journal event thread id does not match run thread id")
+	}
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	event := journalEventFromServiceRequest(&req.Event, id, run.ThreadID)
+	return journalRepo.FinalizeJournalAttempt(ctx, repository.FinalizeJournalAttemptRequest{
+		RunID: req.Event.RunID, Status: req.Status, Event: event, EndedAt: req.EndedAt,
+	})
+}
+
+func (s *threadService) GetJournalEvent(
+	ctx context.Context,
+	eventID int64,
+) (*entity.JournalEvent, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if eventID <= 0 {
+		return nil, InvalidArgumentErrorf("journal event id is required")
+	}
+	journalRepo, err := s.journalRepository()
+	if err != nil {
+		return nil, err
+	}
+	return journalRepo.GetJournalEvent(ctx, eventID)
+}
+
+func (s *threadService) journalRepository() (repository.JournalRepository, error) {
+	repo, ok := s.repo.(repository.JournalRepository)
+	if !ok {
+		return nil, fmt.Errorf("agent thread journal repository is unavailable")
+	}
+	return repo, nil
+}
+
+func journalEventFromServiceRequest(
+	req *AppendJournalEventRequest,
+	id, threadID int64,
+) *entity.JournalEvent {
+	createdAt := req.CreatedAt
+	if createdAt <= 0 {
+		createdAt = time.Now().UnixMilli()
+	}
+	return &entity.JournalEvent{
+		ID: id, ThreadID: threadID, RunID: req.RunID,
+		JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+		IdempotencyKey: req.IdempotencyKey, ParentEventID: req.ParentEventID,
+		SchemaVersion: req.SchemaVersion, Status: req.Status,
+		OccurredAtUnixNano: req.OccurredAtUnixNano, Visibility: req.Visibility,
+		PayloadVersion: req.PayloadVersion, SnapshotID: req.SnapshotID, TraceID: req.TraceID,
+		ActionID: req.ActionID, Phase: req.Phase, Operation: req.Operation,
+		Target: req.Target, Milestone: req.Milestone,
+		EventType: req.EventType, Payload: req.Payload, CreatedAt: createdAt,
+	}
 }
 
 func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {

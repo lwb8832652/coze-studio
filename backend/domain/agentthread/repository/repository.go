@@ -26,11 +26,20 @@ import (
 )
 
 var (
-	ErrRunLeaseLost                 = errors.New("agent run lease lost")
-	ErrRunCanceled                  = errors.New("agent run canceled")
-	ErrRunIdempotencyConflict       = entity.ErrRunIdempotencyConflict
-	ErrActiveRunExists              = errors.New("agent thread already has an active run")
-	ErrUnsupportedMultitaskStrategy = errors.New("unsupported multitask strategy")
+	ErrRunLeaseLost                        = errors.New("agent run lease lost")
+	ErrRunCanceled                         = errors.New("agent run canceled")
+	ErrRunIdempotencyConflict              = entity.ErrRunIdempotencyConflict
+	ErrActiveRunExists                     = errors.New("agent thread already has an active run")
+	ErrUnsupportedMultitaskStrategy        = errors.New("unsupported multitask strategy")
+	ErrJournalNotEnrolled                  = errors.New("agent run is not enrolled in journal")
+	ErrActiveJournalAttemptExists          = errors.New("agent run already has an active journal attempt")
+	ErrJournalAttemptTerminal              = errors.New("agent run journal attempt is terminal")
+	ErrJournalParentMismatch               = errors.New("journal parent event belongs to another attempt")
+	ErrJournalActionDrift                  = errors.New("journal action fields changed across phases")
+	ErrJournalTerminalReplayConflict       = errors.New("journal terminal event replays a non-terminal event")
+	ErrJournalUnsafeLegacyEvent            = errors.New("legacy run event is not safe for journal projection")
+	ErrJournalInvalidStateTransition       = errors.New("invalid journal attempt state transition")
+	ErrUnsupportedJournalEnrollmentVersion = errors.New("unsupported journal enrollment version")
 )
 
 type ThreadRepository interface {
@@ -127,6 +136,7 @@ type CreateRunBundleRequest struct {
 	Run                         *entity.Run
 	Message                     *entity.Message
 	Event                       *entity.RunEvent
+	Attempt                     *entity.RunAttempt
 	SkipTopLevelAdmission       bool
 	ValidateIdempotencyReplay   bool
 	AllocateInterruptedEventIDs func(count int) ([]int64, error)
@@ -136,6 +146,7 @@ type CreateRunBundleResult struct {
 	Run               *entity.Run
 	Message           *entity.Message
 	Event             *entity.RunEvent
+	Attempt           *entity.RunAttempt
 	InterruptedRuns   []*entity.Run
 	InterruptedEvents []*entity.RunEvent
 	Created           bool

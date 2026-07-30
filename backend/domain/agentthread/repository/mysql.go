@@ -45,7 +45,7 @@ type threadRepository struct {
 	db *gorm.DB
 }
 
-func NewThreadRepository(db *gorm.DB) ThreadRepository {
+func NewThreadRepository(db *gorm.DB) Repository {
 	return &threadRepository{db: db}
 }
 
@@ -139,12 +139,55 @@ type runPO struct {
 }
 
 type runEventPO struct {
-	ID        int64          `gorm:"column:id;primaryKey"`
-	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_run_events_thread_created"`
-	RunID     int64          `gorm:"column:run_id;index:idx_agent_run_events_run_created"`
-	EventType string         `gorm:"column:event_type"`
-	Payload   datatypes.JSON `gorm:"column:payload;type:json"`
-	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
+	ID                 int64          `gorm:"column:id;primaryKey"`
+	ThreadID           int64          `gorm:"column:thread_id;index:idx_agent_run_events_thread_created"`
+	RunID              int64          `gorm:"column:run_id;index:idx_agent_run_events_run_created"`
+	JournalRunID       *int64         `gorm:"column:journal_run_id;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:1;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:1;uniqueIndex:uk_agent_run_events_action_phase,priority:1"`
+	AttemptID          *string        `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:2;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:2;uniqueIndex:uk_agent_run_events_action_phase,priority:2"`
+	Sequence           *uint64        `gorm:"column:sequence;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:3"`
+	IdempotencyKey     *string        `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:3"`
+	ParentEventID      *int64         `gorm:"column:parent_event_id;index:idx_agent_run_events_parent"`
+	SchemaVersion      *string        `gorm:"column:schema_version;size:16"`
+	Status             *string        `gorm:"column:status;size:32"`
+	OccurredAtUnixNano *int64         `gorm:"column:occurred_at_unix_nano"`
+	Visibility         *string        `gorm:"column:visibility;size:16"`
+	PayloadVersion     *string        `gorm:"column:payload_version;size:16"`
+	SnapshotID         *string        `gorm:"column:snapshot_id;size:64"`
+	TraceID            *string        `gorm:"column:trace_id;size:128"`
+	ActionID           *string        `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_run_events_action_phase,priority:3"`
+	Phase              *string        `gorm:"column:phase;size:64;uniqueIndex:uk_agent_run_events_action_phase,priority:4"`
+	Operation          *string        `gorm:"column:operation;size:128"`
+	Target             *string        `gorm:"column:target;size:512"`
+	Milestone          *string        `gorm:"column:milestone;size:191"`
+	EventType          string         `gorm:"column:event_type"`
+	Payload            datatypes.JSON `gorm:"column:payload;type:json"`
+	CreatedAt          int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
+}
+
+type runAttemptPO struct {
+	ID                     int64   `gorm:"column:id;primaryKey"`
+	ThreadID               int64   `gorm:"column:thread_id;index:idx_agent_run_attempts_thread_created,priority:1"`
+	JournalRunID           int64   `gorm:"column:journal_run_id;uniqueIndex:uk_agent_run_attempts_identity,priority:1;uniqueIndex:uk_agent_run_attempts_ordinal,priority:1;uniqueIndex:uk_agent_run_attempts_active,priority:1;uniqueIndex:uk_agent_run_attempts_recovery_key,priority:1"`
+	ExecutionRunID         int64   `gorm:"column:execution_run_id;uniqueIndex:uk_agent_run_attempts_execution"`
+	AttemptID              string  `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_run_attempts_identity,priority:2"`
+	Ordinal                uint32  `gorm:"column:ordinal;uniqueIndex:uk_agent_run_attempts_ordinal,priority:2"`
+	Status                 string  `gorm:"column:status;size:32"`
+	ActiveSlot             *uint8  `gorm:"column:active_slot;uniqueIndex:uk_agent_run_attempts_active,priority:2"`
+	NextSequence           uint64  `gorm:"column:next_sequence"`
+	LastCommittedSequence  uint64  `gorm:"column:last_committed_sequence"`
+	SourceCheckpointID     *int64  `gorm:"column:source_checkpoint_id"`
+	SourceAttemptID        *string `gorm:"column:source_attempt_id;size:64"`
+	RecoveryIdempotencyKey *string `gorm:"column:recovery_idempotency_key;size:191;uniqueIndex:uk_agent_run_attempts_recovery_key,priority:2"`
+	EnrollmentVersion      string  `gorm:"column:enrollment_version;size:32"`
+	SnapshotsEnabled       bool    `gorm:"column:snapshots_enabled"`
+	ProjectionState        string  `gorm:"column:projection_state;size:16"`
+	ProjectionDegradedAt   *int64  `gorm:"column:projection_degraded_at"`
+	TraceID                *string `gorm:"column:trace_id;size:128"`
+	TerminalEventID        *int64  `gorm:"column:terminal_event_id"`
+	CreatedAt              int64   `gorm:"column:created_at;index:idx_agent_run_attempts_thread_created,priority:2"`
+	UpdatedAt              int64   `gorm:"column:updated_at"`
+	StartedAt              *int64  `gorm:"column:started_at"`
+	EndedAt                *int64  `gorm:"column:ended_at"`
 }
 
 type checkpointPO struct {
@@ -347,6 +390,10 @@ func (runPO) TableName() string {
 
 func (runEventPO) TableName() string {
 	return "agent_run_events"
+}
+
+func (runAttemptPO) TableName() string {
+	return "agent_run_attempts"
 }
 
 func (checkpointPO) TableName() string {
@@ -681,6 +728,7 @@ func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
 		{model: &memoryPO{}, where: "thread_id = ?"},
 		{model: &checkpointPO{}, where: "thread_id = ?"},
 		{model: &runEventPO{}, where: "thread_id = ?"},
+		{model: &runAttemptPO{}, where: "thread_id = ?"},
 		{model: &messagePO{}, where: "thread_id = ?"},
 		{model: &runPO{}, where: "thread_id = ?"},
 	}
@@ -883,6 +931,18 @@ func (r *threadRepository) CreateRunBundle(
 		(req.Event.ThreadID != req.Run.ThreadID || req.Event.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle event does not belong to run")
 	}
+	if req.Attempt != nil &&
+		(req.Attempt.ThreadID != req.Run.ThreadID ||
+			req.Attempt.JournalRunID != req.Run.ID || req.Attempt.ExecutionRunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle attempt does not belong to run")
+	}
+	if req.Attempt != nil &&
+		(req.Attempt.ID <= 0 || strings.TrimSpace(req.Attempt.AttemptID) == "") {
+		return nil, fmt.Errorf("run bundle internal and public attempt ids are required")
+	}
+	if req.Attempt != nil && !isTopLevelTaskRun(req.Run) {
+		return nil, fmt.Errorf("only a root task run can enroll in journal")
+	}
 
 	now := time.Now().UnixMilli()
 	run := *req.Run
@@ -897,6 +957,55 @@ func (r *threadRepository) CreateRunBundle(
 		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
 		ValidateIdempotencyReplay:   req.ValidateIdempotencyReplay,
 		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
+	}
+	if req.Attempt != nil {
+		attempt := *req.Attempt
+		expectedStatus, err := journalAttemptStatusFromRun(run.Status)
+		if err != nil {
+			return nil, err
+		}
+		if attempt.Status != expectedStatus || attempt.Ordinal != 1 {
+			return nil, fmt.Errorf("initial journal attempt status or ordinal does not match run")
+		}
+		if attempt.NextSequence == 0 {
+			attempt.NextSequence = 1
+		}
+		if attempt.NextSequence != 1 || attempt.LastCommittedSequence != 0 {
+			return nil, fmt.Errorf("initial journal attempt sequence must start at one")
+		}
+		if attempt.RecoveryIdempotencyKey != nil {
+			return nil, fmt.Errorf("initial journal attempt cannot have a recovery idempotency key")
+		}
+		attempt.EnrollmentVersion = strings.TrimSpace(attempt.EnrollmentVersion)
+		if attempt.EnrollmentVersion == "" {
+			return nil, fmt.Errorf("initial journal attempt enrollment version is required")
+		}
+		if attempt.ProjectionState == "" {
+			attempt.ProjectionState = entity.JournalProjectionStateHealthy
+		}
+		if attempt.ProjectionState != entity.JournalProjectionStateHealthy || attempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("initial journal attempt projection must be healthy")
+		}
+		activeSlot := uint8(1)
+		attempt.ActiveSlot = &activeSlot
+		attempt.TerminalEventID = nil
+		attempt.EndedAt = nil
+		if attempt.CreatedAt == 0 {
+			attempt.CreatedAt = run.CreatedAt
+		}
+		if attempt.UpdatedAt == 0 {
+			attempt.UpdatedAt = attempt.CreatedAt
+		}
+		if attempt.Status == entity.RunAttemptStatusPending {
+			attempt.StartedAt = nil
+		} else if attempt.StartedAt == nil {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = attempt.CreatedAt
+			}
+			attempt.StartedAt = &startedAt
+		}
+		normalized.Attempt = &attempt
 	}
 	if req.Message != nil {
 		message := *req.Message
@@ -939,6 +1048,14 @@ func (r *threadRepository) CreateRunBundle(
 		if found {
 			return nil
 		}
+		if normalized.Attempt != nil &&
+			normalized.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
+			return fmt.Errorf(
+				"%w %q",
+				ErrUnsupportedJournalEnrollmentVersion,
+				normalized.Attempt.EnrollmentVersion,
+			)
+		}
 
 		activeRuns, err := lockActiveTopLevelRuns(tx, normalized.Run, normalized.SkipTopLevelAdmission)
 		if err != nil {
@@ -974,6 +1091,11 @@ func (r *threadRepository) CreateRunBundle(
 		if err := tx.Create(runPO).Error; err != nil {
 			return err
 		}
+		if normalized.Attempt != nil {
+			if err := tx.Create(runAttemptToPO(normalized.Attempt)).Error; err != nil {
+				return err
+			}
+		}
 		if normalized.Message != nil {
 			messagePO, err := messageToPO(normalized.Message)
 			if err != nil {
@@ -1003,7 +1125,7 @@ func (r *threadRepository) CreateRunBundle(
 			return err
 		}
 		result = &CreateRunBundleResult{
-			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event,
+			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event, Attempt: normalized.Attempt,
 			InterruptedRuns: interruptedRuns, InterruptedEvents: interruptedEvents, Created: true,
 		}
 		return nil
@@ -1243,6 +1365,28 @@ func findExistingRunBundle(
 	}
 
 	result := &CreateRunBundleResult{Run: run.toEntity()}
+	var attempt runAttemptPO
+	attemptErr := db.Where("journal_run_id = ? AND ordinal = ?", run.ID, 1).First(&attempt).Error
+	hasAttempt := attemptErr == nil
+	if attemptErr != nil && !errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, attemptErr
+	}
+	if req.Attempt == nil && hasAttempt {
+		return nil, false, fmt.Errorf("%w: journal enrollment changed", ErrRunIdempotencyConflict)
+	}
+	if req.Attempt != nil {
+		if !hasAttempt {
+			return nil, false, fmt.Errorf(
+				"%w: idempotent run bundle is missing journal attempt",
+				ErrRunIdempotencyConflict,
+			)
+		}
+		if attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+			attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+			return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+		}
+		result.Attempt = attempt.toEntity()
+	}
 	if req.Message != nil {
 		var message messagePO
 		err := db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).

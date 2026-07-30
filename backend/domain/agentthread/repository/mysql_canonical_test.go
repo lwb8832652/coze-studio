@@ -101,7 +101,7 @@ func TestCanonicalExtensionsKeepLegacyListMessagesPagingAndOrder(t *testing.T) {
 }
 
 func TestCanonicalRunBundleReturnsTypedIdempotencyConflictAcrossThreads(t *testing.T) {
-	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &messagePO{})
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{})
 	repo := NewThreadRepository(db)
 	for _, thread := range []*entity.Thread{
 		{ID: 10, SpaceID: 1, CreatorID: 2, Title: "first", Status: entity.ThreadStatusIdle},
@@ -256,6 +256,7 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 		&threadPO{},
 		&messagePO{},
 		&runPO{},
+		&runAttemptPO{},
 		&runEventPO{},
 		&checkpointPO{},
 		&memoryPO{},
@@ -294,7 +295,7 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, deleted)
 	for _, model := range []any{
-		&threadPO{}, &messagePO{}, &runPO{}, &runEventPO{}, &checkpointPO{},
+		&threadPO{}, &messagePO{}, &runPO{}, &runAttemptPO{}, &runEventPO{}, &checkpointPO{},
 		&memoryPO{}, &memoryAuditEventPO{}, &transcriptSnapshotPO{}, &memoryFlushJobPO{},
 		&tokenUsagePO{}, &agentFilePO{}, &agentArtifactPO{}, &agentArtifactScanJobPO{},
 		&agentRunPlanPO{}, &agentRunPlanItemPO{},
@@ -1165,6 +1166,7 @@ func canonicalDeleteRepositoryTestDB(t *testing.T, dsn string) *gorm.DB {
 		&threadPO{},
 		&messagePO{},
 		&runPO{},
+		&runAttemptPO{},
 		&runEventPO{},
 		&checkpointPO{},
 		&memoryPO{},

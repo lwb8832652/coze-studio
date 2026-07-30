@@ -114,14 +114,23 @@ type CreateRunBundleRequest struct {
 	Run                     CreateRunRequest
 	Message                 *CreateMessageSpec
 	Event                   *CreateRunEventSpec
+	EnrollJournal           bool
+	JournalEnrollment       *JournalEnrollmentOptions
 	SkipTopLevelAdmission   bool
 	PersistMessageReference bool
+}
+
+type JournalEnrollmentOptions struct {
+	EnrollmentVersion string
+	SnapshotsEnabled  bool
+	TraceID           string
 }
 
 type CreateRunBundleResult struct {
 	Run               *entity.Run
 	Message           *entity.Message
 	Event             *entity.RunEvent
+	Attempt           *entity.RunAttempt
 	InterruptedRuns   []*entity.Run
 	InterruptedEvents []*entity.RunEvent
 	Created           bool
@@ -145,6 +154,45 @@ type AppendRunEventRequest struct {
 	RunID     int64
 	EventType string
 	Payload   string
+}
+
+type CreateJournalAttemptRequest struct {
+	JournalRunID           int64
+	ExecutionRunID         int64
+	SourceCheckpointID     *int64
+	SourceAttemptID        *string
+	RecoveryIdempotencyKey string
+	TraceID                string
+}
+
+type AppendJournalEventRequest struct {
+	ThreadID           int64
+	RunID              int64
+	JournalRunID       int64
+	AttemptID          string
+	IdempotencyKey     string
+	ParentEventID      int64
+	SchemaVersion      string
+	Status             string
+	OccurredAtUnixNano int64
+	Visibility         entity.JournalVisibility
+	PayloadVersion     string
+	SnapshotID         string
+	TraceID            string
+	ActionID           string
+	Phase              string
+	Operation          string
+	Target             string
+	Milestone          string
+	EventType          string
+	Payload            string
+	CreatedAt          int64
+}
+
+type FinalizeJournalAttemptRequest struct {
+	Status  entity.RunAttemptStatus
+	Event   AppendJournalEventRequest
+	EndedAt int64
 }
 
 type CreateCheckpointRequest struct {
@@ -581,6 +629,21 @@ type ThreadService interface {
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
+}
+
+type JournalService interface {
+	CreateJournalAttempt(ctx context.Context, req *CreateJournalAttemptRequest) (*entity.RunAttempt, error)
+	AppendJournalEvent(ctx context.Context, req *AppendJournalEventRequest) (*entity.JournalEvent, error)
+	FinalizeJournalAttempt(
+		ctx context.Context,
+		req *FinalizeJournalAttemptRequest,
+	) (*entity.JournalEvent, bool, error)
+	GetJournalEvent(ctx context.Context, eventID int64) (*entity.JournalEvent, error)
+}
+
+type Service interface {
+	ThreadService
+	JournalService
 }
 
 type Components struct {
