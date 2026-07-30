@@ -44,6 +44,10 @@ assert_file_not_contains() {
   fi
 }
 
+failure_record_for() {
+  find "$1/deployments" -maxdepth 1 -name 'failed-*.env' -print -quit 2>/dev/null
+}
+
 setup_transaction_case() {
   CASE_DIR=$1
   DEPLOYMENTS_DIR=$CASE_DIR/deployments
@@ -141,6 +145,14 @@ test_mismatched_candidate_revisions_stop_before_up() (
   fi
   assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
     'mismatched candidate revisions reached compose up'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'revision mismatch did not retain a failure record'
+  assert_file_contains "$failure_record" "^CANDIDATE_SERVER_REVISION=$REV_A$" \
+    'failure record lost the candidate server revision'
+  assert_file_contains "$failure_record" "^CANDIDATE_WEB_REVISION=$REV_B$" \
+    'failure record lost the candidate web revision'
+  assert_file_contains "$failure_record" '^ROLLBACK_RESULT=not-attempted$' \
+    'pre-update failure record has the wrong rollback result'
 )
 
 test_requested_revision_mismatch_stops_before_up() (
@@ -152,6 +164,10 @@ test_requested_revision_mismatch_stops_before_up() (
   fi
   assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
     'requested revision mismatch reached compose up'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'requested revision mismatch did not retain a failure record'
+  assert_file_contains "$failure_record" '^FAILURE_REASON=candidate revision does not match the requested SHA$' \
+    'requested revision mismatch reason was not recorded'
 )
 
 test_invalid_candidate_revision_stops_before_up() (
@@ -164,6 +180,10 @@ test_invalid_candidate_revision_stops_before_up() (
   fi
   assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
     'invalid candidate revision reached compose up'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'invalid candidate revision did not retain a failure record'
+  assert_file_contains "$failure_record" '^CANDIDATE_SERVER_REVISION=not-a-full-sha$' \
+    'invalid candidate revision value was not retained'
 )
 
 test_pull_failure_stops_before_up() (
@@ -176,6 +196,10 @@ test_pull_failure_stops_before_up() (
   fi
   assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
     'candidate pull failure reached compose up'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'candidate pull failure did not retain a failure record'
+  assert_file_contains "$failure_record" '^ROLLBACK_RESULT=not-attempted$' \
+    'candidate pull failure has the wrong rollback result'
 )
 
 test_success_records_complete_current_environment() (
@@ -229,7 +253,7 @@ test_health_failure_rolls_back_both_images_and_stays_failed() (
     'rollback compose did not recreate both services with both rollback tags'
   assert_file_contains "$case_dir/output.log" 'rollback succeeded' \
     'healthy rollback was not reported'
-  failure_record=$(find "$DEPLOYMENTS_DIR" -maxdepth 1 -name 'failed-*.env' -print -quit)
+  failure_record=$(failure_record_for "$case_dir")
   [ -n "$failure_record" ] || fail 'failed deployment did not retain a failure record'
   assert_file_contains "$failure_record" '^ROLLBACK_RESULT=succeeded$' \
     'failure record did not preserve the successful rollback result'

@@ -158,17 +158,19 @@ record_success() {
 
 record_failure() {
   local transaction_id=$1
-  local candidate_revision=$2
-  local candidate_server_id=$3
-  local candidate_web_id=$4
-  local old_server_id=$5
-  local old_web_id=$6
-  local old_server_revision=$7
-  local old_web_revision=$8
-  local rollback_result=$9
+  local candidate_server_revision=$2
+  local candidate_web_revision=$3
+  local candidate_server_id=$4
+  local candidate_web_id=$5
+  local old_server_id=$6
+  local old_web_id=$7
+  local old_server_revision=$8
+  local old_web_revision=$9
+  local rollback_result=${10}
+  local failure_reason=${11}
   local failed_at record tmp value
 
-  for value in "$transaction_id" "$candidate_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result"; do
+  for value in "$transaction_id" "$candidate_server_revision" "$candidate_web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" "$failure_reason"; do
     record_value_is_safe "$value" || return 1
   done
 
@@ -177,7 +179,8 @@ record_failure() {
   tmp=$(mktemp "$DEPLOYMENTS_DIR/.failed.env.tmp.XXXXXX")
   failed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   if ! {
-    printf 'CANDIDATE_REVISION=%s\n' "$candidate_revision"
+    printf 'CANDIDATE_SERVER_REVISION=%s\n' "$candidate_server_revision"
+    printf 'CANDIDATE_WEB_REVISION=%s\n' "$candidate_web_revision"
     printf 'CANDIDATE_SERVER_IMAGE_ID=%s\n' "$candidate_server_id"
     printf 'CANDIDATE_WEB_IMAGE_ID=%s\n' "$candidate_web_id"
     printf 'OLD_SERVER_IMAGE_ID=%s\n' "$old_server_id"
@@ -185,6 +188,7 @@ record_failure() {
     printf 'OLD_SERVER_REVISION=%s\n' "$old_server_revision"
     printf 'OLD_WEB_REVISION=%s\n' "$old_web_revision"
     printf 'ROLLBACK_RESULT=%s\n' "$rollback_result"
+    printf 'FAILURE_REASON=%s\n' "$failure_reason"
     printf 'FAILED_AT_UTC=%s\n' "$failed_at"
   } > "$tmp"; then
     rm -f -- "$tmp"
@@ -192,6 +196,24 @@ record_failure() {
   fi
   chmod 600 "$tmp"
   mv -f -- "$tmp" "$record"
+}
+
+record_pre_update_failure() {
+  local reason=$1
+  local transaction_id=$2
+  local candidate_server_revision=$3
+  local candidate_web_revision=$4
+  local candidate_server_id=$5
+  local candidate_web_id=$6
+  local old_server_id=$7
+  local old_web_id=$8
+  local old_server_revision=$9
+  local old_web_revision=${10}
+
+  error "$reason"
+  record_failure "$transaction_id" "$candidate_server_revision" "$candidate_web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" 'not-attempted' "$reason" ||
+    error 'failed to write the pre-update failure record'
+  return 1
 }
 
 rollback_images() {
@@ -240,18 +262,19 @@ rollback_images() {
 
 deploy_transaction() {
   local requested_revision=${1:-}
-  local old_server_id old_web_id old_server_revision= old_web_revision=
-  local server_revision web_revision candidate_revision
-  local candidate_server_id candidate_web_id
+  local old_server_id= old_web_id= old_server_revision= old_web_revision=
+  local server_revision= web_revision= candidate_revision=
+  local candidate_server_id= candidate_web_id=
   local transaction_id rollback_result
 
+  transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
   if ! old_server_id=$(container_image_id coze-server); then
-    error 'cannot read the current server container image'
-    return 1
+    record_pre_update_failure 'cannot read the current server container image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if ! old_web_id=$(container_image_id coze-web); then
-    error 'cannot read the current web container image'
-    return 1
+    record_pre_update_failure 'cannot read the current web container image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if [ -n "$old_server_id" ]; then
     old_server_revision=$(image_revision "$old_server_id" 2>/dev/null || true)
@@ -262,49 +285,48 @@ deploy_transaction() {
 
   log 'pulling candidate server and web images'
   if ! docker_cmd pull "$SERVER_IMAGE_REF"; then
-    error 'failed to pull the candidate server image'
-    return 1
+    record_pre_update_failure 'failed to pull the candidate server image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if ! docker_cmd pull "$WEB_IMAGE_REF"; then
-    error 'failed to pull the candidate web image'
-    return 1
+    record_pre_update_failure 'failed to pull the candidate web image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
 
   if ! server_revision=$(image_revision "$SERVER_IMAGE_REF"); then
-    error 'candidate server image has no readable revision'
-    return 1
+    record_pre_update_failure 'candidate server image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if ! web_revision=$(image_revision "$WEB_IMAGE_REF"); then
-    error 'candidate web image has no readable revision'
-    return 1
+    record_pre_update_failure 'candidate web image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if ! is_revision "$server_revision" || ! is_revision "$web_revision"; then
-    error 'candidate image revisions must both be full 40-hex SHA values'
-    return 1
+    record_pre_update_failure 'candidate image revisions must both be full 40-hex SHA values' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   server_revision=$(normalize_revision "$server_revision")
   web_revision=$(normalize_revision "$web_revision")
   if [ "$server_revision" != "$web_revision" ]; then
-    error 'candidate server and web revisions do not match'
-    return 1
+    record_pre_update_failure 'candidate server and web revisions do not match' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   candidate_revision=$server_revision
   if [ -n "$requested_revision" ] &&
     [ "$candidate_revision" != "$(normalize_revision "$requested_revision")" ]; then
-    error 'candidate revision does not match the requested SHA'
-    return 1
+    record_pre_update_failure 'candidate revision does not match the requested SHA' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
 
   if ! candidate_server_id=$(image_id "$SERVER_IMAGE_REF"); then
-    error 'cannot read the candidate server image ID'
-    return 1
+    record_pre_update_failure 'cannot read the candidate server image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
   if ! candidate_web_id=$(image_id "$WEB_IMAGE_REF"); then
-    error 'cannot read the candidate web image ID'
-    return 1
+    record_pre_update_failure 'cannot read the candidate web image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
   fi
 
-  transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
   if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev compose_cmd up -d --no-build --remove-orphans coze-server coze-web &&
     wait_for_health "$candidate_revision"; then
     if ! record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
@@ -320,7 +342,7 @@ deploy_transaction() {
   if rollback_images "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$transaction_id"; then
     rollback_result=succeeded
   fi
-  record_failure "$transaction_id" "$candidate_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" ||
+  record_failure "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" 'candidate update or health check failed' ||
     error 'failed to write the deployment failure record'
   return 1
 }
