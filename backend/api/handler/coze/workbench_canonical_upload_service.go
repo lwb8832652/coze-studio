@@ -36,16 +36,15 @@ const (
 	canonicalThreadUploadMaxTotalBytes = 100 << 20
 )
 
-// ListCanonicalThreadUploads returns canonical upload metadata for one
-// authorized Thread without the legacy code/msg/data envelope.
+// ListCanonicalThreadUploads serves GET /api/workbench/threads/:thread_id/uploads.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListTaskThreadUploadFiles, and returns canonical upload-list JSON.
 func ListCanonicalThreadUploads(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("upload.list", "/api/workbench/threads/:thread_id/uploads")
 	requestLog.ResponseBodyKind = "values"
 	requestLog.ResourceType = "upload"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -91,17 +90,16 @@ func ListCanonicalThreadUploads(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// UploadCanonicalThreadFiles accepts canonical multipart file uploads under
-// either "files" or the SDK-compatible singular "file" field.
+// UploadCanonicalThreadFiles serves POST /api/workbench/threads/:thread_id/uploads.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.UploadTaskThreadFiles, and returns canonical upload-result JSON.
 func UploadCanonicalThreadFiles(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("upload.create", "/api/workbench/threads/:thread_id/uploads")
 	requestLog.ResponseBodyKind = "values"
 	requestLog.ResourceType = "upload"
 	requestLog.LifecycleStage = "upload"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -175,16 +173,15 @@ func UploadCanonicalThreadFiles(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// DeleteCanonicalThreadUpload deletes one upload by stable file_id. Filename
-// deletion remains owned by the legacy task_threads route.
+// DeleteCanonicalThreadUpload serves DELETE /api/workbench/threads/:thread_id/uploads/:file_id.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and upload. It calls
+// ApplicationService.DeleteTaskThreadUploadFileByID, and returns 204 with an empty body.
 func DeleteCanonicalThreadUpload(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("upload.delete", "/api/workbench/threads/:thread_id/uploads/:file_id")
 	requestLog.ResponseBodyKind = "empty"
 	requestLog.ResourceType = "upload"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}

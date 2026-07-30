@@ -62,12 +62,7 @@ const mockGetTaskThreadArtifactSignedURL = vi.hoisted(() => vi.fn());
 const mockInstallSkillFromArtifact = vi.hoisted(() => vi.fn());
 const mockDeleteTaskThreadArtifact = vi.hoisted(() => vi.fn());
 const mockRestoreTaskThreadArtifact = vi.hoisted(() => vi.fn());
-const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
-  vi.fn(
-    ({ threadId }: { threadId: string }) =>
-      `/api/workbench/task_threads/${threadId}/run_events/stream`,
-  ),
-);
+const mockSubscribeRunEvents = vi.hoisted(() => vi.fn());
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
@@ -160,7 +155,6 @@ vi.mock('../../system/service', async importOriginal => {
 
 vi.mock('../service', () => ({
   getTaskThread: mockGetTaskThread,
-  getTaskThreadRunEventsStreamURL: mockGetTaskThreadRunEventsStreamURL,
   listTaskThreadMessages: mockListTaskThreadMessages,
   listTaskThreadRuns: mockListTaskThreadRuns,
   listTaskThreadRunEvents: mockListTaskThreadRunEvents,
@@ -201,6 +195,15 @@ vi.mock('../service', () => ({
   cancelTaskThreadRun: mockCancelTaskThreadRun,
   retryTaskThreadSubagentRun: mockRetryTaskThreadSubagentRun,
 }));
+
+vi.mock(
+  '../../workbench/thread-client/canonical-thread-client-singleton',
+  () => ({
+    canonicalThreadClient: {
+      subscribeRunEvents: mockSubscribeRunEvents,
+    },
+  }),
+);
 
 vi.mock('../../workbench/service', () => ({
   getWorkbenchLLMModels: mockGetWorkbenchLLMModels,
@@ -544,39 +547,76 @@ import {
   saveTaskTokenUsageViewMode,
 } from '../task-message-token-usage';
 import TaskDetailPage from '../detail';
+import type { WorkbenchRunEvent } from '../../workbench/thread-client';
 import type * as SystemService from '../../system/service';
 
-class MockEventSource {
-  static instances: MockEventSource[] = [];
+interface MockRunEventStreamRequest {
+  space_id: string;
+  thread_id: string;
+  run_id: string;
+  signal: AbortSignal;
+  onEvent: (event: WorkbenchRunEvent) => void;
+  onEnd: () => void;
+  onError: (error: Error) => void;
+}
 
-  readonly url: string;
+class MockRunEventSubscription {
+  static instances: MockRunEventSubscription[] = [];
 
   readonly close = vi.fn();
 
-  private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  readonly request: MockRunEventStreamRequest;
 
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.instances.push(this);
+  constructor(request: MockRunEventStreamRequest) {
+    this.request = request;
+    MockRunEventSubscription.instances.push(this);
   }
 
-  addEventListener(type: string, listener: (event: MessageEvent) => void) {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-  }
-
-  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
-    this.listeners.set(
-      type,
-      (this.listeners.get(type) ?? []).filter(item => item !== listener),
-    );
-  }
-
-  emit(type: string, data: string) {
-    for (const listener of this.listeners.get(type) ?? []) {
-      listener({ data } as MessageEvent);
-    }
+  emit(event: WorkbenchRunEvent) {
+    this.request.onEvent(event);
   }
 }
+
+const createMockRunningRun = (threadID: string, runID: string) => ({
+  run_id: runID,
+  thread_id: threadID,
+  parent_run_id: '0',
+  space_id: 'space-1',
+  creator_id: 'user-1',
+  assistant_id: 'default',
+  run_kind: 'task',
+  status: 'running',
+  command: '{}',
+  input: '{"messages":[]}',
+  config: '{}',
+  context: '{}',
+  metadata: '{}',
+  stream_mode: '["messages","updates"]',
+  multitask_strategy: 'enqueue',
+  on_disconnect: 'continue',
+  durability: 'async',
+  idempotency_key: '',
+  worker_id: 'agent-harness',
+  error_code: '',
+  error_message: '',
+  started_at: 1717000100000,
+  created_at: 1717000100000,
+  updated_at: 1717000300000,
+});
+
+const mockTopLevelRun = (run: ReturnType<typeof createMockRunningRun>) => {
+  mockListTaskThreadRuns.mockImplementation(
+    ({ parent_run_id }: { parent_run_id?: string }) =>
+      Promise.resolve({
+        data: {
+          runs: parent_run_id === '0' ? [run] : [],
+          total: parent_run_id === '0' ? 1 : 0,
+        },
+        code: 0,
+        msg: '',
+      }),
+  );
+};
 
 const openTaskDetailInspector = async (container: HTMLElement) => {
   const detailButton = Array.from(container.querySelectorAll('button')).find(
@@ -668,19 +708,18 @@ const expectDeerFlowTaskComposer = (
 
 describe('TaskDetailPage', () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, 'EventSource', {
-      configurable: true,
-      value: MockEventSource,
-    });
     window.localStorage.removeItem('coze.task-detail.token-usage-view-mode');
-    MockEventSource.instances = [];
+    MockRunEventSubscription.instances = [];
+    mockSubscribeRunEvents.mockReset();
+    mockSubscribeRunEvents.mockImplementation(
+      request => new MockRunEventSubscription(request),
+    );
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
       thread_id: 'thread-1',
     });
     mockUseUserInfo.mockReturnValue({ user_id_str: 'user-1' });
     mockGetTaskThread.mockReset();
-    mockGetTaskThreadRunEventsStreamURL.mockClear();
     mockListTaskThreadMessages.mockReset();
     mockListTaskThreadRuns.mockReset();
     mockListTaskThreadRunEvents.mockReset();
@@ -996,14 +1035,7 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockListTaskThreadRuns.mockResolvedValue({
-      data: {
-        runs: [],
-        total: 0,
-      },
-      code: 0,
-      msg: '',
-    });
+    mockTopLevelRun(createMockRunningRun('thread-1', 'run-1'));
     mockListTaskThreadRunEvents.mockResolvedValue({
       data: {
         events: [
@@ -1239,9 +1271,14 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      space_id: 'space-1',
+    });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-1',
+      run_id: 'run-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -1327,7 +1364,6 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
@@ -1997,9 +2033,13 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      space_id: 'space-1',
+    });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
@@ -2126,6 +2166,10 @@ describe('TaskDetailPage', () => {
       },
       code: 0,
       msg: '',
+    });
+    mockTopLevelRun({
+      ...createMockRunningRun('thread-1', 'run-1'),
+      status: 'success',
     });
 
     await act(async () => {
@@ -2455,6 +2499,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadGuardrailAuditEvents).toHaveBeenCalledWith({
       thread_id: 'thread-guardrail-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 20,
     });
@@ -2502,6 +2547,7 @@ describe('TaskDetailPage', () => {
         1,
         {
           thread_id: 'thread-guardrail-1',
+          space_id: 'space-1',
           page: 1,
           page_size: 1000,
         },
@@ -2510,6 +2556,7 @@ describe('TaskDetailPage', () => {
         2,
         {
           thread_id: 'thread-guardrail-1',
+          space_id: 'space-1',
           page: 2,
           page_size: 1000,
         },
@@ -2639,6 +2686,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadMCPRuntimeAuditEvents).toHaveBeenCalledWith({
       thread_id: 'thread-mcp-audit-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 20,
     });
@@ -2727,14 +2775,18 @@ describe('TaskDetailPage', () => {
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      run_id: 'run-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -2804,9 +2856,11 @@ describe('TaskDetailPage', () => {
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'thread-running',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-running',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
@@ -3113,6 +3167,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith(
       {
+        space_id: 'space-1',
         thread_id: 'thread-token-1',
         page: 1,
         page_size: 50,
@@ -3299,7 +3354,6 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
@@ -3860,6 +3914,9 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    mockTopLevelRun(
+      createMockRunningRun('thread-turn-token-1', 'run-turn-token-1'),
+    );
 
     await act(async () => {
       root = createRoot(container);
@@ -6134,7 +6191,6 @@ describe('TaskDetailPage', () => {
       },
       msg: '',
     });
-
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
@@ -6462,7 +6518,7 @@ describe('TaskDetailPage', () => {
                 creator_id: 'user-1',
                 assistant_id: 'singleagent:1002',
                 run_kind: 'subagent',
-                status: 'failed',
+                status: 'error',
                 command: '{}',
                 input: '{"messages":[]}',
                 config: '{}',
@@ -6476,8 +6532,6 @@ describe('TaskDetailPage', () => {
                 durability: 'async',
                 idempotency_key: '',
                 worker_id: '',
-                error_code: 'subagent_timeout',
-                error_message: 'context deadline exceeded',
                 started_at: 1717000200000,
                 ended_at: 1717000300000,
                 created_at: 1717000200000,
@@ -6529,7 +6583,7 @@ describe('TaskDetailPage', () => {
               creator_id: 'user-1',
               assistant_id: 'default',
               run_kind: 'task',
-              status: 'queued',
+              status: 'pending',
               command: '',
               input: '',
               config: '',
@@ -6745,11 +6799,13 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRuns).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 20,
     });
     expect(mockListTaskThreadRuns).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       parent_run_id: 'run-parent-1',
       page: 1,
       page_size: 20,
@@ -6759,6 +6815,7 @@ describe('TaskDetailPage', () => {
     );
     expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       run_id: 'run-parent-1',
       include_child_runs: true,
       page: 1,
@@ -6822,6 +6879,28 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-subagent-timeout',
+            thread_id: 'thread-subagent-1',
+            run_id: 'run-parent-1',
+            event_type: 'subagent.run.failed',
+            payload: JSON.stringify({
+              child_run_id: 'run-child-2',
+              error_code: 'subagent_timeout',
+              error_message: 'context deadline exceeded',
+              terminal_classification: 'timeout',
+            }),
+            created_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
     mockListTaskThreadRuns.mockImplementation(({ parent_run_id }) => {
       if (parent_run_id === 'run-parent-1') {
         return Promise.resolve({
@@ -6835,7 +6914,7 @@ describe('TaskDetailPage', () => {
                 creator_id: 'user-1',
                 assistant_id: 'singleagent:1002',
                 run_kind: 'subagent',
-                status: 'failed',
+                status: 'error',
                 command: '',
                 input: '',
                 config: '',
@@ -6849,8 +6928,6 @@ describe('TaskDetailPage', () => {
                 durability: 'async',
                 idempotency_key: '',
                 worker_id: '',
-                error_code: 'subagent_timeout',
-                error_message: 'context deadline exceeded',
                 started_at: 1717000200000,
                 ended_at: 1717000300000,
                 created_at: 1717000200000,
@@ -6875,7 +6952,7 @@ describe('TaskDetailPage', () => {
               creator_id: 'user-1',
               assistant_id: 'default',
               run_kind: 'task',
-              status: 'completed',
+              status: 'success',
               command: '{}',
               input: '{"messages":[]}',
               config: '{}',
@@ -6887,8 +6964,6 @@ describe('TaskDetailPage', () => {
               durability: 'async',
               idempotency_key: '',
               worker_id: '',
-              error_code: '',
-              error_message: '',
               started_at: 1717000100000,
               ended_at: 1717000300000,
               created_at: 1717000100000,
@@ -6922,6 +6997,7 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockRetryTaskThreadSubagentRun).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-subagent-1',
       run_id: 'run-child-2',
     });
@@ -6977,6 +7053,14 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [createMockRunningRun('thread-only-1', 'run-1')],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
     mockListTaskThreadRunEvents.mockResolvedValue({
       data: {
         events: [
@@ -7006,12 +7090,18 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      run_id: 'run-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
-    expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0].url).toContain(
-      '/api/workbench/task_threads/thread-only-1/run_events/stream',
+    expect(MockRunEventSubscription.instances).toHaveLength(1);
+    expect(mockSubscribeRunEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        space_id: 'space-1',
+        thread_id: 'thread-only-1',
+        run_id: 'run-1',
+      }),
     );
     expect(
       container.querySelector('.coze-prototype-reasoning-panel'),
@@ -7030,21 +7120,18 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('开始执行 generate_answer');
 
     act(() => {
-      MockEventSource.instances[0].emit(
-        'run.event',
-        JSON.stringify({
-          event_id: 'event-run-2',
-          thread_id: 'thread-only-1',
-          run_id: 'run-1',
-          event_type: 'step.completed',
-          payload: JSON.stringify({
-            step_name: 'generate_answer',
-            step_index: 0,
-            final: true,
-          }),
-          created_at: 1717000300000,
+      MockRunEventSubscription.instances[0].emit({
+        event_id: 'event-run-2',
+        thread_id: 'thread-only-1',
+        run_id: 'run-1',
+        event_type: 'step.completed',
+        payload: JSON.stringify({
+          step_name: 'generate_answer',
+          step_index: 0,
+          final: true,
         }),
-      );
+        created_at: 1717000300000,
+      });
     });
 
     expect(container.textContent).toContain('完成 generate_answer');
@@ -7052,7 +7139,7 @@ describe('TaskDetailPage', () => {
     act(() => {
       root?.unmount();
     });
-    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+    expect(MockRunEventSubscription.instances[0].close).toHaveBeenCalled();
     container.remove();
   });
 
@@ -7105,6 +7192,16 @@ describe('TaskDetailPage', () => {
           },
         ],
         total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          createMockRunningRun('thread-token-stream-1', 'run-token-stream-1'),
+        ],
+        total: 1,
       },
       code: 0,
       msg: '',
@@ -7202,33 +7299,30 @@ describe('TaskDetailPage', () => {
     expect(emptyTokenUsage).toBeTruthy();
     expect(emptyTokenUsage?.textContent).not.toContain('20');
     expect(emptyTokenUsage?.getAttribute('aria-label')).toBe('查看 Token 用量');
-    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockRunEventSubscription.instances).toHaveLength(1);
 
     await act(async () => {
-      MockEventSource.instances[0].emit(
-        'run.event',
-        JSON.stringify({
-          event_id: 'event-token-snapshot-1',
-          thread_id: 'thread-token-stream-1',
-          run_id: 'run-token-stream-1',
-          event_type: 'token_usage.snapshot',
-          payload: JSON.stringify({
-            usage_id: 401,
-            source: 'lead_agent',
-            step_id: 'model-1',
-            step_name: 'generate_answer',
-            model_name: 'gpt-test',
-            provider: 'openai-compatible',
-            input_tokens: 12,
-            output_tokens: 8,
-            total_tokens: 20,
-            cost_micros: 123,
-            currency: 'USD',
-            estimated: false,
-          }),
-          created_at: 1717000300000,
+      MockRunEventSubscription.instances[0].emit({
+        event_id: 'event-token-snapshot-1',
+        thread_id: 'thread-token-stream-1',
+        run_id: 'run-token-stream-1',
+        event_type: 'token_usage.snapshot',
+        payload: JSON.stringify({
+          usage_id: 401,
+          source: 'lead_agent',
+          step_id: 'model-1',
+          step_name: 'generate_answer',
+          model_name: 'gpt-test',
+          provider: 'openai-compatible',
+          input_tokens: 12,
+          output_tokens: 8,
+          total_tokens: 20,
+          cost_micros: 123,
+          currency: 'USD',
+          estimated: false,
         }),
-      );
+        created_at: 1717000300000,
+      });
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -7295,6 +7389,14 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [createMockRunningRun('thread-title-sync-1', 'run-1')],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
 
     await act(async () => {
       root = createRoot(container);
@@ -7307,22 +7409,19 @@ describe('TaskDetailPage', () => {
       '.coze-prototype-task-title-group',
     );
     expect(titleGroup?.textContent).toContain('请帮我制定一份武汉3日游攻略');
-    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockRunEventSubscription.instances).toHaveLength(1);
 
     act(() => {
-      MockEventSource.instances[0].emit(
-        'run.event',
-        JSON.stringify({
-          event_id: 'event-title-sync',
-          thread_id: 'thread-title-sync-1',
-          run_id: 'run-1',
-          event_type: 'context.thread_title_updated',
-          payload: JSON.stringify({
-            thread_title: '武汉3日游攻略',
-          }),
-          created_at: 1717000400000,
+      MockRunEventSubscription.instances[0].emit({
+        event_id: 'event-title-sync',
+        thread_id: 'thread-title-sync-1',
+        run_id: 'run-1',
+        event_type: 'context.thread_title_updated',
+        payload: JSON.stringify({
+          thread_title: '武汉3日游攻略',
         }),
-      );
+        created_at: 1717000400000,
+      });
     });
 
     expect(titleGroup?.textContent).toContain('武汉3日游攻略');
@@ -7540,6 +7639,10 @@ describe('TaskDetailPage', () => {
       },
       code: 0,
       msg: '',
+    });
+    mockTopLevelRun({
+      ...createMockRunningRun('thread-flow-labels-1', 'run-1'),
+      status: 'success',
     });
 
     await act(async () => {
@@ -8016,6 +8119,7 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockCancelTaskThreadRun).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-cancel-1',
       run_id: 'run-cancel-1',
     });
@@ -8519,6 +8623,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockGenerateTaskThreadSuggestions).toHaveBeenCalledWith({
       thread_id: 'thread-suggestions-1',
+      space_id: 'space-1',
       messages: [
         { role: 'user', content: '帮我制定武汉3日游攻略' },
         { role: 'assistant', content: '已经整理了路线和预算。' },
@@ -8676,6 +8781,8 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-retry-1',
+      run_id: 'run-failed-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -8701,11 +8808,15 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      attempt_kind: 'retry',
+      space_id: 'space-1',
       thread_id: 'thread-retry-1',
       input: expect.any(String),
       config: expect.any(String),
       metadata: expect.any(String),
       idempotency_key: expect.any(String),
+      message_content: '请分析客户反馈',
+      source_run_id: 'run-failed-1',
     });
     const retryRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     expect(JSON.parse(retryRequest.input)).toMatchObject({
@@ -8840,6 +8951,7 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockResumeTaskThreadRun).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-human-1',
       run_id: 'run-source-1',
       interrupt_id: 'interrupt-1',
@@ -8849,7 +8961,6 @@ describe('TaskDetailPage', () => {
         kind: 'clarification',
         decision: 'answered',
         answer: '最近 7 天',
-        source: 'task_detail',
       },
     });
 
@@ -8959,6 +9070,7 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockResumeTaskThreadRun).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-confirm-1',
       run_id: 'run-source-2',
       interrupt_id: 'interrupt-2',
@@ -8968,7 +9080,6 @@ describe('TaskDetailPage', () => {
         kind: 'confirmation',
         decision: 'rejected',
         comment: '先保留数据',
-        source: 'task_detail',
       },
     });
 
@@ -9071,19 +9182,19 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockListTaskThreadRuns.mockImplementation(({ page_size }) =>
-      Promise.resolve({
+    mockListTaskThreadRuns.mockImplementation(({ parent_run_id }) => {
+      const isPrimaryRunLookup = parent_run_id === '0';
+      return Promise.resolve({
         data: {
-          runs:
-            page_size === 1
-              ? [latestRunResponses.shift() ?? makeTopLevelRun('succeeded')]
-              : [],
-          total: page_size === 1 ? 1 : 0,
+          runs: isPrimaryRunLookup
+            ? [latestRunResponses.shift() ?? makeTopLevelRun('succeeded')]
+            : [],
+          total: isPrimaryRunLookup ? 1 : 0,
         },
         code: 0,
         msg: '',
-      }),
-    );
+      });
+    });
     mockListTaskThreadMessages
       .mockResolvedValueOnce({
         data: {
@@ -9251,10 +9362,12 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-only-1',
       files: [followUpFile],
     });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      space_id: 'space-1',
       thread_id: 'thread-only-1',
       input: expect.any(String),
       config: expect.any(String),
@@ -9340,7 +9453,9 @@ describe('TaskDetailPage', () => {
     expect(JSON.parse(runRequest.metadata)).toMatchObject({
       source: 'workbench_detail_followup',
     });
-    expect(runRequest.idempotency_key).toMatch(/^thread-only-1:.+:followup$/);
+    expect(runRequest.idempotency_key).toMatch(
+      /^space-1:thread-only-1:.+:followup$/,
+    );
     expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain('请追加行动建议');
     expect(container.textContent).not.toContain(

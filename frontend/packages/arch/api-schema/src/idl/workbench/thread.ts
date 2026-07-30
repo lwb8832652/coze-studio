@@ -213,6 +213,7 @@ export interface CreateCanonicalRunRequest {
   langsmith_tracer?: any,
   "Idempotency-Key"?: string,
   "X-Coze-Space-ID": string,
+  coze?: any,
 }
 export interface WaitCanonicalRunRequest {
   thread_id: string,
@@ -241,6 +242,7 @@ export interface WaitCanonicalRunRequest {
   raise_error?: boolean,
   "Idempotency-Key"?: string,
   "X-Coze-Space-ID": string,
+  coze?: any,
 }
 export interface ReconnectCanonicalRunStreamRequest {
   thread_id: string,
@@ -445,7 +447,7 @@ export const CreateCanonicalRun = /*#__PURE__*/createAPI<CreateCanonicalRunReque
   "reqType": "CreateCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalRun",
@@ -459,7 +461,7 @@ export const StreamCanonicalRun = /*#__PURE__*/createAPI<CreateCanonicalRunReque
   "reqType": "CreateCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalStreamResponse['body']",
@@ -473,7 +475,7 @@ export const WaitCanonicalRun = /*#__PURE__*/createAPI<WaitCanonicalRunRequest, 
   "reqType": "WaitCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "raise_error"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "raise_error", "coze"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalValuesResponse['body']",

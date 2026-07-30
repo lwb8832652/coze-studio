@@ -68,6 +68,7 @@ type canonicalThreadCoze struct {
 	Progress          int32  `json:"progress"`
 	LastUserMessage   string `json:"last_user_message"`
 	LastAgentMessage  string `json:"last_agent_message"`
+	CanEdit           bool   `json:"can_edit"`
 }
 
 type canonicalRun struct {
@@ -106,8 +107,6 @@ type canonicalMessage struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt string         `json:"created_at"`
 	Seq       string         `json:"seq,omitempty"`
-
-	sortCreatedAt int64
 }
 
 type canonicalRunEvent struct {
@@ -180,14 +179,23 @@ func projectCanonicalThread(
 	if err != nil {
 		return nil, err
 	}
-	if complete {
-		return projectCanonicalThreadSnapshot(summary, snapshot)
+	if !complete {
+		snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+		if err != nil {
+			return nil, err
+		}
 	}
-	snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+	projected, err := projectCanonicalThreadSnapshot(summary, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	return projectCanonicalThreadSnapshot(summary, snapshot)
+	projected.Coze.CanEdit = canonicalThreadCanEdit(ctx, summary.CreatorID)
+	return projected, nil
+}
+
+func canonicalThreadCanEdit(ctx context.Context, creatorID int64) bool {
+	viewerID := workbenchViewerIDFromCtx(ctx)
+	return viewerID > 0 && creatorID > 0 && viewerID == creatorID
 }
 
 func canonicalThreadSnapshotFromProductStatus(
@@ -610,6 +618,8 @@ func canonicalRunAttemptKind(kind appagentthread.RunKind, metadata map[string]an
 		"coze.human_interaction_resolved.v1",
 	) != nil:
 		return "resume"
+	case kind == appagentthread.RunKindTask && canonicalProjectedTopLevelRetrySourceRunID(metadata) != nil:
+		return "retry"
 	case canonicalMetadataObjectSchema(
 		metadata,
 		"subagent_retry",
@@ -634,6 +644,9 @@ func canonicalRunSourceRunID(metadata map[string]any) *string {
 		}
 		return canonicalNestedMetadataID(metadata, "checkpoint_resume", "source_run_id")
 	}
+	if sourceRunID := canonicalProjectedTopLevelRetrySourceRunID(metadata); sourceRunID != nil {
+		return sourceRunID
+	}
 	if canonicalMetadataObjectSchema(
 		metadata,
 		"subagent_retry",
@@ -642,6 +655,14 @@ func canonicalRunSourceRunID(metadata map[string]any) *string {
 		return canonicalMetadataID(metadata["source_run_id"])
 	}
 	return nil
+}
+
+func canonicalProjectedTopLevelRetrySourceRunID(metadata map[string]any) *string {
+	attemptKind, ok := metadata["attempt_kind"].(string)
+	if !ok || strings.TrimSpace(attemptKind) != "retry" {
+		return nil
+	}
+	return canonicalMetadataID(metadata["source_run_id"])
 }
 
 func canonicalNestedMetadataID(metadata map[string]any, objectKey, idKey string) *string {
@@ -791,7 +812,7 @@ func canonicalEntityMetadataFromMap(source map[string]any, title string) map[str
 
 func removeCanonicalInternalMetadata(metadata map[string]any) {
 	for _, key := range []string{
-		"status", "appended_message_id", "source_run_id", "parent_run_id", "requested_at",
+		"status", "appended_message_id", "attempt_kind", "source_run_id", "parent_run_id", "requested_at",
 	} {
 		delete(metadata, key)
 	}
@@ -851,7 +872,7 @@ func canonicalMetadataValue(value any) (any, bool) {
 		return typed, true
 	case string:
 		projected := canonicalCleanString(typed, canonicalMaxMetadataRunes)
-		if projected == "" || canonicalSensitiveValuePattern.MatchString(projected) {
+		if projected == "" || canonicalMetadataStringIsSensitive(projected) {
 			return nil, false
 		}
 		return projected, true
@@ -860,13 +881,22 @@ func canonicalMetadataValue(value any) (any, bool) {
 	}
 }
 
+func canonicalMetadataStringIsSensitive(value string) bool {
+	// This reviewed business label contains the substring "sk_", which the
+	// generic credential detector intentionally treats as sensitive elsewhere.
+	if value == "task_retry" {
+		return false
+	}
+	return canonicalSensitiveValuePattern.MatchString(value)
+}
+
 func canonicalProtectedMetadataKey(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
 	if canonicalUnsafePublicField(normalized) {
 		return true
 	}
 	for _, fragment := range []string{
-		"owner", "creator", "user_id", "space", "runtime", "credential", "secret", "token",
+		"owner", "creator", "user_id", "space", "can_edit", "runtime", "credential", "secret", "token",
 		"api_key", "apikey", "authorization", "password", "legacy_task_id", "worker_id",
 		"lease_owner", "lease_token", "idempotency_key", "checkpoint_bytes", "provider_body",
 		"hidden_config",

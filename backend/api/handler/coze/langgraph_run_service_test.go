@@ -33,320 +33,6 @@ import (
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
 
-func TestLangGraphRunCreateListAndGetHandlers(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	h.GET("/api/threads/:thread_id/runs", ListLangGraphRuns)
-	h.GET("/api/threads/:thread_id/runs/:run_id", GetLangGraphRun)
-	installAgentThreadTestService(t)
-
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input": map[string]any{
-			"messages": []map[string]any{
-				{
-					"role":    "user",
-					"content": "帮我分析这个需求",
-				},
-			},
-		},
-		"metadata": map[string]any{
-			"source": "langgraph_sdk",
-		},
-		"config": map[string]any{
-			"configurable": map[string]any{
-				"model_name": "gpt-4.1",
-			},
-		},
-		"context": map[string]any{
-			"enable_skills": []string{"research"},
-		},
-		"stream_mode":        []string{"messages", "updates"},
-		"multitask_strategy": "reject",
-		"on_disconnect":      "continue",
-		"durability":         "async",
-	})
-	require.NoError(t, err)
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	createBody := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, createResp.Code)
-	require.Contains(t, createBody, `"run_id":"2"`)
-	require.Contains(t, createBody, `"thread_id":"1"`)
-	require.Contains(t, createBody, `"assistant_id":"default"`)
-	require.Contains(t, createBody, `"status":"pending"`)
-	require.Contains(t, createBody, `"source":"langgraph_sdk"`)
-	require.NotContains(t, createBody, `"model_name":"gpt-4.1"`)
-	require.NotContains(t, createBody, `"enable_skills":["research"]`)
-	require.Contains(t, createBody, `"stream_mode":["messages","updates"]`)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
-	require.NoError(t, err)
-	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
-	require.Contains(t, persisted.Run.Context, `"enable_skills":["research"]`)
-
-	listResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs?limit=10&offset=0", nil)
-	listBody := string(listResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, listResp.Code)
-	require.Contains(t, listBody, `"run_id":"2"`)
-	require.Contains(t, listBody, `"thread_id":"1"`)
-
-	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs/2", nil)
-	getBody := string(getResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, getResp.Code)
-	require.Contains(t, getBody, `"run_id":"2"`)
-	require.Contains(t, getBody, `"thread_id":"1"`)
-	require.Contains(t, getBody, `"status":"pending"`)
-	require.Contains(t, getBody, `"source":"langgraph_sdk"`)
-}
-
-func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-	previousPolicy := appagentthread.SVC.RuntimePolicy
-	policy := appagentthread.RuntimePolicy{
-		DefaultMode:    appagentthread.RuntimeModeEinoADK,
-		EinoADKEnabled: true,
-	}
-	appagentthread.SVC.RuntimePolicy = &policy
-	t.Cleanup(func() { appagentthread.SVC.RuntimePolicy = previousPolicy })
-
-	payload, err := json.Marshal(map[string]any{
-		"assistant_id": "lead_agent",
-		"input": map[string]any{
-			"messages": []map[string]any{{"role": "user", "content": "analyze"}},
-		},
-		"config": map[string]any{
-			"configurable": map[string]any{"mode": "flash"},
-		},
-		"context": map[string]any{
-			"mode":                     "ultra",
-			"model_name":               "deepseek-v4-pro",
-			"max_concurrent_subagents": 4,
-		},
-	})
-	require.NoError(t, err)
-	response := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-
-	require.Equal(t, http.StatusOK, response.Code)
-	persisted, err := appagentthread.SVC.GetRun(
-		context.Background(),
-		&appagentthread.GetRunRequest{RunID: 2},
-	)
-	require.NoError(t, err)
-	require.JSONEq(t, `{
-		"runtime":"eino_adk",
-		"mode":"ultra",
-		"model_name":"deepseek-v4-pro",
-		"thinking_enabled":true,
-		"reasoning_effort":"high",
-		"is_plan_mode":true,
-		"subagent_enabled":true,
-		"max_concurrent_subagents":4,
-		"configurable":{"mode":"flash"}
-	}`, persisted.Run.Config)
-}
-
-func TestLangGraphRunGetForbiddenForDifferentViewer(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET(
-		"/api/threads/:thread_id/runs/:run_id",
-		workbenchSessionMiddlewareForTest(3),
-		GetLangGraphRun,
-	)
-	installAgentThreadTestService(t)
-	runResp, err := appagentthread.SVC.CreateRun(
-		context.Background(),
-		&appagentthread.CreateRunRequest{ThreadID: 1, Input: `{}`},
-	)
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10),
-		nil,
-	)
-
-	require.Equal(t, http.StatusForbidden, resp.Code)
-	require.Contains(t, string(resp.Result().Body()), "thread access denied")
-}
-
-func TestLangGraphRunCreateAccessDeniedDoesNotMutate(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST(
-		"/api/threads/:thread_id/runs",
-		workbenchSessionMiddlewareForTest(3),
-		CreateLangGraphRun,
-	)
-	installAgentThreadTestService(t)
-	payload, err := json.Marshal(map[string]any{
-		"input": map[string]any{"messages": []map[string]string{{
-			"role": "user", "content": "must not run",
-		}}},
-	})
-	require.NoError(t, err)
-	before, err := appagentthread.SVC.ListRuns(
-		context.Background(),
-		&appagentthread.ListRunsRequest{ThreadID: 1},
-	)
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	after, err := appagentthread.SVC.ListRuns(
-		context.Background(),
-		&appagentthread.ListRunsRequest{ThreadID: 1},
-	)
-	require.NoError(t, err)
-
-	require.Equal(t, http.StatusForbidden, resp.Code)
-	require.Equal(t, before.Total, after.Total)
-}
-
-func TestLangGraphRunThreadMismatchForbiddenWithoutCancel(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST(
-		"/api/threads/:thread_id/runs/:run_id/cancel",
-		workbenchSessionMiddlewareForTest(2),
-		CancelLangGraphRun,
-	)
-	installAgentThreadTestService(t)
-	threadResp, err := appagentthread.SVC.CreateThread(
-		context.Background(),
-		&appagentthread.CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "other"},
-	)
-	require.NoError(t, err)
-	runResp, err := appagentthread.SVC.CreateRun(
-		context.Background(),
-		&appagentthread.CreateRunRequest{ThreadID: threadResp.Thread.ThreadID, Input: `{}`},
-	)
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/cancel",
-		nil,
-	)
-	persisted, err := appagentthread.SVC.GetRun(
-		context.Background(),
-		&appagentthread.GetRunRequest{RunID: runResp.Run.RunID},
-	)
-	require.NoError(t, err)
-
-	require.Equal(t, http.StatusForbidden, resp.Code)
-	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
-}
-
-func TestLangGraphRunCreateAcceptsFlexibleInputAndStreamMode(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input": []map[string]any{
-			{
-				"role":    "user",
-				"content": "数组输入",
-			},
-		},
-		"stream_mode": "updates",
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, createResp.Code)
-	require.Contains(t, body, `"run_id":"2"`)
-	require.NotContains(t, body, `"content":"数组输入"`)
-	require.Contains(t, body, `"stream_mode":["updates"]`)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
-	require.NoError(t, err)
-	require.JSONEq(t, `[{"content":"数组输入","role":"user"}]`, persisted.Run.Input)
-	require.Equal(t, `["updates"]`, persisted.Run.StreamMode)
-}
-
-func TestLangGraphRunCreateAcceptsEmptyObjectInput(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input":        map[string]any{},
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, createResp.Code)
-	require.Contains(t, body, `"input":{}`)
-}
-
-func TestLangGraphRunWaitCreatesRunAndReturnsFallbackState(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/wait", WaitLangGraphRun)
-	installAgentThreadTestService(t)
-
-	payload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input": map[string]any{
-			"messages": []map[string]any{{"role": "user", "content": "同步等待"}},
-		},
-	})
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/wait?timeout_ms=1&interval_ms=1",
-		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(resp.Result().Body())
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	require.Contains(t, body, `"status":"pending"`)
-	require.Contains(t, body, `"error":""`)
-}
-
 func TestLangGraphStatelessRunWaitCreatesRunAndReturnsFallbackState(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/runs/wait", WaitLangGraphStatelessRun)
@@ -376,474 +62,6 @@ func TestLangGraphStatelessRunWaitCreatesRunAndReturnsFallbackState(t *testing.T
 	require.Equal(t, http.StatusOK, resp.Code)
 	require.Contains(t, body, `"status":"pending"`)
 	require.Contains(t, body, `"error":""`)
-}
-
-func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"resume guard"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
-		WorkerID: "source-worker",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
-		RunID:        runResp.Run.RunID,
-		From:         appagentthread.RunStatusRunning,
-		WorkerID:     "source-worker",
-		ErrorCode:    "step_error",
-		ErrorMessage: "source run failed",
-	}))
-	require.NoError(t, err)
-	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
-		ThreadID:        1,
-		RunID:           runResp.Run.RunID,
-		CheckpointNS:    "harness.terminal",
-		ChannelValues:   `{"messages":[{"role":"assistant","content":"partial"}]}`,
-		ChannelVersions: `{"messages":1}`,
-		PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
-		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed","error_type":"step_error"}`,
-	})
-	require.NoError(t, err)
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input": map[string]any{
-			"messages": []map[string]any{{"role": "user", "content": "resume"}},
-		},
-		"metadata": map[string]any{
-			"client": "langgraph_sdk",
-		},
-		"command": map[string]any{
-			"resume": map[string]any{
-				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, createResp.Code)
-
-	var apiRun langgraphapi.Run
-	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
-	require.Equal(t, "queued", apiRun.Status)
-	require.NotContains(t, body, "langgraph_sdk")
-	require.Empty(t, apiRun.Command)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
-	require.NoError(t, err)
-	command := langGraphJSONMap(persisted.Run.Command)
-	resumeCommand, ok := command["resume"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeCommand["checkpoint_id"])
-	require.Equal(t, "harness.terminal", resumeCommand["checkpoint_ns"])
-	require.Equal(t, "pending_sends", resumeCommand["resume_from"])
-	require.Equal(t, "pending_sends_available", resumeCommand["reason"])
-	require.Equal(t, "worker_replay_not_enabled", resumeCommand["guard"])
-
-	resumeMetadata, ok := langGraphJSONMap(persisted.Run.Metadata)["checkpoint_resume"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, true, resumeMetadata["protected_from_worker_claim"])
-	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeMetadata["checkpoint_id"])
-
-	require.Equal(t, appagentthread.RunStatusQueued, persisted.Run.Status)
-
-	claimed, err := appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    10,
-	})
-	require.NoError(t, err)
-	require.Empty(t, claimed.Runs)
-	require.NotContains(t, body, `"checkpoint_resume"`)
-}
-
-func TestLangGraphRunCreatePreservesResumeTargets(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-	_, checkpointID := createInterruptedHumanInteractionRunWithCheckpoint(t)
-
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input":        map[string]any{},
-		"command": map[string]any{
-			"resume": map[string]any{
-				"checkpoint_id": strconv.FormatInt(checkpointID, 10),
-				"targets": map[string]any{
-					"interrupt-1": map[string]any{
-						"schema":         "coze.human_interaction_response.v1",
-						"interaction_id": "hi_1",
-						"kind":           "clarification",
-						"decision":       "answered",
-						"answer":         "最近 7 天",
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-
-	require.Equal(t, http.StatusOK, createResp.Code)
-	var apiRun langgraphapi.Run
-	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
-	require.Empty(t, apiRun.Command)
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
-	require.NoError(t, err)
-	resumeCommand, ok := langGraphJSONMap(persisted.Run.Command)["resume"].(map[string]any)
-	require.True(t, ok)
-	targets, ok := resumeCommand["targets"].(map[string]any)
-	require.True(t, ok)
-	target, ok := targets["interrupt-1"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "最近 7 天", target["answer"])
-	require.Equal(t, "interrupt", resumeCommand["resume_from"])
-}
-
-func TestLangGraphRunCreateRejectsUnknownResumeTarget(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-	_, checkpointID := createInterruptedHumanInteractionRunWithCheckpoint(t)
-
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input":        map[string]any{},
-		"command": map[string]any{
-			"resume": map[string]any{
-				"checkpoint_id": strconv.FormatInt(checkpointID, 10),
-				"targets": map[string]any{
-					"missing": map[string]any{
-						"schema":         "coze.human_interaction_response.v1",
-						"interaction_id": "hi_1",
-						"kind":           "clarification",
-						"decision":       "answered",
-						"answer":         "最近 7 天",
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusBadRequest, createResp.Code)
-	require.Contains(t, body, "resume target missing is not present in checkpoint interrupts")
-}
-
-func TestLangGraphRunCreateRejectsNotResumableCheckpoint(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"done guard"}]}`,
-	})
-	require.NoError(t, err)
-	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
-		ThreadID:        1,
-		RunID:           runResp.Run.RunID,
-		CheckpointNS:    "harness.terminal",
-		ChannelValues:   `{"messages":[{"role":"assistant","content":"done"}]}`,
-		ChannelVersions: `{"messages":1}`,
-		PendingSends:    `[]`,
-		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"succeeded"}`,
-	})
-	require.NoError(t, err)
-	createPayload, err := json.Marshal(map[string]any{
-		"assistant_id": "default",
-		"input":        map[string]any{},
-		"config": map[string]any{
-			"configurable": map[string]any{
-				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	createResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs",
-		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-	body := string(createResp.Result().Body())
-
-	require.Equal(t, http.StatusBadRequest, createResp.Code)
-	require.Contains(t, body, "checkpoint is not resumable")
-	require.Contains(t, body, "checkpoint_already_succeeded")
-}
-
-func TestLangGraphRunListAcceptsCompatibleStatusFilter(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/runs", ListLangGraphRuns)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"状态筛选"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
-		RunID:    runResp.Run.RunID,
-		From:     appagentthread.RunStatusRunning,
-		WorkerID: "worker-a",
-	}))
-	require.NoError(t, err)
-
-	listResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs?status=success", nil)
-	body := string(listResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, listResp.Code)
-	require.Contains(t, body, `"run_id":"2"`)
-	require.Contains(t, body, `"status":"success"`)
-}
-
-func TestLangGraphRunGetRejectsCrossThreadRun(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/runs/:run_id", GetLangGraphRun)
-	installAgentThreadTestService(t)
-
-	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
-		SpaceID:  1,
-		UserID:   2,
-		Title:    "另一个任务",
-		Source:   appagentthread.ThreadSourceAPI,
-		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
-	})
-	require.NoError(t, err)
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"跨线程检查"}]}`,
-	})
-	require.NoError(t, err)
-
-	getResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10),
-		nil,
-	)
-
-	require.Equal(t, http.StatusForbidden, getResp.Code)
-}
-
-func TestLangGraphRunMessagesHandlerReturnsDeerFlowPage(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/runs/:run_id/messages", ListLangGraphRunMessages)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"请搜索青岛最佳旅游时间"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     runResp.Run.RunID,
-		EventType: "message.completed",
-		Payload:   `{"role":"assistant","content":"我先查询天气和旅游季节。","reasoning_content":"Need travel season evidence","usage":{"input_tokens":11,"output_tokens":7}}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     runResp.Run.RunID,
-		EventType: "tool.completed",
-		Payload:   `{"tool_name":"web_search","tool_call_id":"call-1","content":"青岛5-10月适合旅游"}`,
-	})
-	require.NoError(t, err)
-
-	firstPage := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/messages?limit=2",
-		nil,
-	)
-	firstBody := string(firstPage.Result().Body())
-
-	require.Equal(t, http.StatusOK, firstPage.Code)
-	require.Contains(t, firstBody, `"has_more":true`)
-	require.Contains(t, firstBody, `"seq":1`)
-	require.Contains(t, firstBody, `"type":"human"`)
-	require.Contains(t, firstBody, `"content":"请搜索青岛最佳旅游时间"`)
-	require.Contains(t, firstBody, `"seq":2`)
-	require.Contains(t, firstBody, `"type":"ai"`)
-	require.Contains(t, firstBody, `"content":"我先查询天气和旅游季节。"`)
-	require.Contains(t, firstBody, `"reasoning_present":true`)
-	require.NotContains(t, firstBody, "Need travel season evidence")
-	require.NotContains(t, firstBody, `"type":"tool"`)
-
-	nextPage := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/messages?after_seq=2",
-		nil,
-	)
-	nextBody := string(nextPage.Result().Body())
-
-	require.Equal(t, http.StatusOK, nextPage.Code)
-	require.Contains(t, nextBody, `"has_more":false`)
-	require.Contains(t, nextBody, `"seq":3`)
-	require.Contains(t, nextBody, `"type":"tool"`)
-	require.Contains(t, nextBody, `"name":"web_search"`)
-	require.Contains(t, nextBody, `"tool_call_id":"call-1"`)
-	require.NotContains(t, nextBody, "Need travel season evidence")
-}
-
-func TestLangGraphThreadMessagesHandlerReturnsDeerFlowList(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/messages", ListLangGraphThreadMessages)
-	installAgentThreadTestService(t)
-
-	firstRun, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"第一轮问题"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     firstRun.Run.RunID,
-		EventType: "message.completed",
-		Payload:   `{"role":"assistant","content":"第一轮回复","tool_calls":[{"id":"call-1","name":"web_search","arguments":{"query":"secret raw arg"}}]}`,
-	})
-	require.NoError(t, err)
-
-	secondRun, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID:          1,
-		Input:             `{"messages":[{"role":"user","content":"第二轮问题"}]}`,
-		MultitaskStrategy: "interrupt",
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     secondRun.Run.RunID,
-		EventType: "message.completed",
-		Payload:   `{"role":"assistant","content":"第二轮回复","reasoning_content":"visible bounded reasoning"}`,
-	})
-	require.NoError(t, err)
-
-	firstPage := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/messages?limit=3",
-		nil,
-	)
-	firstBody := string(firstPage.Result().Body())
-
-	require.Equal(t, http.StatusOK, firstPage.Code)
-	require.Contains(t, firstBody, `"seq":1`)
-	require.Contains(t, firstBody, `"content":"第一轮问题"`)
-	require.Contains(t, firstBody, `"seq":2`)
-	require.Contains(t, firstBody, `"content":"第一轮回复"`)
-	require.Contains(t, firstBody, `"tool_calls":[{"id":"call-1","name":"web_search","type":"function"}]`)
-	require.Contains(t, firstBody, `"feedback":null`)
-	require.Contains(t, firstBody, `"seq":3`)
-	require.Contains(t, firstBody, `"content":"第二轮问题"`)
-	require.NotContains(t, firstBody, "secret raw arg")
-	require.NotContains(t, firstBody, "第二轮回复")
-
-	nextPage := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/messages?after_seq=3",
-		nil,
-	)
-	nextBody := string(nextPage.Result().Body())
-
-	require.Equal(t, http.StatusOK, nextPage.Code)
-	require.Contains(t, nextBody, `"seq":4`)
-	require.Contains(t, nextBody, `"content":"第二轮回复"`)
-	require.NotContains(t, nextBody, "visible bounded reasoning")
-	require.NotContains(t, nextBody, "第一轮问题")
-}
-
-func TestLangGraphRunEventsHandlerReturnsSafeDeerFlowList(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/runs/:run_id/events", ListLangGraphRunEvents)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"执行工具"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     runResp.Run.RunID,
-		EventType: "run.started",
-		Payload:   `{"status":"running","worker_id":"worker-a"}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
-		ThreadID:  1,
-		RunID:     runResp.Run.RunID,
-		EventType: "tool.completed",
-		Payload: `{
-			"role":"tool",
-			"tool_name":"web_search",
-			"tool_call_id":"call_123",
-			"content":"tool result sk-secret https://private.example/signed",
-			"usage":{"prompt_tokens":10,"completion_tokens":5}
-		}`,
-	})
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/events?event_types=tool.completed&limit=10",
-		nil,
-	)
-	body := string(resp.Result().Body())
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	require.Contains(t, body, `"event_type":"tool.completed"`)
-	require.Contains(t, body, `\"redacted\":true`)
-	require.Contains(t, body, `\"role\":\"tool\"`)
-	require.Contains(t, body, `\"tool_name\":\"web_search\"`)
-	require.Contains(t, body, `\"tool_call_id\":\"call_123\"`)
-	require.Contains(t, body, `\"result_present\":true`)
-	require.NotContains(t, body, `"event_type":"run.started"`)
-	require.NotContains(t, body, "tool result")
-	require.NotContains(t, body, "sk-secret")
-	require.NotContains(t, body, "private.example")
-	require.NotContains(t, body, "prompt_tokens")
 }
 
 func TestLangGraphStatelessRunMessagesHandlerReturnsDeerFlowPage(t *testing.T) {
@@ -900,69 +118,7 @@ func TestLangGraphStatelessRunFeedbackHandlerReturnsEmptyListForValidRun(t *test
 	require.JSONEq(t, `[]`, string(resp.Result().Body()))
 }
 
-func TestLangGraphRunCancelHandlerTransitionsPendingRun(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/cancel", CancelLangGraphRun)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"取消这次任务"}]}`,
-	})
-	require.NoError(t, err)
-
-	cancelResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/cancel",
-		nil,
-	)
-	cancelBody := string(cancelResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, cancelResp.Code)
-	require.Contains(t, cancelBody, `"run_id":"2"`)
-	require.Contains(t, cancelBody, `"thread_id":"1"`)
-	require.Contains(t, cancelBody, `"status":"interrupted"`)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
-}
-
-func TestLangGraphRunCancelRejectsCrossThreadRun(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/cancel", CancelLangGraphRun)
-	installAgentThreadTestService(t)
-
-	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
-		SpaceID:  1,
-		UserID:   2,
-		Title:    "另一个任务",
-		Source:   appagentthread.ThreadSourceAPI,
-		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
-	})
-	require.NoError(t, err)
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"跨线程取消检查"}]}`,
-	})
-	require.NoError(t, err)
-
-	cancelResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/cancel",
-		nil,
-	)
-
-	require.Equal(t, http.StatusForbidden, cancelResp.Code)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
-}
-
-func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
+func TestLangGraphStatelessRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -992,8 +148,7 @@ func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
-		ThreadID:   1,
+	streamLangGraphStatelessRunEvents(context.Background(), writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:      runResp.Run.RunID,
 		IntervalMs: 10,
 		TimeoutMs:  100,
@@ -1014,7 +169,7 @@ func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: end"))
 }
 
-func TestLangGraphRunStreamCancelsPersistedCancelModeOnWriteFailure(t *testing.T) {
+func TestLangGraphStatelessRunStreamCancelsPersistedCancelModeOnWriteFailure(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1023,8 +178,7 @@ func TestLangGraphRunStreamCancelsPersistedCancelModeOnWriteFailure(t *testing.T
 	})
 	require.NoError(t, err)
 
-	streamLangGraphRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, langgraphapi.StreamRunRequest{
-		ThreadID:   1,
+	streamLangGraphStatelessRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, langgraphapi.StatelessStreamRunRequest{
 		RunID:      runResp.Run.RunID,
 		IntervalMs: 10,
 		TimeoutMs:  100,
@@ -1036,7 +190,7 @@ func TestLangGraphRunStreamCancelsPersistedCancelModeOnWriteFailure(t *testing.T
 	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
 }
 
-func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
+func TestLangGraphStatelessRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1060,8 +214,7 @@ func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
-		ThreadID:     1,
+	streamLangGraphStatelessRunEvents(context.Background(), writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:        runResp.Run.RunID,
 		AfterEventID: first.Event.EventID,
 		IntervalMs:   10,
@@ -1073,7 +226,7 @@ func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 	require.Contains(t, body, `"event_type":"step.completed"`)
 }
 
-func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing.T) {
+func TestLangGraphStatelessRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1096,8 +249,7 @@ func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing
 	}
 
 	firstWriter := &cursorRecordingLangGraphRunStreamWriter{failAfterEvents: 1}
-	streamLangGraphRunEvents(context.Background(), firstWriter, langgraphapi.StreamRunRequest{
-		ThreadID:   1,
+	streamLangGraphStatelessRunEvents(context.Background(), firstWriter, langgraphapi.StatelessStreamRunRequest{
 		RunID:      runResp.Run.RunID,
 		IntervalMs: 1,
 		TimeoutMs:  1,
@@ -1105,8 +257,7 @@ func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing
 	require.Len(t, firstWriter.eventIDs, 1)
 
 	secondWriter := &cursorRecordingLangGraphRunStreamWriter{}
-	streamLangGraphRunEvents(context.Background(), secondWriter, langgraphapi.StreamRunRequest{
-		ThreadID:     1,
+	streamLangGraphStatelessRunEvents(context.Background(), secondWriter, langgraphapi.StatelessStreamRunRequest{
 		RunID:        runResp.Run.RunID,
 		AfterEventID: firstWriter.eventIDs[0],
 		IntervalMs:   1,
@@ -1118,7 +269,7 @@ func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing
 	require.Len(t, secondWriter.eventIDs, 2)
 }
 
-func TestLangGraphRunStreamRespectsUpdatesMode(t *testing.T) {
+func TestLangGraphStatelessRunStreamRespectsUpdatesMode(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1135,8 +286,7 @@ func TestLangGraphRunStreamRespectsUpdatesMode(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
-		ThreadID:   1,
+	streamLangGraphStatelessRunEvents(context.Background(), writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:      runResp.Run.RunID,
 		StreamMode: "updates",
 		IntervalMs: 1,
@@ -1151,7 +301,7 @@ func TestLangGraphRunStreamRespectsUpdatesMode(t *testing.T) {
 	require.Contains(t, body, `"role":"assistant"`)
 }
 
-func TestLangGraphRunStreamRespectsMessagesMode(t *testing.T) {
+func TestLangGraphStatelessRunStreamRespectsMessagesMode(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1168,8 +318,7 @@ func TestLangGraphRunStreamRespectsMessagesMode(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
-		ThreadID:   1,
+	streamLangGraphStatelessRunEvents(context.Background(), writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:      runResp.Run.RunID,
 		StreamMode: "messages",
 		IntervalMs: 1,
@@ -1183,7 +332,7 @@ func TestLangGraphRunStreamRespectsMessagesMode(t *testing.T) {
 	require.Contains(t, body, `"node":"agent"`)
 }
 
-func TestLangGraphRunCreateStreamUsesRequestedStreamMode(t *testing.T) {
+func TestLangGraphStatelessRunCreateStreamUsesRequestedStreamMode(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1201,8 +350,7 @@ func TestLangGraphRunCreateStreamUsesRequestedStreamMode(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	streamCreatedLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
-		ThreadID:   1,
+	streamCreatedLangGraphStatelessRun(context.Background(), writer, langgraphapi.StatelessCreateStreamRunRequest{
 		StreamMode: []string{"updates"},
 		IntervalMs: 1,
 		TimeoutMs:  1,
@@ -1214,158 +362,9 @@ func TestLangGraphRunCreateStreamUsesRequestedStreamMode(t *testing.T) {
 	require.Contains(t, body, `"agent":{"status":"planning"}`)
 }
 
-func TestLangGraphRunStreamRejectsCrossThreadRun(t *testing.T) {
+func TestLangGraphStatelessRunCreateStreamRejectsMissingInput(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
-	h.GET("/api/threads/:thread_id/runs/:run_id/stream", StreamLangGraphRun)
-	installAgentThreadTestService(t)
-
-	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
-		SpaceID:  1,
-		UserID:   2,
-		Title:    "另一个任务",
-		Source:   appagentthread.ThreadSourceAPI,
-		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
-	})
-	require.NoError(t, err)
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"跨任务流检查"}]}`,
-	})
-	require.NoError(t, err)
-
-	streamResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/stream",
-		nil,
-	)
-
-	require.Equal(t, http.StatusForbidden, streamResp.Code)
-}
-
-func TestLangGraphRunStreamPostInterruptCancelsRunWhenWaitRequested(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/stream", StreamLangGraphRun)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"停止"}]}`,
-	})
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/stream?action=interrupt&wait=1",
-		nil,
-	)
-
-	require.Equal(t, http.StatusNoContent, resp.Code)
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
-}
-
-func TestLangGraphRunCreateStreamCreatesRunAndStreamsMetadata(t *testing.T) {
-	installAgentThreadTestService(t)
-
-	writer := &recordingTaskThreadRunEventStreamWriter{}
-	_, err := createAndStreamLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
-		ThreadID:    1,
-		AssistantID: "default",
-		Input: map[string]any{
-			"messages": []map[string]any{
-				{
-					"role":    "user",
-					"content": "创建并流式返回",
-				},
-			},
-		},
-		Metadata: map[string]any{
-			"source": "langgraph_sdk",
-		},
-		Config: map[string]any{
-			"configurable": map[string]any{
-				"model_name": "gpt-4.1",
-			},
-		},
-		StreamMode: []string{"updates"},
-		IntervalMs: 1,
-		TimeoutMs:  1,
-	})
-	require.NoError(t, err)
-	body := writer.String()
-
-	require.Contains(t, body, "event: metadata")
-	require.Contains(t, body, `"run_id":"2"`)
-	require.Contains(t, body, `"thread_id":"1"`)
-	require.Contains(t, body, `"status":"pending"`)
-
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), persisted.Run.ThreadID)
-	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
-	require.Contains(t, persisted.Run.Metadata, `"source":"langgraph_sdk"`)
-	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
-	require.Equal(t, `["updates"]`, persisted.Run.StreamMode)
-}
-
-func TestLangGraphRunCreateStreamCreatesProtectedResumeRunFromReadyCheckpoint(t *testing.T) {
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"resume stream guard"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
-		WorkerID: "source-worker",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
-		RunID:        runResp.Run.RunID,
-		From:         appagentthread.RunStatusRunning,
-		WorkerID:     "source-worker",
-		ErrorCode:    "step_error",
-		ErrorMessage: "source run failed",
-	}))
-	require.NoError(t, err)
-	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
-		ThreadID:        1,
-		RunID:           runResp.Run.RunID,
-		CheckpointNS:    "harness.terminal",
-		ChannelValues:   `{"messages":[{"role":"assistant","content":"partial"}]}`,
-		ChannelVersions: `{"messages":1}`,
-		PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
-		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed","error_type":"step_error"}`,
-	})
-	require.NoError(t, err)
-
-	writer := &recordingTaskThreadRunEventStreamWriter{}
-	resp, err := createAndStreamLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
-		ThreadID:    1,
-		AssistantID: "default",
-		Input:       map[string]any{},
-		Command: map[string]any{
-			"resume": map[string]any{
-				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
-			},
-		},
-		IntervalMs: 1,
-		TimeoutMs:  1,
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusQueued, resp.Run.Status)
-	require.Contains(t, writer.String(), `"status":"queued"`)
-	require.Contains(t, resp.Run.Metadata, `"protected_from_worker_claim":true`)
-}
-
-func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/stream", CreateLangGraphRunStream)
+	h.POST("/api/runs/stream", CreateLangGraphStatelessRunStream)
 	installAgentThreadTestService(t)
 
 	payload, err := json.Marshal(map[string]any{
@@ -1376,7 +375,7 @@ func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
 	streamResp := ut.PerformRequest(
 		h.Engine,
 		http.MethodPost,
-		"/api/threads/1/runs/stream?timeout_ms=1",
+		"/api/runs/stream?timeout_ms=1",
 		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
 		ut.Header{Key: "Content-Type", Value: "application/json"},
 	)
@@ -1384,74 +383,9 @@ func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, streamResp.Code)
 }
 
-func TestLangGraphRunCreateStreamRejectsActiveRunBeforeSSEHeaders(t *testing.T) {
+func TestLangGraphStatelessRunJoinReturnsCurrentRunOnTimeout(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/stream", CreateLangGraphRunStream)
-	installAgentThreadTestService(t)
-	_, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"first"}]}`,
-	})
-	require.NoError(t, err)
-	payload, err := json.Marshal(map[string]any{
-		"input": map[string]any{"messages": []map[string]string{{
-			"role": "user", "content": "second",
-		}}},
-	})
-	require.NoError(t, err)
-
-	resp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/stream?timeout_ms=1",
-		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-	)
-
-	require.Equal(t, http.StatusConflict, resp.Code)
-	require.NotContains(t, resp.Header().Get("Content-Type"), "text/event-stream")
-	require.Contains(t, string(resp.Result().Body()), "thread already has an active run")
-}
-
-func TestLangGraphRunJoinHandlerReturnsTerminalRun(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
-	installAgentThreadTestService(t)
-
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"等待完成"}]}`,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
-		RunID:    runResp.Run.RunID,
-		From:     appagentthread.RunStatusRunning,
-		WorkerID: "worker-a",
-	}))
-	require.NoError(t, err)
-
-	joinResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?interval_ms=1&timeout_ms=1",
-		nil,
-	)
-	body := string(joinResp.Result().Body())
-
-	require.Equal(t, http.StatusOK, joinResp.Code)
-	require.Contains(t, body, `"run_id":"2"`)
-	require.Contains(t, body, `"thread_id":"1"`)
-	require.Contains(t, body, `"status":"success"`)
-}
-
-func TestLangGraphRunJoinReturnsCurrentRunOnTimeout(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
+	h.POST("/api/runs/:run_id/join", JoinLangGraphStatelessRun)
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1463,7 +397,7 @@ func TestLangGraphRunJoinReturnsCurrentRunOnTimeout(t *testing.T) {
 	joinResp := ut.PerformRequest(
 		h.Engine,
 		http.MethodPost,
-		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?interval_ms=1&timeout_ms=1",
+		"/api/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?interval_ms=1&timeout_ms=1",
 		nil,
 	)
 	body := string(joinResp.Result().Body())
@@ -1473,44 +407,7 @@ func TestLangGraphRunJoinReturnsCurrentRunOnTimeout(t *testing.T) {
 	require.Contains(t, body, `"status":"pending"`)
 }
 
-func TestLangGraphRunJoinRejectsCrossThreadRun(t *testing.T) {
-	h := authenticatedAgentThreadTestServer()
-	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
-	h.GET("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRunStream)
-	installAgentThreadTestService(t)
-
-	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
-		SpaceID:  1,
-		UserID:   2,
-		Title:    "另一个任务",
-		Source:   appagentthread.ThreadSourceAPI,
-		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
-	})
-	require.NoError(t, err)
-	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"跨任务等待检查"}]}`,
-	})
-	require.NoError(t, err)
-
-	postResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodPost,
-		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?timeout_ms=1",
-		nil,
-	)
-	getResp := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?timeout_ms=1",
-		nil,
-	)
-
-	require.Equal(t, http.StatusForbidden, postResp.Code)
-	require.Equal(t, http.StatusForbidden, getResp.Code)
-}
-
-func TestLangGraphRunJoinStreamWritesEventsAndEnd(t *testing.T) {
+func TestLangGraphStatelessRunJoinStreamWritesEventsAndEnd(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -1540,8 +437,7 @@ func TestLangGraphRunJoinStreamWritesEventsAndEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
-	joinLangGraphRunStreamEvents(context.Background(), writer, langgraphapi.JoinRunRequest{
-		ThreadID:   1,
+	joinLangGraphStatelessRunStreamEvents(context.Background(), writer, langgraphapi.StatelessJoinRunRequest{
 		RunID:      runResp.Run.RunID,
 		IntervalMs: 1,
 		TimeoutMs:  1,
@@ -1818,8 +714,7 @@ func TestLangGraphStatelessRunCreateRejectsMissingInput(t *testing.T) {
 func TestLangGraphStatelessRunCreateStreamCreatesRunAndStreamsMetadata(t *testing.T) {
 	installAgentThreadTestService(t)
 
-	writer := &recordingTaskThreadRunEventStreamWriter{}
-	resp, err := createAndStreamLangGraphStatelessRun(context.Background(), writer, langgraphapi.StatelessCreateStreamRunRequest{
+	req := langgraphapi.StatelessCreateStreamRunRequest{
 		AssistantID: "default",
 		Input: map[string]any{
 			"messages": []map[string]any{
@@ -1830,35 +725,39 @@ func TestLangGraphStatelessRunCreateStreamCreatesRunAndStreamsMetadata(t *testin
 			},
 		},
 		Metadata: map[string]any{
-			"title":  "一次性流式任务",
-			"source": "api",
+			"space_id": "1",
+			"title":    "一次性流式任务",
+			"source":   "api",
 		},
 		StreamMode: []string{"updates"},
 		IntervalMs: 1,
 		TimeoutMs:  1,
-	})
+	}
+	runResp, err := createLangGraphStatelessRun(context.Background(), statelessCreateRunRequest(req))
 	require.NoError(t, err)
+	require.NotNil(t, runResp)
+	require.NotNil(t, runResp.Run)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamCreatedLangGraphStatelessRun(context.Background(), writer, req, runResp)
 	body := writer.String()
 
-	require.Equal(t, int64(3), resp.Run.RunID)
-	require.Equal(t, int64(2), resp.Run.ThreadID)
 	require.Contains(t, body, "event: metadata")
-	require.Contains(t, body, `"run_id":"3"`)
-	require.Contains(t, body, `"thread_id":"2"`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(runResp.Run.RunID, 10)+`"`)
+	require.Contains(t, body, `"thread_id":"`+strconv.FormatInt(runResp.Run.ThreadID, 10)+`"`)
 	require.Contains(t, body, `"status":"pending"`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, runResp.Run.ThreadID, persisted.Run.ThreadID)
 }
 
-func TestLangGraphInterruptedStatusMapsToResumableInternalState(t *testing.T) {
-	require.Equal(
-		t,
-		appagentthread.RunStatusInterrupted,
-		langGraphInternalRunStatus("interrupted"),
-	)
+func TestLangGraphStatelessRunStatusMapsCanceledToInterrupted(t *testing.T) {
 	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusInterrupted))
 	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusCanceled))
 }
 
-func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
+func TestLangGraphStatelessPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
 	const sensitive = "langgraph-sensitive-sentinel"
 
 	run := langGraphRunToAPI(&appagentthread.RunSummary{
@@ -1882,8 +781,7 @@ func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
 	require.Equal(t, "Model request failed", run.Error)
 	require.NotContains(t, mustMarshalJSON(t, run), sensitive)
 
-	checkpointState := langGraphThreadStateFromCheckpoint(
-		&appagentthread.ThreadSummary{ThreadID: 2, Title: "safe title"},
+	checkpointValues := langGraphPublicCheckpointValues(appagentthread.ProjectPublicCheckpoint(
 		&appagentthread.CheckpointSummary{
 			CheckpointID:    4,
 			ThreadID:        2,
@@ -1895,8 +793,8 @@ func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
 			PendingSends:    sensitive,
 			Metadata:        `{"provider":"` + sensitive + `"}`,
 		},
-	)
-	require.NotContains(t, mustMarshalJSON(t, checkpointState), sensitive)
+	))
+	require.NotContains(t, mustMarshalJSON(t, checkpointValues), sensitive)
 
 	event := &appagentthread.RunEventSummary{
 		EventID:   5,
@@ -1927,23 +825,13 @@ func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
 	require.Equal(t, true, journal["reasoning_present"])
 	require.NotContains(t, mustMarshalJSON(t, journal), sensitive)
 
-	stateMessages := langGraphThreadStateMessages([]*appagentthread.MessageSummary{{
-		MessageID: 1,
-		ThreadID:  2,
-		RunID:     1,
-		Role:      appagentthread.MessageRoleAssistant,
-		Content:   "visible state message",
-		Metadata:  `{"source":"runtime","provider_body":"` + sensitive + `"}`,
-	}})
-	require.NotContains(t, mustMarshalJSON(t, stateMessages), sensitive)
-
 	writer := &recordingTaskThreadRunEventStreamWriter{}
 	writeLangGraphRunStreamError(context.Background(), writer, errors.New(sensitive))
 	require.NotContains(t, writer.String(), sensitive)
 	require.Contains(t, writer.String(), "runtime_failed")
 }
 
-func TestLangGraphRunWaitResponseDoesNotExposeProviderError(t *testing.T) {
+func TestLangGraphStatelessRunWaitResponseDoesNotExposeProviderError(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{

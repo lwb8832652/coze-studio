@@ -36,16 +36,14 @@ const (
 	canonicalSuggestionMessageLimit          = 40
 )
 
-// AppendCanonicalThreadMessage is an internal compatibility write boundary.
-// Ordinary user turns must continue to use POST /runs so user message and Run
-// creation stay atomic and idempotency-safe.
+// AppendCanonicalThreadMessage serves POST /api/workbench/threads/:thread_id/messages.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and referenced Run. It calls
+// ApplicationService.AppendMessage, and returns canonical message JSON.
 func AppendCanonicalThreadMessage(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.message.append", "/api/workbench/threads/:thread_id/messages")
 	requestLog.ResponseBodyKind = "values"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -155,15 +153,14 @@ func AppendCanonicalThreadMessage(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, message)
 }
 
-// GenerateCanonicalThreadSuggestions reads persisted public messages and asks the
-// current Workbench suggestion service for best-effort follow-up suggestions.
+// GenerateCanonicalThreadSuggestions serves POST /api/workbench/threads/:thread_id/suggestions.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// Workbench ApplicationService.GenerateSuggestions, and returns suggestion-list JSON.
 func GenerateCanonicalThreadSuggestions(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.suggestions.generate", "/api/workbench/threads/:thread_id/suggestions")
 	requestLog.ResponseBodyKind = "values"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}

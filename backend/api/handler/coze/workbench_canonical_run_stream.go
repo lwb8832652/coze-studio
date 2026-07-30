@@ -67,14 +67,13 @@ func (c canonicalRunEventStreamConfig) normalized() canonicalRunEventStreamConfi
 	return c
 }
 
-// StreamCanonicalRun creates or resumes one persisted Run, validates its public
-// projections, and only then upgrades the response to the canonical SSE stream.
+// StreamCanonicalRun serves POST /api/workbench/threads/:thread_id/runs/stream.
+// It authorizes the authenticated session principal against the path Thread and any referenced
+// source Run; workspace identity comes from those resources, not X-Coze-Space-ID. It calls
+// ApplicationService.CreateRun or ResumeHumanInteraction and ListRunEvents, and emits canonical SSE events.
 func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.create", "/api/workbench/threads/:thread_id/runs/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -193,6 +192,10 @@ func createCanonicalStreamRun(
 	}
 
 	requestLog.SubmissionKind = "run_turn"
+	if submission.TopLevelRetry != nil {
+		requestLog.SubmissionKind = "run_retry"
+		requestLog.SourceRunID = submission.TopLevelRetry.SourceRunID
+	}
 	response, public, err := createCanonicalRunBundle(ctx, threadID, submission)
 	if public != nil {
 		return nil, public, nil
@@ -200,33 +203,35 @@ func createCanonicalStreamRun(
 	if err != nil {
 		return nil, nil, err
 	}
-	if response == nil || response.Run == nil || response.Message == nil ||
-		response.Run.ThreadID != threadID || response.Message.ThreadID != threadID ||
-		response.Message.RunID != response.Run.RunID {
+	if !canonicalRunCreationResponseValid(response, threadID, submission) {
 		return nil, nil, fmt.Errorf("agent thread application returned invalid run")
 	}
 	projectedRun, err := projectCanonicalRun(response.Run)
 	if err != nil {
 		return nil, nil, err
 	}
-	projectedMessage, err := projectCanonicalMessage(response.Message)
-	if err != nil {
-		return nil, nil, err
-	}
-	if projectedRun == nil || projectedMessage == nil {
+	if projectedRun == nil {
 		return nil, nil, fmt.Errorf("canonical run stream projection returned empty resource")
+	}
+	if response.Message != nil {
+		projectedMessage, err := projectCanonicalMessage(response.Message)
+		if err != nil {
+			return nil, nil, err
+		}
+		if projectedMessage == nil {
+			return nil, nil, fmt.Errorf("canonical run stream projection returned empty message")
+		}
 	}
 	return response.Run, nil, nil
 }
 
-// ReconnectCanonicalRunStream validates both client cursors, replays after the
-// greater value, and then follows live events for the same authorized Run.
+// ReconnectCanonicalRunStream serves GET /api/workbench/threads/:thread_id/runs/:run_id/stream.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.GetRun and ListRunEvents, and emits replay-then-live canonical SSE events.
 func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.reconnect", "/api/workbench/threads/:thread_id/runs/:run_id/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -358,7 +363,7 @@ func streamCanonicalRunEvents(
 	}
 	config = config.normalized()
 	trackedWriter := newDisconnectTrackingRunEventStreamWriter(writer)
-	terminalObserved := isTaskThreadRunTerminal(run.Status)
+	terminalObserved := isWorkbenchRunTerminal(run.Status)
 	defer func() {
 		if !config.CancelOnDisconnect || !trackedWriter.disconnected || terminalObserved {
 			return
@@ -366,7 +371,7 @@ func streamCanonicalRunEvents(
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runStreamDisconnectCancelTimeout)
 		defer cancel()
 		current, err := getCanonicalAuthorizedRun(cancelCtx, run.ThreadID, run.RunID)
-		if err != nil || current == nil || isTaskThreadRunTerminal(current.Status) {
+		if err != nil || current == nil || isWorkbenchRunTerminal(current.Status) {
 			if err != nil {
 				logCanonicalRunStreamFailure(cancelCtx, "disconnect_state", run, err)
 			}
@@ -537,7 +542,7 @@ func cancelCanonicalRunAfterStreamDisconnect(ctx context.Context, runID int64) {
 		return
 	}
 	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
-	if err != nil || current == nil || current.Run == nil || isTaskThreadRunTerminal(current.Run.Status) {
+	if err != nil || current == nil || current.Run == nil || isWorkbenchRunTerminal(current.Run.Status) {
 		if err != nil {
 			logCanonicalRunStreamFailure(ctx, "disconnect_cancel", &appagentthread.RunSummary{RunID: runID}, err)
 		}
@@ -571,7 +576,7 @@ func finishCanonicalRunStreamWhenTerminal(
 		writeLangGraphRunStreamError(ctx, writer, err)
 		return false, true
 	}
-	if !isTaskThreadRunTerminal(current.Status) {
+	if !isWorkbenchRunTerminal(current.Status) {
 		return false, false
 	}
 	// Run status and its terminal event commit together. Flushing after the

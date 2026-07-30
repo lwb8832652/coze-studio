@@ -14,23 +14,37 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type {
+  WorkbenchRun,
+  WorkbenchTokenUsage,
+} from '../workbench/thread-client';
 import {
   mapTaskThreadTokenUsageAggregate,
   type TaskDetailTokenUsage,
 } from './task-detail-token-usage';
+import {
+  getPayloadID,
+  getPayloadNumber,
+  getPayloadString,
+  loadTaskThreadSubagentEventHistory,
+  parseJSONObject,
+  type TaskDetailSubagentStatus,
+  type TaskDetailSubagentTimelineItem,
+  type TaskThreadSubagentLifecycle,
+} from './task-detail-subagent-events';
 import { getTaskThreadTokenUsage, listTaskThreadRuns } from './service';
 
-type TaskThreadRun = workbenchTask.TaskThreadRun;
-type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
+export {
+  getRunLifecycleByRunID,
+  getSubagentLifecycleByChildRunID,
+  getSubagentTimelineByChildRunID,
+} from './task-detail-subagent-events';
+export type {
+  TaskDetailSubagentStatus,
+  TaskDetailSubagentTimelineItem,
+} from './task-detail-subagent-events';
 
-export type TaskDetailSubagentStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'canceled';
+type TaskThreadRun = WorkbenchRun;
 
 export interface TaskDetailSubagentRun {
   runId: string;
@@ -52,17 +66,6 @@ export interface TaskDetailSubagentRun {
   updatedAt: number;
 }
 
-export interface TaskDetailSubagentTimelineItem {
-  id: string;
-  eventType: string;
-  title: string;
-  status: TaskDetailSubagentStatus;
-  elapsedMs: number;
-  terminalClassification: string;
-  errorMessage: string;
-  createdAt: number;
-}
-
 export interface TaskDetailSubagentRetryAttempt {
   retryRunId: string;
   status: TaskDetailSubagentStatus;
@@ -72,37 +75,6 @@ export interface TaskDetailSubagentRetryAttempt {
   requestedAt: number;
   updatedAt: number;
 }
-
-interface TaskThreadSubagentLifecycle {
-  childRunId: string;
-  errorCode: string;
-  errorMessage: string;
-  elapsedMs: number;
-  terminalClassification: string;
-  createdAt: number;
-}
-
-const parseJSONObject = (value?: string): Record<string, unknown> => {
-  if (!value?.trim()) {
-    return {};
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      return {};
-    }
-
-    throw error;
-  }
-
-  return {};
-};
 
 const getSubagentName = (run: TaskThreadRun) => {
   const metadata = parseJSONObject(run.metadata);
@@ -119,219 +91,45 @@ const getSubagentName = (run: TaskThreadRun) => {
   return run.assistant_id || run.run_id;
 };
 
-const getPayloadID = (
-  payload: Record<string, unknown>,
-  key: string,
-): string => {
-  const value = payload[key];
-
-  if (typeof value === 'string') {
-    return value.trim();
-  }
-
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return String(value);
-  }
-
-  return '';
-};
-
-const getPayloadString = (
-  payload: Record<string, unknown>,
-  key: string,
-): string => {
-  const value = payload[key];
-
-  return typeof value === 'string' ? value.trim() : '';
-};
-
-const getPayloadNumber = (
-  payload: Record<string, unknown>,
-  key: string,
-): number => {
-  const value = payload[key];
-
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-};
-
-export const getSubagentLifecycleByChildRunID = (
-  events: TaskThreadRunEvent[],
-): Map<string, TaskThreadSubagentLifecycle> => {
-  const lifecycleByRunID = new Map<string, TaskThreadSubagentLifecycle>();
-
-  for (const event of events) {
-    if (!event.event_type?.startsWith('subagent.run.')) {
-      continue;
-    }
-    const payload = parseJSONObject(event.payload);
-    const childRunId = getPayloadID(payload, 'child_run_id');
-
-    if (!childRunId) {
-      continue;
-    }
-
-    const current = lifecycleByRunID.get(childRunId);
-    if (current && current.createdAt > event.created_at) {
-      continue;
-    }
-
-    lifecycleByRunID.set(childRunId, {
-      childRunId,
-      errorCode: getPayloadString(payload, 'error_code'),
-      errorMessage: getPayloadString(payload, 'error_message'),
-      elapsedMs: getPayloadNumber(payload, 'elapsed_ms'),
-      terminalClassification: getPayloadString(
-        payload,
-        'terminal_classification',
-      ),
-      createdAt: event.created_at,
-    });
-  }
-
-  return lifecycleByRunID;
-};
-
-const getSubagentTimelineTitle = (eventType: string) => {
-  switch (eventType) {
-    case 'subagent.run.started':
-      return '子智能体已启动';
-    case 'subagent.run.completed':
-      return '子智能体已完成';
-    case 'subagent.run.failed':
-      return '子智能体失败';
-    case 'subagent.run.canceled':
-      return '子智能体已取消';
-    default:
-      return eventType;
-  }
-};
-
-const normalizeSubagentStatus = (
-  status: string,
-): TaskDetailSubagentStatus | undefined => {
-  switch (status) {
-    case 'running':
-      return 'running';
-    case 'completed':
-    case 'succeeded':
-      return 'completed';
-    case 'failed':
-      return 'failed';
-    case 'canceling':
-    case 'canceled':
-      return 'canceled';
-    case 'queued':
-    case 'created':
-    case 'pending':
-    case 'interrupted':
-      return 'pending';
-    default:
-      return undefined;
-  }
-};
-
-const getSubagentTimelineStatus = (
-  eventType: string,
-  payload: Record<string, unknown>,
-): TaskDetailSubagentStatus => {
-  const payloadStatus = normalizeSubagentStatus(
-    getPayloadString(payload, 'status'),
-  );
-
-  if (payloadStatus) {
-    return payloadStatus;
-  }
-
-  switch (eventType) {
-    case 'subagent.run.completed':
-      return 'completed';
-    case 'subagent.run.failed':
-      return 'failed';
-    case 'subagent.run.canceled':
-      return 'canceled';
-    case 'subagent.run.started':
-      return 'running';
-    default:
-      return 'pending';
-  }
-};
-
-export const getSubagentTimelineByChildRunID = (
-  events: TaskThreadRunEvent[],
-): Map<string, TaskDetailSubagentTimelineItem[]> => {
-  const timelineByRunID = new Map<string, TaskDetailSubagentTimelineItem[]>();
-
-  for (const event of events) {
-    if (!event.event_type?.startsWith('subagent.run.')) {
-      continue;
-    }
-
-    const payload = parseJSONObject(event.payload);
-    const childRunId = getPayloadID(payload, 'child_run_id');
-
-    if (!childRunId) {
-      continue;
-    }
-
-    const timeline = timelineByRunID.get(childRunId) ?? [];
-    timeline.push({
-      id: event.event_id,
-      eventType: event.event_type,
-      title: getSubagentTimelineTitle(event.event_type),
-      status: getSubagentTimelineStatus(event.event_type, payload),
-      elapsedMs: getPayloadNumber(payload, 'elapsed_ms'),
-      terminalClassification: getPayloadString(
-        payload,
-        'terminal_classification',
-      ),
-      errorMessage: getPayloadString(payload, 'error_message'),
-      createdAt: event.created_at,
-    });
-    timelineByRunID.set(childRunId, timeline);
-  }
-
-  for (const timeline of timelineByRunID.values()) {
-    timeline.sort((left, right) => {
-      if (left.createdAt !== right.createdAt) {
-        return left.createdAt - right.createdAt;
-      }
-
-      return left.id.localeCompare(right.id);
-    });
-  }
-
-  return timelineByRunID;
-};
-
 const mapSubagentRunStatus = (
   run: TaskThreadRun,
+  lifecycle?: TaskThreadSubagentLifecycle,
 ): Pick<TaskDetailSubagentRun, 'status' | 'statusText'> => {
   switch (run.status) {
     case 'running':
       return { status: 'running', statusText: '运行中' };
     case 'completed':
+    case 'success':
     case 'succeeded':
       return { status: 'completed', statusText: '已完成' };
+    case 'error':
     case 'failed':
       return {
         status: 'failed',
-        statusText: run.error_code === 'subagent_timeout' ? '超时' : '失败',
+        statusText:
+          lifecycle?.errorCode === 'subagent_timeout' ? '超时' : '失败',
       };
     case 'canceling':
     case 'canceled':
       return { status: 'canceled', statusText: '已取消' };
     case 'queued':
+    case 'pending':
       return { status: 'pending', statusText: '排队中' };
     case 'interrupted':
-      return { status: 'pending', statusText: '等待确认' };
+      return ['canceled', 'cancelled'].includes(
+        String(run.terminal_reason ?? '')
+          .trim()
+          .toLowerCase(),
+      )
+        ? { status: 'canceled', statusText: '已取消' }
+        : { status: 'pending', statusText: '等待确认' };
     case 'created':
-    case 'pending':
     default:
       return { status: 'pending', statusText: '待执行' };
   }
 };
 
-const getSubagentRetrySourceRunID = (run: TaskThreadRun) => {
+export const getSubagentRetrySourceRunID = (run: TaskThreadRun) => {
   const metadata = parseJSONObject(run.metadata);
   if (getPayloadString(metadata, 'source') !== 'subagent_retry') {
     return '';
@@ -340,7 +138,10 @@ const getSubagentRetrySourceRunID = (run: TaskThreadRun) => {
   return getPayloadID(metadata, 'source_run_id');
 };
 
-const groupRetryAttemptsBySourceRunID = (runs: TaskThreadRun[]) => {
+const groupRetryAttemptsBySourceRunID = (
+  runs: TaskThreadRun[],
+  lifecycleByRunID: Map<string, TaskThreadSubagentLifecycle>,
+) => {
   const attemptsByRunID = new Map<string, TaskDetailSubagentRetryAttempt[]>();
 
   for (const run of runs) {
@@ -349,15 +150,16 @@ const groupRetryAttemptsBySourceRunID = (runs: TaskThreadRun[]) => {
       continue;
     }
 
-    const status = mapSubagentRunStatus(run);
+    const lifecycle = lifecycleByRunID.get(run.run_id);
+    const status = mapSubagentRunStatus(run, lifecycle);
     const metadata = parseJSONObject(run.metadata);
     const attempts = attemptsByRunID.get(sourceRunId) ?? [];
     attempts.push({
       retryRunId: run.run_id,
       status: status.status,
       statusText: status.statusText,
-      errorCode: run.error_code,
-      errorMessage: run.error_message,
+      errorCode: lifecycle?.errorCode || '',
+      errorMessage: lifecycle?.errorMessage || '',
       requestedAt: getPayloadNumber(metadata, 'requested_at'),
       updatedAt: run.updated_at,
     });
@@ -388,31 +190,29 @@ const mapTaskThreadSubagentRun = (
     timeline?: TaskDetailSubagentTimelineItem[];
   } = {},
 ): TaskDetailSubagentRun => {
-  const status = mapSubagentRunStatus(run);
+  const status = mapSubagentRunStatus(run, options.lifecycle);
   const timeline = options.timeline ?? [];
 
   return {
     runId: run.run_id,
-    parentRunId: run.parent_run_id,
+    parentRunId: run.parent_run_id ?? '',
     name: getSubagentName(run),
     assistantId: run.assistant_id,
     status: status.status,
     statusText: status.statusText,
-    errorCode: run.error_code || options.lifecycle?.errorCode || '',
-    errorMessage: run.error_message || options.lifecycle?.errorMessage || '',
+    errorCode: options.lifecycle?.errorCode || '',
+    errorMessage: options.lifecycle?.errorMessage || '',
     elapsedMs: options.lifecycle?.elapsedMs ?? 0,
     terminalClassification: options.lifecycle?.terminalClassification ?? '',
     modelAttribution: options.modelAttribution ?? '',
     timeline: timeline.length ? timeline : undefined,
-    startedAt: run.started_at,
-    endedAt: run.ended_at,
+    startedAt: run.started_at ?? 0,
+    endedAt: run.ended_at ?? 0,
     updatedAt: run.updated_at,
   };
 };
 
-const getModelAttribution = (
-  usage: workbenchTask.TaskThreadTokenUsage,
-): string => {
+const getModelAttribution = (usage: WorkbenchTokenUsage): string => {
   const provider = usage.provider.trim();
   const model = usage.model_name.trim();
 
@@ -444,20 +244,33 @@ const getSingleCurrency = (currencies: string[] = []) => {
   return currencies[0];
 };
 
-export const fetchTaskThreadSubagentRuns = async (
-  threadId: string,
-  lifecycleByChildRunID: Map<string, TaskThreadSubagentLifecycle>,
-  timelineByChildRunID: Map<string, TaskDetailSubagentTimelineItem[]>,
-): Promise<TaskDetailSubagentRun[]> => {
+export const fetchTaskThreadSubagentRuns = async ({
+  eventSourceRunId,
+  lifecycleByChildRunID,
+  runLifecycleByRunID,
+  spaceId,
+  threadId,
+  timelineByChildRunID,
+}: {
+  eventSourceRunId?: string;
+  threadId: string;
+  lifecycleByChildRunID: Map<string, TaskThreadSubagentLifecycle>;
+  runLifecycleByRunID: Map<string, TaskThreadSubagentLifecycle>;
+  timelineByChildRunID: Map<string, TaskDetailSubagentTimelineItem[]>;
+  spaceId: string;
+}): Promise<TaskDetailSubagentRun[]> => {
   const topLevelRunsResponse = await listTaskThreadRuns({
     thread_id: threadId,
+    space_id: spaceId,
     page: 1,
     page_size: 20,
   });
   const topLevelRuns = (topLevelRunsResponse.data?.runs ?? []).filter(
     run => run.run_kind !== 'subagent',
   );
-  const retryAttemptsByRunID = groupRetryAttemptsBySourceRunID(topLevelRuns);
+  const retryRuns = topLevelRuns.filter(run =>
+    Boolean(getSubagentRetrySourceRunID(run)),
+  );
   const parentRuns = topLevelRuns.filter(
     run => !getSubagentRetrySourceRunID(run),
   );
@@ -470,6 +283,7 @@ export const fetchTaskThreadSubagentRuns = async (
     parentRuns.map(run =>
       listTaskThreadRuns({
         thread_id: threadId,
+        space_id: spaceId,
         parent_run_id: run.run_id,
         page: 1,
         page_size: 20,
@@ -485,10 +299,31 @@ export const fetchTaskThreadSubagentRuns = async (
     return [];
   }
 
+  const parentRunIDsWithChildren = new Set(
+    childRuns.map(run => run.parent_run_id).filter(Boolean),
+  );
+  const eventHistory = await loadTaskThreadSubagentEventHistory({
+    eventSourceRunId,
+    lifecycleByChildRunID,
+    parentRunIds: parentRuns
+      .filter(run => parentRunIDsWithChildren.has(run.run_id))
+      .map(run => run.run_id),
+    retryRunIds: retryRuns.map(run => run.run_id),
+    runLifecycleByRunID,
+    spaceId,
+    threadId,
+    timelineByChildRunID,
+  });
+  const retryAttemptsByRunID = groupRetryAttemptsBySourceRunID(
+    topLevelRuns,
+    eventHistory.runLifecycleByRunID,
+  );
+
   const parentUsageResponses = await Promise.all(
     parentRuns.map(run =>
       getTaskThreadTokenUsage({
         thread_id: threadId,
+        space_id: spaceId,
         run_id: run.run_id,
         include_child_runs: true,
         page: 1,
@@ -539,11 +374,11 @@ export const fetchTaskThreadSubagentRuns = async (
 
     return {
       ...mapTaskThreadSubagentRun(run, {
-        lifecycle: lifecycleByChildRunID.get(run.run_id),
+        lifecycle: eventHistory.lifecycleByChildRunID.get(run.run_id),
         modelAttribution: formatModelAttributionSummary(
           modelAttributionsByRunID.get(run.run_id),
         ),
-        timeline: timelineByChildRunID.get(run.run_id),
+        timeline: eventHistory.timelineByChildRunID.get(run.run_id),
       }),
       retryAttempts: retryAttemptsByRunID.get(run.run_id),
       tokenUsage: tokenUsage ? { ...tokenUsage, currency } : undefined,

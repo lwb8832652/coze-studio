@@ -79,6 +79,9 @@
       "path": "../../packages/arch/default-slardar/tsconfig.build.json"
     },
     {
+      "path": "../../packages/arch/fetch-stream/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/arch/foundation-sdk/tsconfig.build.json"
     },
     {

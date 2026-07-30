@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
+import { presentTaskThreadTokenUsageResponse } from '../workbench/thread-client/legacy-page-response';
+import { canonicalThreadClient } from '../workbench/thread-client/canonical-thread-client-singleton';
+import type {
+  GetWorkbenchTokenUsageRequest,
+  WorkbenchRunTokenUsageAggregate,
+  WorkbenchTokenUsage,
+  WorkbenchTokenUsageAggregate,
+} from '../workbench/thread-client';
 
 const createTaskUsageAbortError = () => {
   if (typeof DOMException !== 'undefined') {
@@ -26,44 +33,40 @@ const createTaskUsageAbortError = () => {
   return error;
 };
 
-export const getTaskThreadTokenUsage = (
-  request: workbenchTask.GetTaskThreadTokenUsageRequest,
+type GetTaskThreadTokenUsageRequest = Omit<
+  GetWorkbenchTokenUsageRequest,
+  'signal'
+>;
+
+export interface GetTaskThreadTokenUsageResponse {
+  data?: {
+    usage: WorkbenchTokenUsage[];
+    total: number;
+    aggregate: WorkbenchTokenUsageAggregate;
+    run_aggregates: WorkbenchRunTokenUsageAggregate[];
+  };
+  code: number;
+  msg: string;
+}
+
+export const getTaskThreadTokenUsage = async (
+  request: GetTaskThreadTokenUsageRequest,
   options?: { signal?: AbortSignal },
-): Promise<workbenchTask.GetTaskThreadTokenUsageResponse> => {
-  const api = workbenchTask.GetTaskThreadTokenUsage.withAbort();
+): Promise<GetTaskThreadTokenUsageResponse> => {
   const signal = options?.signal;
-
-  if (!signal) {
-    return api(request);
+  if (signal?.aborted) {
+    throw createTaskUsageAbortError();
   }
-  if (signal.aborted) {
-    return Promise.reject(createTaskUsageAbortError());
+  const spaceID = String(request.space_id ?? '').trim();
+  if (!spaceID) {
+    throw new Error('Task usage workspace scope is required');
   }
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (
-      callback: (
-        value: workbenchTask.GetTaskThreadTokenUsageResponse | unknown,
-      ) => void,
-      value: workbenchTask.GetTaskThreadTokenUsageResponse | unknown,
-    ) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener('abort', handleAbort);
-      callback(value);
-    };
-    const handleAbort = () => {
-      api.abort();
-      finish(reject, createTaskUsageAbortError());
-    };
-
-    signal.addEventListener('abort', handleAbort, { once: true });
-    void api(request).then(
-      response => finish(resolve, response),
-      error => finish(reject, error),
-    );
-  });
+  return presentTaskThreadTokenUsageResponse(
+    await canonicalThreadClient.getTokenUsage({
+      ...request,
+      ...(signal === undefined ? {} : { signal }),
+      space_id: spaceID,
+    }),
+  );
 };

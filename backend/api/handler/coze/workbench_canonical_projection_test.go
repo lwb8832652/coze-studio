@@ -139,6 +139,26 @@ func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *te
 	}
 }
 
+func TestCanonicalRunProjectionTopLevelRetryUsesProtectedSourceMarkers(t *testing.T) {
+	projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3002, ThreadID: 2001, RunKind: appagentthread.RunKindTask,
+		Status:   appagentthread.RunStatusPending,
+		Metadata: `{"source":"task_retry","attempt_kind":"retry","source_run_id":3001}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, projected)
+	require.Equal(t, "retry", projected.Coze.AttemptKind)
+	require.NotNil(t, projected.Coze.SourceRunID)
+	require.Equal(t, "3001", *projected.Coze.SourceRunID)
+	require.Equal(t, map[string]any{"source": "task_retry"}, projected.Metadata)
+	_, credentialAccepted := canonicalMetadataValue("sk_secret")
+	require.False(t, credentialAccepted)
+	metadata := canonicalProjectionJSON(t, projected.Metadata)
+	require.NotContains(t, metadata, "attempt_kind")
+	require.NotContains(t, metadata, "source_run_id")
+}
+
 // Thread coze fields are compatibility pass-throughs from ThreadSummary; this
 // projection does not enrich them from domain state, queries, or messages.
 func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(t *testing.T) {
@@ -162,6 +182,73 @@ func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(
 	require.Equal(t, int32(80), projectedThread.Coze.Progress)
 	require.Equal(t, "user message", projectedThread.Coze.LastUserMessage)
 	require.Equal(t, "agent message", projectedThread.Coze.LastAgentMessage)
+}
+
+func TestCanonicalThreadProjectionCanEditRequiresMatchingAuthenticatedCreator(t *testing.T) {
+	testCases := []struct {
+		name      string
+		ctx       context.Context
+		creatorID int64
+		metadata  string
+		canEdit   bool
+	}{
+		{
+			name:      "matching authenticated viewer",
+			ctx:       canonicalViewerContext(42),
+			creatorID: 42,
+			metadata:  `{"can_edit":false,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
+			canEdit:   true,
+		},
+		{
+			name:      "missing viewer",
+			ctx:       context.Background(),
+			creatorID: 42,
+			metadata:  `{"can_edit":true,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
+			canEdit:   false,
+		},
+		{
+			name:      "mismatched viewer",
+			ctx:       canonicalViewerContext(7),
+			creatorID: 42,
+			metadata:  `{"can_edit":true,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
+			canEdit:   false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			projected, err := projectCanonicalThread(testCase.ctx, &appagentthread.ThreadSummary{
+				ThreadID:  2001,
+				CreatorID: testCase.creatorID,
+				Status:    appagentthread.ThreadStatusCompleted,
+				Metadata:  testCase.metadata,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, "alpha", projected.Metadata["team"])
+			requireCanonicalThreadCanEditJSON(
+				t,
+				canonicalProjectionJSON(t, projected),
+				testCase.canEdit,
+			)
+		})
+	}
+
+	t.Run("snapshot remains viewer independent", func(t *testing.T) {
+		projected, err := projectCanonicalThreadSnapshot(
+			&appagentthread.ThreadSummary{
+				ThreadID:  2001,
+				CreatorID: 42,
+				Metadata:  `{"can_edit":true,"team":"alpha"}`,
+			},
+			canonicalThreadProjectionSnapshot{},
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, "alpha", projected.Metadata["team"])
+		requireCanonicalThreadCanEditJSON(t, canonicalProjectionJSON(t, projected), false)
+	})
 }
 
 func TestCanonicalThreadAndRunProjectionRejectsUnknownNonEmptyEnums(t *testing.T) {
@@ -415,6 +502,7 @@ func TestCanonicalThreadProjectionRedactsMetadata(t *testing.T) {
 				"title":"untrusted title",
 				"business_key":"release-plan",
 				"priority":true,
+				"can_edit":true,
 				"status":"running",
 				"source_run_id":"3000",
 				"appended_message_id":"4000",
@@ -443,6 +531,7 @@ func TestCanonicalThreadProjectionRedactsMetadata(t *testing.T) {
 		"priority":     true,
 	}, projected.Metadata)
 	require.NotContains(t, projected.Metadata, "status")
+	require.NotContains(t, projected.Metadata, "can_edit")
 	require.NotContains(t, projected.Metadata, "source_run_id")
 	require.NotContains(t, projected.Metadata, "appended_message_id")
 	require.Equal(t, map[string]any{"messages": []map[string]any{}}, projected.Values)
@@ -677,4 +766,33 @@ func canonicalProjectionJSON(t *testing.T, value any) string {
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	return string(encoded)
+}
+
+func requireCanonicalThreadCanEditJSON(t *testing.T, encoded string, expected bool) {
+	t.Helper()
+
+	var thread map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(encoded), &thread))
+	cozeJSON, exists := thread["coze"]
+	require.True(t, exists, "canonical Thread JSON must include coze")
+
+	var coze map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cozeJSON, &coze))
+	canEditJSON, exists := coze["can_edit"]
+	require.True(t, exists, "canonical Thread JSON must include coze.can_edit")
+
+	var canEdit bool
+	require.NoError(t, json.Unmarshal(canEditJSON, &canEdit))
+	require.Equal(t, expected, canEdit)
+
+	metadataJSON, exists := thread["metadata"]
+	require.True(t, exists, "canonical Thread JSON must include metadata")
+	var metadata map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(metadataJSON, &metadata))
+	require.NotContains(t, metadata, "can_edit")
+
+	for _, hidden := range []string{"creator_id", "owner_id", "user_id", "space_id"} {
+		require.NotContains(t, metadata, hidden)
+		require.NotContains(t, encoded, `"`+hidden+`"`)
+	}
 }

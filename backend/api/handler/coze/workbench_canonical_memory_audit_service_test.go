@@ -33,7 +33,6 @@ import (
 )
 
 func TestCanonicalThreadMemoryReadsAndExportsAreSafe(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "memory reads", `{}`)
 	first := createCanonicalMemoryFixture(t, thread.ThreadID, "用户偏好中文摘要", "source-a")
@@ -100,7 +99,6 @@ func TestCanonicalThreadMemoryReadsAndExportsAreSafe(t *testing.T) {
 }
 
 func TestCanonicalThreadAuditReadsAndExportsAreSafe(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "audit reads", `{}`)
 	recordCanonicalGuardrailAudit(t, thread.ThreadID, 9101, appagentthread.GuardrailActionDeny)
@@ -184,7 +182,6 @@ func TestCanonicalThreadAuditReadsAndExportsAreSafe(t *testing.T) {
 }
 
 func TestCanonicalThreadMemoryMutations(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "memory mutations", `{}`)
 	memory := createCanonicalMemoryFixture(t, thread.ThreadID, "待更新记忆", "source-update")
@@ -266,7 +263,6 @@ func TestCanonicalThreadMemoryMutations(t *testing.T) {
 }
 
 func TestCanonicalThreadMemoryErrors(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "memory errors", `{}`)
 	memory := createCanonicalMemoryFixture(t, thread.ThreadID, "错误记忆", "source-error")

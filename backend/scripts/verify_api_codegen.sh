@@ -107,7 +107,6 @@ handwritten_generated_excludes=(
   api/model/agent/langgraph/thread.go
   api/model/workbench/diagnostic/diagnostic.go
   api/model/workbench/skill/skill_extension.go
-  api/model/workbench/thread/thread.go
   api/model/workbench/tool/tool.go
   api/model/workbench/tool/official_catalog.go
   api/model/workbench/tool/mcp_management_api_contract_test.go

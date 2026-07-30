@@ -23,6 +23,7 @@ const artifactScanBlockedMessage = (
   const actionLabel = mode === 'download' ? '下载' : '预览';
 
   const messages: Record<string, string> = {
+    artifact_content_blocked: `产物受安全策略限制，暂不能${actionLabel}`,
     scan_blocked: `产物安全扫描未通过，暂不能${actionLabel}`,
     scan_failed: '产物安全扫描暂不可用，请稍后重试',
     scan_infected: `产物存在安全风险，已阻断${actionLabel}`,

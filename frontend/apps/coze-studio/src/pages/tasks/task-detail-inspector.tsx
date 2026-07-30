@@ -61,9 +61,13 @@ export const TaskDetailInspector = ({
           </div>
           {artifactAction}
           <TaskRuntimeDoctorSection spaceId={spaceId} />
-          <TaskGuardrailAuditSection threadId={threadId} />
-          <TaskMCPRuntimeAuditSection threadId={threadId} />
-          <TaskMemorySection readOnly={memoryReadOnly} threadId={threadId} />
+          <TaskGuardrailAuditSection spaceId={spaceId} threadId={threadId} />
+          <TaskMCPRuntimeAuditSection spaceId={spaceId} threadId={threadId} />
+          <TaskMemorySection
+            readOnly={memoryReadOnly}
+            spaceId={spaceId}
+            threadId={threadId}
+          />
         </div>
       </SideSheet>
     </>

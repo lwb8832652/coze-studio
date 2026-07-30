@@ -236,6 +236,7 @@ struct CreateCanonicalRunRequest {
     23: optional string langsmith_tracer (api.body="langsmith_tracer", api.value_type="any")
     24: optional string idempotency_key (api.header="Idempotency-Key")
     25: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    26: optional string coze (api.body="coze", api.value_type="any")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -266,6 +267,7 @@ struct WaitCanonicalRunRequest {
     24: optional bool raise_error (api.body="raise_error")
     25: optional string idempotency_key (api.header="Idempotency-Key")
     26: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    27: optional string coze (api.body="coze", api.value_type="any")
     255: optional base.Base Base (api.none="true")
 }
 

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 type ArtifactPreviewModeCarrier = Pick<
   TaskThreadArtifact,
   'content_type' | 'preview_mode'

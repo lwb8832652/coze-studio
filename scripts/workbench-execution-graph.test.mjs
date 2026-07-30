@@ -477,7 +477,7 @@ test('rejects compatibility nodes from canonical execution chains', async () => 
   const chain = contract.chains.find(
     item => item.id === 'framework.canonical_stack',
   );
-  chain.ordered_node_ids[0] = 'compat.langgraph.create_run';
+  chain.ordered_node_ids[0] = 'compat.langgraph.stateless_run';
 
   const result = await validateContract(contract, { repoRoot: REPO_ROOT });
   assert.match(
@@ -556,7 +556,7 @@ test('canonical nodes all have an AST-file bridge candidate', async () => {
   assert.deepEqual(missing, []);
 });
 
-test('canonical transport anchors and integration-ingress query are explicit', async () => {
+test('canonical transport, retired routes, and integration ingress are explicit', async () => {
   const contract = await loadCanonicalContract();
   const anchorPaths = new Set(
     contract.nodes.flatMap(node =>
@@ -564,12 +564,68 @@ test('canonical transport anchors and integration-ingress query are explicit', a
     ),
   );
   for (const expected of [
-    'frontend/packages/arch/api-schema/src/idl/workbench/task.ts',
+    'frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client-singleton.ts',
+    'frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts',
+    'frontend/packages/arch/api-schema/src/idl/workbench/thread.ts',
+    'idl/workbench/thread.thrift',
+    'idl/workbench/thread_product.thrift',
     'backend/api/router/coze/api.go',
-    'backend/api/router/coze/custom_routes.go',
+    'backend/api/router/coze/workbench_canonical_thread_route_test.go',
   ]) {
     assert.equal(anchorPaths.has(expected), true, expected);
   }
+
+  const scheduledContract = contract.nodes.find(
+    item => item.id === 'contract.workbench_scheduled_task.thrift',
+  );
+  assert.ok(scheduledContract);
+  assert.deepEqual(
+    new Set(scheduledContract.source_anchors.map(anchor => anchor.path)),
+    new Set([
+      'idl/workbench/task.thrift',
+      'frontend/packages/arch/api-schema/src/idl/workbench/task.ts',
+      'backend/api/model/workbench/task/task.go',
+    ]),
+  );
+
+  const routeSurface = contract.nodes.find(
+    item => item.id === 'contract.workbench.route_surface',
+  );
+  assert.equal(routeSurface?.label, 'Workbench route surface 47/36/23/11/10');
+  assert.equal(
+    contract.nodes.filter(item => item.id === 'frontend.client.singleton')
+      .length,
+    1,
+  );
+
+  for (const retiredNodeID of [
+    'compat.langgraph.create_run',
+    'contract.workbench_task.thrift',
+    'frontend.events.event_source',
+    'framework.browser_eventsource',
+    'http.workbench.create_thread',
+    'http.workbench.create_run',
+    'http.workbench.stream_events',
+    'http.workbench.cancel_run',
+    'http.workbench.resume_run',
+    'http.workbench.retry_subagent',
+  ]) {
+    assert.equal(
+      contract.nodes.some(item => item.id === retiredNodeID),
+      false,
+      retiredNodeID,
+    );
+  }
+  assert.equal(contract.chains.some(item => item.id === 'entry.langgraph_compat'), false);
+  assert.equal(JSON.stringify(contract).includes('Feature-gated canonical'), false);
+  assert.equal(
+    contract.exclusions.some(item => item.id === 'exclude.taskthread_v1_routes'),
+    true,
+  );
+  assert.equal(
+    contract.exclusions.some(item => item.id === 'exclude.langgraph_thread_routes'),
+    true,
+  );
 
   const query = contract.required_queries.find(
     item => item.id === 'query.integration_ingress',

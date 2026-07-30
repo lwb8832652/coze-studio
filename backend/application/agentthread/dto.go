@@ -558,26 +558,27 @@ type ListRecentPublicMessagesResponse struct {
 }
 
 type CreateRunRequest struct {
-	ThreadID                int64
-	ParentRunID             int64
-	AssistantID             string
-	RunKind                 RunKind
-	Status                  RunStatus
-	Command                 string
-	Input                   string
-	Config                  string
-	Context                 string
-	Metadata                string
-	StreamMode              string
-	MultitaskStrategy       string
-	OnDisconnect            string
-	Durability              string
-	IdempotencyKey          string
-	IdempotencyOperation    string
-	IdempotencyFingerprint  string
-	MessageContent          string
-	MessageMetadata         string
-	PersistMessageReference bool
+	ThreadID                 int64
+	ParentRunID              int64
+	TopLevelRetrySourceRunID int64
+	AssistantID              string
+	RunKind                  RunKind
+	Status                   RunStatus
+	Command                  string
+	Input                    string
+	Config                   string
+	Context                  string
+	Metadata                 string
+	StreamMode               string
+	MultitaskStrategy        string
+	OnDisconnect             string
+	Durability               string
+	IdempotencyKey           string
+	IdempotencyOperation     string
+	IdempotencyFingerprint   string
+	MessageContent           string
+	MessageMetadata          string
+	PersistMessageReference  bool
 }
 
 type CreateRunResponse struct {

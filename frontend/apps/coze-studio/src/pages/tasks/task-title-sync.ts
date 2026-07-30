@@ -16,10 +16,32 @@
 
 import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type { WorkbenchThread } from '../workbench/thread-client';
 import { emitWorkspaceTaskThreadUpsert } from './task-thread-events';
-import type { TaskThreadDetailModel } from './task-thread-detail-model';
+import {
+  TaskThreadDetailStatus,
+  type TaskThreadDetailModel,
+} from './task-thread-detail-model';
+
+const mapTaskDetailStatusToThreadStatus = (status: TaskThreadDetailStatus) => {
+  switch (status) {
+    case TaskThreadDetailStatus.Queued:
+      return 'queued';
+    case TaskThreadDetailStatus.Running:
+      return 'running';
+    case TaskThreadDetailStatus.Succeeded:
+      return 'succeeded';
+    case TaskThreadDetailStatus.Failed:
+      return 'failed';
+    case TaskThreadDetailStatus.Canceling:
+      return 'canceling';
+    case TaskThreadDetailStatus.Canceled:
+      return 'canceled';
+    case TaskThreadDetailStatus.Created:
+    default:
+      return 'created';
+  }
+};
 
 const buildThreadTitleUpdatedTask = ({
   currentTask,
@@ -51,26 +73,30 @@ const emitThreadSummaryPatch = ({
   spaceID?: string;
   task: TaskThreadDetailModel;
 }) => {
+  if (!spaceID) {
+    return;
+  }
+
   const nextTitle = task.title?.trim();
   const titleChanged =
     Boolean(nextTitle) && previousTask.title?.trim() !== nextTitle;
   const statusChanged = previousTask.status !== task.status;
-  const thread: Partial<workbenchTask.TaskThread> &
-    Pick<workbenchTask.TaskThread, 'thread_id'> = {
-    thread_id: task.id,
-    updated_at: task.updated_at,
-  };
+  const thread: Partial<WorkbenchThread> & Pick<WorkbenchThread, 'thread_id'> =
+    {
+      thread_id: task.id,
+      updated_at: task.updated_at,
+    };
 
   if (titleChanged) {
     thread.title = nextTitle;
   }
   if (statusChanged) {
-    thread.status = task.status;
+    thread.status = mapTaskDetailStatusToThreadStatus(task.status);
   }
 
   emitWorkspaceTaskThreadUpsert({
     mode: 'patch',
-    space_id: task.space_id || spaceID || '',
+    space_id: spaceID,
     thread,
   });
 };
@@ -84,18 +110,20 @@ export const useTaskThreadTitleSync = ({
 }) => {
   const taskRef = useRef<TaskThreadDetailModel | undefined>();
   const setCurrentTask = useCallback(
-    (nextTask?: TaskThreadDetailModel) => {
+    (nextTask: SetStateAction<TaskThreadDetailModel | undefined>) => {
       const previousTask = taskRef.current;
-      taskRef.current = nextTask;
-      setTask(nextTask);
+      const resolvedTask =
+        typeof nextTask === 'function' ? nextTask(previousTask) : nextTask;
+      taskRef.current = resolvedTask;
+      setTask(resolvedTask);
 
-      const nextTitle = nextTask?.title?.trim();
+      const nextTitle = resolvedTask?.title?.trim();
       const titleChanged =
         Boolean(nextTitle) && previousTask?.title?.trim() !== nextTitle;
-      const statusChanged = previousTask?.status !== nextTask?.status;
+      const statusChanged = previousTask?.status !== resolvedTask?.status;
       if (
-        !nextTask ||
-        previousTask?.id !== nextTask.id ||
+        !resolvedTask ||
+        previousTask?.id !== resolvedTask.id ||
         (!titleChanged && !statusChanged)
       ) {
         return;
@@ -104,7 +132,7 @@ export const useTaskThreadTitleSync = ({
       emitThreadSummaryPatch({
         previousTask,
         spaceID,
-        task: nextTitle ? { ...nextTask, title: nextTitle } : nextTask,
+        task: nextTitle ? { ...resolvedTask, title: nextTitle } : resolvedTask,
       });
     },
     [setTask, spaceID],

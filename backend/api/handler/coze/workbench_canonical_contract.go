@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +39,6 @@ import (
 )
 
 const (
-	canonicalAPIEnabledEnv   = "COZE_WORKBENCH_CANONICAL_API_ENABLED"
 	canonicalContractVersion = "canonical_v1"
 	canonicalSpaceIDHeader   = "X-Coze-Space-ID"
 )
@@ -75,18 +73,6 @@ type canonicalRequestLog struct {
 	Offset             int32
 	LifecycleStage     string
 	StartedAt          time.Time
-}
-
-func canonicalAPIEnabled(getenv func(string) string) bool {
-	return getenv != nil && getenv(canonicalAPIEnabledEnv) == "true"
-}
-
-func requireCanonicalAPI(_ context.Context, c *app.RequestContext) bool {
-	if canonicalAPIEnabled(os.Getenv) {
-		return true
-	}
-	c.Status(hertzconsts.StatusNotFound)
-	return false
 }
 
 func requireCanonicalAgentThreadService(ctx context.Context, c *app.RequestContext) bool {
@@ -320,10 +306,7 @@ func canonicalRunJoinPath(threadID, runID int64) string {
 }
 
 func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, limit int) {
-	if total < 0 {
-		total = 0
-	}
-	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
+	setCanonicalPaginationTotal(c, total)
 	c.Response.Header.Del("X-Pagination-Next")
 	if offset < 0 || limit <= 0 {
 		return
@@ -334,6 +317,13 @@ func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, l
 		return
 	}
 	c.Header("X-Pagination-Next", strconv.FormatInt(current+int64(limit), 10))
+}
+
+func setCanonicalPaginationTotal(c *app.RequestContext, total int64) {
+	if total < 0 {
+		total = 0
+	}
+	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
 }
 
 func logCanonicalRequestCompleted(
@@ -402,7 +392,7 @@ func canonicalHTTPOutcome(status int) string {
 
 func canonicalSubmissionKind(value string) string {
 	switch value {
-	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_resume":
+	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_retry", "run_resume":
 		return value
 	default:
 		return "not_applicable"
@@ -558,6 +548,30 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"resource_not_found",
 			"Resource not found",
 			"access_denied",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetrySourceNotFound):
+		return *newCanonicalError(
+			hertzconsts.StatusNotFound,
+			"resource_not_found",
+			"Resource not found",
+			"top_level_retry_source_not_found",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryInvalid):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"invalid_retry",
+			"Top-level retry request is invalid",
+			"invalid_top_level_retry",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_retryable",
+			"Run is not retryable",
+			"top_level_retry_source_not_failed",
 			false,
 		)
 	case errors.Is(err, appagentthread.ErrActiveRunExists):

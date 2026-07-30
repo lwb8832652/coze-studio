@@ -1,442 +1,247 @@
 # Workbench Canonical Product Client Validation
 
-本手册用于 Checkpoint A 的后端 canonical 产品扩展验收。它不代表生产 UI 已切到
-canonical，也不授权删除 `/api/workbench/task_threads` 或 `/api/threads`。
+更新时间：2026-07-30
+状态：Gate B 后唯一有效验证手册
 
-## Scope
+## 目的
 
-- 验证默认关闭的 `/api/workbench/threads` canonical 合同；
-- 验证 21 个 core 路由和 26 个 product 路由；
-- 验证旧 `/api/workbench/task_threads`、`/api/threads` 与 ChatTask 退役边界；
-- 验证 session、workspace header、SSE cursor、公开投影和日志脱敏；
-- 不验证 API key、Bearer scope、分布式限流、生产网关 SSE 或外部容量隔离。
+本手册验证 Workbench、任务列表和任务详情已经完整使用
+`/api/workbench/threads/**`，且切换没有改变现有产品行为。它同时验证旧 Thread
+路由不可达、Scheduled Task 未被误删、stateless `/api/runs/**` 保持当前受控状态，
+以及认证、租户隔离、SSE、错误映射和日志脱敏满足生产边界。
 
-生产级外部接入仍属于后续阶段。Checkpoint A 只证明服务端合同和旧接口兼容性。
+本手册不提供旧 client 回退步骤。出现失败时停止发布并修复 canonical 链路，不得
+恢复 `/api/workbench/task_threads/**`、`/api/threads/**` 或 ChatTask。
 
-## Local Gate
+## 固定事实
 
-canonical API 默认关闭。关闭时所有 canonical 路由应返回 `404`，且不能进入业务
-handler。
+| 路由面 | 数量 | 预期状态 | 所有者 |
+| --- | ---: | --- | --- |
+| `/api/workbench/threads/**` | 47 | 注册且 always-on | `idl/workbench/thread.thrift` |
+| `/api/workbench/task_threads/**` | 36 | 全部不可达 | 已退役 |
+| `/api/threads/**` | 23 | 全部不可达 | 已退役 |
+| Scheduled Task | 11 | 保留 | `idl/workbench/task.thrift` |
+| stateless `/api/runs/**` | 10 | 暂时保留 | zero-use gate blocked |
 
-本地开启：
+路由数量和 method/path 对由
+`backend/api/router/coze/workbench_canonical_thread_route_test.go` 固定。任何数量变化
+都必须先解释公共合同变化，不能只修改表格或测试快照。
 
-```bash
-export APP_ENV=debug
-export COZE_WORKBENCH_CANONICAL_API_ENABLED=true
-```
+## 前置条件
 
-使用本地后端时把上述变量放入 ignored `bin/.env.debug` 或当前 shell，不提交到仓库。
-关闭或回滚只需删除变量或改为非 `true`，例如：
+1. 使用待发布分支的最新提交，工作区没有来源不明的改动。
+2. 后端使用目标线上 MySQL 配置；只核对 host 分类和连通性，不打印 DSN、密码或
+   session key。不得为通过验证而启动或改写本地 MySQL。
+3. Redis、对象存储、Milvus 等依赖按目标环境配置；关键安全依赖缺失时必须 fail
+   closed。
+4. 按 `docs/superpowers/runbooks/local-debug-and-test.md` 使用测试账号和有效工作空间。
+5. 后端监听 `http://localhost:8888`，前端监听 `http://localhost:8080`；端口冲突时
+   选择空闲端口并在证据中记录。
+6. 浏览器验收默认使用 Codex in-app browser，并保留同一登录会话。
 
-```bash
-unset COZE_WORKBENCH_CANONICAL_API_ENABLED
-```
-
-## Auth Contract
-
-所有 canonical Workbench 请求必须同时满足：
-
-- 已登录 session cookie；
-- `X-Coze-Space-ID` 为正整数；
-- session principal 是该 workspace 成员；
-- path `thread_id`、`run_id`、resource id 均由服务端校验 ownership；
-- body 中的 `space_id`、`user_id`、`owner` 不作为授权事实。
-
-占位变量：
+推荐启动顺序：
 
 ```bash
-BASE_URL=http://localhost:8888
-COOKIE='session_key=<local-session-cookie>'
-SPACE_ID=<workspace-id>
-THREAD_ID=<thread-id>
-RUN_ID=<run-id>
+cd bin
+APP_ENV=debug ./opencoze -start
 ```
-
-通用 header：
 
 ```bash
--H "Cookie: ${COOKIE}" \
--H "X-Coze-Space-ID: ${SPACE_ID}"
+cd frontend/apps/coze-studio
+rushx dev
 ```
 
-## Route Surface
+启动后先确认：
 
-### Core Routes
+- 未认证访问受保护资源返回 `401`；
+- 前端首页返回 `200`；
+- 后端日志显示目标数据库连接成功，但不包含任何 credential；
+- 必需依赖不可用时页面和 API 显式报错，没有内存或未授权执行回退。
 
-| Method | Path |
-| --- | --- |
-| `POST` | `/api/workbench/threads` |
-| `POST` | `/api/workbench/threads/search` |
-| `GET` | `/api/workbench/threads/:thread_id` |
-| `PATCH` | `/api/workbench/threads/:thread_id` |
-| `DELETE` | `/api/workbench/threads/:thread_id` |
-| `GET` | `/api/workbench/threads/:thread_id/state` |
-| `POST` | `/api/workbench/threads/:thread_id/state` |
-| `GET` | `/api/workbench/threads/:thread_id/history` |
-| `POST` | `/api/workbench/threads/:thread_id/history` |
-| `GET` | `/api/workbench/threads/:thread_id/messages` |
-| `GET` | `/api/workbench/threads/:thread_id/runs` |
-| `POST` | `/api/workbench/threads/:thread_id/runs` |
-| `POST` | `/api/workbench/threads/:thread_id/runs/stream` |
-| `POST` | `/api/workbench/threads/:thread_id/runs/wait` |
-| `GET` | `/api/workbench/threads/:thread_id/runs/:run_id` |
-| `GET` | `/api/workbench/threads/:thread_id/runs/:run_id/stream` |
-| `GET` | `/api/workbench/threads/:thread_id/runs/:run_id/join` |
-| `POST` | `/api/workbench/threads/:thread_id/runs/:run_id/cancel` |
-| `POST` | `/api/workbench/threads/:thread_id/runs/:run_id/resume` |
-| `GET` | `/api/workbench/threads/:thread_id/runs/:run_id/events` |
-| `GET` | `/api/workbench/threads/:thread_id/runs/:run_id/messages` |
+## 路由门禁
 
-Forbidden variants must remain unreachable:
-
-- `POST /api/workbench/threads/:thread_id/runs/:run_id/stream`
-- `POST /api/workbench/threads/:thread_id/runs/:run_id/join`
-
-### Product Routes
-
-| Method | Path | Operation |
-| --- | --- | --- |
-| `POST` | `/api/workbench/threads/:thread_id/messages` | internal message append |
-| `POST` | `/api/workbench/threads/:thread_id/suggestions` | suggestions |
-| `GET` | `/api/workbench/threads/:thread_id/uploads` | list uploads |
-| `POST` | `/api/workbench/threads/:thread_id/uploads` | multipart upload |
-| `DELETE` | `/api/workbench/threads/:thread_id/uploads/:file_id` | delete upload by file id |
-| `GET` | `/api/workbench/threads/:thread_id/artifacts` | list artifacts |
-| `GET` | `/api/workbench/threads/:thread_id/artifacts/:artifact_id/content` | artifact content |
-| `GET` | `/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url` | artifact signed URL |
-| `DELETE` | `/api/workbench/threads/:thread_id/artifacts/:artifact_id` | delete artifact |
-| `POST` | `/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore` | restore artifact |
-| `POST` | `/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review` | scan review |
-| `GET` | `/api/workbench/threads/:thread_id/artifact_scan_jobs` | list scan jobs |
-| `POST` | `/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry` | retry scan job |
-| `GET` | `/api/workbench/threads/:thread_id/token_usage` | token usage |
-| `GET` | `/api/workbench/threads/:thread_id/memories` | list memories |
-| `PUT` | `/api/workbench/threads/:thread_id/memories/:memory_id` | update memory |
-| `DELETE` | `/api/workbench/threads/:thread_id/memories/:memory_id` | delete memory |
-| `POST` | `/api/workbench/threads/:thread_id/memories/:memory_id/restore` | restore memory |
-| `POST` | `/api/workbench/threads/:thread_id/memories/clear` | clear memories |
-| `GET` | `/api/workbench/threads/:thread_id/memories/export` | export memories |
-| `POST` | `/api/workbench/threads/:thread_id/memories/import` | import memories |
-| `GET` | `/api/workbench/threads/:thread_id/memories/audit_events` | memory audit |
-| `GET` | `/api/workbench/threads/:thread_id/guardrail_audit_events` | guardrail audit |
-| `GET` | `/api/workbench/threads/:thread_id/guardrail_audit_events/export` | guardrail export |
-| `GET` | `/api/workbench/threads/:thread_id/mcp_runtime_audit_events` | MCP runtime audit |
-| `POST` | `/api/workbench/threads/:thread_id/runs/:run_id/retry` | subagent retry |
-
-## Safe Curl Probes
-
-### Gate-Off Probe
-
-```bash
-curl -i -X POST "${BASE_URL}/api/workbench/threads" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Content-Type: application/json" \
-  --data '{"metadata":{"title":"gate-off probe"}}'
-```
-
-Expected with gate off: `404`.
-
-### Create Thread With Initial Run
-
-```bash
-curl -i "${BASE_URL}/api/workbench/threads" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: local-create-thread-001" \
-  --data '{
-    "metadata": {"title": "Local canonical validation"},
-    "coze": {
-      "initial_run": {
-        "assistant_id": "agent",
-        "input": {
-          "messages": [
-            {"role": "user", "content": "请生成一个三点排查计划"}
-          ]
-        },
-        "config": {"runtime": "eino_adk"},
-        "metadata": {"source": "runbook"}
-      }
-    }
-  }'
-```
-
-Expected:
-
-- `200`;
-- response has decimal string `thread_id`;
-- response does not contain `input`, `command`, `config`, `context`, provider body or idempotency key.
-
-### Create Follow-Up Run
-
-```bash
-curl -i "${BASE_URL}/api/workbench/threads/${THREAD_ID}/runs" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: local-run-001" \
-  --data '{
-    "assistant_id": "agent",
-    "input": {
-      "messages": [
-        {"role": "user", "content": "继续补充风险项"}
-      ]
-    },
-    "metadata": {"source": "runbook_followup"},
-    "stream_mode": ["messages-tuple", "updates"],
-    "on_disconnect": "continue"
-  }'
-```
-
-Expected:
-
-- `200`;
-- `Content-Location` points to `/threads/{thread_id}/runs/{run_id}`;
-- the persisted User Message and Run are created atomically;
-- response does not expose request body internals.
-
-### Multipart Upload
-
-```bash
-curl -i "${BASE_URL}/api/workbench/threads/${THREAD_ID}/uploads" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -F "files=@/path/to/local-test.txt;type=text/plain"
-```
-
-Expected:
-
-- `200`;
-- response has `uploads[]` with decimal string `file_id`;
-- deletion uses `DELETE /uploads/{file_id}`, never filename.
-
-### Subagent Retry
-
-```bash
-curl -i -X POST \
-  "${BASE_URL}/api/workbench/threads/${THREAD_ID}/runs/${RUN_ID}/retry" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Idempotency-Key: local-subagent-retry-001"
-```
-
-Expected:
-
-- retry is accepted only for failed or canceled subagent runs;
-- top-level runs return `422 invalid_request`;
-- running subagent runs return `409 run_conflict`;
-- non-empty body such as `{"idempotency_key":"x"}` returns `422 invalid_request`;
-- same header key replays the same retry run;
-- same key with another source run returns `409 idempotency_conflict`.
-
-### SSE Create And Reconnect
-
-Create stream:
-
-```bash
-curl -N -i "${BASE_URL}/api/workbench/threads/${THREAD_ID}/runs/stream" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: local-stream-001" \
-  --data '{
-    "assistant_id": "agent",
-    "input": {
-      "messages": [
-        {"role": "user", "content": "流式输出一个检查清单"}
-      ]
-    },
-    "stream_mode": ["messages-tuple", "updates"],
-    "on_disconnect": "continue"
-  }'
-```
-
-Reconnect by query cursor:
-
-```bash
-curl -N -i \
-  "${BASE_URL}/api/workbench/threads/${THREAD_ID}/runs/${RUN_ID}/stream?after_event_id=${AFTER_EVENT_ID}" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}"
-```
-
-Reconnect by header cursor:
-
-```bash
-curl -N -i \
-  "${BASE_URL}/api/workbench/threads/${THREAD_ID}/runs/${RUN_ID}/stream" \
-  -H "Cookie: ${COOKIE}" \
-  -H "X-Coze-Space-ID: ${SPACE_ID}" \
-  -H "Last-Event-ID: ${AFTER_EVENT_ID}"
-```
-
-When both query `after_event_id` and `Last-Event-ID` are present, the server uses the
-larger cursor. `cancel_on_disconnect=true` may cancel only when the writer confirms
-disconnect and the run is still active; confirmed reconnect, timeout and terminal drains
-must not cancel the run.
-
-For any reverse proxy check, ensure buffering is disabled for SSE. The public API should
-stream frames progressively; a proxy that waits for completion is not acceptable for
-production, but production gateway SSE support is outside Checkpoint A.
-
-## Logs And Redaction
-
-Canonical completion logs should include safe operational fields only:
-
-- `event_name=workbench.api.request.completed`;
-- `client_contract=canonical_v1`;
-- `operation`;
-- `route_template`;
-- `http_method`;
-- `http_status`;
-- `duration_ms`;
-- `outcome`;
-- `principal_id_hash`;
-- `thread_id`;
-- `run_id`;
-- `source_run_id`;
-- `resource_type`;
-- `resource_id`;
-- `limit`;
-- `offset`;
-- `lifecycle_stage`;
-- `response_body_kind`;
-- `location_kind`;
-- `response_projection_version`;
-- `stream_modes`;
-- `raise_error_mode`;
-- `failure_projection`;
-- `idempotency_key_hash`.
-
-Logs and responses must not contain:
-
-- request body;
-- message content;
-- memory content;
-- signed URL;
-- credential, token or API key;
-- tool arguments or results;
-- provider body or raw usage;
-- checkpoint bytes;
-- object storage URI;
-- hidden config or context.
-
-## Legacy Preservation
-
-Run these probes with the same server binary:
+运行精确路由快照：
 
 ```bash
 cd backend
-GOCACHE=/private/tmp/coze-workbench-product-go-cache \
-go test -p 1 -gcflags="all=-l -N" ./api/router/coze \
-  -run '^TestWorkbenchCanonicalThreadRoutes$' -count=1
-```
-
-Expected:
-
-- canonical route snapshot equals 47 routes;
-- `/api/workbench/task_threads` snapshot is unchanged;
-- `/api/threads` snapshot is unchanged;
-- `/api/workbench/tasks*` and `/api/workbench/chat` return `404`;
-- ChatTask retired paths do not enter a handler chain.
-
-Additional source scan:
-
-```bash
-rg -n 'ChatTask|sendWorkbenchChat|source_task_id' \
-  backend idl frontend/apps/coze-studio/src frontend/packages/arch/api-schema/src \
-  --glob '!**/__tests__/**' --glob '!**/*_test.go'
-
-rg -n 'legacy_task_id' \
-  backend idl frontend/apps/coze-studio/src frontend/packages/arch/api-schema/src \
-  --glob '!**/__tests__/**' --glob '!**/*_test.go'
-
-rg -n 'include "\./task.thrift"|workbenchTask|workbench\.task' \
-  idl/workbench/thread.thrift idl/workbench/thread_product.thrift \
-  backend/api/handler/coze/workbench_canonical_*.go
-```
-
-Expected:
-
-- the first and third commands return exit code `1` with no output;
-- `legacy_task_id` appears only in metadata protection, projection filtering and
-  retired LangGraph metadata cleanup;
-- no live production ChatTask symbol;
-- canonical IDL and canonical handlers do not depend on TaskThread IDL/model/handler.
-
-## Deterministic Verification
-
-Backend:
-
-```bash
-cd backend
-bash scripts/verify_api_codegen.sh
-GOCACHE=/private/tmp/coze-workbench-product-go-cache \
-go test -p 1 -gcflags="all=-l -N" \
-  ./api/handler/coze \
-  ./api/router/coze \
-  ./application/agentthread \
-  ./domain/agentthread/service \
-  ./domain/agentthread/repository \
+GOCACHE=/private/tmp/coze-workbench-route-cache \
+  go test -p 1 -gcflags='all=-l -N' ./api/router/coze \
+  -run '^TestWorkbench(CanonicalThreadRoutes|StatelessRunRouteResolution)$' \
   -count=1
 ```
 
-Atlas migration hash and validate, from the repository root:
+必须同时满足：
 
-```bash
-docker run --rm -v "$PWD/docker/atlas/migrations:/migrations" \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate hash --dir file:///migrations
+- 47 条 canonical method/path 对精确匹配；
+- 36 条 TaskThread V1 method/path 对都不能进入 handler chain；
+- 23 条本地 LangGraph Thread method/path 对都不能进入 handler chain；
+- 11 条 Scheduled Task method/path 对完整保留；
+- 10 条 stateless Run method/path 对完整保留，静态路径不会误匹配动态 `:run_id`；
+- `/api/workbench/chat` 和 `/api/workbench/tasks` 仍不可达；
+- 未定义的 POST stream/join 变体不能被动态路由误接收。
 
-docker run --rm -v "$PWD":/work -w /work \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate validate --dir file://docker/atlas/migrations
-```
-
-Frontend generated contract:
+生成 schema 还必须与 IDL 保持一致：
 
 ```bash
 cd frontend/packages/arch/api-schema
 rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
 
-The consolidated contract test freezes the 47 generated canonical API functions and
-asserts that generated canonical thread sources do not import or reference
-`TaskThread` contracts.
+## 认证探针
 
-Diff and ownership:
+使用权限为 `0600` 的临时 cookie jar。账号和密码只从本地调试手册或安全环境变量
+读取，不进入命令历史、证据文档和日志。
+
+所有受保护的 canonical 请求必须带：
+
+- 登录后 session cookie；
+- 当前工作空间的 `X-Coze-Space-ID`；
+- JSON 写请求的正确 `Content-Type`；
+- POST 重试场景的唯一 `Idempotency-Key`。
+
+至少验证以下结果：
+
+| 场景 | 预期 |
+| --- | --- |
+| 无 session | `401` |
+| 无效或无权限 workspace | `403` 或资源隔离错误 |
+| 不属于当前 workspace 的 Thread/Run | `403` 或 `404`，不得泄露归属 |
+| 不存在的资源 | 稳定 `404` |
+| 同幂等键、同 payload | 回放原 Run/Message，不重复写入 |
+| 同幂等键、不同 payload/operation | 稳定 `409` |
+| 无效参数、非法状态、超限 body | 对应 `400/413/422` |
+| 服务端错误 | 稳定 `500`，响应和日志不含内部载荷 |
+| 限流 | `429`，前端显示可恢复错误且 telemetry 不含正文 |
+
+探针只使用测试数据。不得将线上 credential、真实用户正文、工具参数或对象存储
+地址写入验证材料。
+
+## 浏览器功能矩阵
+
+使用有效 workspace 完成下列操作，每项记录 URL、Thread ID、Run ID、可见状态和
+控制台结果；不得记录消息全文或附件内容。
+
+| 区域 | 必测行为 |
+| --- | --- |
+| 任务列表 | 首次加载、状态筛选、搜索、刷新、空态、错误态 |
+| 无附件创建 | 提交、流式进度、终态、标题更新、刷新后保留 |
+| 单附件创建 | 选择、上传、移除、重新上传、执行 |
+| 多附件创建 | 一次选择多个文件、上传完成后只创建一个 Run |
+| 任务详情 | 消息、步骤、建议、Token Usage、详情面板 |
+| Follow-up | 当前轮提交、附件先上传、只创建一个顶层 Run |
+| Cancel | 运行中停止，刷新后仍显示取消状态 |
+| Resume/Retry | 有资格的数据上创建新 Run，不改写历史 Run |
+| Artifact | 列表、内容/签名 URL、删除、恢复、扫描审核/重试 |
+| Memory | 列表、更新、删除、恢复、清空、导入导出、审计 |
+| 诊断 | Guardrail、MCP Runtime、依赖正常/未知/不可用状态 |
+| 隔离 | 不存在资源与无权限 workspace 都不能展示数据 |
+
+没有可操作记录的 destructive 场景，可用确定性 handler/component 测试补充，但必须
+在证据中明确“页面未构造该数据”，不能伪称完成页面操作。
+
+## 网络与 SSE
+
+正常 UI 工作流只允许访问 `/api/workbench/threads/**` 以及与任务无关的既有产品
+接口。不得出现：
+
+- `/api/workbench/task_threads/**`；
+- `/api/threads/**`；
+- `/api/workbench/tasks/**` 或 `/api/workbench/chat`；
+- 同一次用户提交产生两个 Thread、两个顶层 Run 或两条流连接；
+- 页面 service 绕过 `canonicalThreadClient` 自行创建流连接。
+
+SSE 必须验证：
+
+1. create-stream 只创建一个 Run 和一条 User Message；
+2. reconnect 使用 `Last-Event-ID` 或 `after_event_id` 续传，不重复投影事件；
+3. 终态前完成最后一次持久化事件 flush；
+4. 普通完成、超时或 context 结束不触发取消；
+5. 只有明确选择且 writer 确认断连时才执行 cancel-on-disconnect；
+6. `messages-tuple` 在 wire 上使用 `messages` 事件和二元数组；
+7. 浏览器刷新后从持久化 Message/RunEvent 恢复，不依赖内存状态。
+
+## 日志门禁
+
+canonical completion log 应包含足够排障的 bounded metadata：
+
+- `operation`、`route_template`、HTTP method/status、duration、outcome；
+- Thread/Run/资源 ID；
+- 哈希化 principal 或经审核的 workspace 标识；
+- 分页、重放、取消、恢复、扫描等有限状态字段。
+
+日志、响应和 telemetry 禁止出现：
+
+- session key、Cookie、Authorization、credential、token、secret；
+- 用户消息正文、prompt、completion、文件内容或文件名原文；
+- tool arguments/results、provider body、对象 URI；
+- checkpoint bytes、原始 config/context/metadata；
+- 原始 `Idempotency-Key`。
+
+登录 handler 也适用同一规则。执行：
 
 ```bash
-git diff --check
-git status --short
-git diff --stat dev...HEAD
+cd backend
+GOCACHE=/private/tmp/coze-workbench-passport-cache \
+  go test -p 1 -gcflags='all=-l -N' ./api/handler/coze \
+  -run '^TestPassportWebEmailLoginPostDoesNotLogSessionKey$' -count=1
 ```
 
-Expected diff scope:
+## 确定性验证
 
-- IDL and generated schema/client for canonical contract;
-- canonical handler and tests;
-- one additive upload delete-by-file-ID application use case;
-- one additive idempotent message index for suggestions recent public message lookup;
-- documentation;
-- no table semantic, runtime, worker, state-machine or old source handler rewrite.
+前端 canonical source gate：
 
-## Stop Conditions
+```bash
+cd frontend/apps/coze-studio
+rushx test \
+  src/pages/tasks/__tests__/canonical-frontend-contract.test.ts \
+  src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts \
+  src/pages/workbench/thread-client/__tests__/page-service-parity.test.ts
+```
 
-Stop Checkpoint A validation if any of these occurs:
+canonical client、SSE、错误和 telemetry：
 
-- canonical gate off does not return `404`;
-- unauthenticated request is accepted;
-- missing or wrong `X-Coze-Space-ID` is accepted;
-- cross-workspace or cross-thread access returns data;
-- any canonical response includes raw provider, credential, tool payload or checkpoint bytes;
-- canonical write falls back to `/api/workbench/task_threads`;
-- a failed retry/resume/upload/artifact/memory write leaves partial records;
-- SSE reconnect duplicates or skips logical events;
-- old `/api/workbench/task_threads` or `/api/threads` route snapshot changes;
-- retired ChatTask route enters a handler chain;
-- generated code changes after verification.
+```bash
+cd frontend/apps/coze-studio
+rushx test src/pages/workbench/thread-client/__tests__
+```
 
-When a stop condition triggers, leave production UI on V1, turn off
-`COZE_WORKBENCH_CANONICAL_API_ENABLED`, keep evidence, and debug on the feature branch.
+后端至少运行 router、canonical handler、应用层和领域层相关包；Mockey 测试统一加
+`-gcflags='all=-l -N'`。随后运行 IDL/codegen 校验、`go vet`、后端构建，以及前端
+typecheck、lint、build。全量测试若存在基线失败，必须在同一提交的独立基线上复跑，
+只有错误集合完全一致才可判定为非本次回归。
+
+执行图与长期事实必须同步：
+
+```bash
+node scripts/workbench-execution-graph.mjs verify
+node scripts/workbench-execution-graph.mjs build
+node scripts/workbench-execution-graph.mjs verify-derived
+node --test scripts/workbench-execution-graph.test.mjs
+```
+
+## 验收证据
+
+Gate B 证据至少包含：
+
+- 分支、提交 SHA、基线 SHA 和数据库环境分类；
+- `47 present / 36 absent / 23 absent / 11 present / 10 retained-blocked`；
+- 浏览器矩阵、正常工作流控制台和故意隔离探针结果；
+- canonical 网络路径、唯一写入/唯一 SSE 证据；
+- request/error/log 脱敏结果；
+- 所有执行命令和退出状态；
+- 页面无法构造而由确定性测试替代的场景；
+- 基线失败对照和未消除的外部依赖风险。
+
+## 停止条件
+
+出现以下任一情况立即停止合并或发布：
+
+- UI 命中任何已退役路由；
+- 路由数量或 method/path 快照不一致；
+- 同一提交产生重复 Thread、Run、Message 或 SSE；
+- workspace 隔离、权限或资源归属校验失败；
+- 日志、响应或 telemetry 泄露敏感内容；
+- canonical 错误被静默转换为成功或旧链路回退；
+- 关键依赖缺失时仍进入未授权执行路径；
+- 页面核心流程回归，且无法由同一基线证明为既有问题；
+- 执行图、上下文文档或派生图校验失败。

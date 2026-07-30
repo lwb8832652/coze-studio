@@ -151,8 +151,10 @@ const downloadGuardrailAuditExport = ({
 };
 
 const fetchGuardrailAuditExportData = async ({
+  spaceId,
   threadId,
 }: {
+  spaceId: string;
   threadId: string;
 }): Promise<ExportTaskThreadGuardrailAuditEventsData> => {
   let page = 1;
@@ -163,6 +165,7 @@ const fetchGuardrailAuditExportData = async ({
   while (true) {
     const response = await exportTaskThreadGuardrailAuditEvents({
       thread_id: threadId,
+      space_id: spaceId,
       page,
       page_size: GUARDRAIL_AUDIT_EXPORT_PAGE_SIZE,
     });
@@ -242,8 +245,10 @@ const TaskGuardrailAuditRow = ({
 };
 
 export const TaskGuardrailAuditSection = ({
+  spaceId,
   threadId,
 }: {
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [events, setEvents] = useState<TaskThreadGuardrailAuditEvent[]>([]);
@@ -253,7 +258,7 @@ export const TaskGuardrailAuditSection = ({
   const [error, setError] = useState('');
 
   const loadEvents = useCallback(async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       setEvents([]);
       setTotal(0);
       return;
@@ -263,6 +268,7 @@ export const TaskGuardrailAuditSection = ({
     try {
       const response = await listTaskThreadGuardrailAuditEvents({
         thread_id: threadId,
+        space_id: spaceId,
         page: 1,
         page_size: GUARDRAIL_AUDIT_PAGE_SIZE,
       });
@@ -275,7 +281,7 @@ export const TaskGuardrailAuditSection = ({
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [spaceId, threadId]);
 
   useEffect(() => {
     void loadEvents();
@@ -287,13 +293,13 @@ export const TaskGuardrailAuditSection = ({
   );
 
   const handleExport = useCallback(async () => {
-    if (!threadId || exportLoading) {
+    if (!spaceId || !threadId || exportLoading) {
       return;
     }
     setExportLoading(true);
     setError('');
     try {
-      const data = await fetchGuardrailAuditExportData({ threadId });
+      const data = await fetchGuardrailAuditExportData({ spaceId, threadId });
       downloadGuardrailAuditExport({
         data,
         threadId,
@@ -303,9 +309,9 @@ export const TaskGuardrailAuditSection = ({
     } finally {
       setExportLoading(false);
     }
-  }, [exportLoading, threadId]);
+  }, [exportLoading, spaceId, threadId]);
 
-  if (!threadId) {
+  if (!spaceId || !threadId) {
     return null;
   }
 

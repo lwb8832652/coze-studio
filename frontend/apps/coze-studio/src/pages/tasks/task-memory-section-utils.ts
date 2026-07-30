@@ -140,7 +140,7 @@ export const getClearScopes = (scope: MemoryScopeFilter) =>
   scope === 'all' ? CLEAR_ALL_SCOPES : [scope];
 
 export const isDeletedMemory = (memory: TaskThreadMemory) =>
-  memory.deleted_at > 0;
+  (memory.deleted_at ?? 0) > 0;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);

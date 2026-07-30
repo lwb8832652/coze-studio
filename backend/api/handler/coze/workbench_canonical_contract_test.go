@@ -19,7 +19,6 @@ package coze
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -34,27 +33,6 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	projectconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
-
-func TestCanonicalGateDefaultsToNotFound(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "")
-
-	var c app.RequestContext
-	require.False(t, canonicalAPIEnabled(os.Getenv))
-	require.False(t, requireCanonicalAPI(context.Background(), &c))
-	require.Equal(t, hertzconsts.StatusNotFound, c.Response.StatusCode())
-	require.Empty(t, c.Response.Body())
-}
-
-func TestCanonicalGateAcceptsOnlyExplicitTrue(t *testing.T) {
-	for _, value := range []string{"", "1", "TRUE", " true", "true ", "yes"} {
-		value := value
-		t.Run("reject_"+strings.ReplaceAll(value, " ", "_"), func(t *testing.T) {
-			require.False(t, canonicalAPIEnabled(func(string) string { return value }))
-		})
-	}
-
-	require.True(t, canonicalAPIEnabled(func(string) string { return "true" }))
-}
 
 func TestCanonicalDecodeRejectsUnknownField(t *testing.T) {
 	type request struct {
@@ -330,6 +308,8 @@ func TestCanonicalLogEnumsFailClosed(t *testing.T) {
 	require.Equal(t, "values", canonicalResponseBodyKind("values", hertzconsts.StatusOK))
 	require.Equal(t, "error", canonicalResponseBodyKind("values", hertzconsts.StatusBadRequest))
 	require.Equal(t, "none", canonicalResponseBodyKind("request-body", hertzconsts.StatusOK))
+	require.Equal(t, "run_retry", canonicalSubmissionKind("run_retry"))
+	require.Equal(t, "not_applicable", canonicalSubmissionKind("retry-payload"))
 	require.Equal(t, "not_applicable", canonicalRaiseErrorMode(nil))
 	value := true
 	require.Equal(t, "true", canonicalRaiseErrorMode(&value))

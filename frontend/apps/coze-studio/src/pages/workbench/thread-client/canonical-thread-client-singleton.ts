@@ -14,24 +14,13 @@
  * limitations under the License.
  */
 
-package coze
+import { useSpaceStore } from '@coze-foundation/space-store';
 
-import (
-	"context"
+import type { WorkbenchThreadClient } from './workbench-thread-client';
+import { CanonicalThreadClient } from './canonical-thread-client';
 
-	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/cloudwego/hertz/pkg/protocol/consts"
-)
+export const canonicalThreadClient: WorkbenchThreadClient =
+  new CanonicalThreadClient();
 
-func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
-
-	writeCanonicalError(ctx, c, consts.StatusNotImplemented, canonicalError{
-		Detail:     "Canonical Workbench API is not implemented",
-		Code:       "canonical_not_implemented",
-		Retryable:  false,
-		errorClass: "canonical_not_implemented",
-	})
-}
+export const resolvePageServiceSpaceID = (spaceID?: string): string =>
+  spaceID ?? useSpaceStore.getState().getSpaceId();
