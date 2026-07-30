@@ -293,6 +293,15 @@ deploy_transaction() {
     return
   fi
 
+  if ! candidate_server_id=$(image_id "$SERVER_IMAGE_REF"); then
+    record_pre_update_failure 'cannot read the candidate server image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if ! candidate_web_id=$(image_id "$WEB_IMAGE_REF"); then
+    record_pre_update_failure 'cannot read the candidate web image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+
   if ! server_revision=$(image_revision "$SERVER_IMAGE_REF"); then
     record_pre_update_failure 'candidate server image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
@@ -315,15 +324,6 @@ deploy_transaction() {
   if [ -n "$requested_revision" ] &&
     [ "$candidate_revision" != "$(normalize_revision "$requested_revision")" ]; then
     record_pre_update_failure 'candidate revision does not match the requested SHA' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
-    return
-  fi
-
-  if ! candidate_server_id=$(image_id "$SERVER_IMAGE_REF"); then
-    record_pre_update_failure 'cannot read the candidate server image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
-    return
-  fi
-  if ! candidate_web_id=$(image_id "$WEB_IMAGE_REF"); then
-    record_pre_update_failure 'cannot read the candidate web image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
 
