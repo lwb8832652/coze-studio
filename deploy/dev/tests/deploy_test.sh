@@ -59,6 +59,8 @@ setup_transaction_case() {
   WEB_IMAGE_REF=$WEB_REPOSITORY:dev
   MOCK_OLD_SERVER_ID=sha256:old-server
   MOCK_OLD_WEB_ID=sha256:old-web
+  MOCK_RESTORED_SERVER_ID=$MOCK_OLD_SERVER_ID
+  MOCK_RESTORED_WEB_ID=$MOCK_OLD_WEB_ID
   MOCK_OLD_SERVER_REVISION=$REV_C
   MOCK_OLD_WEB_REVISION=$REV_C
   MOCK_SERVER_REVISION=$REV_A
@@ -74,9 +76,25 @@ setup_transaction_case() {
   printf '0\n' > "$WAIT_COUNT_FILE"
 
   container_image_id() {
+    restored=0
+    if grep -Eq '^compose SERVER_IMAGE_TAG=rollback-' "$COMMAND_LOG"; then
+      restored=1
+    fi
     case "$1" in
-      coze-server) printf '%s\n' "$MOCK_OLD_SERVER_ID" ;;
-      coze-web) printf '%s\n' "$MOCK_OLD_WEB_ID" ;;
+      coze-server)
+        if [ "$restored" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RESTORED_SERVER_ID"
+        else
+          printf '%s\n' "$MOCK_OLD_SERVER_ID"
+        fi
+        ;;
+      coze-web)
+        if [ "$restored" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RESTORED_WEB_ID"
+        else
+          printf '%s\n' "$MOCK_OLD_WEB_ID"
+        fi
+        ;;
       *) return 1 ;;
     esac
   }
@@ -316,6 +334,26 @@ test_success_record_failure_rolls_back_both_images() (
     'success record failure lost its specific reason'
 )
 
+test_rollback_rejects_restored_container_image_mismatch() (
+  case_dir=$(mktemp -d "$TEST_ROOT/rollback-image-mismatch.XXXXXX")
+  setup_transaction_case "$case_dir"
+  MOCK_HEALTH_FAILURE=1
+  MOCK_ROLLBACK_HEALTHY=1
+  MOCK_RESTORED_WEB_ID=sha256:candidate-web
+
+  if deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'deployment succeeded after rollback restored the wrong web image'
+  fi
+  assert_file_not_contains "$case_dir/output.log" 'rollback succeeded' \
+    'rollback claimed success with the wrong web image ID'
+  assert_file_contains "$case_dir/output.log" 'rollback container image IDs do not match the saved images' \
+    'rollback image identity mismatch was not reported'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'rollback image mismatch lost the failure record'
+  assert_file_contains "$failure_record" '^ROLLBACK_RESULT=failed$' \
+    'rollback image mismatch did not preserve a failed rollback result'
+)
+
 test_first_deployment_failure_cannot_claim_rollback() (
   case_dir=$(mktemp -d "$TEST_ROOT/first-failure.XXXXXX")
   setup_transaction_case "$case_dir"
@@ -508,6 +546,7 @@ run_test 'candidate pull failure stops before update' test_pull_failure_stops_be
 run_test 'successful deployment records current.env' test_success_records_complete_current_environment
 run_test 'health failure rolls back atomically' test_health_failure_rolls_back_both_images_and_stays_failed
 run_test 'success record failure rolls back atomically' test_success_record_failure_rolls_back_both_images
+run_test 'rollback verifies restored image identities' test_rollback_rejects_restored_container_image_mismatch
 run_test 'first deployment failure has no fake rollback' test_first_deployment_failure_cannot_claim_rollback
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction
 run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker

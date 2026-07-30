@@ -243,6 +243,7 @@ rollback_images() {
   local old_web_revision=$4
   local transaction_id=$5
   local rollback_tag rollback_revision=
+  local restored_server_id restored_web_id
 
   if [ -z "$old_server_id" ] || [ -z "$old_web_id" ]; then
     error 'first deployment failed; rollback unavailable'
@@ -261,6 +262,16 @@ rollback_images() {
 
   if ! SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" compose_cmd up -d --no-build --remove-orphans coze-server coze-web; then
     error 'rollback compose update failed'
+    return 1
+  fi
+  if ! restored_server_id=$(container_image_id coze-server) ||
+    ! restored_web_id=$(container_image_id coze-web); then
+    error 'cannot read container image IDs after rollback'
+    return 1
+  fi
+  if [ "$restored_server_id" != "$old_server_id" ] ||
+    [ "$restored_web_id" != "$old_web_id" ]; then
+    error 'rollback container image IDs do not match the saved images'
     return 1
   fi
 
