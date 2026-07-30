@@ -52,6 +52,7 @@ concurrency = workflow['concurrency']
 assert_contract(concurrency.is_a?(Hash), 'concurrency must be configured')
 assert_contract(concurrency['group'] == 'deploy-dev', 'concurrency group must be deploy-dev')
 assert_contract(concurrency['cancel-in-progress'] == false, 'in-progress deployment must not be canceled')
+assert_contract(concurrency['queue'] == 'max', 'all pending dev deployments must remain queued')
 assert_contract(workflow['permissions'] == { 'contents' => 'read' }, 'permissions must be contents: read only')
 
 jobs = workflow.fetch('jobs', {})
@@ -62,10 +63,19 @@ preflight = jobs.fetch('preflight')
 assert_contract(preflight.fetch('outputs', {}).keys.sort == %w[migration_changed target_sha],
                 'preflight must expose only target_sha and migration_changed')
 preflight_text = job_text(preflight)
+resolve_step = preflight.fetch('steps', []).find { |step| step['id'] == 'resolve' }
+assert_contract(resolve_step.is_a?(Hash), 'preflight resolve step is missing')
+resolve_run = resolve_step['run'].to_s
+resolve_env = resolve_step.fetch('env', {})
+assert_contract(resolve_env['TARGET_SHA_INPUT'].to_s.include?('inputs.target_sha'),
+                'dispatch target_sha must enter the script through an environment variable')
+assert_contract(!resolve_run.include?('${{ inputs.target_sha }}'),
+                'dispatch target_sha must not be interpolated into shell source')
 assert_contract(preflight_text.include?('actions/checkout@v7'), 'preflight must use checkout v7')
+assert_contract(preflight_text.include?('docker/login-action@v4'), 'push preflight must log in to ACR')
 assert_contract(preflight_text.include?('fetch-depth') && preflight_text.include?('0'),
                 'preflight must fetch full history')
-%w[github.event.before github.sha origin/dev merge-base docker/atlas/migrations GITHUB_OUTPUT].each do |token|
+%w[github.event.before GITHUB_SHA origin/dev merge-base docker/atlas/migrations GITHUB_OUTPUT].each do |token|
   assert_contract(preflight_text.include?(token), "preflight is missing #{token}")
 end
 assert_contract(preflight_text.include?('migration_changed=true'),
@@ -74,6 +84,12 @@ assert_contract(preflight_text.include?("tr '[:upper:]' '[:lower:]'") || preflig
                 'preflight must normalize dispatch target_sha to lowercase')
 assert_contract(preflight_text.include?('git cat-file') && preflight_text.include?('git diff --quiet'),
                 'preflight must validate the before object before diffing migrations')
+%w[coze-server:dev coze-web:dev docker\ pull docker\ image\ inspect org.opencontainers.image.revision deployed_revision].each do |token|
+  assert_contract(preflight_text.include?(token.gsub('\\ ', ' ')),
+                  "preflight deployed baseline is missing #{token}")
+end
+assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
+                'deployed revision must belong to the target history')
 
 {
   'build-server' => ['backend/Dockerfile', 'coze-server'],
@@ -155,3 +171,78 @@ end
 
 puts 'workflow contract: passed'
 RUBY
+
+SEMANTIC_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/coze-workflow-test.XXXXXX")
+trap 'rm -rf -- "$SEMANTIC_ROOT"' EXIT
+RESOLVE_SCRIPT=$SEMANTIC_ROOT/resolve.sh
+TEST_REPO=$SEMANTIC_ROOT/repository
+TEST_BIN=$SEMANTIC_ROOT/bin
+GITHUB_OUTPUT_FILE=$SEMANTIC_ROOT/github-output
+
+ruby - "$WORKFLOW" > "$RESOLVE_SCRIPT" <<'EXTRACT'
+require 'yaml'
+
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+resolve_step = workflow.fetch('jobs').fetch('preflight').fetch('steps').find do |step|
+  step['id'] == 'resolve'
+end
+abort 'resolve step is missing' unless resolve_step
+puts resolve_step.fetch('run')
+EXTRACT
+
+mkdir -p -- "$TEST_REPO" "$TEST_BIN"
+git -C "$TEST_REPO" init -q
+printf 'base\n' > "$TEST_REPO/application.txt"
+git -C "$TEST_REPO" add application.txt
+git -C "$TEST_REPO" -c user.name=contract-test -c user.email=contract@example.invalid \
+  commit -qm 'base deployment'
+DEPLOYED_REVISION=$(git -C "$TEST_REPO" rev-parse HEAD)
+
+mkdir -p -- "$TEST_REPO/docker/atlas/migrations"
+printf 'migration\n' > "$TEST_REPO/docker/atlas/migrations/202607300001.sql"
+git -C "$TEST_REPO" add docker/atlas/migrations/202607300001.sql
+git -C "$TEST_REPO" -c user.name=contract-test -c user.email=contract@example.invalid \
+  commit -qm 'add migration'
+BEFORE_REVISION=$(git -C "$TEST_REPO" rev-parse HEAD)
+
+printf 'ordinary change\n' >> "$TEST_REPO/application.txt"
+git -C "$TEST_REPO" add application.txt
+git -C "$TEST_REPO" -c user.name=contract-test -c user.email=contract@example.invalid \
+  commit -qm 'ordinary follow-up'
+TARGET_REVISION=$(git -C "$TEST_REPO" rev-parse HEAD)
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'if [ "$1" = pull ]; then exit 0; fi' \
+  'if [ "$1" = image ] && [ "$2" = inspect ]; then' \
+  '  printf "%s\\n" "$DEPLOYED_REVISION"' \
+  '  exit 0' \
+  'fi' \
+  'exit 97' > "$TEST_BIN/docker"
+chmod +x "$TEST_BIN/docker"
+
+(
+  cd -- "$TEST_REPO"
+  PATH="$TEST_BIN:$PATH" \
+    DEPLOYED_REVISION="$DEPLOYED_REVISION" \
+    GITHUB_EVENT_NAME=push \
+    GITHUB_SHA="$TARGET_REVISION" \
+    TARGET_SHA_INPUT= \
+    BEFORE_SHA="$BEFORE_REVISION" \
+    SERVER_DEV_IMAGE=registry.example/coze-server:dev \
+    WEB_DEV_IMAGE=registry.example/coze-web:dev \
+    GITHUB_OUTPUT="$GITHUB_OUTPUT_FILE" \
+    bash "$RESOLVE_SCRIPT"
+)
+
+grep -qx "target_sha=$TARGET_REVISION" "$GITHUB_OUTPUT_FILE" || {
+  printf 'workflow contract failure: semantic preflight wrote the wrong target SHA\n' >&2
+  exit 1
+}
+grep -qx 'migration_changed=true' "$GITHUB_OUTPUT_FILE" || {
+  printf 'workflow contract failure: follow-up push bypassed the pending migration hold\n' >&2
+  exit 1
+}
+
+printf 'workflow semantic contract: passed\n'
