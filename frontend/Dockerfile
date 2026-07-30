@@ -1,3 +1,6 @@
+ARG GIT_REVISION=unknown
+ARG SOURCE_URL=unknown
+
 # Build stage
 FROM node:22-alpine AS builder
 
@@ -38,6 +41,11 @@ RUN rush build --to @coze-studio/app
 
 # Production image stage
 FROM nginx:1.25-alpine
+ARG GIT_REVISION
+ARG SOURCE_URL
+
+LABEL org.opencontainers.image.revision=$GIT_REVISION
+LABEL org.opencontainers.image.source=$SOURCE_URL
 
 
 # if you located in China, you can use aliyun mirror to speed up
@@ -47,8 +55,10 @@ RUN apk add --no-cache bash
 
 # Copy build artifacts to nginx static directory
 COPY --from=builder /app/frontend/apps/coze-studio/dist /usr/share/nginx/html
+COPY deploy/dev/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY deploy/dev/nginx/default.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 8888
+EXPOSE 80
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
