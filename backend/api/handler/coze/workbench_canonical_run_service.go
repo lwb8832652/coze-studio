@@ -175,6 +175,10 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -220,7 +224,7 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusOK, projected)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, public, err := createCanonicalRunBundle(ctx, threadID, submission)
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -272,6 +276,10 @@ func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "run_array"
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
@@ -309,7 +317,7 @@ func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	runs, total, err := searchCanonicalRunProjections(ctx, threadID, parent, status, offset, limit)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -331,6 +339,10 @@ func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "run"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
@@ -338,7 +350,7 @@ func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.ThreadID, requestLog.RunID = threadID, runID
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -370,6 +382,10 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
+		return
+	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
 		return
 	}
 	threadID, public := canonicalPathID(c, "thread_id")
@@ -413,7 +429,7 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	} else {
-		ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+		ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 		response, public, err := createCanonicalRunBundle(ctx, threadID, submission)
 		if public != nil {
 			writeCanonicalError(ctx, c, public.status, *public)
@@ -429,7 +445,7 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.Header("Content-Location", canonicalRunPath(threadID, run.RunID))
 	c.Header("Location", canonicalRunJoinPath(threadID, run.RunID))
 	requestLog.LocationKind = "run_join"
-	ctx = workbenchThreadAccessContext(ctx, threadID, run.RunID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, run.RunID)
 
 	run, err = waitCanonicalRunTerminal(
 		ctx,
@@ -475,6 +491,10 @@ func JoinCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "values"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
@@ -486,7 +506,7 @@ func JoinCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -526,6 +546,10 @@ func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "empty"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
@@ -538,7 +562,7 @@ func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -588,6 +612,10 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
+		return
+	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
 		return
 	}
 	requestLog.ResponseBodyKind = "run"
@@ -656,6 +684,10 @@ func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "event_page"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
@@ -679,7 +711,7 @@ func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -734,6 +766,10 @@ func ListCanonicalRunMessages(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	requestLog.ResponseBodyKind = "message_page"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
@@ -764,7 +800,7 @@ func ListCanonicalRunMessages(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, runID)
+	ctx = canonicalThreadAccessContext(ctx, threadID, runID)
 	run, err := getCanonicalAuthorizedRun(ctx, threadID, runID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -954,7 +990,7 @@ func resumeCanonicalHumanInteraction(
 	if submission == nil {
 		return nil, canonicalInvalidRequest("Resume request is invalid", "invalid_resume"), nil
 	}
-	accessCtx := workbenchThreadAccessContext(ctx, threadID, submission.SourceRunID)
+	accessCtx := canonicalThreadAccessContext(ctx, threadID, submission.SourceRunID)
 	sourceRun, err := getCanonicalAuthorizedRun(accessCtx, threadID, submission.SourceRunID)
 	if err != nil {
 		return nil, nil, err

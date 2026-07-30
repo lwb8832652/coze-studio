@@ -438,7 +438,7 @@ func loadCanonicalThreadProjectionSnapshot(
 		return canonicalThreadProjectionSnapshot{}, fmt.Errorf("agent thread application service is unavailable")
 	}
 
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	runs, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
 		ThreadID: threadID,
 		Page:     1,

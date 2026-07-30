@@ -155,6 +155,10 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	if public := canonicalRequestBodyLimit(c, "Thread"); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
@@ -170,12 +174,8 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	spaceID, public := canonicalSpaceID(ctx, c)
-	if public != nil {
-		writeCanonicalError(ctx, c, public.status, *public)
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, 0, 0)
+	spaceID := canonicalSpaceIDFromContext(ctx)
+	ctx = canonicalThreadAccessContext(ctx, 0, 0)
 
 	metadata, title, threadSource, public := canonicalCreateThreadMetadata(req.Metadata)
 	if public != nil {
@@ -317,6 +317,10 @@ func SearchCanonicalThreads(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	var req canonicalSearchThreadsRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -326,12 +330,8 @@ func SearchCanonicalThreads(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	spaceID, public := canonicalSpaceID(ctx, c)
-	if public != nil {
-		writeCanonicalError(ctx, c, public.status, *public)
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, 0, 0)
+	spaceID := canonicalSpaceIDFromContext(ctx)
+	ctx = canonicalThreadAccessContext(ctx, 0, 0)
 
 	ids, public := canonicalThreadIDs(req.IDs)
 	if public != nil {
@@ -369,6 +369,10 @@ func GetCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -380,7 +384,7 @@ func GetCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{
 		ThreadID: threadID,
 	})
@@ -416,6 +420,10 @@ func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -443,7 +451,7 @@ func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, err := appagentthread.SVC.PatchThread(ctx, &appagentthread.PatchThreadRequest{
 		ThreadID: threadID, Title: title, MetadataPatch: metadata, UpdatedAt: time.Now().UnixMilli(),
 	})
@@ -482,13 +490,17 @@ func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
 	requestLog.ThreadID = threadID
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, err := appagentthread.SVC.DeleteThreadIfIdle(ctx, &appagentthread.DeleteThreadIfIdleRequest{
 		ThreadID: threadID,
 	})
@@ -527,6 +539,10 @@ func GetCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -545,7 +561,7 @@ func GetCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	checkpoint, err := getCanonicalThreadCheckpoint(ctx, threadID, checkpointID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -579,6 +595,10 @@ func UpdateCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -599,7 +619,7 @@ func UpdateCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, err := appagentthread.SVC.UpdatePublicThreadState(
 		ctx,
 		&appagentthread.UpdatePublicThreadStateRequest{
@@ -635,6 +655,10 @@ func GetCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -667,6 +691,10 @@ func PostCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
+		return
+	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
 		return
 	}
 	threadID, public := canonicalPathID(c, "thread_id")
@@ -712,6 +740,10 @@ func ListCanonicalThreadMessages(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	if !ok {
+		return
+	}
 	threadID, public := canonicalPathID(c, "thread_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -741,7 +773,7 @@ func ListCanonicalThreadMessages(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	messages, err := loadCanonicalThreadMessages(ctx, threadID)
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -756,7 +788,7 @@ func serveCanonicalThreadHistory(
 	threadID, before int64,
 	limit int32,
 ) {
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	response, err := appagentthread.SVC.ListCheckpointsBefore(
 		ctx,
 		&appagentthread.ListCheckpointsBeforeRequest{

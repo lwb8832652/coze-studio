@@ -602,7 +602,7 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
-	h := canonicalRunTestServer()
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
 	payload := `{
 		"interrupt_id":"interrupt-1",
 		"response":{
@@ -647,7 +647,7 @@ func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, conflicting)
 	require.NotNil(t, conflicting.Run)
-	h := canonicalRunTestServer()
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
 	payload := `{
 		"interrupt_id":"interrupt-1",
 		"response":{
@@ -678,7 +678,7 @@ func TestCanonicalCreateRunCommandResumeUsesSameApplicationUseCase(t *testing.T)
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
-	h := canonicalRunTestServer()
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
 	payload := fmt.Sprintf(`{
 		"assistant_id":"agent",
 		"command":{"resume":{
@@ -717,7 +717,7 @@ func TestCanonicalResumeRoutesShareFingerprintAndRejectTurnReuse(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
-	h := canonicalRunTestServer()
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
 	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-resume-shared-1"}
 	response := canonicalResumeResponse{
 		Schema: "coze.human_interaction_response.v1", InteractionID: "hi_1",
@@ -798,7 +798,7 @@ func TestCanonicalResumeMapsClientSemanticErrorsToUnprocessableEntity(t *testing
 			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			sourceRunID := createInterruptedHumanInteractionRun(t)
-			h := canonicalRunTestServer()
+			h := canonicalRunTestServerForUserAndSpace(2, 1)
 			request := canonicalResumeRunRequest{
 				InterruptID: "interrupt-1",
 				Response: canonicalResumeResponse{
@@ -1430,8 +1430,11 @@ func canonicalRunTestServer() *server.Hertz {
 }
 
 func canonicalRunTestServerForUser(userID int64) *server.Hertz {
-	h := server.Default()
-	h.Use(workbenchSessionMiddlewareForTest(userID))
+	return canonicalRunTestServerForUserAndSpace(userID, 1001)
+}
+
+func canonicalRunTestServerForUserAndSpace(userID, spaceID int64) *server.Hertz {
+	h := canonicalAgentThreadTestServerForUserAndSpace(userID, spaceID)
 	h.GET("/api/workbench/threads/:thread_id/runs", ListCanonicalRuns)
 	h.POST("/api/workbench/threads/:thread_id/runs", CreateCanonicalRun)
 	h.POST("/api/workbench/threads/:thread_id/runs/wait", WaitCanonicalRun)
