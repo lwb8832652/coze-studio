@@ -11,8 +11,8 @@
 
 ## 2. 当前事实
 
-- 当前 `.github/workflows` 只对 `main` 和 Pull Request 执行检查，没有监听
-  `dev` 的镜像发布任务。
+- `.github/workflows/deploy-dev.yml` 监听远程 `dev` push，并支持使用完整 SHA 的
+  `workflow_dispatch`。
 - `backend/Dockerfile` 和 `frontend/Dockerfile` 已能分别构建后端与 Web 镜像。
 - `docker/docker-compose.yml` 面向本地完整环境，包含 MySQL、Redis、
   Elasticsearch、MinIO、Milvus、Etcd 和 NSQ，不适合 2C4G 预发布服务器。
@@ -99,8 +99,10 @@ Nginx 不再强制代理到本地 `minio:9000`。
 
 ```text
 /opt/coze-dev/
+  .env.example
   docker-compose.yml
   deploy.sh
+  deploy.env
   app.env
   deploy.lock
   deployments/

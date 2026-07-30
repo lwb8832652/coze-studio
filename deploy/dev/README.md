@@ -86,7 +86,7 @@ chmod 600 deploy.env
 
 按实际 ACR 修改 `ACR_REGISTRY` 和 `ACR_NAMESPACE`。日常发布保持
 `SERVER_IMAGE_TAG=dev`、`WEB_IMAGE_TAG=dev`。`DEPLOY_HEALTH_TIMEOUT_SECONDS`
-必须是正整数。
+必须是正整数。`deploy.env` 是服务器本地文件，不要提交或附到工单中。
 
 ### app.env
 
