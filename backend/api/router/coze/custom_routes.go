@@ -14,6 +14,7 @@ import (
 // IDL routes. Existing generated routes are intentionally not duplicated.
 func RegisterCustomRoutes(r *server.Hertz) {
 	r.GET("/api/site/config", handler.GetPublicSiteConfig)
+	r.GET("/healthz", handler.GetHealthz)
 	root := r.Group("/", rootMw()...)
 	api := root.Group("/api", _apiMw()...)
 
