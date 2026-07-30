@@ -27,11 +27,14 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 const outputFileWrittenSchema = "coze.output_file_written.v1"
@@ -366,6 +369,14 @@ func (s *ApplicationService) PresentOutputFiles(
 	if err := s.emitArtifactPresentedEvent(ctx, req.Run, resp.Artifacts); err != nil {
 		return nil, err
 	}
+	if err := s.emitArtifactPresentedVerification(ctx, req.Run, resp.Artifacts); err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"[journal-projection] append artifact verification failed, run_id=%d err=%v",
+			req.Run.RunID,
+			err,
+		)
+	}
 	resp.Notice = artifactPresentedNotice(ctx, resp.Artifacts)
 
 	return resp, nil
@@ -540,15 +551,54 @@ func (s *ApplicationService) emitArtifactPresentedEvent(
 		"artifact_count": len(artifacts),
 		"artifacts":      safeArtifactEventItems(artifacts),
 	}
-	_, err := s.ThreadSVC.AppendRunEvent(
+	_, err := s.AppendRunEvent(
 		ctx,
-		&domainservice.AppendRunEventRequest{
+		&AppendRunEventRequest{
 			ThreadID:  run.ThreadID,
 			RunID:     run.RunID,
 			EventType: artifactPresentedEvent,
 			Payload:   encodeRunEventPayload(ctx, payload),
 		},
 	)
+	return err
+}
+
+func (s *ApplicationService) emitArtifactPresentedVerification(
+	ctx context.Context,
+	run *RunSummary,
+	artifacts []*ArtifactSummary,
+) error {
+	if run == nil || len(artifacts) == 0 {
+		return nil
+	}
+	artifactIDs := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact != nil && artifact.ArtifactID > 0 {
+			artifactIDs = append(artifactIDs, strconv.FormatInt(artifact.ArtifactID, 10))
+		}
+	}
+	if len(artifactIDs) == 0 {
+		return nil
+	}
+	sort.Strings(artifactIDs)
+	verificationID := journalStableProjectionID(
+		run.RunID,
+		"verification",
+		"presented-artifacts:"+strings.Join(artifactIDs, ","),
+	)
+	payload := map[string]any{
+		"schema":          "coze.journal_verification.v1",
+		"verification_id": verificationID,
+		"title":           "交付物检查",
+		"status":          "completed",
+		"summary":         fmt.Sprintf("已确认 %d 个交付物可用", len(artifactIDs)),
+	}
+	_, err := s.AppendRunEvent(ctx, &AppendRunEventRequest{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: "verification.completed",
+		Payload:   encodeRunEventPayload(ctx, payload),
+	})
 	return err
 }
 

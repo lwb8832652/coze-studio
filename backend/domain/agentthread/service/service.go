@@ -94,8 +94,11 @@ type CreateMessageSpec struct {
 type RunEventPayloadBuilder func(runID int64) string
 
 type CreateRunEventSpec struct {
-	EventType      string
-	PayloadBuilder RunEventPayloadBuilder
+	EventType               string
+	PayloadBuilder          RunEventPayloadBuilder
+	JournalSourceRunID      int64
+	Journal                 *AppendJournalEventRequest
+	JournalProjectionFailed bool
 }
 
 type CreateThreadRunMessageRequest struct {
@@ -150,10 +153,12 @@ type ListRunsRequest struct {
 }
 
 type AppendRunEventRequest struct {
-	ThreadID  int64
-	RunID     int64
-	EventType string
-	Payload   string
+	ThreadID                int64
+	RunID                   int64
+	EventType               string
+	Payload                 string
+	Journal                 *AppendJournalEventRequest
+	JournalProjectionFailed bool
 }
 
 type CreateJournalAttemptRequest struct {

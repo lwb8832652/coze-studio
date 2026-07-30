@@ -1082,6 +1082,9 @@ func TestReconcileExpiredRunLeaseValidatesTargetAndForwardsFence(t *testing.T) {
 	require.Equal(t, int64(2001), repo.lastReconcileExpiredRunLeaseReq.Event.ID)
 	require.Equal(t, "run.failed", repo.lastReconcileExpiredRunLeaseReq.Event.EventType)
 	require.JSONEq(t, `{"status":"failed","error_code":"run_abandoned"}`, repo.lastReconcileExpiredRunLeaseReq.Event.Payload)
+	require.NotNil(t, repo.lastReconcileExpiredRunLeaseReq.JournalEvent)
+	require.Equal(t, "run.lifecycle", repo.lastReconcileExpiredRunLeaseReq.JournalEvent.EventType)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), repo.lastReconcileExpiredRunLeaseReq.JournalEvent.Status)
 }
 
 func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.T) {
@@ -1108,6 +1111,8 @@ func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.
 	require.Equal(t, int64(900), repo.lastRequestRunCancellationReq.Event.ID)
 	require.Equal(t, "run.canceled", repo.lastRequestRunCancellationReq.Event.EventType)
 	require.JSONEq(t, `{"status":"canceled"}`, repo.lastRequestRunCancellationReq.Event.Payload)
+	require.NotNil(t, repo.lastRequestRunCancellationReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCancelled), repo.lastRequestRunCancellationReq.JournalEvent.Status)
 }
 
 func TestRequestRunCancellationReturnsCanceledRunWithoutAllocatingEventID(t *testing.T) {
@@ -1171,6 +1176,8 @@ func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *tes
 	require.Equal(t, "context.thread_title_updated", result.TitleEvent.EventType)
 	require.Equal(t, int64(302), result.CompletionEvent.ID)
 	require.Equal(t, "run.completed", result.CompletionEvent.EventType)
+	require.NotNil(t, repo.lastFinalizeRunSuccessReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCompleted), repo.lastFinalizeRunSuccessReq.JournalEvent.Status)
 	require.NotNil(t, result.TerminalCheckpoint)
 	require.Equal(t, int64(303), result.TerminalCheckpoint.ID)
 	require.Equal(t, int64(50), result.TerminalCheckpoint.ParentCheckpointID)
@@ -1218,6 +1225,8 @@ func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	require.Equal(t, int64(2001), repo.lastUpdateRunReq.Event.ID)
 	require.Equal(t, "run.completed", repo.lastUpdateRunReq.Event.EventType)
 	require.JSONEq(t, `{"status":"succeeded","worker_id":"worker-a"}`, repo.lastUpdateRunReq.Event.Payload)
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCompleted), repo.lastUpdateRunReq.JournalEvent.Status)
 }
 
 func TestCompleteRunBindsOutboxIntentToDurableTerminalEvent(t *testing.T) {
@@ -1378,6 +1387,29 @@ func TestFailRunStoresError(t *testing.T) {
 	require.JSONEq(t, `{"status":"failed","worker_id":"worker-a","error_code":"model_error"}`, repo.lastUpdateRunReq.Event.Payload)
 	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "provider secret")
 	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "raw_provider")
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), repo.lastUpdateRunReq.JournalEvent.Status)
+}
+
+func TestFailRunProjectsStandardTimeoutCodeAsTimedOut(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a"},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.FailRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		ErrorCode: "task_timeout", ErrorMessage: "execution deadline reached",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusTimedOut), repo.lastUpdateRunReq.JournalEvent.Status)
+	require.JSONEq(t,
+		`{"type":"terminal","data":{"status":"timed_out"}}`,
+		repo.lastUpdateRunReq.JournalEvent.Payload,
+	)
 }
 
 func TestAppendRunEventCreatesEventFromRun(t *testing.T) {

@@ -167,7 +167,9 @@ func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent(
 			Metadata:     `{"source":"present_files"}`,
 		},
 	}
-	threadSVC := &recordingThreadService{}
+	threadSVC := &recordingThreadService{
+		appendedRunEvent: &domainentity.RunEvent{},
+	}
 	app := &ApplicationService{
 		ThreadSVC:      threadSVC,
 		RuntimeFileSVC: runtimeFiles,
@@ -200,11 +202,19 @@ func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent(
 	require.Equal(t, "document", artifacts.registerReq.ArtifactType)
 	require.JSONEq(t, `{"source":"present_files"}`, artifacts.registerReq.Metadata)
 	require.NotNil(t, threadSVC.appendRunEventReq)
-	require.Equal(t, "artifact.presented", threadSVC.appendRunEventReq.EventType)
+	require.Len(t, threadSVC.appendRunEventReqs, 2)
+	require.Equal(t, "artifact.presented", threadSVC.appendRunEventReqs[0].EventType)
+	require.NotNil(t, threadSVC.appendRunEventReqs[0].Journal)
+	require.Equal(t, "artifact.created", threadSVC.appendRunEventReqs[0].Journal.EventType)
+	require.Equal(t, "verification.completed", threadSVC.appendRunEventReqs[1].EventType)
+	require.NotNil(t, threadSVC.appendRunEventReqs[1].Journal)
+	require.Equal(t, "verification.terminal", threadSVC.appendRunEventReqs[1].Journal.EventType)
+	require.Equal(t, "completed", threadSVC.appendRunEventReqs[1].Journal.Status)
+	require.NotContains(t, threadSVC.appendRunEventReqs[1].Payload, "/mnt/user-data")
 	payload := map[string]any{}
-	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
+	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReqs[0].Payload), &payload))
 	require.Equal(t, "coze.artifact_presented.v1", payload["schema"])
-	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
+	require.NotContains(t, threadSVC.appendRunEventReqs[0].Payload, "agent-runtime")
 	require.NotContains(t, resp.Notice, "agent-runtime")
 	require.Contains(t, resp.Notice, "/mnt/user-data/outputs/report.md")
 }
@@ -228,8 +238,11 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 			Metadata:     `{"source":"present_files"}`,
 		},
 	}
+	threadSVC := &recordingThreadService{
+		appendedRunEvent: &domainentity.RunEvent{},
+	}
 	app := &ApplicationService{
-		ThreadSVC:              &recordingThreadService{},
+		ThreadSVC:              threadSVC,
 		RuntimeFileSVC:         runtimeFiles,
 		ArtifactSVC:            artifacts,
 		ArtifactObjectStorage:  objectStorage,
@@ -297,6 +310,10 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 	require.NotContains(t, presentResult, "agent-runtime")
 	require.NotNil(t, artifacts.registerReq)
 	require.Equal(t, int64(99), artifacts.registerReq.FileID)
+	require.Len(t, threadSVC.appendRunEventReqs, 2)
+	require.Equal(t, "artifact.presented", threadSVC.appendRunEventReqs[0].EventType)
+	require.Equal(t, "verification.completed", threadSVC.appendRunEventReqs[1].EventType)
+	require.NotNil(t, threadSVC.appendRunEventReqs[1].Journal)
 	require.Equal(t, []ADKParityArtifact{{
 		ArtifactID: 100, FileID: 99, RunID: 20, Title: "report.md",
 		ArtifactType: "document", VirtualPath: "/mnt/user-data/outputs/report.md",

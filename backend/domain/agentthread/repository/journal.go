@@ -35,6 +35,22 @@ type JournalRepository interface {
 	ListJournalEvents(ctx context.Context, req ListJournalEventsRequest) (*ListJournalEventsResult, error)
 }
 
+// RunEventProjectionRepository atomically preserves the existing RunEvent view
+// and, when the run is enrolled, enriches the same row with a public Journal
+// projection.
+type RunEventProjectionRepository interface {
+	CreateRunEventWithJournalProjection(
+		ctx context.Context,
+		req CreateRunEventWithJournalProjectionRequest,
+	) (*entity.JournalEvent, error)
+}
+
+type CreateRunEventWithJournalProjectionRequest struct {
+	Event            *entity.RunEvent
+	Journal          *entity.JournalEvent
+	ProjectionFailed bool
+}
+
 type Repository interface {
 	ThreadRepository
 	JournalRepository

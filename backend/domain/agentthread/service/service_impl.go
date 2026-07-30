@@ -572,6 +572,22 @@ func (s *threadService) CreateRunBundle(
 		if req.Event.PayloadBuilder == nil {
 			return nil, InvalidArgumentErrorf("run event payload builder is required")
 		}
+		hasJournalProjection := req.Event.Journal != nil || req.Event.JournalProjectionFailed
+		if hasJournalProjection && req.Event.JournalSourceRunID <= 0 {
+			return nil, InvalidArgumentErrorf("run event journal source run id is required")
+		}
+		if !hasJournalProjection && req.Event.JournalSourceRunID != 0 {
+			return nil, InvalidArgumentErrorf("run event journal source requires a projection")
+		}
+		if req.Event.JournalSourceRunID > 0 {
+			sourceRun, err := s.repo.GetRun(ctx, req.Event.JournalSourceRunID)
+			if err != nil {
+				return nil, err
+			}
+			if sourceRun.ThreadID != req.Run.ThreadID {
+				return nil, InvalidArgumentErrorf("run event journal source thread does not match run thread")
+			}
+		}
 	}
 
 	entityCount := 1
@@ -623,7 +639,12 @@ func (s *threadService) CreateRunBundle(
 		}
 	}
 	var event *entity.RunEvent
+	var eventJournal *entity.JournalEvent
+	var eventJournalSourceRunID int64
+	var eventJournalProjectionFailed bool
 	if req.Event != nil {
+		eventJournalSourceRunID = req.Event.JournalSourceRunID
+		eventJournalProjectionFailed = req.Event.JournalProjectionFailed
 		event = &entity.RunEvent{
 			ID:        ids[nextID],
 			ThreadID:  run.ThreadID,
@@ -631,6 +652,11 @@ func (s *threadService) CreateRunBundle(
 			EventType: strings.TrimSpace(req.Event.EventType),
 			Payload:   defaultJSON(req.Event.PayloadBuilder(run.ID), "{}"),
 			CreatedAt: now,
+		}
+		if req.Event.Journal != nil {
+			eventJournal = journalEventFromServiceRequest(req.Event.Journal, event.ID, event.ThreadID)
+			eventJournal.RunID = event.RunID
+			eventJournal.CreatedAt = event.CreatedAt
 		}
 		nextID++
 	}
@@ -667,8 +693,11 @@ func (s *threadService) CreateRunBundle(
 
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event, Attempt: attempt,
-		SkipTopLevelAdmission:     req.SkipTopLevelAdmission,
-		ValidateIdempotencyReplay: strings.TrimSpace(req.Run.IdempotencyOperation) != "",
+		EventJournalSourceRunID:      eventJournalSourceRunID,
+		EventJournal:                 eventJournal,
+		EventJournalProjectionFailed: eventJournalProjectionFailed,
+		SkipTopLevelAdmission:        req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay:    strings.TrimSpace(req.Run.IdempotencyOperation) != "",
 		AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
 			return s.idGen.GenMultiIDs(ctx, count)
 		},
@@ -938,7 +967,12 @@ func (s *threadService) AppendRunEvent(ctx context.Context, req *AppendRunEventR
 		Payload:   defaultJSON(req.Payload, "{}"),
 		CreatedAt: time.Now().UnixMilli(),
 	}
-	if err := s.repo.CreateRunEvent(ctx, event); err != nil {
+	if err := s.persistRunEventWithOptionalJournal(
+		ctx,
+		event,
+		req.Journal,
+		req.JournalProjectionFailed,
+	); err != nil {
 		return nil, err
 	}
 
@@ -2485,6 +2519,10 @@ func (s *threadService) ReconcileExpiredRunLease(
 		Payload:   eventPayload,
 		CreatedAt: now,
 	}
+	journalEvent, err := newRunTerminalJournalEvent(event, req.ToStatus, req.ErrorCode)
+	if err != nil {
+		return nil, err
+	}
 	return s.repo.ReconcileExpiredRunLease(ctx, repository.ReconcileExpiredRunLeaseRequest{
 		RunID:               req.RunID,
 		LeaseOwner:          owner,
@@ -2495,6 +2533,7 @@ func (s *threadService) ReconcileExpiredRunLease(
 		ErrorCode:           strings.TrimSpace(req.ErrorCode),
 		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
 		Event:               event,
+		JournalEvent:        journalEvent,
 		OutboxIntent:        bindTerminalOutboxIntent(req.OutboxIntent, event, req.ToStatus),
 	})
 }
@@ -2555,6 +2594,10 @@ func (s *threadService) RequestRunCancellation(
 		Payload:   string(payload),
 		CreatedAt: now,
 	}
+	journalEvent, err := newRunTerminalJournalEvent(event, entity.RunStatusCanceled, errorCode)
+	if err != nil {
+		return nil, err
+	}
 
 	result, err := s.repo.RequestRunCancellation(ctx, repository.RequestRunCancellationRequest{
 		RunID:        req.RunID,
@@ -2562,6 +2605,7 @@ func (s *threadService) RequestRunCancellation(
 		ErrorCode:    errorCode,
 		ErrorMessage: errorMessage,
 		Event:        event,
+		JournalEvent: journalEvent,
 		OutboxIntent: bindTerminalOutboxIntent(req.OutboxIntent, event, entity.RunStatusCanceled),
 	})
 	if err != nil {
@@ -2655,6 +2699,10 @@ func (s *threadService) FinalizeRunSuccess(
 		ID: ids[nextID], ThreadID: req.ThreadID, RunID: req.RunID,
 		EventType: "run.completed", Payload: completionPayload, CreatedAt: now,
 	}
+	journalEvent, err := newRunTerminalJournalEvent(completionEvent, entity.RunStatusSucceeded, "")
+	if err != nil {
+		return nil, err
+	}
 	nextID++
 	buildTerminalCheckpoint := func(checkpoint *CreateCheckpointRequest, id int64) (*entity.Checkpoint, error) {
 		if checkpoint == nil {
@@ -2713,6 +2761,7 @@ func (s *threadService) FinalizeRunSuccess(
 		},
 		TitleEvent:                        titleEvent,
 		CompletionEvent:                   completionEvent,
+		JournalEvent:                      journalEvent,
 		TerminalCheckpoint:                terminalCheckpoint,
 		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
 		ExpectedThreadTitle:               expectedTitle,
@@ -2796,6 +2845,7 @@ func (s *threadService) transitionRun(
 
 	workerID := strings.TrimSpace(req.WorkerID)
 	var terminalEvent *entity.RunEvent
+	var journalEvent *entity.JournalEvent
 	if !req.EventAlreadyPersisted {
 		eventID, err := s.idGen.GenID(ctx)
 		if err != nil {
@@ -2818,6 +2868,14 @@ func (s *threadService) transitionRun(
 			ID: eventID, ThreadID: current.ThreadID, RunID: current.ID,
 			EventType: eventType, Payload: eventPayload, CreatedAt: req.Now,
 		}
+		journalEvent, err = newRunTerminalJournalEvent(
+			terminalEvent,
+			to,
+			strings.TrimSpace(req.ErrorCode),
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.UpdateRunStatus(ctx, repository.UpdateRunStatusRequest{
 		RunID:                 req.RunID,
@@ -2832,6 +2890,7 @@ func (s *threadService) transitionRun(
 		ErrorMessage:          strings.TrimSpace(req.ErrorMessage),
 		EventPayload:          req.EventPayload,
 		Event:                 terminalEvent,
+		JournalEvent:          journalEvent,
 		EventAlreadyPersisted: req.EventAlreadyPersisted,
 		OutboxIntent:          bindTerminalOutboxIntent(req.OutboxIntent, terminalEvent, to),
 	}); err != nil {

@@ -311,6 +311,122 @@ func (r *threadRepository) AppendJournalEvent(
 	return appended, err
 }
 
+func (r *threadRepository) CreateRunEventWithJournalProjection(
+	ctx context.Context,
+	req CreateRunEventWithJournalProjectionRequest,
+) (*entity.JournalEvent, error) {
+	if req.Event == nil || req.Event.ID <= 0 || req.Event.ThreadID <= 0 || req.Event.RunID <= 0 {
+		return nil, fmt.Errorf("run event identity is required")
+	}
+	base := *req.Event
+	base.EventType = strings.TrimSpace(base.EventType)
+	if base.EventType == "" {
+		return nil, fmt.Errorf("run event type is required")
+	}
+	if base.CreatedAt <= 0 {
+		base.CreatedAt = time.Now().UnixMilli()
+	}
+	basePO, err := runEventToPO(&base)
+	if err != nil {
+		return nil, err
+	}
+
+	var appended *entity.JournalEvent
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var persistErr error
+		appended, persistErr = persistRunEventWithJournalProjectionTx(
+			tx,
+			&base,
+			basePO,
+			req.Journal,
+			req.ProjectionFailed,
+			base.RunID,
+		)
+		return persistErr
+	})
+	return appended, err
+}
+
+func persistRunEventWithJournalProjectionTx(
+	tx *gorm.DB,
+	base *entity.RunEvent,
+	basePO *runEventPO,
+	journal *entity.JournalEvent,
+	projectionFailed bool,
+	journalSourceRunID int64,
+) (*entity.JournalEvent, error) {
+	if tx == nil || base == nil || basePO == nil {
+		return nil, fmt.Errorf("base run event is required")
+	}
+	var projected *entity.JournalEvent
+	if journal != nil {
+		candidate := *journal
+		candidate.ID = base.ID
+		candidate.ThreadID = base.ThreadID
+		candidate.RunID = base.RunID
+		if candidate.CreatedAt <= 0 {
+			candidate.CreatedAt = base.CreatedAt
+		}
+		normalized, err := normalizeJournalEvent(&candidate)
+		if err != nil {
+			projectionFailed = true
+		} else if normalized.EventType == "run.lifecycle" &&
+			entity.RunAttemptStatus(normalized.Status).IsTerminal() {
+			projectionFailed = true
+		} else {
+			projected = normalized
+		}
+	}
+	if !projectionFailed && projected == nil {
+		return nil, createBaseRunEvent(tx, basePO)
+	}
+	if journalSourceRunID <= 0 {
+		journalSourceRunID = base.RunID
+	}
+	executionRoot, executionPath, err := resolveJournalRunPath(tx, journalSourceRunID)
+	if err != nil {
+		return nil, err
+	}
+	if executionRoot.ThreadID != base.ThreadID {
+		return nil, fmt.Errorf("journal source run does not belong to event thread")
+	}
+	attempt, err := lockJournalAttemptForEvent(tx, executionRoot.ID, executionPath, "")
+	if errors.Is(err, ErrJournalNotEnrolled) {
+		return nil, createBaseRunEvent(tx, basePO)
+	}
+	if err != nil {
+		return nil, err
+	}
+	attemptStatus := entity.RunAttemptStatus(attempt.Status)
+	projectionState := entity.JournalProjectionState(attempt.ProjectionState)
+	if !attemptStatus.IsActive() || projectionState != entity.JournalProjectionStateHealthy {
+		return nil, createBaseRunEvent(tx, basePO)
+	}
+	if projectionFailed {
+		if err := createBaseRunEvent(tx, basePO); err != nil {
+			return nil, err
+		}
+		return nil, markJournalProjectionDegraded(tx, attempt, base.CreatedAt)
+	}
+
+	projected.JournalRunID = attempt.JournalRunID
+	projected.AttemptID = attempt.AttemptID
+	appended, err := appendJournalEventLockedWithBase(tx, attempt, projected, base)
+	if err == nil {
+		return appended, nil
+	}
+	if errors.Is(err, ErrJournalAttemptTerminal) {
+		return nil, createBaseRunEvent(tx, basePO)
+	}
+	if !isJournalProjectionInvariantError(err) {
+		return nil, err
+	}
+	if err := createBaseRunEvent(tx, basePO); err != nil {
+		return nil, err
+	}
+	return nil, markJournalProjectionDegraded(tx, attempt, base.CreatedAt)
+}
+
 func (r *threadRepository) FinalizeJournalAttempt(
 	ctx context.Context,
 	req FinalizeJournalAttemptRequest,
@@ -575,12 +691,24 @@ func appendJournalEventLocked(
 	attempt *runAttemptPO,
 	event *entity.JournalEvent,
 ) (*entity.JournalEvent, error) {
+	return appendJournalEventLockedWithBase(tx, attempt, event, nil)
+}
+
+func appendJournalEventLockedWithBase(
+	tx *gorm.DB,
+	attempt *runAttemptPO,
+	event *entity.JournalEvent,
+	base *entity.RunEvent,
+) (*entity.JournalEvent, error) {
 	var existing runEventPO
 	err := tx.Where(
 		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
 		attempt.JournalRunID, attempt.AttemptID, event.IdempotencyKey,
 	).First(&existing).Error
 	if err == nil {
+		if err := createProjectedBaseReplay(tx, base); err != nil {
+			return nil, err
+		}
 		return journalEventFromPO(&existing), nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -605,6 +733,9 @@ func appendJournalEventLocked(
 				attempt.JournalRunID, attempt.AttemptID, event.ActionID, event.Phase,
 			).First(&phase).Error
 			if err == nil {
+				if err := createProjectedBaseReplay(tx, base); err != nil {
+					return nil, err
+				}
 				return journalEventFromPO(&phase), nil
 			}
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -631,11 +762,8 @@ func appendJournalEventLocked(
 	if event.Visibility == entity.JournalVisibilityUser {
 		sequence = attempt.NextSequence
 	}
-	po, err := journalEventToPO(event, sequence)
+	po, err := journalEventToPOWithBase(event, sequence, base)
 	if err != nil {
-		return nil, err
-	}
-	if err := tx.Create(po).Error; err != nil {
 		return nil, err
 	}
 	if sequence > 0 {
@@ -652,11 +780,188 @@ func appendJournalEventLocked(
 			return nil, result.Error
 		}
 		if result.RowsAffected != 1 {
-			return nil, fmt.Errorf("journal sequence allocation lost attempt lock")
+			return nil, ErrJournalSequenceAllocation
 		}
 		attempt.NextSequence = sequence + 1
 	}
+	if err := tx.Create(po).Error; err != nil {
+		return nil, err
+	}
 	return journalEventFromPO(po), nil
+}
+
+func createProjectedBaseReplay(tx *gorm.DB, base *entity.RunEvent) error {
+	if base == nil {
+		return nil
+	}
+	po, err := runEventToPO(base)
+	if err != nil {
+		return err
+	}
+	return createBaseRunEvent(tx, po)
+}
+
+func markJournalProjectionDegraded(tx *gorm.DB, attempt *runAttemptPO, degradedAt int64) error {
+	if attempt == nil || entity.JournalProjectionState(attempt.ProjectionState) != entity.JournalProjectionStateHealthy {
+		return nil
+	}
+	if degradedAt <= 0 {
+		degradedAt = time.Now().UnixMilli()
+	}
+	result := tx.Model(&runAttemptPO{}).
+		Where("id = ? AND projection_state = ?", attempt.ID, entity.JournalProjectionStateHealthy).
+		Updates(map[string]any{
+			"projection_state":       string(entity.JournalProjectionStateDegraded),
+			"projection_degraded_at": degradedAt,
+			"updated_at":             degradedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		attempt.ProjectionState = string(entity.JournalProjectionStateDegraded)
+		attempt.ProjectionDegradedAt = &degradedAt
+	}
+	return nil
+}
+
+func isJournalProjectionInvariantError(err error) bool {
+	return errors.Is(err, ErrJournalParentMismatch) ||
+		errors.Is(err, ErrJournalActionDrift) ||
+		errors.Is(err, ErrJournalInvalidStateTransition) ||
+		errors.Is(err, ErrJournalSequenceAllocation)
+}
+
+func persistTerminalRunEventWithJournal(
+	tx *gorm.DB,
+	base *entity.RunEvent,
+	basePO *runEventPO,
+	journal *entity.JournalEvent,
+	status entity.RunAttemptStatus,
+	endedAt int64,
+) error {
+	if base == nil || basePO == nil || !status.IsTerminal() {
+		return fmt.Errorf("terminal run event and attempt status are required")
+	}
+	// Repository callers that do not opt into Journal keep the original terminal
+	// persistence path and must not depend on Journal tables being present.
+	if journal == nil {
+		return createBaseRunEvent(tx, basePO)
+	}
+	attempt, enrolled, err := lockJournalAttemptForTerminalProjection(tx, base.RunID)
+	if err != nil {
+		return err
+	}
+	if !enrolled {
+		return createBaseRunEvent(tx, basePO)
+	}
+	if attempt.ThreadID != base.ThreadID {
+		return fmt.Errorf("terminal journal attempt does not belong to run thread")
+	}
+	if !entity.RunAttemptStatus(attempt.Status).IsActive() {
+		return createBaseRunEvent(tx, basePO)
+	}
+	if endedAt <= 0 {
+		endedAt = time.Now().UnixMilli()
+	}
+
+	var normalized *entity.JournalEvent
+	projectionValid := journal != nil &&
+		entity.JournalProjectionState(attempt.ProjectionState) == entity.JournalProjectionStateHealthy
+	if projectionValid {
+		candidate := *journal
+		candidate.ID = base.ID
+		candidate.ThreadID = base.ThreadID
+		candidate.RunID = base.RunID
+		candidate.JournalRunID = attempt.JournalRunID
+		candidate.AttemptID = attempt.AttemptID
+		if candidate.CreatedAt <= 0 {
+			candidate.CreatedAt = base.CreatedAt
+		}
+		normalized, err = normalizeJournalEvent(&candidate)
+		if err == nil {
+			err = validateTerminalJournalEvent(normalized, status)
+		}
+		projectionValid = err == nil
+	}
+
+	if err := ensureJournalAttemptRunning(tx, attempt, base.CreatedAt); err != nil {
+		return err
+	}
+	if projectionValid {
+		sequence := attempt.NextSequence
+		po, err := journalEventToPOWithBase(normalized, sequence, base)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&runAttemptPO{}).
+			Where(
+				"id = ? AND status = ? AND active_slot = ? AND next_sequence = ?",
+				attempt.ID, entity.RunAttemptStatusRunning, 1, sequence,
+			).
+			Updates(map[string]any{
+				"status":            string(status),
+				"active_slot":       nil,
+				"next_sequence":     sequence + 1,
+				"terminal_event_id": base.ID,
+				"ended_at":          endedAt,
+				"updated_at":        endedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			if err := tx.Create(po).Error; err != nil {
+				return err
+			}
+			return nil
+		}
+		projectionValid = false
+	}
+
+	if err := createBaseRunEvent(tx, basePO); err != nil {
+		return err
+	}
+	if entity.JournalProjectionState(attempt.ProjectionState) == entity.JournalProjectionStateHealthy {
+		if err := markJournalProjectionDegraded(tx, attempt, base.CreatedAt); err != nil {
+			return err
+		}
+	}
+	result := tx.Model(&runAttemptPO{}).
+		Where("id = ? AND status = ? AND active_slot = ?", attempt.ID, entity.RunAttemptStatusRunning, 1).
+		Updates(map[string]any{
+			"status":            string(status),
+			"active_slot":       nil,
+			"terminal_event_id": base.ID,
+			"ended_at":          endedAt,
+			"updated_at":        endedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrJournalInvalidStateTransition
+	}
+	return nil
+}
+
+func lockJournalAttemptForTerminalProjection(
+	tx *gorm.DB,
+	executionRunID int64,
+) (*runAttemptPO, bool, error) {
+	query := tx.Where("execution_run_id = ?", executionRunID).Order("ordinal DESC")
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var attempt runAttemptPO
+	err := query.First(&attempt).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &attempt, true, nil
 }
 
 func ensureJournalAttemptRunning(tx *gorm.DB, attempt *runAttemptPO, startedAt int64) error {
@@ -957,6 +1262,7 @@ func journalEventToPO(event *entity.JournalEvent, sequence uint64) (*runEventPO,
 	journalRunID := event.JournalRunID
 	attemptID := event.AttemptID
 	occurredAt := event.OccurredAtUnixNano
+	journalEventType := event.EventType
 	po := &runEventPO{
 		ID: event.ID, ThreadID: event.ThreadID, RunID: event.RunID,
 		JournalRunID: &journalRunID, AttemptID: &attemptID,
@@ -968,7 +1274,8 @@ func journalEventToPO(event *entity.JournalEvent, sequence uint64) (*runEventPO,
 		TraceID: stringPtrOrNil(event.TraceID), ActionID: stringPtrOrNil(event.ActionID),
 		Phase: stringPtrOrNil(event.Phase), Operation: stringPtrOrNil(event.Operation),
 		Target: stringPtrOrNil(event.Target), Milestone: stringPtrOrNil(event.Milestone),
-		EventType: event.EventType, Payload: payload, CreatedAt: event.CreatedAt,
+		EventType: event.EventType, JournalEventType: &journalEventType,
+		Payload: payload, JournalPayload: append([]byte(nil), payload...), CreatedAt: event.CreatedAt,
 	}
 	if sequence > 0 {
 		po.Sequence = &sequence
@@ -976,7 +1283,35 @@ func journalEventToPO(event *entity.JournalEvent, sequence uint64) (*runEventPO,
 	return po, nil
 }
 
+func journalEventToPOWithBase(
+	event *entity.JournalEvent,
+	sequence uint64,
+	base *entity.RunEvent,
+) (*runEventPO, error) {
+	po, err := journalEventToPO(event, sequence)
+	if err != nil || base == nil {
+		return po, err
+	}
+	if base.ID != event.ID || base.ThreadID != event.ThreadID || base.RunID != event.RunID {
+		return nil, fmt.Errorf("base run event and journal projection identity do not match")
+	}
+	basePO, err := runEventToPO(base)
+	if err != nil {
+		return nil, err
+	}
+	po.EventType = basePO.EventType
+	po.Payload = basePO.Payload
+	po.CreatedAt = basePO.CreatedAt
+	return po, nil
+}
+
 func journalEventFromPO(po *runEventPO) *entity.JournalEvent {
+	eventType := po.EventType
+	payload := po.Payload
+	if po.JournalEventType != nil && strings.TrimSpace(*po.JournalEventType) != "" && len(po.JournalPayload) > 0 {
+		eventType = *po.JournalEventType
+		payload = po.JournalPayload
+	}
 	return &entity.JournalEvent{
 		ID: po.ID, ThreadID: po.ThreadID, RunID: po.RunID,
 		JournalRunID: int64FromPtr(po.JournalRunID), AttemptID: stringFromPtr(po.AttemptID),
@@ -988,7 +1323,7 @@ func journalEventFromPO(po *runEventPO) *entity.JournalEvent {
 		TraceID: stringFromPtr(po.TraceID), ActionID: stringFromPtr(po.ActionID),
 		Phase: stringFromPtr(po.Phase), Operation: stringFromPtr(po.Operation),
 		Target: stringFromPtr(po.Target), Milestone: stringFromPtr(po.Milestone),
-		EventType: po.EventType, Payload: jsonToString(po.Payload), CreatedAt: po.CreatedAt,
+		EventType: eventType, Payload: jsonToString(payload), CreatedAt: po.CreatedAt,
 	}
 }
 
@@ -1085,6 +1420,25 @@ func journalAttemptStatusFromRun(status entity.RunStatus) (entity.RunAttemptStat
 	}
 }
 
+func journalAttemptStatusForTerminalRun(
+	status entity.RunStatus,
+	errorCode string,
+) entity.RunAttemptStatus {
+	switch status {
+	case entity.RunStatusSucceeded:
+		return entity.RunAttemptStatusCompleted
+	case entity.RunStatusCanceled:
+		return entity.RunAttemptStatusCancelled
+	case entity.RunStatusFailed:
+		if entity.IsJournalTimeoutErrorCode(errorCode) {
+			return entity.RunAttemptStatusTimedOut
+		}
+		return entity.RunAttemptStatusFailed
+	default:
+		return entity.RunAttemptStatusFailed
+	}
+}
+
 func isJournalRootRun(run *runPO) bool {
 	return run != nil && run.ParentRunID == 0 &&
 		(run.RunKind == "" || run.RunKind == string(entity.RunKindTask))
@@ -1137,7 +1491,7 @@ func journalColumnsEmpty(po *runEventPO) bool {
 		po.Status == nil && po.OccurredAtUnixNano == nil && po.Visibility == nil &&
 		po.PayloadVersion == nil && po.SnapshotID == nil && po.TraceID == nil &&
 		po.ActionID == nil && po.Phase == nil && po.Operation == nil &&
-		po.Target == nil && po.Milestone == nil
+		po.Target == nil && po.Milestone == nil && po.JournalEventType == nil && len(po.JournalPayload) == 0
 }
 
 func uint64FromPtr(value *uint64) uint64 {

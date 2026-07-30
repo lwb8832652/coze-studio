@@ -160,7 +160,9 @@ type runEventPO struct {
 	Target             *string        `gorm:"column:target;size:512"`
 	Milestone          *string        `gorm:"column:milestone;size:191"`
 	EventType          string         `gorm:"column:event_type"`
+	JournalEventType   *string        `gorm:"column:journal_event_type;size:128"`
 	Payload            datatypes.JSON `gorm:"column:payload;type:json"`
+	JournalPayload     datatypes.JSON `gorm:"column:journal_payload;type:json"`
 	CreatedAt          int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
 }
 
@@ -931,6 +933,19 @@ func (r *threadRepository) CreateRunBundle(
 		(req.Event.ThreadID != req.Run.ThreadID || req.Event.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle event does not belong to run")
 	}
+	hasEventJournal := req.EventJournal != nil || req.EventJournalProjectionFailed
+	if hasEventJournal && (req.Event == nil || req.EventJournalSourceRunID <= 0) {
+		return nil, fmt.Errorf("run bundle event journal source is required")
+	}
+	if !hasEventJournal && req.EventJournalSourceRunID != 0 {
+		return nil, fmt.Errorf("run bundle event journal source requires a projection")
+	}
+	if req.EventJournal != nil &&
+		(req.EventJournal.ID != req.Event.ID ||
+			req.EventJournal.ThreadID != req.Event.ThreadID ||
+			req.EventJournal.RunID != req.Event.RunID) {
+		return nil, fmt.Errorf("run bundle event journal does not belong to event")
+	}
 	if req.Attempt != nil &&
 		(req.Attempt.ThreadID != req.Run.ThreadID ||
 			req.Attempt.JournalRunID != req.Run.ID || req.Attempt.ExecutionRunID != req.Run.ID) {
@@ -953,10 +968,12 @@ func (r *threadRepository) CreateRunBundle(
 		run.UpdatedAt = run.CreatedAt
 	}
 	normalized := CreateRunBundleRequest{
-		Run:                         &run,
-		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
-		ValidateIdempotencyReplay:   req.ValidateIdempotencyReplay,
-		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
+		Run:                          &run,
+		EventJournalSourceRunID:      req.EventJournalSourceRunID,
+		EventJournalProjectionFailed: req.EventJournalProjectionFailed,
+		SkipTopLevelAdmission:        req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay:    req.ValidateIdempotencyReplay,
+		AllocateInterruptedEventIDs:  req.AllocateInterruptedEventIDs,
 	}
 	if req.Attempt != nil {
 		attempt := *req.Attempt
@@ -1020,6 +1037,16 @@ func (r *threadRepository) CreateRunBundle(
 			event.CreatedAt = run.CreatedAt
 		}
 		normalized.Event = &event
+		if req.EventJournal != nil {
+			journal := *req.EventJournal
+			journal.ID = event.ID
+			journal.ThreadID = event.ThreadID
+			journal.RunID = event.RunID
+			if journal.CreatedAt <= 0 {
+				journal.CreatedAt = event.CreatedAt
+			}
+			normalized.EventJournal = &journal
+		}
 	}
 
 	var result *CreateRunBundleResult
@@ -1110,7 +1137,14 @@ func (r *threadRepository) CreateRunBundle(
 			if err != nil {
 				return err
 			}
-			if err := tx.Create(eventPO).Error; err != nil {
+			if _, err := persistRunEventWithJournalProjectionTx(
+				tx,
+				normalized.Event,
+				eventPO,
+				normalized.EventJournal,
+				normalized.EventJournalProjectionFailed,
+				normalized.EventJournalSourceRunID,
+			); err != nil {
 				return err
 			}
 		}
@@ -1278,7 +1312,7 @@ func interruptActiveTopLevelRuns(
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if err := createBaseRunEvent(tx, eventPO); err != nil {
 			return nil, nil, err
 		}
 		events = append(events, event)
@@ -1565,7 +1599,7 @@ func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.Run
 		return err
 	}
 
-	return r.db.WithContext(ctx).Create(po).Error
+	return createBaseRunEvent(r.db.WithContext(ctx), po)
 }
 
 func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
@@ -4164,7 +4198,14 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 		if event.ThreadID != current.ThreadID {
 			return fmt.Errorf("expired run lease event does not belong to run thread")
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if req.ToStatus == entity.RunStatusFailed {
+			journalStatus := journalAttemptStatusForTerminalRun(req.ToStatus, req.ErrorCode)
+			if err := persistTerminalRunEventWithJournal(
+				tx, event, eventPO, req.JournalEvent, journalStatus, now,
+			); err != nil {
+				return err
+			}
+		} else if err := createBaseRunEvent(tx, eventPO); err != nil {
 			return err
 		}
 		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
@@ -4244,7 +4285,14 @@ func (r *threadRepository) RequestRunCancellation(
 		if updated.RowsAffected == 0 {
 			return fmt.Errorf("%w: run %d cancellation lost execution fence", ErrRunLeaseLost, req.RunID)
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if err := persistTerminalRunEventWithJournal(
+			tx,
+			req.Event,
+			eventPO,
+			req.JournalEvent,
+			entity.RunAttemptStatusCancelled,
+			now,
+		); err != nil {
 			return err
 		}
 		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
@@ -4421,13 +4469,20 @@ func (r *threadRepository) FinalizeRunSuccess(
 				if titleEvent.ThreadID != completed.ThreadID {
 					return fmt.Errorf("run success title event does not belong to run thread")
 				}
-				if err := tx.Create(titleEventPO).Error; err != nil {
+				if err := createBaseRunEvent(tx, titleEventPO); err != nil {
 					return err
 				}
 				result.TitleEvent = titleEvent
 			}
 		}
-		if err := tx.Create(completionEventPO).Error; err != nil {
+		if err := persistTerminalRunEventWithJournal(
+			tx,
+			completionEvent,
+			completionEventPO,
+			req.JournalEvent,
+			entity.RunAttemptStatusCompleted,
+			now,
+		); err != nil {
 			return err
 		}
 		selectedTerminalCheckpoint := terminalCheckpoint
@@ -4564,7 +4619,19 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 		if terminalEvent.ThreadID != current.ThreadID {
 			return fmt.Errorf("terminal run event does not belong to run thread")
 		}
-		if err := tx.Create(terminalEventPO).Error; err != nil {
+		if isTerminalRunStatus(req.To) {
+			journalStatus := journalAttemptStatusForTerminalRun(req.To, req.ErrorCode)
+			if err := persistTerminalRunEventWithJournal(
+				tx,
+				terminalEvent,
+				terminalEventPO,
+				req.JournalEvent,
+				journalStatus,
+				now,
+			); err != nil {
+				return err
+			}
+		} else if err := createBaseRunEvent(tx, terminalEventPO); err != nil {
 			return err
 		}
 		return appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent)
@@ -4865,6 +4932,13 @@ func runEventToPO(event *entity.RunEvent) (*runEventPO, error) {
 		Payload:   payload,
 		CreatedAt: event.CreatedAt,
 	}, nil
+}
+
+func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {
+	if db == nil || po == nil {
+		return fmt.Errorf("base run event is required")
+	}
+	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
 }
 
 func (po *runEventPO) toEntity() *entity.RunEvent {

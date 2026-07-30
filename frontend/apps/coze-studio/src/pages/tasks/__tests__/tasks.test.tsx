@@ -663,6 +663,98 @@ describe('TasksPage helpers', () => {
     expect(projected[1].display.status).toBe('completed');
   });
 
+  it('does not treat tool.started events as completed tool results', () => {
+    const events = [
+      {
+        id: 'event-assistant-parallel-tool-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-read-file',
+              function: { name: 'read_file', arguments: '{}' },
+            },
+            {
+              id: 'call-web-search',
+              function: { name: 'web_search', arguments: '{}' },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-supplemental-tool-start',
+        task_id: 'task-1',
+        event_type: 'tool.started',
+        payload: JSON.stringify({
+          tool_name: 'web_search',
+          tool_call_id: 'call-web-search',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(2);
+    expect(projected.map(item => item.display.status)).toEqual([
+      'running',
+      'running',
+    ]);
+  });
+
+  it('does not present canceled or timed out tools as successful', () => {
+    const events = [
+      {
+        id: 'event-assistant-terminal-tools',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-canceled',
+              function: { name: 'read_file', arguments: '{}' },
+            },
+            {
+              id: 'call-timeout',
+              function: { name: 'web_search', arguments: '{}' },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-canceled',
+        task_id: 'task-1',
+        event_type: 'tool.canceled',
+        payload: JSON.stringify({ tool_call_id: 'call-canceled' }),
+        created_at: 6,
+      },
+      {
+        id: 'event-tool-timeout',
+        task_id: 'task-1',
+        event_type: 'tool.timed_out',
+        payload: JSON.stringify({ tool_call_id: 'call-timeout' }),
+        created_at: 7,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(2);
+    expect(projected.map(item => item.display.status)).toEqual([
+      'failed',
+      'failed',
+    ]);
+    expect(projected.map(item => item.display.detail)).toEqual([
+      '工具调用已取消',
+      '工具调用超时',
+    ]);
+  });
+
   it('projects web search tool calls with DeerFlow-style readable query labels', () => {
     const events = [
       {

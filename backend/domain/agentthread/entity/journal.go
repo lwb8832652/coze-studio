@@ -16,6 +16,8 @@
 
 package entity
 
+import "strings"
+
 const (
 	JournalSchemaVersion  = "1.1"
 	JournalPayloadVersion = "1.0"
@@ -45,6 +47,16 @@ func (s RunAttemptStatus) IsTerminal() bool {
 	switch s {
 	case RunAttemptStatusCompleted, RunAttemptStatusFailed,
 		RunAttemptStatusCancelled, RunAttemptStatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsJournalTimeoutErrorCode recognizes only server-owned timeout categories.
+func IsJournalTimeoutErrorCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "deadline_exceeded", "run_timeout", "task_timeout", "tool_timeout", "subagent_timeout", "timeout":
 		return true
 	default:
 		return false
@@ -96,27 +108,27 @@ type RunAttempt struct {
 }
 
 type JournalEvent struct {
-	ID                   int64
-	ThreadID             int64
-	RunID                int64
-	JournalRunID         int64
-	AttemptID            string
-	Sequence             uint64
-	IdempotencyKey       string
-	ParentEventID        int64
-	SchemaVersion        string
-	Status               string
-	OccurredAtUnixNano   int64
-	Visibility           JournalVisibility
-	PayloadVersion       string
-	SnapshotID           string
-	TraceID              string
-	ActionID             string
-	Phase                string
-	Operation            string
-	Target               string
-	Milestone            string
-	EventType            string
-	Payload              string
-	CreatedAt            int64
+	ID                 int64
+	ThreadID           int64
+	RunID              int64
+	JournalRunID       int64
+	AttemptID          string
+	Sequence           uint64
+	IdempotencyKey     string
+	ParentEventID      int64
+	SchemaVersion      string
+	Status             string
+	OccurredAtUnixNano int64
+	Visibility         JournalVisibility
+	PayloadVersion     string
+	SnapshotID         string
+	TraceID            string
+	ActionID           string
+	Phase              string
+	Operation          string
+	Target             string
+	Milestone          string
+	EventType          string
+	Payload            string
+	CreatedAt          int64
 }

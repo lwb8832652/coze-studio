@@ -1974,6 +1974,14 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	require.Contains(t, domainSVC.createRunBundleReq.Message.Content, "最近 7 天")
 	require.Equal(t, "human.interaction.resolved", domainSVC.createRunBundleReq.Event.EventType)
 	require.Contains(t, domainSVC.createRunBundleEventPayload, `"resume_run_id":21`)
+	require.Equal(t, int64(20), domainSVC.createRunBundleReq.Event.JournalSourceRunID)
+	require.NotNil(t, domainSVC.createRunBundleReq.Event.Journal)
+	require.Equal(t, "confirmation.resolved", domainSVC.createRunBundleReq.Event.Journal.EventType)
+	require.Equal(t, "interrupt-1", journalPayloadString(
+		t,
+		domainSVC.createRunBundleReq.Event.Journal.Payload,
+		"confirmation_id",
+	))
 }
 
 func TestApplicationResumeHumanInteractionRejectsNonInterruptedSourceRun(t *testing.T) {
@@ -3518,6 +3526,7 @@ func TestApplicationRecordArtifactScanResultEmitsContentFreeAuditEvent(t *testin
 	require.Equal(t, int64(10), threadSVC.appendRunEventReq.ThreadID)
 	require.Equal(t, int64(20), threadSVC.appendRunEventReq.RunID)
 	require.Equal(t, "artifact.scan.completed", threadSVC.appendRunEventReq.EventType)
+	require.Nil(t, threadSVC.appendRunEventReq.Journal)
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "/mnt/user-data")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "unsafe-report.txt")
@@ -3730,6 +3739,7 @@ func TestApplicationProcessArtifactScanJobsCompletesCleanScan(t *testing.T) {
 	require.Equal(t, int64(10), threadSVC.appendRunEventReq.ThreadID)
 	require.Equal(t, int64(20), threadSVC.appendRunEventReq.RunID)
 	require.Equal(t, "artifact.scan.completed", threadSVC.appendRunEventReq.EventType)
+	require.Nil(t, threadSVC.appendRunEventReq.Journal)
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "/mnt/user-data")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "report.txt")
@@ -4465,6 +4475,68 @@ func TestApplicationAppendRunEventMapsDomainEvent(t *testing.T) {
 	require.Equal(t, int64(400), resp.Event.CreatedAt)
 }
 
+func TestApplicationAppendRunEventAddsRedactedJournalProjection(t *testing.T) {
+	domainSVC := &recordingThreadService{appendedRunEvent: &entity.RunEvent{
+		ID: 300, ThreadID: 10, RunID: 200, EventType: "tool.completed", Payload: `{}`, CreatedAt: 400,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		ThreadID: 10, RunID: 200, EventType: "tool.completed",
+		Payload: `{"tool_name":"read_file","tool_call_id":"call-1","result":"/private/secret.md sk-secret"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.appendRunEventReq.Journal)
+	require.Equal(t, "action.terminal", domainSVC.appendRunEventReq.Journal.EventType)
+	require.Equal(t, "read", domainSVC.appendRunEventReq.Journal.Operation)
+	require.Equal(t, "文件", domainSVC.appendRunEventReq.Journal.Target)
+	require.NotContains(t, domainSVC.appendRunEventReq.Journal.Payload, "/private/secret.md")
+	require.NotContains(t, domainSVC.appendRunEventReq.Journal.Payload, "sk-secret")
+	require.False(t, domainSVC.appendRunEventReq.JournalProjectionFailed)
+}
+
+func TestApplicationAppendRunEventPersistsParallelToolStarts(t *testing.T) {
+	domainSVC := &recordingThreadService{appendedRunEvent: &entity.RunEvent{
+		ID: 300, ThreadID: 10, RunID: 200, EventType: "message.completed", Payload: `{}`, CreatedAt: 400,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		ThreadID: 10, RunID: 200, EventType: "message.completed",
+		Payload: `{"role":"assistant","tool_calls":[
+			{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/one.md\"}"}},
+			{"id":"call-2","function":{"name":"web_search","arguments":"{\"query\":\"private\"}"}}
+		]}`,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, domainSVC.appendRunEventReqs, 2)
+	require.Equal(t, "message.completed", domainSVC.appendRunEventReqs[0].EventType)
+	require.NotNil(t, domainSVC.appendRunEventReqs[0].Journal)
+	require.Equal(t, "read", domainSVC.appendRunEventReqs[0].Journal.Operation)
+	require.Equal(t, "tool.started", domainSVC.appendRunEventReqs[1].EventType)
+	require.NotNil(t, domainSVC.appendRunEventReqs[1].Journal)
+	require.Equal(t, "search", domainSVC.appendRunEventReqs[1].Journal.Operation)
+	require.NotContains(t, domainSVC.appendRunEventReqs[1].Payload, "private")
+}
+
+func TestApplicationAppendRunEventMarksMalformedActionProjectionFailed(t *testing.T) {
+	domainSVC := &recordingThreadService{appendedRunEvent: &entity.RunEvent{
+		ID: 300, ThreadID: 10, RunID: 200, EventType: "tool.completed", Payload: `{`, CreatedAt: 400,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		ThreadID: 10, RunID: 200, EventType: "tool.completed", Payload: `[]`,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, domainSVC.appendRunEventReq.Journal)
+	require.True(t, domainSVC.appendRunEventReq.JournalProjectionFailed)
+	require.Equal(t, `[]`, domainSVC.appendRunEventReq.Payload)
+}
+
 func TestApplicationListRunEventsMapsDomainEvents(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		runEvents: []*entity.RunEvent{
@@ -5086,6 +5158,7 @@ type recordingThreadService struct {
 	failRunReq                     *domainservice.UpdateRunStatusRequest
 	cancelRunReq                   *domainservice.UpdateRunStatusRequest
 	appendRunEventReq              *domainservice.AppendRunEventRequest
+	appendRunEventReqs             []*domainservice.AppendRunEventRequest
 	createCheckpointReq            *domainservice.CreateCheckpointRequest
 	listCheckpointsReq             *domainservice.ListCheckpointsRequest
 	getCheckpointReq               *domainservice.GetCheckpointRequest
@@ -5507,8 +5580,35 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			target text,
 			milestone text,
 			event_type text,
+			journal_event_type text,
 			payload json,
+			journal_payload json,
 			created_at integer
+		);
+		CREATE TABLE agent_run_attempts (
+			id integer PRIMARY KEY,
+			thread_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			execution_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			ordinal integer NOT NULL,
+			status text NOT NULL,
+			active_slot integer,
+			next_sequence integer NOT NULL DEFAULT 1,
+			last_committed_sequence integer NOT NULL DEFAULT 0,
+			source_checkpoint_id integer,
+			source_attempt_id text,
+			recovery_idempotency_key text,
+			enrollment_version text NOT NULL,
+			snapshots_enabled integer NOT NULL DEFAULT 0,
+			projection_state text NOT NULL DEFAULT 'healthy',
+			projection_degraded_at integer,
+			trace_id text,
+			terminal_event_id integer,
+			created_at integer NOT NULL,
+			updated_at integer NOT NULL,
+			started_at integer,
+			ended_at integer
 		)
 	`).Error
 }
@@ -5853,6 +5953,7 @@ func (s *recordingThreadService) CancelRun(ctx context.Context, req *domainservi
 
 func (s *recordingThreadService) AppendRunEvent(ctx context.Context, req *domainservice.AppendRunEventRequest) (*entity.RunEvent, error) {
 	s.appendRunEventReq = req
+	s.appendRunEventReqs = append(s.appendRunEventReqs, req)
 	return s.appendedRunEvent, nil
 }
 

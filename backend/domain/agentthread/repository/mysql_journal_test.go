@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -365,6 +366,307 @@ func TestJournalAppendValidatesEnvelopeAndFreezesDefaults(t *testing.T) {
 	// Ordinary Journal persistence is not a recoverable execution boundary.
 	// Task 7 advances this field only with the checkpoint/ledger transaction.
 	require.Zero(t, attempt.LastCommittedSequence)
+}
+
+func TestRunEventJournalProjectionKeepsBaseAndJournalViews(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+	projectionRepo, ok := repo.(RunEventProjectionRepository)
+	require.True(t, ok)
+
+	base := &entity.RunEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, EventType: "tool.completed",
+		Payload:   `{"tool_name":"read_file","tool_call_id":"call-1","result":"private output"}`,
+		CreatedAt: 1000,
+	}
+	projected, err := projectionRepo.CreateRunEventWithJournalProjection(
+		context.Background(),
+		CreateRunEventWithJournalProjectionRequest{
+			Event: base,
+			Journal: &entity.JournalEvent{
+				ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "call-1:terminal",
+				ActionID: "action-1", Phase: "terminal", Operation: "read", Target: "文件",
+				EventType: "action.terminal", Status: "completed",
+				Payload:   `{"type":"document","data":{"action_id":"action-1","operation":"read","target":"文件","display_verb_running":"正在读取","display_verb_completed":"已读取"}}`,
+				CreatedAt: 1000,
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, projected)
+	require.Equal(t, uint64(1), projected.Sequence)
+	require.Equal(t, "action.terminal", projected.EventType)
+
+	baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, baseEvents, 1)
+	require.Equal(t, "tool.completed", baseEvents[0].EventType)
+	require.Contains(t, baseEvents[0].Payload, "private output")
+
+	journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+		RunID: 10, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, journalEvents.Events, 1)
+	require.Equal(t, "action.terminal", journalEvents.Events[0].EventType)
+	require.NotContains(t, journalEvents.Events[0].Payload, "private output")
+}
+
+func TestCreateRunBundleProjectsResolvedConfirmationToSourceAttemptAtomically(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRunWithStatus(t, db, 10, 1, entity.RunStatusInterrupted)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+
+	resumeRun := newRepositoryTestRun(11, 1, entity.RunStatusPending, 2)
+	resumeRun.SpaceID = 10
+	resumeRun.CreatorID = 20
+	resumeRun.RunKind = entity.RunKindTask
+	resumeRun.IdempotencyKey = "resume-confirmation-1"
+	base := &entity.RunEvent{
+		ID: 1000, ThreadID: 1, RunID: 11, EventType: "human.interaction.resolved",
+		Payload: `{"interrupt_id":"interrupt-1","resume_run_id":11}`, CreatedAt: 1000,
+	}
+	journal := &entity.JournalEvent{
+		ID: 1000, ThreadID: 1, RunID: 11,
+		IdempotencyKey: "journal:confirmation:interrupt-1:resolved",
+		EventType:      "confirmation.resolved", Status: "completed",
+		Visibility: entity.JournalVisibilityUser,
+		Payload:    `{"type":"confirmation","data":{"confirmation_id":"interrupt-1","confirmation_type":"confirmation","allowed_action_keys":[]}}`,
+		CreatedAt:  1000,
+	}
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: resumeRun, Event: base,
+		EventJournalSourceRunID: 10,
+		EventJournal:            journal,
+	})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+
+	baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 11, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, baseEvents, 1)
+	require.Equal(t, "human.interaction.resolved", baseEvents[0].EventType)
+
+	journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+		RunID: 10, AttemptID: "att_100", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, journalEvents.Events, 1)
+	require.Equal(t, "confirmation.resolved", journalEvents.Events[0].EventType)
+	require.Equal(t, int64(11), journalEvents.Events[0].RunID)
+	require.Equal(t, uint64(1), journalEvents.Events[0].Sequence)
+}
+
+func TestRunEventJournalProjectionDegradesOnceAndKeepsBaseEvents(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+	projectionRepo, ok := repo.(RunEventProjectionRepository)
+	require.True(t, ok)
+
+	_, err := projectionRepo.CreateRunEventWithJournalProjection(
+		context.Background(),
+		CreateRunEventWithJournalProjectionRequest{
+			Event: &entity.RunEvent{
+				ID: 1000, ThreadID: 1, RunID: 10, EventType: "tool.completed", Payload: `{}`, CreatedAt: 1000,
+			},
+			Journal: &entity.JournalEvent{
+				ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "invalid",
+				EventType: "action.terminal", Payload: `{}`, CreatedAt: 1000,
+			},
+		},
+	)
+	require.NoError(t, err)
+	firstAttempt, err := repo.GetActiveJournalAttempt(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, entity.JournalProjectionStateDegraded, firstAttempt.ProjectionState)
+	require.NotNil(t, firstAttempt.ProjectionDegradedAt)
+	degradedAt := *firstAttempt.ProjectionDegradedAt
+
+	_, err = projectionRepo.CreateRunEventWithJournalProjection(
+		context.Background(),
+		CreateRunEventWithJournalProjectionRequest{
+			Event: &entity.RunEvent{
+				ID: 1001, ThreadID: 1, RunID: 10, EventType: "tool.completed", Payload: `{}`, CreatedAt: 2000,
+			},
+			Journal: &entity.JournalEvent{
+				ID: 1001, ThreadID: 1, RunID: 10, IdempotencyKey: "valid-after-degrade",
+				ActionID: "action-1", Phase: "terminal", Operation: "read", Target: "文件",
+				EventType: "action.terminal", Status: "completed",
+				Payload: `{"type":"document","data":{"action_id":"action-1"}}`, CreatedAt: 2000,
+			},
+		},
+	)
+	require.NoError(t, err)
+	secondAttempt, err := repo.GetActiveJournalAttempt(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, degradedAt, *secondAttempt.ProjectionDegradedAt)
+	require.Equal(t, uint64(1), secondAttempt.NextSequence)
+
+	baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, baseEvents, 2)
+	journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+		RunID: 10, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, journalEvents.Events)
+}
+
+func TestJournalSequenceAllocationFailureCanFallbackWithoutPartialProjection(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var staleAttempt runAttemptPO
+		if err := tx.Where("id = ?", 100).First(&staleAttempt).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&runAttemptPO{}).Where("id = ?", 100).
+			Update("next_sequence", 2).Error; err != nil {
+			return err
+		}
+		base := &entity.RunEvent{
+			ID: 1000, ThreadID: 1, RunID: 10, EventType: "tool.completed",
+			Payload: `{"tool_call_id":"call-1"}`, CreatedAt: 1000,
+		}
+		_, appendErr := appendJournalEventLockedWithBase(tx, &staleAttempt, &entity.JournalEvent{
+			ID: 1000, ThreadID: 1, RunID: 10, JournalRunID: 10, AttemptID: "att_100",
+			IdempotencyKey: "call-1:terminal", SchemaVersion: entity.JournalSchemaVersion,
+			Status: "completed", Visibility: entity.JournalVisibilityUser,
+			PayloadVersion: entity.JournalPayloadVersion,
+			ActionID:       "action-1", Phase: "terminal", Operation: "read", Target: "文件",
+			EventType: "action.terminal",
+			Payload:   `{"type":"document","data":{"action_id":"action-1"}}`, CreatedAt: 1000,
+		}, base)
+		if !errors.Is(appendErr, ErrJournalSequenceAllocation) {
+			return fmt.Errorf("expected sequence allocation failure, got %w", appendErr)
+		}
+		basePO, err := runEventToPO(base)
+		if err != nil {
+			return err
+		}
+		if err := createBaseRunEvent(tx, basePO); err != nil {
+			return err
+		}
+		return markJournalProjectionDegraded(tx, &staleAttempt, 1000)
+	})
+	require.NoError(t, err)
+
+	var rows []runEventPO
+	require.NoError(t, db.Where("run_id = ?", 10).Find(&rows).Error)
+	require.Len(t, rows, 1)
+	require.Equal(t, "tool.completed", rows[0].EventType)
+	require.Nil(t, rows[0].JournalEventType)
+	require.Empty(t, rows[0].JournalPayload)
+	var attempt runAttemptPO
+	require.NoError(t, db.Where("id = ?", 100).First(&attempt).Error)
+	require.Equal(t, string(entity.JournalProjectionStateDegraded), attempt.ProjectionState)
+}
+
+func TestRunCancellationFinalizesJournalAttemptWithSameBaseRow(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+	base := &entity.RunEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, EventType: "run.canceled",
+		Payload: `{"status":"canceled"}`, CreatedAt: 1000,
+	}
+	journal := &entity.JournalEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "run-10:cancelled",
+		EventType: "run.lifecycle", Status: string(entity.RunAttemptStatusCancelled),
+		Visibility: entity.JournalVisibilityUser,
+		Payload:    `{"type":"terminal","data":{"status":"cancelled"}}`, CreatedAt: 1000,
+	}
+
+	result, err := repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 10, Now: 1000, ErrorCode: "run_canceled", ErrorMessage: "canceled",
+		Event: base, JournalEvent: journal,
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, entity.RunStatusCanceled, result.Run.Status)
+	attempts, err := repo.ListJournalAttempts(context.Background(), 10)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, entity.RunAttemptStatusCancelled, attempts[0].Status)
+	require.Nil(t, attempts[0].ActiveSlot)
+	require.NotNil(t, attempts[0].TerminalEventID)
+	require.Equal(t, int64(1000), *attempts[0].TerminalEventID)
+	require.Equal(t, uint64(2), attempts[0].NextSequence)
+
+	baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "run.canceled", baseEvents[0].EventType)
+	journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+		RunID: 10, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, journalEvents.Events, 1)
+	require.Equal(t, "run.lifecycle", journalEvents.Events[0].EventType)
+}
+
+func TestRunCancellationKeepsBaseEventWhenTerminalProjectionIsInvalid(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+
+	result, err := repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 10, Now: 1000, ErrorCode: "run_canceled", ErrorMessage: "canceled",
+		Event: &entity.RunEvent{
+			ID: 1000, ThreadID: 1, RunID: 10, EventType: "run.canceled",
+			Payload: `{"status":"canceled"}`, CreatedAt: 1000,
+		},
+		JournalEvent: &entity.JournalEvent{
+			ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "invalid-terminal",
+			EventType: "action.terminal", Status: "completed",
+			Payload: `{"type":"terminal","data":{"status":"completed"}}`, CreatedAt: 1000,
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, entity.RunStatusCanceled, result.Run.Status)
+	attempts, err := repo.ListJournalAttempts(context.Background(), 10)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, entity.RunAttemptStatusCancelled, attempts[0].Status)
+	require.Equal(t, entity.JournalProjectionStateDegraded, attempts[0].ProjectionState)
+	require.NotNil(t, attempts[0].ProjectionDegradedAt)
+	require.Equal(t, uint64(1), attempts[0].NextSequence)
+
+	baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "run.canceled", baseEvents[0].EventType)
+	journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+		RunID: 10, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, journalEvents.Events)
 }
 
 func TestJournalAppendRejectsTerminalLifecycleOutsideFinalize(t *testing.T) {

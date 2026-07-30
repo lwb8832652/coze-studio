@@ -1351,12 +1351,10 @@ func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunE
 		return nil, err
 	}
 
-	event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     req.RunID,
-		EventType: req.EventType,
-		Payload:   req.Payload,
-	})
+	sourceEvent := RunEvent{
+		ThreadID: req.ThreadID, RunID: req.RunID, EventType: req.EventType, Payload: req.Payload,
+	}
+	event, err := s.appendProjectedRunEvent(ctx, sourceEvent)
 	if err != nil {
 		return nil, err
 	}
@@ -1364,7 +1362,51 @@ func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunE
 		return nil, fmt.Errorf("agent thread service returned empty run event")
 	}
 
+	supplemental, supplementalErr := journalSupplementalRunEvents(sourceEvent)
+	if supplementalErr != nil {
+		logs.CtxWarnf(
+			ctx,
+			"[journal-projection] expand event failed, run_id=%d event_type=%s err=%v",
+			req.RunID,
+			req.EventType,
+			supplementalErr,
+		)
+	}
+	for _, item := range supplemental {
+		if _, err := s.appendProjectedRunEvent(ctx, item); err != nil {
+			logs.CtxWarnf(
+				ctx,
+				"[journal-projection] append supplemental event failed, run_id=%d event_type=%s err=%v",
+				item.RunID,
+				item.EventType,
+				err,
+			)
+		}
+	}
+
 	return &AppendRunEventResponse{Event: DomainRunEventToSummary(event)}, nil
+}
+
+func (s *ApplicationService) appendProjectedRunEvent(
+	ctx context.Context,
+	sourceEvent RunEvent,
+) (*domainentity.RunEvent, error) {
+	projection, projectionErr := ProjectRunEventToJournal(sourceEvent)
+	if projectionErr != nil {
+		logs.CtxWarnf(ctx, "[journal-projection] project event failed, run_id=%d event_type=%s err=%v", sourceEvent.RunID, sourceEvent.EventType, projectionErr)
+	}
+	event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:                sourceEvent.ThreadID,
+		RunID:                   sourceEvent.RunID,
+		EventType:               sourceEvent.EventType,
+		Payload:                 sourceEvent.Payload,
+		Journal:                 journalProjectionToDomainRequest(sourceEvent, projection),
+		JournalProjectionFailed: projectionErr != nil,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEventsRequest) (*ListRunEventsResponse, error) {
