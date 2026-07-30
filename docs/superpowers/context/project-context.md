@@ -52,6 +52,21 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 当前只支持飞书官方 Go SDK。配置按工作空间隔离，secret 加密且不回显；外部
 事件先持久化去重，再进入异步 Agent 流程。
 
+### dev 预发布部署
+
+推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
+不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
+服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI revision
+一致。
+
+Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
+不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
+完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。该服务器只运行
+两个应用容器，MySQL、Elasticsearch、Redis 和对象存储均为远程服务。
+
+这是允许短时中断的单实例 dev/预发布流程，不等于生产发布。推送授权、数据库
+操作和生产发布保持独立权限边界。
+
 ## 主要产品域
 
 - 任务与 Agent Workbench：唯一公共事实模型为 Thread、Message、Run 和
@@ -109,6 +124,7 @@ Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合�
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
 - 本地调试：`docs/superpowers/runbooks/local-debug-and-test.md`
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
+- dev 预发布运维：`deploy/dev/README.md`
 - Sandbox：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
 - Guardrail：`docs/superpowers/runbooks/guardrail-audit-operations.md`
 - Workbench canonical product client：

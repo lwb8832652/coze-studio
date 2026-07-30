@@ -47,19 +47,22 @@
 - `workflow_dispatch`：接收完整提交 SHA，用于迁移完成后继续部署指定版本，或
   重放已构建的版本。
 
-工作流使用 `concurrency: deploy-dev`，`cancel-in-progress` 为 `false`。后提交的
-发布必须等待正在进行的发布结束，不能在服务器更新过程中取消旧任务。
+工作流使用 `concurrency: deploy-dev`，`cancel-in-progress` 为 `false`，队列为
+`max`。后提交的发布必须保留并等待正在进行的发布结束，不能在服务器更新过程中
+取消旧任务或替换待执行的 migration 检查。
 
 工作流包含以下 job：
 
-1. `preflight` 解析目标 SHA，检查推送区间是否修改迁移目录，并输出
-   `migration_changed`。
+1. `preflight` 解析目标 SHA，检查事件完整性，并从已晋级 revision 到目标 SHA
+   检查迁移目录，输出 `migration_changed`。
 2. `build-server` 构建后端镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
 3. `build-web` 构建 Web 镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
-4. `promote` 在两个构建都成功且没有迁移变化时，把同一 SHA 的两个镜像提升为
+4. `verify-images` 在手工任务中确认两张不可变镜像存在且 OCI revision 等于目标
+   SHA，不重新构建。
+5. `promote` 在两个构建都成功且没有迁移变化时，把同一 SHA 的两个镜像提升为
    `dev`；手动任务则在确认指定镜像存在后执行同样的提升。
-5. `deploy` 在未检测到迁移变化时调用宝塔 webhook。
-6. `migration-hold` 在检测到迁移变化时明确结束为待人工迁移状态，不调用
+6. `deploy` 只在 `promote` 成功后调用宝塔 webhook。
+7. `migration-hold` 在检测到迁移变化时明确结束为待人工迁移状态，不调用
    webhook。
 
 `workflow_dispatch` 不重新构建镜像。它先确认指定 SHA 的两个不可变镜像都存在，
@@ -87,7 +90,8 @@ Nginx 不再强制代理到本地 `minio:9000`。
 
 - `docker-compose.yml` 只包含 `coze-server` 和 `coze-web`。
 - `deploy.sh` 完成拉取、版本校验、更新、健康检查和回滚。
-- `.env.example` 只描述镜像地址、监听地址和应用环境文件路径，不包含真实凭据。
+- `.env.example` 只描述 ACR registry、namespace、前后端标签和健康检查超时，不含
+  真实凭据；业务运行配置固定保存在服务器本地 `app.env`。
 - `README.md` 说明宝塔安装、ACR 登录、环境文件和 webhook 配置步骤。
 - `tests/` 保存部署脚本的命令替身和回归测试。
 
@@ -166,9 +170,14 @@ Web 只绑定 `127.0.0.1:8888`，宝塔 Nginx 负责域名、HTTPS 和公网入�
 
 自动发布只检查 Git diff，不连接远程数据库。
 
-`push` 事件使用 `before` 与当前 SHA 计算迁移目录是否变化。首次推送或无法确认
-基准时按有迁移处理，默认暂停部署。合并提交需要检查完整推送区间，不能只检查
-最后一个父提交。
+`push` 事件先校验 `before`、当前 SHA 和两者的祖先关系；字段缺失、全零或 Git
+对象不可读时默认暂停部署。实际迁移比较基线来自 ACR 当前
+`coze-server:dev`、`coze-web:dev` 两张镜像的一致 OCI revision，即上次成功晋级
+的完整 SHA。基线缺失、两个 revision 不一致或基线不属于目标历史时同样暂停。
+
+Workflow 比较已晋级 SHA 到当前目标 SHA 的完整迁移目录变化。迁移提交 A 被暂停
+后，后续普通提交 B 仍从旧的已晋级 SHA 比较，因此不能绕过 hold。人工恢复成功
+后，两张新 `dev` 镜像的 revision 成为下一次 push 的比较基线。
 
 有迁移变化时，两个不可变镜像仍然构建并推送，但 `dev` 标签不更新，webhook
 不调用。运维人员完成远程 Atlas 迁移后，从 Actions 手动运行同一个 workflow，
