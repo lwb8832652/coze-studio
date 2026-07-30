@@ -1408,7 +1408,7 @@ unchanged latest `dev` baseline and no Workbench/canonical failure. Frontend Wor
 `/api/workbench/threads/**` requests. Full evidence is recorded in
 `docs/superpowers/evidence/2026-07-30-workbench-final-contract-retirement.md`.
 
-- [ ] **Step 5: Commit the stateless retirement**
+- [x] **Step 5: Commit the stateless retirement**
 
 ```bash
 git add -A \
@@ -1421,6 +1421,11 @@ git commit -m "refactor: retire unused stateless run api"
 
 Commit only after fresh verification. The owner override permits this commit despite the audit
 remaining `BLOCKED`; the commit and final audit must retain that residual-risk statement.
+
+Completed in `bcc3058d4858c56a28cfbfc3d24d679e407967d0`. The commit contains the exact
+ten-route negative snapshot, old adapter/model deletion, canonical-owned SSE protocol, updated
+execution graph and final retirement evidence. It does not contain a database migration or business
+data change.
 
 ### Task 15: Run The Canonical-Only Automated Verification
 
