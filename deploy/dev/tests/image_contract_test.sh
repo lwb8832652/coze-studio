@@ -123,6 +123,9 @@ assert_default_conf() {
   api_block=$(location_block "$1" 'location ~ ^/(api|v[1-3]|admin|open_api)(/|$) {')
   assert_proxy_block "$health_block" '/healthz proxy location'
   assert_proxy_block "$api_block" 'API proxy location'
+  require_block_line "$api_block" 'proxy_http_version[[:space:]]+1\.1;' 'API proxy location must use HTTP/1.1 for streaming'
+  require_block_line "$api_block" 'proxy_set_header[[:space:]]+Connection[[:space:]]+"";' 'API proxy location must clear the Connection header'
+  require_block_line "$api_block" 'proxy_buffering[[:space:]]+off;' 'API proxy location must disable buffering for SSE'
 }
 
 assert_forbidden_config_content() {
