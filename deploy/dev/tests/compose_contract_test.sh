@@ -66,6 +66,7 @@ render_config() {
 }
 
 config=$(render_config)
+compose_source=$(<"$COMPOSE_FILE")
 services=$(printf '%s\n' "$config" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
 require_exact_text "$services" $'coze-server\ncoze-web' 'services must be exactly coze-server then coze-web'
 server_config=$(service_block "$config" coze-server)
@@ -80,6 +81,7 @@ fi
 require_text "$server_config" 'source: .*/deploy/dev/app\.env' 'coze-server must mount the server-local app.env'
 require_text "$server_config" 'target: /app/\.env' 'coze-server must mount app.env at /app/.env'
 require_text "$server_config" 'read_only: true' 'the backend app.env mount must be read-only'
+require_text "$compose_source" 'create_host_path:[[:space:]]+false' 'a missing app.env must fail closed instead of creating a directory'
 require_text "$server_config" 'curl' 'backend healthcheck must use curl'
 require_text "$server_config" 'http://127\.0\.0\.1:8888/healthz' 'backend healthcheck must call /healthz'
 require_text "$server_config" 'restart: unless-stopped' 'coze-server must restart unless stopped'
