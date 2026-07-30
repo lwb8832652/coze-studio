@@ -62,16 +62,6 @@ sudo install -m 640 deploy/dev/.env.example /opt/coze-dev/.env.example
 宝塔 webhook 使用的系统账号必须能够读取该目录并访问 Docker。不要让无关账号
 获得 `app.env` 或 Docker socket 权限。
 
-使用服务器只读账号登录 ACR。登录动作必须由实际执行 webhook 的同一系统账号
-完成：
-
-```bash
-printf '%s' "$ACR_PULL_PASSWORD" | docker login "$ACR_REGISTRY" \
-  --username "$ACR_PULL_USERNAME" --password-stdin
-```
-
-不要在脚本、命令历史或宝塔日志中写入凭据字面值。
-
 ## 配置文件
 
 ### deploy.env
@@ -87,6 +77,22 @@ chmod 600 deploy.env
 按实际 ACR 修改 `ACR_REGISTRY` 和 `ACR_NAMESPACE`。日常发布保持
 `SERVER_IMAGE_TAG=dev`、`WEB_IMAGE_TAG=dev`。`DEPLOY_HEALTH_TIMEOUT_SECONDS`
 必须是正整数。`deploy.env` 是服务器本地文件，不要提交或附到工单中。
+
+使用服务器只读账号登录 ACR。登录动作必须由实际执行 webhook 的同一系统账号
+完成，并在 `deploy.env` 配置后执行：
+
+```bash
+cd /opt/coze-dev
+source deploy.env
+read -r -p 'ACR pull username: ' ACR_PULL_USERNAME
+read -r -s -p 'ACR pull password: ' ACR_PULL_PASSWORD
+printf '\n'
+printf '%s' "$ACR_PULL_PASSWORD" | docker login "$ACR_REGISTRY" \
+  --username "$ACR_PULL_USERNAME" --password-stdin
+unset ACR_PULL_PASSWORD
+```
+
+不要在脚本、命令历史或宝塔日志中写入凭据字面值。
 
 ### app.env
 
@@ -195,8 +201,9 @@ docker run --rm \
 ## 回滚
 
 `deploy.sh` 在更新前保存两个旧 image ID。Compose 更新或健康检查失败时，它会给
-两个旧镜像创建同一 transaction 的本地 rollback 标签，共同恢复两项服务。回滚
-成功后本次发布仍返回非零，Actions/宝塔必须显示失败。检查：
+两个旧镜像创建同一 transaction 的本地 rollback 标签，共同恢复两项服务，并
+核对两个容器的实际 image ID 都等于保存值。回滚成功后本次发布仍返回非零，
+Actions/宝塔必须显示失败。检查：
 
 ```bash
 cd /opt/coze-dev
