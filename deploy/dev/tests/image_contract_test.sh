@@ -101,6 +101,27 @@ assert_dockerfile() {
   printf '%s\n' "$stage" | grep -Eiq 'LABEL[[:space:]]+org\.opencontainers\.image\.source=' || fail "$name final runtime stage must label org.opencontainers.image.source"
 }
 
+assert_sqlite_musl_compatibility() {
+  go_mod=$1
+  sqlite_version=$(awk '$1 == "github.com/mattn/go-sqlite3" { print $2; exit }' "$go_mod")
+  [ -n "$sqlite_version" ] || fail 'backend go.mod must declare github.com/mattn/go-sqlite3 directly'
+
+  version=${sqlite_version#v}
+  major=${version%%.*}
+  remainder=${version#*.}
+  minor=${remainder%%.*}
+  patch=${remainder#*.}
+  case "$major.$minor.$patch" in
+    *[!0-9.]*|.*|*..*|*.) fail "backend go.mod has an unsupported go-sqlite3 version: $sqlite_version" ;;
+  esac
+
+  if [ "$major" -lt 1 ] || \
+     { [ "$major" -eq 1 ] && [ "$minor" -lt 14 ]; } || \
+     { [ "$major" -eq 1 ] && [ "$minor" -eq 14 ] && [ "$patch" -lt 19 ]; }; then
+    fail "backend go-sqlite3 $sqlite_version is incompatible with Alpine musl; require v1.14.19 or newer"
+  fi
+}
+
 assert_nginx_conf() {
   require_line "$1" '^[[:space:]]*worker_processes[[:space:]]+[^;]+;' 'nginx.conf must configure worker_processes'
   require_line "$1" '^[[:space:]]*events[[:space:]]*\{' 'nginx.conf must define events'
@@ -138,11 +159,13 @@ assert_forbidden_config_content() {
 }
 
 backend_dockerfile=$CONTRACT_ROOT/backend/Dockerfile
+backend_go_mod=$CONTRACT_ROOT/backend/go.mod
 frontend_dockerfile=$CONTRACT_ROOT/frontend/Dockerfile
 nginx_conf=$CONTRACT_ROOT/deploy/dev/nginx/nginx.conf
 default_conf=$CONTRACT_ROOT/deploy/dev/nginx/default.conf
 
 [ -f "$backend_dockerfile" ] || fail 'backend Dockerfile is missing'
+[ -f "$backend_go_mod" ] || fail 'backend go.mod is missing'
 [ -f "$frontend_dockerfile" ] || fail 'frontend Dockerfile is missing'
 [ -f "$nginx_conf" ] || fail 'deployment nginx.conf is missing'
 [ -f "$default_conf" ] || fail 'deployment default.conf is missing'
@@ -154,6 +177,7 @@ done
 
 backend_final_stage=$(final_stage "$backend_dockerfile")
 printf '%s\n' "$backend_final_stage" | grep -Eiq '^ENV[[:space:]]+APP_REVISION=\$GIT_REVISION([[:space:]]|$)' || fail 'backend final runtime stage must set APP_REVISION from GIT_REVISION'
+assert_sqlite_musl_compatibility "$backend_go_mod"
 
 require_line "$frontend_dockerfile" 'COPY[[:space:]]+deploy/dev/nginx/nginx\.conf[[:space:]]+/etc/nginx/nginx\.conf' 'frontend Dockerfile must copy deployment nginx.conf'
 require_line "$frontend_dockerfile" 'COPY[[:space:]]+deploy/dev/nginx/default\.conf[[:space:]]+/etc/nginx/conf\.d/default\.conf' 'frontend Dockerfile must copy deployment default.conf'
