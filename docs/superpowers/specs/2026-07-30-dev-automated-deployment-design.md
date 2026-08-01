@@ -35,6 +35,8 @@
 - 宝塔 webhook 暂按不能传递参数设计，部署脚本同时保留可选 SHA 参数。
 - 数据库迁移手动执行。提交包含 `docker/atlas/migrations/**` 变化时，自动发布
   构建镜像但暂停部署。
+- 首次没有 `:dev` 镜像时，若两张镜像都明确返回 manifest 不存在，则使用经过
+  校验的 push `before` 作为一次性启动基线；当前 push 不含迁移时继续自动部署。
 - 健康检查失败后自动恢复部署前的前后端镜像。
 
 ## 4. 发布架构
@@ -54,7 +56,8 @@
 工作流包含以下 job：
 
 1. `preflight` 解析目标 SHA，检查事件完整性，并从已晋级 revision 到目标 SHA
-   检查迁移目录，输出 `migration_changed`。
+   检查迁移目录；首次没有两张 `:dev` manifest 时改用 push `before` 检查本次
+   变更，输出 `migration_changed`。
 2. `build-server` 构建后端镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
 3. `build-web` 构建 Web 镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
 4. `verify-images` 在 push 构建完成后和手工任务中确认两张不可变镜像存在且 OCI
@@ -175,9 +178,17 @@ Web 只绑定 `127.0.0.1:8888`，宝塔 Nginx 负责域名、HTTPS 和公网入�
 自动发布只检查 Git diff，不连接远程数据库。
 
 `push` 事件先校验 `before`、当前 SHA 和两者的祖先关系；字段缺失、全零或 Git
-对象不可读时默认暂停部署。实际迁移比较基线来自 ACR 当前
+对象不可读时默认暂停部署。日常发布的迁移比较基线来自 ACR 当前
 `coze-server:dev`、`coze-web:dev` 两张镜像的一致 OCI revision，即上次成功晋级
-的完整 SHA。基线缺失、两个 revision 不一致或基线不属于目标历史时同样暂停。
+的完整 SHA。只有一张镜像缺失、两个 revision 不一致、基线不属于目标历史，或
+registry 返回非 manifest 缺失错误时，仍然暂停部署。
+
+首次发布时，两张 `:dev` 镜像会同时返回 manifest 不存在。此时 workflow 把已经
+通过格式、对象和祖先校验的 push `before` 作为一次性启动基线，只比较
+`before..target` 内的迁移变化。该启动路径的前提是远程 dev 数据库 schema 已与
+push 前的 `dev` 代码一致；当前 push 不含迁移时可自动晋级和调用 webhook，含迁移
+时仍进入 hold。首次晋级完成后，后续发布恢复使用两张 `:dev` 镜像的一致 revision
+作为基线，不能再通过 push `before` 绕过历史 migration hold。
 
 Workflow 比较已晋级 SHA 到当前目标 SHA 的完整迁移目录变化。迁移提交 A 被暂停
 后，后续普通提交 B 仍从旧的已晋级 SHA 比较，因此不能绕过 hold。人工恢复成功
@@ -235,9 +246,9 @@ ACR 或服务器。至少覆盖：
 - 构建前后端镜像，检查 OCI revision 标签。
 - 启动最小可用环境后验证后端与 Web 的 `/healthz`。
 
-真实 ACR 推送和宝塔 webhook 只在 GitHub 配置完成后验收。第一次发布使用
-`workflow_dispatch` 指定已构建 SHA，记录 Actions URL、目标 SHA、容器 revision、
-健康检查结果和服务器回滚记录目录。
+真实 ACR 推送和宝塔 webhook 只在 GitHub 配置完成后验收。第一次普通 push 应在
+两张 `:dev` manifest 都不存在且本次没有迁移时自动完成晋级和部署，并记录
+Actions URL、目标 SHA、容器 revision、健康检查结果和服务器回滚记录目录。
 
 ## 9. 运维和集成门禁
 
@@ -263,6 +274,8 @@ ACR 或服务器。至少覆盖：
 ## 11. 验收标准
 
 - `dev` 普通提交能构建并推送两个同 SHA 镜像，随后触发一次 webhook。
+- 首次没有两张 `:dev` manifest 时，普通且不含迁移的 push 能自动建立 `:dev`
+  基线并触发 webhook，无需手工运行 workflow。
 - 迁移提交不会更新 `dev` 标签，也不会调用 webhook。
 - 手动任务可以部署已存在的完整 SHA。
 - 服务器在拉取失败或版本不一致时保持旧服务运行。
