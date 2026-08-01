@@ -18,29 +18,71 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 type Cmdable = cache.Cmdable
 
-func New() cache.Cmdable {
-	addr := os.Getenv("REDIS_ADDR")
-	password := os.Getenv("REDIS_PASSWORD")
+const redisReadinessTimeout = 5 * time.Second
 
-	return NewWithAddrAndPassword(addr, password)
+func New(ctx context.Context) (cache.Cmdable, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("redis initialization context is nil")
+	}
+	db, err := parseRedisDB(os.Getenv(consts.RedisDB))
+	if err != nil {
+		return nil, err
+	}
+	client := newWithAddrPasswordAndDB(
+		os.Getenv(consts.RedisAddr),
+		os.Getenv("REDIS_PASSWORD"),
+		db,
+	)
+	readinessCtx, cancel := context.WithTimeout(ctx, redisReadinessTimeout)
+	defer cancel()
+	if err := client.CheckReadiness(readinessCtx); err != nil {
+		_ = client.client.Close()
+		return nil, fmt.Errorf("redis readiness check failed: %w", err)
+	}
+	return client, nil
+}
+
+func parseRedisDB(raw string) (int, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0, nil
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return 0, fmt.Errorf("%s must be a non-negative decimal integer", consts.RedisDB)
+		}
+	}
+	db, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative decimal integer: %w", consts.RedisDB, err)
+	}
+	return db, nil
 }
 
 func NewWithAddrAndPassword(addr, password string) cache.Cmdable {
+	return newWithAddrPasswordAndDB(addr, password, 0)
+}
+
+func newWithAddrPasswordAndDB(addr, password string, db int) *redisImpl {
 	cache.SetDefaultNilError(redis.Nil)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr, // Redis地址
-		DB:       0,    // 默认数据库
+		DB:       db,
 		Password: password,
 		// connection pool configuration
 		PoolSize:        100,             // Maximum number of connections (recommended to set to CPU cores * 10)
