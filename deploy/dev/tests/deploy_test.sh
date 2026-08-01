@@ -531,6 +531,57 @@ test_health_checks_use_configured_web_url() (
     fail "health checks used unexpected web URLs: $actual"
 )
 
+test_wait_for_health_retries_then_succeeds() (
+  DEPLOY_HEALTH_TIMEOUT_SECONDS=10
+  SECONDS=0
+  attempts=0
+  sleeps=0
+
+  health_checks_pass() {
+    [ "$1" = "$REV_A" ] || fail 'wait_for_health forwarded the wrong revision'
+    attempts=$((attempts + 1))
+    [ "$attempts" -eq 2 ]
+  }
+
+  sleep() {
+    [ "$1" = 2 ] || fail 'wait_for_health used the wrong retry interval'
+    sleeps=$((sleeps + 1))
+    SECONDS=$((SECONDS + 2))
+  }
+
+  wait_for_health "$REV_A" || fail 'wait_for_health rejected a successful retry'
+  [ "$attempts" -eq 2 ] || fail "wait_for_health made $attempts attempts before success"
+  [ "$sleeps" -eq 1 ] || fail "wait_for_health slept $sleeps times before success"
+)
+
+test_wait_for_health_stops_after_timeout() (
+  case_dir=$(mktemp -d "$TEST_ROOT/health-timeout.XXXXXX")
+  DEPLOY_HEALTH_TIMEOUT_SECONDS=5
+  SECONDS=0
+  attempts=0
+  sleeps=0
+
+  health_checks_pass() {
+    [ "$1" = "$REV_A" ] || fail 'wait_for_health forwarded the wrong revision'
+    attempts=$((attempts + 1))
+    return 1
+  }
+
+  sleep() {
+    [ "$1" = 2 ] || fail 'wait_for_health used the wrong retry interval'
+    sleeps=$((sleeps + 1))
+    SECONDS=$((SECONDS + 2))
+  }
+
+  if wait_for_health "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'wait_for_health succeeded after persistent failures'
+  fi
+  [ "$attempts" -eq 3 ] || fail "wait_for_health made $attempts attempts before timeout"
+  [ "$sleeps" -eq 3 ] || fail "wait_for_health slept $sleeps times before timeout"
+  assert_file_contains "$case_dir/output.log" 'health checks did not pass within 5s' \
+    'wait_for_health did not report the configured timeout'
+)
+
 test_is_ipv4_rejects_malformed_addresses() (
   for value in \
     '192.0.2' \
@@ -540,6 +591,11 @@ test_is_ipv4_rejects_malformed_addresses() (
     ' 192.0.2.10' \
     '192.0.2.10 ' \
     '192. 0.2.10' \
+    '01.2.3.4' \
+    '1.02.3.4' \
+    '1.2.03.4' \
+    '1.2.3.04' \
+    '00.0.0.0' \
     '256.0.0.1' \
     '1.2.3.999' \
     '1..2.3'; do
@@ -661,6 +717,24 @@ test_invalid_web_bind_ip_fails_before_docker() (
   [ ! -e "$marker" ] || fail 'invalid WEB_BIND_IP reached Docker'
   assert_file_contains "$case_dir/output.log" 'WEB_BIND_IP must be a valid IPv4 address' \
     'invalid WEB_BIND_IP error was not reported'
+)
+
+test_leading_zero_web_bind_ip_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/leading-zero-web-bind-ip.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_BIND_IP=01.2.3.4\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'leading-zero WEB_BIND_IP unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'leading-zero WEB_BIND_IP reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_BIND_IP must be a valid IPv4 address' \
+    'leading-zero WEB_BIND_IP error was not reported'
 )
 
 test_invalid_web_port_fails_before_docker() (
@@ -785,6 +859,9 @@ run_test 'web health URL defaults to port 8888' test_web_health_base_url_default
 run_test 'unhealthy nsqd blocks application health checks' test_health_checks_stop_at_unhealthy_nsqd
 run_test 'empty inspect health status is rejected' test_service_health_status_rejects_empty_inspect_output
 run_test 'health checks use the configured web URL' test_health_checks_use_configured_web_url
+run_test 'health wait retries transient failures' test_wait_for_health_retries_then_succeeds
+run_test 'health wait stops after persistent failures' test_wait_for_health_stops_after_timeout
+run_test 'leading-zero web bind IP fails before Docker' test_leading_zero_web_bind_ip_fails_before_docker
 run_test 'malformed IPv4 addresses are rejected' test_is_ipv4_rejects_malformed_addresses
 run_test 'invalid TCP port forms are rejected' test_is_tcp_port_rejects_non_strict_values
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction

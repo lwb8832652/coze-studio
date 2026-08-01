@@ -54,7 +54,7 @@ is_ipv4() {
   IFS=. read -r -a octets <<< "$address"
   [ "${#octets[@]}" -eq 4 ] || return 1
   for octet in "${octets[@]}"; do
-    [ "${#octet}" -le 3 ] || return 1
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
     ((10#$octet <= 255)) || return 1
   done
 }
