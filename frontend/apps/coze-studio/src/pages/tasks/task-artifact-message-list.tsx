@@ -26,6 +26,7 @@ import { Button } from '@coze-arch/coze-design';
 import type { WorkbenchArtifact } from '../workbench/thread-client';
 import {
   artifactScanStatus,
+  artifactSupportsCapability,
   artifactFileExtension,
   artifactFileName,
   canPreviewArtifact,
@@ -55,6 +56,21 @@ const EXTENSION_LABELS: Record<string, string> = {
   md: 'Markdown',
   pdf: 'PDF',
   skill: 'Skill',
+};
+
+const ARTIFACT_SOURCE_LABELS: Record<string, string> = {
+  agent_generated: '智能体生成',
+  external_reference: '外部引用',
+  tool_output: '工具输出',
+  user_upload: '用户上传',
+};
+
+const ARTIFACT_STATUS_LABELS: Record<string, string> = {
+  blocked: '已阻止',
+  expired: '已失效',
+  failed: '生成失败',
+  processing: '生成中',
+  ready: '已生成',
 };
 
 const contentTypeLabel = (artifact: TaskThreadArtifact) => {
@@ -107,6 +123,7 @@ const TaskArtifactMessageCard = ({
 }) => {
   const artifactName = artifactFileName(artifact);
   const previewable = canPreviewArtifact(artifact);
+  const downloadable = artifactSupportsCapability(artifact, 'download');
   const activeDownload = activeAction === `download:${artifact.artifact_id}`;
   const activeInstall =
     activeAction === `install_skill:${artifact.artifact_id}`;
@@ -150,6 +167,18 @@ const TaskArtifactMessageCard = ({
           </div>
           <div className="coze-prototype-artifact-message-meta">
             <span>{contentTypeLabel(artifact)} file</span>
+            {artifact.source ? (
+              <span>
+                {ARTIFACT_SOURCE_LABELS[artifact.source] ?? artifact.source}
+              </span>
+            ) : null}
+            {artifact.generation_status ? (
+              <span>
+                {ARTIFACT_STATUS_LABELS[artifact.generation_status] ??
+                  artifact.generation_status}
+              </span>
+            ) : null}
+            {artifact.is_primary ? <span>主要产物</span> : null}
           </div>
         </div>
       </div>
@@ -194,23 +223,26 @@ const TaskArtifactMessageCard = ({
             安装
           </Button>
         ) : null}
-        <Button
-          aria-label={`下载文档 ${artifactName}`}
-          disabled={
-            actionLocked && activeAction !== `download:${artifact.artifact_id}`
-          }
-          icon={<IconCozDownload />}
-          loading={activeDownload}
-          size="small"
-          theme="borderless"
-          type="tertiary"
-          onClick={event => {
-            event.stopPropagation();
-            void handleArtifactAction(artifact, 'download');
-          }}
-        >
-          下载
-        </Button>
+        {downloadable ? (
+          <Button
+            aria-label={`下载文档 ${artifactName}`}
+            disabled={
+              actionLocked &&
+              activeAction !== `download:${artifact.artifact_id}`
+            }
+            icon={<IconCozDownload />}
+            loading={activeDownload}
+            size="small"
+            theme="borderless"
+            type="tertiary"
+            onClick={event => {
+              event.stopPropagation();
+              void handleArtifactAction(artifact, 'download');
+            }}
+          >
+            下载
+          </Button>
+        ) : null}
       </div>
     </article>
   );
@@ -246,6 +278,8 @@ export const TaskArtifactMessageList = ({
     () =>
       [...artifacts].sort(
         (left, right) =>
+          Number(Boolean(right.is_primary)) -
+            Number(Boolean(left.is_primary)) ||
           left.created_at - right.created_at ||
           left.artifact_id.localeCompare(right.artifact_id),
       ),

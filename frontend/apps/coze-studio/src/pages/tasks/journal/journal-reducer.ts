@@ -97,6 +97,7 @@ export type JournalAction =
   | { type: 'snapshot_loading'; snapshot_id: string }
   | { type: 'snapshot_loaded'; snapshot: WorkbenchJournalSnapshot }
   | { type: 'snapshot_failed'; error_code: string; no_permission?: boolean }
+  | { type: 'snapshot_cleared' }
   | { type: 'inactivity_timeout'; observed_at: number }
   | { type: 'reset' };
 
@@ -138,6 +139,9 @@ const eventSequence = (event: WorkbenchJournalEvent): number | undefined =>
   Number.isSafeInteger(event.sequence) && (event.sequence ?? -1) >= 0
     ? event.sequence
     : undefined;
+
+const updatesExecutionStatus = (event: WorkbenchJournalEvent): boolean =>
+  event.event_type === 'run.lifecycle' || event.event_type.startsWith('run.');
 
 const eventOrder = (
   left: WorkbenchJournalEvent,
@@ -267,7 +271,7 @@ const applySequencedEvents = (
     applied.push(next);
     knownEventIDs.add(next.event_id);
     consistentSequence = sequence;
-    if (next.status) {
+    if (next.status && updatesExecutionStatus(next)) {
       status = next.status;
     }
   }
@@ -302,8 +306,9 @@ const stateWithEvents = (
     ...state,
     execution,
     has_displayable_journal_content:
-      state.has_displayable_journal_content ||
-      execution.events.some(isDisplayableEvent),
+      execution.detail_available &&
+      (state.has_displayable_journal_content ||
+        execution.events.some(isDisplayableEvent)),
   };
 };
 
@@ -311,6 +316,9 @@ const bootstrapState = (
   state: JournalState,
   bootstrap: WorkbenchJournalBootstrap,
 ): JournalState => {
+  const detailAvailable =
+    bootstrap.enrollment.journal_enabled &&
+    bootstrap.projection_state === 'healthy';
   const selected =
     bootstrap.default_attempt ??
     bootstrap.attempts.find(
@@ -334,7 +342,7 @@ const bootstrapState = (
       events: [],
       consistent_sequence: 0,
       pending_events: [],
-      detail_available: true,
+      detail_available: detailAvailable,
     },
     content: { status: 'empty' },
     view_mode: 'live_follow',
@@ -342,41 +350,48 @@ const bootstrapState = (
     submit_at: bootstrap.submit_at,
     server_time: bootstrap.server_time,
   };
-  return stateWithEvents(reset, bootstrap.events.items);
+  return detailAvailable
+    ? stateWithEvents(reset, bootstrap.events.items)
+    : reset;
 };
+
+const unavailableControlState = (
+  state: JournalState,
+  status: JournalTransportStatus,
+  errorCode?: string,
+): JournalState => ({
+  ...state,
+  transport: {
+    ...state.transport,
+    status,
+    ...(errorCode ? { error_code: errorCode } : {}),
+  },
+  execution: {
+    ...state.execution,
+    events: [],
+    pending_events: [],
+    gap: undefined,
+    detail_available: false,
+  },
+  content: { status: 'empty' },
+  has_displayable_journal_content: false,
+});
 
 const controlState = (
   state: JournalState,
   control: WorkbenchJournalControl,
 ): JournalState => {
   if (control.type === 'journal_disabled') {
-    return {
-      ...state,
-      transport: {
-        ...state.transport,
-        status: 'disabled',
-        error_code: control.error_code,
-      },
-    };
+    return unavailableControlState(state, 'disabled', control.error_code);
   }
   if (control.type === 'journal_degraded') {
-    return {
-      ...state,
-      transport: {
-        ...state.transport,
-        status: 'degraded',
-        error_code: control.error_code,
-      },
-    };
+    return unavailableControlState(state, 'degraded', control.error_code);
   }
-  return {
-    ...state,
-    transport: {
-      ...state.transport,
-      status: 'error',
-      error_code: control.error_code ?? control.type,
-    },
-  };
+  return unavailableControlState(
+    state,
+    control.type === 'capability_unavailable' ? 'disabled' : 'error',
+    control.error_code ?? control.type,
+  );
 };
 
 export const journalReducer = (
@@ -432,6 +447,9 @@ export const journalReducer = (
     case 'view_mode_changed':
       return { ...state, view_mode: action.mode };
     case 'snapshot_loading':
+      if (!state.execution.detail_available) {
+        return state;
+      }
       return {
         ...state,
         content: {
@@ -440,6 +458,9 @@ export const journalReducer = (
         },
       };
     case 'snapshot_loaded':
+      if (!state.execution.detail_available) {
+        return state;
+      }
       return {
         ...state,
         content: {
@@ -458,6 +479,11 @@ export const journalReducer = (
           error_code: action.error_code,
           snapshot: undefined,
         },
+      };
+    case 'snapshot_cleared':
+      return {
+        ...state,
+        content: { status: 'empty' },
       };
     case 'inactivity_timeout':
       return terminalStatuses.has(state.execution.status)

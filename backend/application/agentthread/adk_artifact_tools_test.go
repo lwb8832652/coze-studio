@@ -128,6 +128,71 @@ func TestApplicationWriteOutputFilePublishesTypedDocumentSnapshot(t *testing.T) 
 	}
 }
 
+func TestApplicationWriteOutputFilePublishesTypedCodeSnapshot(t *testing.T) {
+	app, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &domainentity.RunAttempt{
+		ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "att-code", Status: domainentity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+	}
+	app.JournalSnapshotAttemptReader = repo
+	app.RuntimeFileSVC = &recordingRuntimeFileService{}
+	app.ArtifactObjectStorage = &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	run := &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40}
+
+	resp, err := app.WriteOutputFile(context.Background(), &WriteOutputFileRequest{
+		Run: run, ToolCallID: "tool-call-code",
+		FilePath: "/mnt/user-data/outputs/src/main.go",
+		Content:  "package main\n\nfunc main() {}\n", ContentType: "text/x-go; charset=utf-8",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, repo.snapshots, 1)
+	for _, snapshot := range repo.snapshots {
+		require.Equal(t, domainentity.JournalSnapshotContentTypeCode, snapshot.ContentType)
+		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
+		require.Equal(t, "99", snapshot.SourceResourceID)
+		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)
+		var content JournalTypedSnapshotContent
+		require.NoError(t, json.Unmarshal([]byte(snapshot.ContentJSON), &content))
+		require.Nil(t, content.Document)
+		require.NotNil(t, content.Code)
+		require.Equal(t, "agent-output", content.Code.Repository)
+		require.Equal(t, resp.File.Digest, content.Code.Revision)
+		require.Equal(t, "src/main.go", content.Code.Path)
+		require.Equal(t, "go", content.Code.Language)
+		require.Equal(t, "package main\n\nfunc main() {}", content.Code.Content)
+		require.Equal(t, int32(1), content.Code.StartLine)
+		require.Equal(t, int32(3), content.Code.EndLine)
+	}
+}
+
+func TestJournalOutputCodeLanguageUsesExplicitMIMEAllowlist(t *testing.T) {
+	tests := []struct {
+		contentType string
+		language    string
+		allowed     bool
+	}{
+		{contentType: "text/x-go; charset=utf-8", language: "go", allowed: true},
+		{contentType: "text/x-python", language: "python", allowed: true},
+		{contentType: "application/typescript", language: "typescript", allowed: true},
+		{contentType: "application/json", language: "json", allowed: true},
+		{contentType: "text/plain", allowed: false},
+		{contentType: "text/markdown", allowed: false},
+		{contentType: "text/html", allowed: false},
+		{contentType: "application/octet-stream", allowed: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.contentType, func(t *testing.T) {
+			language, allowed := journalOutputCodeLanguage(test.contentType)
+			require.Equal(t, test.allowed, allowed)
+			require.Equal(t, test.language, language)
+		})
+	}
+}
+
 func TestApplicationWriteOutputFileKeepsToolSuccessWhenJournalProjectionFails(t *testing.T) {
 	app, repo, _ := newJournalSnapshotApplicationTestService()
 	repo.activeAttempt = &domainentity.RunAttempt{

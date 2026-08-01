@@ -166,6 +166,22 @@ describe('journalReducer', () => {
     expect(state.has_displayable_journal_content).toBe(false);
   });
 
+  it('keeps the Attempt running when a child action completes', () => {
+    const completedAction = event({
+      eventId: '101',
+      eventType: 'action.terminal',
+      sequence: 1,
+      status: 'completed',
+    });
+    const state = journalReducer(createInitialJournalState(), {
+      type: 'bootstrap_succeeded',
+      bootstrap: bootstrap([completedAction]),
+    });
+
+    expect(state.execution.status).toBe('running');
+    expect(state.has_displayable_journal_content).toBe(true);
+  });
+
   it('keeps a legacy public action visible without inventing a sequence cursor', () => {
     const legacy: WorkbenchJournalEvent = {
       event_id: 'legacy-101',
@@ -309,5 +325,79 @@ describe('journalReducer', () => {
     expect(state.execution.status).toBe('running');
     expect(state.content.status).toBe('ready');
     expect(state.has_displayable_journal_content).toBe(true);
+  });
+
+  it('drops Journal detail when a runtime control disables or degrades it', () => {
+    const visible = event({ eventId: '101', sequence: 1 });
+    let state = journalReducer(createInitialJournalState(), {
+      type: 'bootstrap_succeeded',
+      bootstrap: bootstrap([visible]),
+    });
+
+    state = journalReducer(state, {
+      type: 'control_received',
+      control: {
+        type: 'journal_degraded',
+        schema_version: '1.1',
+        journal_protocol_version: '1.1',
+        server_time: 1_200,
+      },
+    });
+
+    expect(state.transport.status).toBe('degraded');
+    expect(state.execution.detail_available).toBe(false);
+    expect(state.execution.events).toEqual([]);
+    expect(state.content.status).toBe('empty');
+    expect(state.has_displayable_journal_content).toBe(false);
+
+    state = journalReducer(state, {
+      type: 'snapshot_loaded',
+      snapshot: {
+        snapshot_id: 'stale-snapshot',
+        content_type: 'document',
+        event_id: visible.event_id,
+        attempt_id: attempt.attempt_id,
+        is_fragmented: false,
+        status: 'ready',
+        created_at: 1_250,
+        visibility: 'user',
+        fragments: [],
+        has_more: false,
+        content: {
+          document: { title: '过期详情', content: '不可重新显示' },
+        },
+      },
+    });
+    expect(state.content.status).toBe('empty');
+    expect(state.has_displayable_journal_content).toBe(false);
+
+    state = journalReducer(state, {
+      type: 'control_received',
+      control: {
+        type: 'journal_disabled',
+        schema_version: '1.1',
+        journal_protocol_version: '1.1',
+        server_time: 1_300,
+      },
+    });
+
+    expect(state.transport.status).toBe('disabled');
+    expect(state.has_displayable_journal_content).toBe(false);
+  });
+
+  it('does not expose bootstrap events from a degraded projection', () => {
+    const degraded = {
+      ...bootstrap([event({ eventId: '101', sequence: 1 })]),
+      projection_state: 'degraded' as const,
+    };
+    const state = journalReducer(createInitialJournalState(), {
+      type: 'bootstrap_succeeded',
+      bootstrap: degraded,
+    });
+
+    expect(state.transport.status).toBe('degraded');
+    expect(state.execution.detail_available).toBe(false);
+    expect(state.execution.events).toEqual([]);
+    expect(state.has_displayable_journal_content).toBe(false);
   });
 });

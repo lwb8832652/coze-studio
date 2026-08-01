@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+/* eslint-disable max-lines -- Stream recovery, cursor fencing, and terminal ordering form one state machine. */
+
 import { WorkbenchClientError } from '../../workbench/thread-client/canonical-fetch';
 import type {
   JournalEventSubscription,
@@ -76,6 +78,7 @@ class DefaultJournalStreamController implements JournalStreamController {
   private suspended = false;
   private capabilityConfirmed = false;
   private backfillInFlight = false;
+  private endAfterBackfillRequested = false;
 
   constructor(private readonly options: JournalStreamControllerOptions) {
     this.cursorStore = options.cursorStore ?? createJournalCursorStore();
@@ -87,6 +90,7 @@ class DefaultJournalStreamController implements JournalStreamController {
     this.terminal = false;
     this.polling = false;
     this.suspended = false;
+    this.endAfterBackfillRequested = false;
     this.reconnectAttempt = 0;
     this.streamGeneration += 1;
     this.clearTimers();
@@ -121,14 +125,39 @@ class DefaultJournalStreamController implements JournalStreamController {
     try {
       const bootstrap = await this.options.client.getRunJournal({
         ...this.options.scope,
+        ...(this.options.attemptId
+          ? { attempt_id: this.options.attemptId }
+          : {}),
         journal_protocol_version: protocolVersion,
         limit: pageSize,
       });
       if (this.stopped) {
         return;
       }
-      this.reduce({ type: 'bootstrap_succeeded', bootstrap });
-      const selected = bootstrap.default_attempt;
+      const selected = this.options.attemptId
+        ? bootstrap.attempts.find(
+            candidate => candidate.attempt_id === this.options.attemptId,
+          )
+        : bootstrap.default_attempt;
+      if (this.options.attemptId && !selected) {
+        this.reduce({
+          type: 'transport_changed',
+          status: 'error',
+          error_code: 'RESOURCE_NOT_FOUND',
+        });
+        return;
+      }
+      const scopedBootstrap = selected
+        ? {
+            ...bootstrap,
+            default_attempt_id: selected.attempt_id,
+            default_attempt: selected,
+          }
+        : bootstrap;
+      this.reduce({ type: 'bootstrap_succeeded', bootstrap: scopedBootstrap });
+      if (this.options.attemptId) {
+        this.reduce({ type: 'view_mode_changed', mode: 'historical' });
+      }
       if (
         !bootstrap.enrollment.journal_enabled ||
         bootstrap.projection_state === 'disabled'
@@ -138,11 +167,11 @@ class DefaultJournalStreamController implements JournalStreamController {
         return;
       }
       if (bootstrap.enrollment.journal_protocol_version !== protocolVersion) {
-        this.reduce({
-          type: 'transport_changed',
-          status: 'error',
-          error_code: 'SCHEMA_INCOMPATIBLE',
-        });
+        this.markDetailUnavailable(
+          'protocol_incompatible',
+          'SCHEMA_INCOMPATIBLE',
+          bootstrap.server_time,
+        );
         return;
       }
       if (!selected) {
@@ -285,11 +314,7 @@ class DefaultJournalStreamController implements JournalStreamController {
     }
     if (!this.capabilityConfirmed) {
       this.suspendStream();
-      this.reduce({
-        type: 'transport_changed',
-        status: 'disabled',
-        error_code: 'capability_unavailable',
-      });
+      this.markDetailUnavailable('capability_unavailable');
       return;
     }
     if (message.kind === 'event') {
@@ -339,11 +364,11 @@ class DefaultJournalStreamController implements JournalStreamController {
       metadata.attempt_id !== this.cursor?.attempt_id
     ) {
       this.suspendStream();
-      this.reduce({
-        type: 'transport_changed',
-        status: 'disabled',
-        error_code: 'capability_unavailable',
-      });
+      this.markDetailUnavailable(
+        'capability_unavailable',
+        undefined,
+        metadata.server_time,
+      );
       return;
     }
     this.capabilityConfirmed = true;
@@ -355,6 +380,23 @@ class DefaultJournalStreamController implements JournalStreamController {
     });
     this.options.onMetadata?.(metadata, this.now());
     this.markActivity();
+  }
+
+  private markDetailUnavailable(
+    type: 'capability_unavailable' | 'protocol_incompatible',
+    errorCode?: 'SCHEMA_INCOMPATIBLE',
+    serverTime = this.now(),
+  ): void {
+    this.reduce({
+      type: 'control_received',
+      control: {
+        type,
+        schema_version: protocolVersion,
+        journal_protocol_version: protocolVersion,
+        server_time: serverTime,
+        ...(errorCode ? { error_code: errorCode } : {}),
+      },
+    });
   }
 
   private markActivity(): void {
@@ -434,7 +476,10 @@ class DefaultJournalStreamController implements JournalStreamController {
         void this.pollOnce();
         return;
       }
-      if (terminalStatuses.has(state.execution.status)) {
+      if (
+        this.endAfterBackfillRequested ||
+        terminalStatuses.has(state.execution.status)
+      ) {
         this.finishTerminal();
         return;
       }
@@ -454,6 +499,9 @@ class DefaultJournalStreamController implements JournalStreamController {
   }
 
   private async backfill(endAfterBackfill = false): Promise<void> {
+    if (endAfterBackfill) {
+      this.endAfterBackfillRequested = true;
+    }
     if (this.backfillInFlight || this.stopped || !this.cursor) {
       return;
     }
@@ -472,7 +520,10 @@ class DefaultJournalStreamController implements JournalStreamController {
         void this.backfill(endAfterBackfill);
         return;
       }
-      if (endAfterBackfill || terminalStatuses.has(state.execution.status)) {
+      if (
+        this.endAfterBackfillRequested ||
+        terminalStatuses.has(state.execution.status)
+      ) {
         this.finishTerminal();
       }
     } catch (error) {
@@ -491,6 +542,7 @@ class DefaultJournalStreamController implements JournalStreamController {
 
   private finishTerminal(): void {
     this.terminal = true;
+    this.endAfterBackfillRequested = false;
     this.polling = false;
     this.clearTimers();
     this.closeSubscription();

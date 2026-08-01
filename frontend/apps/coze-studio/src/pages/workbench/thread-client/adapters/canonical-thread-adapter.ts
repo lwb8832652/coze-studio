@@ -827,6 +827,33 @@ const optionalStringField = (
     ? asString(object[key], `${label}.${key}`)
     : undefined;
 
+const optionalStringArrayField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): string[] | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asStringArray(object[key], `${label}.${key}`)
+    : undefined;
+
+const optionalNonNegativeIntegerField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): number | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asSafeNonNegativeInteger(object[key], `${label}.${key}`)
+    : undefined;
+
+const optionalBooleanField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): boolean | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asBoolean(object[key], `${label}.${key}`)
+    : undefined;
+
 const optionalEpochField = (
   object: CanonicalRecord,
   key: string,
@@ -951,6 +978,24 @@ const adaptCanonicalArtifact = (
   );
   assertExpectedID(threadID, scope.threadId, `${label}.thread_id`);
   const deletedAt = optionalEpochField(artifact, 'deleted_at', label);
+  const source = optionalStringField(artifact, 'source', label);
+  const generationStatus = optionalStringField(
+    artifact,
+    'generation_status',
+    label,
+  );
+  const capabilities = optionalStringArrayField(
+    artifact,
+    'capabilities',
+    label,
+  );
+  const collectionID = optionalStringField(artifact, 'collection_id', label);
+  const collectionOrder = optionalNonNegativeIntegerField(
+    artifact,
+    'collection_order',
+    label,
+  );
+  const isPrimary = optionalBooleanField(artifact, 'is_primary', label);
   return {
     artifact_id: asResourceID(
       required(artifact, 'artifact_id', label),
@@ -999,6 +1044,16 @@ const adaptCanonicalArtifact = (
       `${label}.updated_at`,
     ),
     ...(deletedAt === undefined ? {} : { deleted_at: deletedAt }),
+    ...(source === undefined ? {} : { source }),
+    ...(generationStatus === undefined
+      ? {}
+      : { generation_status: generationStatus }),
+    ...(capabilities === undefined ? {} : { capabilities }),
+    ...(collectionID === undefined ? {} : { collection_id: collectionID }),
+    ...(collectionOrder === undefined
+      ? {}
+      : { collection_order: collectionOrder }),
+    ...(isPrimary === undefined ? {} : { is_primary: isPrimary }),
   };
 };
 

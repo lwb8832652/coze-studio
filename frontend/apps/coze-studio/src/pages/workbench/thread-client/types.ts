@@ -110,6 +110,12 @@ export interface WorkbenchArtifact {
   created_at: number;
   updated_at: number;
   deleted_at?: number;
+  source?: string;
+  generation_status?: string;
+  capabilities?: string[];
+  collection_id?: string;
+  collection_order?: number;
+  is_primary?: boolean;
 }
 
 export interface WorkbenchArtifactScanJob {

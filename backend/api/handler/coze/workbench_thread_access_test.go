@@ -474,6 +474,35 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			started_at integer,
 			ended_at integer
 		);
+		CREATE TABLE agent_side_effect_ledger (
+			id integer PRIMARY KEY,
+			thread_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			idempotency_key text NOT NULL,
+			action_kind text NOT NULL,
+			replay_policy text NOT NULL,
+			status text NOT NULL,
+			request_hash text NOT NULL,
+			request_summary blob,
+			external_reference_digest text,
+			result_snapshot_id text,
+			result_event_id integer,
+			checkpoint_id integer,
+			compensation_kind text,
+			resolution_action text,
+			resolution_idempotency_key text,
+			resolved_at integer,
+			version integer NOT NULL DEFAULT 1,
+			prepared_at integer NOT NULL,
+			executing_at integer,
+			succeeded_at integer,
+			failed_at integer,
+			unknown_at integer,
+			compensated_at integer,
+			created_at integer NOT NULL,
+			updated_at integer NOT NULL
+		);
 		CREATE TABLE agent_journal_snapshots (
 			snapshot_id text PRIMARY KEY,
 			space_id integer NOT NULL,
@@ -507,6 +536,32 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			expires_at integer NOT NULL,
 			cleanup_state text NOT NULL,
 			deleted_at integer,
+			cleanup_claim_token text,
+			cleanup_claim_expires_at integer,
+			cleanup_attempt_count integer NOT NULL DEFAULT 0,
+			cleanup_last_error_code text,
+			created_at integer NOT NULL
+		);
+		CREATE TABLE agent_journal_snapshot_reservations (
+			snapshot_id text PRIMARY KEY,
+			reservation_token text NOT NULL,
+			space_id integer NOT NULL,
+			thread_id integer NOT NULL,
+			run_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			action_id text NOT NULL,
+			revision integer NOT NULL,
+			event_id integer NOT NULL,
+			idempotency_key text NOT NULL,
+			content_hash text NOT NULL,
+			acl_domain text NOT NULL,
+			staging_prefix text NOT NULL,
+			expires_at integer NOT NULL,
+			cleanup_claim_token text,
+			cleanup_claim_expires_at integer,
+			cleanup_attempt_count integer NOT NULL DEFAULT 0,
+			cleanup_last_error_code text,
 			created_at integer NOT NULL
 		);
 		CREATE TABLE agent_journal_snapshot_fragments (

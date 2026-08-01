@@ -296,6 +296,12 @@ export const artifactTransportFixture = canonicalFixture({
         created_at: createdAtISO,
         updated_at: updatedAtISO,
         deleted_at: deletedAtISO,
+        source: 'agent_generated',
+        generation_status: 'ready',
+        capabilities: ['open', 'preview', 'download'],
+        collection_id: 'collection-1',
+        collection_order: 2,
+        is_primary: true,
       },
     ],
     total: 1,
@@ -316,6 +322,12 @@ export const artifactTransportFixture = canonicalFixture({
     created_at: createdAt,
     updated_at: updatedAt,
     deleted_at: deletedAt,
+    source: 'agent_generated',
+    generation_status: 'ready',
+    capabilities: ['open', 'preview', 'download'],
+    collection_id: 'collection-1',
+    collection_order: 2,
+    is_primary: true,
   } satisfies WorkbenchArtifact,
 });
 
@@ -1116,6 +1128,18 @@ const canonicalArtifactFields = fields({
   created_at: canonicalEpoch('created_at'),
   updated_at: canonicalEpoch('updated_at'),
   deleted_at: optionalCanonicalEpoch('deleted_at'),
+  source: optionalCanonicalString('source'),
+  generation_status: optionalCanonicalString('generation_status'),
+  capabilities: optionalRead('capabilities', asStringArray, {
+    omit: value => value === null,
+  }),
+  collection_id: optionalCanonicalString('collection_id'),
+  collection_order: optionalRead('collection_order', asSafeInteger, {
+    omit: value => value === null,
+  }),
+  is_primary: optionalRead('is_primary', asBoolean, {
+    omit: value => value === null,
+  }),
 });
 
 const canonicalScanFields = fields({

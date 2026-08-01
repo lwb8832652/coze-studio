@@ -44,8 +44,37 @@ const maxOutputFileWriteBytes = defaultADKMaxOffloadBytes
 const skillPackageContentType = "application/vnd.coze.skill+zip"
 const maxSkillPackageResources = 64
 const maxSkillPackageResourceBytes = 256 << 10
+const journalOutputCodeRepository = "agent-output"
 
 var skillPackageNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+var journalOutputCodeLanguages = map[string]string{
+	"application/javascript":    "javascript",
+	"application/json":          "json",
+	"application/sql":           "sql",
+	"application/toml":          "toml",
+	"application/typescript":    "typescript",
+	"application/x-javascript":  "javascript",
+	"application/x-python-code": "python",
+	"application/x-sh":          "shell",
+	"application/x-typescript":  "typescript",
+	"application/yaml":          "yaml",
+	"text/css":                  "css",
+	"text/javascript":           "javascript",
+	"text/typescript":           "typescript",
+	"text/x-c":                  "c",
+	"text/x-c++":                "cpp",
+	"text/x-c++src":             "cpp",
+	"text/x-csrc":               "c",
+	"text/x-go":                 "go",
+	"text/x-java-source":        "java",
+	"text/x-python":             "python",
+	"text/x-rust":               "rust",
+	"text/x-shellscript":        "shell",
+	"text/x-sql":                "sql",
+	"text/x-yaml":               "yaml",
+	"text/yaml":                 "yaml",
+}
 
 type ArtifactObjectWriter interface {
 	PutObject(
@@ -142,7 +171,7 @@ func (s *ApplicationService) writeOutputFileBytes(
 	}
 
 	summary := outputFileSummary(file, virtualPath, contentType, int64(len(content)), digest)
-	s.publishJournalDocumentSnapshot(
+	s.publishJournalOutputSnapshot(
 		ctx,
 		run,
 		toolCallID,
@@ -166,6 +195,85 @@ func (s *ApplicationService) writeOutputFileBytes(
 		Created: created,
 		Notice:  notice,
 	}, nil
+}
+
+func (s *ApplicationService) publishJournalOutputSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	originalObjectKey string,
+	content []byte,
+) {
+	if file == nil {
+		return
+	}
+	if language, ok := journalOutputCodeLanguage(file.ContentType); ok {
+		s.publishJournalCodeSnapshot(ctx, run, toolCallID, file, content, language)
+		return
+	}
+	s.publishJournalDocumentSnapshot(ctx, run, toolCallID, file, originalObjectKey, content)
+}
+
+func (s *ApplicationService) publishJournalCodeSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	content []byte,
+	language string,
+) {
+	if s == nil || s.JournalSnapshotAttemptReader == nil ||
+		s.JournalSnapshotRepository == nil || run == nil || file == nil ||
+		len(content) == 0 {
+		return
+	}
+	_, relativePath, err := normalizeOutputVirtualPath(file.VirtualPath)
+	if err != nil {
+		return
+	}
+	visibleContent := strings.TrimSpace(string(content))
+	if visibleContent == "" {
+		return
+	}
+	operation := journalToolOperation("write_file")
+	target := journalToolTarget("write_file", operation)
+	runningVerb, completedVerb := journalActionVerbs(operation)
+	actionID := ""
+	if strings.TrimSpace(toolCallID) != "" {
+		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
+	}
+	_, _, err = s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
+		Run: run, Status: domainentity.JournalContentStatusReady,
+		ContentType: domainentity.JournalSnapshotContentTypeCode,
+		Source: JournalSnapshotSource{
+			ResourceType: "runtime_file",
+			ResourceID:   strconv.FormatInt(file.FileID, 10),
+			Revision:     file.Digest,
+		},
+		Action: JournalContentAction{
+			ActionID:  actionID,
+			Operation: operation, Target: target,
+			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
+		},
+		Content: JournalTypedSnapshotContent{Code: &JournalCodeContent{
+			Repository: journalOutputCodeRepository,
+			Revision:   file.Digest,
+			Path:       relativePath,
+			Language:   language,
+			Content:    visibleContent,
+			StartLine:  1,
+			EndLine:    int32(strings.Count(visibleContent, "\n") + 1),
+		}},
+	})
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal code snapshot unavailable: run_id=%d file_id=%d",
+			run.RunID,
+			file.FileID,
+		)
+	}
 }
 
 func (s *ApplicationService) publishJournalDocumentSnapshot(
@@ -242,6 +350,15 @@ func journalOutputDocumentFormat(contentType string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func journalOutputCodeLanguage(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return "", false
+	}
+	language, ok := journalOutputCodeLanguages[strings.ToLower(mediaType)]
+	return language, ok
 }
 
 func journalMarkdownChapters(content string) []JournalDocumentChapter {

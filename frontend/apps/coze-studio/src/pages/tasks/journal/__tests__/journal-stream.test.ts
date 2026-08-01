@@ -180,6 +180,50 @@ afterEach(() => {
 });
 
 describe('Journal stream controller', () => {
+  it('loads the explicitly selected historical Attempt without opening a live stream', async () => {
+    const historicalAttempt = {
+      ...attempt,
+      attempt_id: 'att-0',
+      status: 'failed' as const,
+      latest_sequence: 1,
+      created_at: 900,
+    };
+    const historicalEvent = {
+      ...actionEvent(1, 'completed'),
+      attempt_id: historicalAttempt.attempt_id,
+    };
+    const { client } = createClient({
+      journal: {
+        ...bootstrap(),
+        attempts: [historicalAttempt, attempt],
+        events: {
+          items: [historicalEvent],
+          has_more: false,
+          attempt_id: historicalAttempt.attempt_id,
+          latest_sequence: 1,
+        },
+      },
+    });
+    const owner = createStateOwner();
+    const controller = createJournalStreamController({
+      client,
+      scope,
+      attemptId: historicalAttempt.attempt_id,
+      reduce: action => owner.reduce(action),
+    });
+
+    await controller.start();
+
+    expect(client.getRunJournal).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt_id: historicalAttempt.attempt_id }),
+    );
+    expect(owner.state.execution.selected_attempt_id).toBe(
+      historicalAttempt.attempt_id,
+    );
+    expect(owner.state.execution.events).toEqual([historicalEvent]);
+    expect(client.subscribeJournalEvents).not.toHaveBeenCalled();
+  });
+
   it('reconnects after 1/2/4 seconds and then falls back to 2-second polling', async () => {
     const { client, subscriptions } = createClient();
     const owner = createStateOwner();
@@ -234,6 +278,46 @@ describe('Journal stream controller', () => {
 
     expect(client.subscribeJournalEvents).not.toHaveBeenCalled();
     expect(owner.state.transport.status).toBe('disabled');
+    expect(owner.state.has_displayable_journal_content).toBe(false);
+  });
+
+  it('drops bootstrapped detail when stream metadata revokes capability', async () => {
+    const visibleEvent = actionEvent(1);
+    const visibleAttempt = { ...attempt, latest_sequence: 1 };
+    const { client, subscriptions } = createClient({
+      journal: {
+        ...bootstrap(),
+        attempts: [visibleAttempt],
+        default_attempt: visibleAttempt,
+        latest_sequence: 1,
+        events: {
+          items: [visibleEvent],
+          has_more: false,
+          attempt_id: attempt.attempt_id,
+          latest_sequence: 1,
+          next_after_sequence: 1,
+        },
+      },
+    });
+    const owner = createStateOwner();
+    const controller = createJournalStreamController({
+      client,
+      scope,
+      reduce: action => owner.reduce(action),
+    });
+
+    await controller.start();
+    expect(owner.state.has_displayable_journal_content).toBe(true);
+    subscriptions[0]?.request.onMessage({
+      kind: 'metadata',
+      metadata: {
+        ...metadata().metadata,
+        journal_enabled: false,
+      },
+    });
+
+    expect(owner.state.transport.status).toBe('disabled');
+    expect(owner.state.execution.events).toEqual([]);
     expect(owner.state.has_displayable_journal_content).toBe(false);
   });
 

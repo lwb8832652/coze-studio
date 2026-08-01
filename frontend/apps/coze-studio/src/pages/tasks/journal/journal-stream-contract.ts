@@ -29,6 +29,7 @@ export type JournalStreamClient = Pick<
 export interface JournalStreamControllerOptions {
   client: JournalStreamClient;
   scope: JournalStreamScope;
+  attemptId?: string;
   reduce: (action: JournalAction) => JournalState;
   cursorStore?: JournalCursorStore;
   onMetadata?: (metadata: WorkbenchJournalMetadata, receivedAt: number) => void;

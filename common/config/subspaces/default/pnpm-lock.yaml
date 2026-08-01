@@ -87,6 +87,9 @@ importers:
       '@coze-arch/web-context':
         specifier: workspace:*
         version: link:../../packages/arch/web-context
+      '@coze-common/virtual-list':
+        specifier: workspace:*
+        version: link:../../packages/components/virtual-list
       '@coze-foundation/account-adapter':
         specifier: workspace:*
         version: link:../../packages/foundation/account-adapter

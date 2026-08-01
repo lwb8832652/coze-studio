@@ -34,6 +34,8 @@ import { useUserInfo } from '@coze-arch/foundation-sdk';
 import type {
   HumanInteractionResponse,
   WorkbenchArtifact,
+  WorkbenchJournalEvent,
+  WorkbenchJournalRecoveryCapability,
   WorkbenchMessage,
   WorkbenchSuggestionMessage,
 } from '../workbench/thread-client';
@@ -89,6 +91,11 @@ import {
   useTaskArtifactActions,
 } from './task-artifact-actions';
 import { generateTaskThreadSuggestions } from './service';
+import { useJournalExperience } from './journal/use-journal-experience';
+import type { JournalViewMode } from './journal/journal-reducer';
+import type { JournalRecoveryHandler } from './journal/journal-recovery-dialog';
+import { JournalPanel, JournalRestoreButton } from './journal/journal-panel';
+import { JournalConversationFlow } from './journal/journal-conversation-flow';
 import {
   getTaskExecutionType,
   getTaskInputText,
@@ -171,6 +178,7 @@ const getLatestPreviewableArtifactID = (artifacts: TaskThreadArtifact[]) =>
     .filter(canPreviewArtifact)
     .sort(
       (left, right) =>
+        Number(Boolean(right.is_primary)) - Number(Boolean(left.is_primary)) ||
         right.created_at - left.created_at ||
         right.artifact_id.localeCompare(left.artifact_id),
     )[0]?.artifact_id ?? '';
@@ -558,23 +566,66 @@ const TaskThreadArtifactCards = ({
   );
 };
 
+interface TaskThreadConversationProps {
+  artifactActions: TaskArtifactActions;
+  artifacts: TaskThreadArtifact[];
+  events: TaskThreadDetailEvent[];
+  latestTaskRunID: string;
+  journalEvents: WorkbenchJournalEvent[];
+  journalRecoveryCapability?: WorkbenchJournalRecoveryCapability;
+  journalViewMode: JournalViewMode;
+  selectedJournalEventId?: string;
+  messages: TaskThreadMessage[];
+  onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
+  onSelectJournalEvent: (event: WorkbenchJournalEvent) => void;
+  onRecoverJournal: JournalRecoveryHandler;
+  task: TaskThreadDetailModel;
+}
+
+const getConversationMessageState = (
+  transcript: TaskThreadMessage[],
+  latestRunID: string,
+) => {
+  const latestUserIndex = transcript.reduce(
+    (latestIndex, message, index) =>
+      message.role === 'user' ? index : latestIndex,
+    -1,
+  );
+  const latestAssistantIndex = transcript.reduce(
+    (latestIndex, message, index) =>
+      message.role === 'assistant' && index > latestUserIndex
+        ? index
+        : latestIndex,
+    -1,
+  );
+
+  return {
+    latestAssistantIndex,
+    hasLatestAssistantMessage: latestRunID
+      ? transcript.some(
+          message =>
+            message.role === 'assistant' &&
+            normalizeThreadRunID(message.run_id) === latestRunID,
+        )
+      : latestAssistantIndex >= 0,
+  };
+};
+
 const TaskThreadConversation = ({
   artifactActions,
   artifacts,
   events,
   latestTaskRunID,
+  journalEvents,
+  journalRecoveryCapability,
+  journalViewMode,
+  selectedJournalEventId,
   messages,
   onAssistantMessageRef,
+  onSelectJournalEvent,
+  onRecoverJournal,
   task,
-}: {
-  artifactActions: TaskArtifactActions;
-  artifacts: TaskThreadArtifact[];
-  events: TaskThreadDetailEvent[];
-  latestTaskRunID: string;
-  messages: TaskThreadMessage[];
-  onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
-  task: TaskThreadDetailModel;
-}) => {
+}: TaskThreadConversationProps) => {
   const transcript = getThreadTranscriptMessages(messages);
   const artifactsByRunID = groupTaskArtifactsByRunID(artifacts);
   const fallbackArtifactsByMessageKey = groupFallbackTaskArtifactsByMessageKey(
@@ -586,31 +637,13 @@ const TaskThreadConversation = ({
   const latestRunID = normalizeThreadRunID(latestTaskRunID);
   const latestRunEvents = getRunEvents(events, latestRunID);
   const latestRunIsActive = !isTaskTerminalStatus(task.status);
-  const latestUserIndex = transcript.reduce(
-    (latestIndex, message, index) =>
-      message.role === 'user' ? index : latestIndex,
-    -1,
-  );
-  const latestAssistantIndexAfterLatestUser = transcript.reduce(
-    (latestIndex, message, index) =>
-      message.role === 'assistant' && index > latestUserIndex
-        ? index
-        : latestIndex,
-    -1,
-  );
+  const { hasLatestAssistantMessage, latestAssistantIndex } =
+    getConversationMessageState(transcript, latestRunID);
   let latestEventsRendered = false;
-  const hasLatestAssistantMessage = latestRunID
-    ? transcript.some(
-        message =>
-          message.role === 'assistant' &&
-          normalizeThreadRunID(message.run_id) === latestRunID,
-      )
-    : latestAssistantIndexAfterLatestUser >= 0;
+  let journalFlowRendered = false;
   const isRunningAssistantMessage = (runID: string, index: number) =>
     latestRunIsActive &&
-    (latestRunID
-      ? runID === latestRunID
-      : index === latestAssistantIndexAfterLatestUser);
+    (latestRunID ? runID === latestRunID : index === latestAssistantIndex);
   const renderedItems = transcript.map((message, index) => {
     if (message.role === 'user') {
       return (
@@ -634,6 +667,11 @@ const TaskThreadConversation = ({
       renderedArtifactIDs,
     });
     const shouldRenderMessageEvents = messageRunEvents.length > 0;
+    const shouldRenderJournalFlow =
+      journalEvents.length > 0 &&
+      !journalFlowRendered &&
+      (latestRunID ? runID === latestRunID : index === latestAssistantIndex);
+    journalFlowRendered = journalFlowRendered || shouldRenderJournalFlow;
     latestEventsRendered =
       latestEventsRendered ||
       Boolean(
@@ -651,7 +689,16 @@ const TaskThreadConversation = ({
         createdAt={message.created_at}
         subtitle={getTaskExecutionType(task.input)}
       >
-        {shouldRenderMessageEvents ? (
+        {shouldRenderJournalFlow ? (
+          <JournalConversationFlow
+            events={journalEvents}
+            recoveryCapability={journalRecoveryCapability}
+            selectedEventId={selectedJournalEventId}
+            viewMode={journalViewMode}
+            onRecover={onRecoverJournal}
+            onSelectEvent={onSelectJournalEvent}
+          />
+        ) : shouldRenderMessageEvents ? (
           <TaskExecutionSummary events={messageRunEvents} task={task} />
         ) : null}
         <TaskThreadArtifactCards
@@ -684,7 +731,16 @@ const TaskThreadConversation = ({
       {!latestEventsRendered &&
       (latestRunEvents.length || !hasLatestAssistantMessage) ? (
         <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
-          {latestRunEvents.length ? (
+          {!journalFlowRendered && journalEvents.length ? (
+            <JournalConversationFlow
+              events={journalEvents}
+              recoveryCapability={journalRecoveryCapability}
+              selectedEventId={selectedJournalEventId}
+              viewMode={journalViewMode}
+              onRecover={onRecoverJournal}
+              onSelectEvent={onSelectJournalEvent}
+            />
+          ) : latestRunEvents.length ? (
             <TaskExecutionSummary events={latestRunEvents} task={task} />
           ) : null}
           {!hasLatestAssistantMessage ? (
@@ -711,6 +767,9 @@ const TaskTranscript = ({
   events,
   humanInteractionError,
   humanInteractionLoading,
+  journalEvents,
+  journalRecoveryCapability,
+  journalViewMode,
   latestTaskRunID,
   messages,
   pendingHumanInteraction,
@@ -721,9 +780,12 @@ const TaskTranscript = ({
   taskRunActionError,
   taskRunActionLoading,
   taskRunActionsDisabled,
+  selectedJournalEventId,
   artifactActions,
   onHumanInteractionSubmit,
   onAssistantMessageRef,
+  onSelectJournalEvent,
+  onRecoverJournal,
   onRetrySubagentRun,
   onRetryTaskRun,
 }: {
@@ -732,6 +794,9 @@ const TaskTranscript = ({
   events: TaskThreadDetailEvent[];
   humanInteractionError?: string;
   humanInteractionLoading: boolean;
+  journalEvents: WorkbenchJournalEvent[];
+  journalRecoveryCapability?: WorkbenchJournalRecoveryCapability;
+  journalViewMode: JournalViewMode;
   latestTaskRunID: string;
   messages: TaskThreadMessage[];
   pendingHumanInteraction?: PendingHumanInteraction;
@@ -742,10 +807,13 @@ const TaskTranscript = ({
   taskRunActionError?: string;
   taskRunActionLoading: TaskRunActionLoading;
   taskRunActionsDisabled?: boolean;
+  selectedJournalEventId?: string;
   onHumanInteractionSubmit: (
     response: HumanInteractionResponse,
   ) => void | Promise<void>;
   onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
+  onSelectJournalEvent: (event: WorkbenchJournalEvent) => void;
+  onRecoverJournal: JournalRecoveryHandler;
   onRetrySubagentRun: (runId: string) => void | Promise<void>;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
 }) => (
@@ -767,17 +835,33 @@ const TaskTranscript = ({
           artifactActions={artifactActions}
           artifacts={artifacts}
           events={events}
+          journalEvents={journalEvents}
+          journalRecoveryCapability={journalRecoveryCapability}
+          journalViewMode={journalViewMode}
           latestTaskRunID={latestTaskRunID}
           messages={messages}
           onAssistantMessageRef={onAssistantMessageRef}
+          onSelectJournalEvent={onSelectJournalEvent}
+          onRecoverJournal={onRecoverJournal}
+          selectedJournalEventId={selectedJournalEventId}
           task={task}
         />
       ) : (
         <>
           <TaskConversation task={task} />
           <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
-            {events.length ||
-            parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
+            {journalEvents.length ? (
+              <JournalConversationFlow
+                events={journalEvents}
+                recoveryCapability={journalRecoveryCapability}
+                selectedEventId={selectedJournalEventId}
+                viewMode={journalViewMode}
+                onRecover={onRecoverJournal}
+                onSelectEvent={onSelectJournalEvent}
+              />
+            ) : events.length ||
+              parseTaskResultPayload(task.result).resultType ===
+                'agent_trace' ? (
               <TaskExecutionSummary events={events} task={task} />
             ) : null}
             <TaskResultSection
@@ -879,6 +963,21 @@ const TaskDetailPage = () => {
   }, [tokenUsageViewMode]);
 
   const activeTaskDetailId = taskDetailId;
+  const journal = useJournalExperience({
+    enabled: Boolean(loadedTaskDetailCurrent && task && !loading),
+    runId: latestTaskRunID,
+    spaceId: space_id,
+    threadId: activeTaskDetailId,
+  });
+  const journalVisible =
+    journal.layoutReady && journal.state.has_displayable_journal_content;
+  const journalEvents = journal.state.has_displayable_journal_content
+    ? journal.state.execution.events
+    : [];
+  const journalRecoveryCapability = journal.state.execution.attempts.find(
+    attempt =>
+      attempt.attempt_id === journal.state.execution.selected_attempt_id,
+  )?.recovery_capability;
   const registerAssistantMessageRef = useCallback(
     (runID: string, element: HTMLElement | null) => {
       const normalizedRunID = String(runID ?? '').trim();
@@ -977,6 +1076,9 @@ const TaskDetailPage = () => {
     task,
   });
   const splitRef = useRef<HTMLElement | null>(null);
+  const journalCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const journalRestoreButtonRef = useRef<HTMLButtonElement>(null);
+  const journalFocusTargetRef = useRef<'close' | 'restore'>();
   const [artifactPanelWidth, setArtifactPanelWidth] = useState(
     ARTIFACT_SPLIT_DEFAULT_WIDTH,
   );
@@ -986,9 +1088,25 @@ const TaskDetailPage = () => {
     threadId: loadedTaskDetailCurrent ? activeTaskDetailId : undefined,
   });
   const artifactPanelOpen = Boolean(artifactActions.inlinePreview);
+  const journalPanelOpen = journalVisible && journal.panelOpen;
+  const sidePanelOpen = artifactPanelOpen || journalPanelOpen;
+  const sidePanelWidth = artifactPanelOpen
+    ? artifactPanelWidth
+    : (1 - journal.splitRatio) * PERCENTAGE_SCALE;
   const artifactSplitStyle: CSSProperties = {
-    '--coze-prototype-artifact-side-preview-width': `${artifactPanelWidth}%`,
+    '--coze-prototype-artifact-side-preview-width': `${sidePanelWidth}%`,
   };
+
+  useEffect(() => {
+    if (journalFocusTargetRef.current === 'restore' && !journal.panelOpen) {
+      journalRestoreButtonRef.current?.focus();
+      journalFocusTargetRef.current = undefined;
+    }
+    if (journalFocusTargetRef.current === 'close' && journal.panelOpen) {
+      journalCloseButtonRef.current?.focus();
+      journalFocusTargetRef.current = undefined;
+    }
+  }, [journal.panelOpen]);
 
   useEffect(() => {
     if (
@@ -1091,29 +1209,45 @@ const TaskDetailPage = () => {
       }
 
       event.preventDefault();
+      const startJournalRatio = journal.splitRatio;
+      let latestJournalRatio = startJournalRatio;
       const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
         const rect = container.getBoundingClientRect();
         if (rect.width <= 0) {
           return;
         }
-        const nextWidth =
-          ((rect.right - moveEvent.clientX) / rect.width) * PERCENTAGE_SCALE;
-        setArtifactPanelWidth(
-          Math.min(
-            ARTIFACT_SPLIT_MAX_WIDTH,
-            Math.max(ARTIFACT_SPLIT_MIN_WIDTH, nextWidth),
-          ),
+        if (artifactPanelOpen) {
+          const nextWidth =
+            ((rect.right - moveEvent.clientX) / rect.width) * PERCENTAGE_SCALE;
+          setArtifactPanelWidth(
+            Math.min(
+              ARTIFACT_SPLIT_MAX_WIDTH,
+              Math.max(ARTIFACT_SPLIT_MIN_WIDTH, nextWidth),
+            ),
+          );
+          return;
+        }
+        latestJournalRatio = Math.min(
+          0.7,
+          Math.max(0.4, (moveEvent.clientX - rect.left) / rect.width),
         );
+        journal.setSplitRatio(latestJournalRatio);
       };
       const handlePointerUp = () => {
         document.removeEventListener('pointermove', handlePointerMove);
         document.removeEventListener('pointerup', handlePointerUp);
+        if (
+          !artifactPanelOpen &&
+          Math.abs(latestJournalRatio - startJournalRatio) > 0.01
+        ) {
+          void journal.commitSplitRatio(latestJournalRatio);
+        }
       };
 
       document.addEventListener('pointermove', handlePointerMove);
       document.addEventListener('pointerup', handlePointerUp);
     },
-    [],
+    [artifactPanelOpen, journal],
   );
 
   return (
@@ -1132,7 +1266,11 @@ const TaskDetailPage = () => {
       <section
         ref={splitRef}
         className="coze-prototype-detail-split"
-        data-artifact-open={artifactPanelOpen}
+        data-artifact-open={sidePanelOpen}
+        data-journal-maximized={
+          journalPanelOpen && !artifactPanelOpen && journal.maximized
+        }
+        data-journal-open={journalPanelOpen && !artifactPanelOpen}
         style={artifactSplitStyle}
       >
         <section className="coze-prototype-detail-inner">
@@ -1156,6 +1294,9 @@ const TaskDetailPage = () => {
                 events={events}
                 humanInteractionError={humanInteractionError}
                 humanInteractionLoading={humanInteractionLoading}
+                journalEvents={journalEvents}
+                journalRecoveryCapability={journalRecoveryCapability}
+                journalViewMode={journal.state.view_mode}
                 latestTaskRunID={latestTaskRunID}
                 messages={messages}
                 pendingHumanInteraction={pendingHumanInteraction}
@@ -1166,8 +1307,11 @@ const TaskDetailPage = () => {
                 taskRunActionError={taskRunActionError}
                 taskRunActionLoading={taskRunActionLoading}
                 taskRunActionsDisabled={taskRunActionsDisabled}
+                selectedJournalEventId={journal.selectedEventId}
                 onHumanInteractionSubmit={handleHumanInteractionSubmit}
                 onAssistantMessageRef={registerAssistantMessageRef}
+                onRecoverJournal={journal.recover}
+                onSelectJournalEvent={journal.selectEvent}
                 onRetrySubagentRun={handleRetrySubagentRun}
                 onRetryTaskRun={handleRetryTaskRun}
               />
@@ -1236,10 +1380,12 @@ const TaskDetailPage = () => {
             />
           ) : null}
         </section>
-        {artifactPanelOpen ? (
+        {sidePanelOpen && !journal.maximized ? (
           <button
             type="button"
-            aria-label="调整产物面板宽度"
+            aria-label={
+              artifactPanelOpen ? '调整产物面板宽度' : '调整执行详情宽度'
+            }
             className="coze-prototype-artifact-resize-handle"
             onPointerDown={handleArtifactResizePointerDown}
           />
@@ -1249,6 +1395,48 @@ const TaskDetailPage = () => {
           error={artifactActions.error}
           inlinePreview={artifactActions.inlinePreview}
         />
+        {journalPanelOpen && !artifactPanelOpen ? (
+          <JournalPanel
+            activeTab={journal.activeTab}
+            artifacts={artifacts}
+            attempts={journal.state.execution.attempts}
+            closeButtonRef={journalCloseButtonRef}
+            contentStatus={journal.state.content.status}
+            events={journalEvents}
+            getScrollPosition={journal.getScrollPosition}
+            maximized={journal.maximized}
+            selectedEventId={journal.selectedEventId}
+            selectedAttemptId={journal.state.execution.selected_attempt_id}
+            snapshot={journal.state.content.snapshot}
+            spaceId={space_id}
+            threadId={activeTaskDetailId}
+            transportStatus={journal.state.transport.status}
+            viewMode={journal.state.view_mode}
+            onActiveTabChange={journal.setActiveTab}
+            onArtifactDownload={artifact =>
+              artifactActions.handleArtifactAction(artifact, 'download')
+            }
+            onClose={() => {
+              journalFocusTargetRef.current = 'restore';
+              journal.closePanel();
+            }}
+            onScrollPositionChange={journal.rememberScrollPosition}
+            onSelectEvent={journal.selectEvent}
+            onSelectAttempt={journal.selectAttempt}
+            onSnapshotAction={journal.performSnapshotAction}
+            onToggleMaximize={() => journal.setMaximized(!journal.maximized)}
+            onViewModeChange={journal.setViewMode}
+          />
+        ) : null}
+        {journalVisible && !journal.panelOpen && !artifactPanelOpen ? (
+          <JournalRestoreButton
+            buttonRef={journalRestoreButtonRef}
+            onRestore={() => {
+              journalFocusTargetRef.current = 'close';
+              journal.openPanel();
+            }}
+          />
+        ) : null}
       </section>
     </main>
   );
