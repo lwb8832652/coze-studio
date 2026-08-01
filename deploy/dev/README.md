@@ -154,16 +154,19 @@ location / {
 
 ### 首次部署
 
-1. 推送目标提交到 `origin/dev`。Actions 构建并推送
-   `coze-server:dev-<full-sha>` 和 `coze-web:dev-<full-sha>`。
-2. 首次没有两张一致的 `:dev` 基线，workflow 会进入 migration hold，不会晋级
-   `:dev`，也不会调用 webhook。
-3. 运维人员核对远程数据库 schema。存在待执行迁移时，先备份，再从目标 SHA 的
-   受控仓库 checkout 手工执行 Atlas。
-4. 在 Actions 手工运行 `Publish and deploy dev images`，输入同一完整 SHA。
-5. Workflow 验证两张不可变镜像和 OCI revision，晋级两个 `:dev` 标签，再调用
-   宝塔 webhook。
-6. 检查 Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
+首次自动启动前，确认远程数据库 schema 已经与 push 前的 `dev` 代码一致。随后：
+
+1. 推送不含 `docker/atlas/migrations/**` 变化的目标提交到 `origin/dev`。
+2. Actions 确认两张 `:dev` manifest 都不存在后，以 push 前 SHA 检查本次迁移
+   变化，并构建、推送 `coze-server:dev-<full-sha>` 和
+   `coze-web:dev-<full-sha>`。
+3. Workflow 验证两张不可变镜像和 OCI revision，自动晋级两个 `:dev` 标签，再
+   调用宝塔 webhook，无需手工运行 workflow。
+4. 检查 Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
+
+如果首次 push 包含迁移，workflow 仍会进入 migration hold。先备份并手工执行
+Atlas，再使用同一完整 SHA 运行 `workflow_dispatch`。只有一张 `:dev` 缺失、
+registry 认证失败、超时或其他拉取错误也会保持 hold，不会被当作首次自动启动。
 
 ### 日常发布
 
