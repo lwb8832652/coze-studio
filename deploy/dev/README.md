@@ -67,6 +67,28 @@ curl --version
 flock --version
 ```
 
+先在宝塔配置中确认 webhook 实际运行的系统账号，再在管理 shell 中记录该账号和
+主组。不要默认使用 `root`；只有确认宝塔 webhook 已明确配置为 `root` 并接受其
+权限范围时，才能在提示中输入并确认 `root`：
+
+```bash
+read -r -p 'Baota webhook system user: ' DEPLOY_USER
+[ -n "$DEPLOY_USER" ] || {
+  printf '%s\n' 'deployment user is required' >&2
+  exit 1
+}
+id "$DEPLOY_USER"
+DEPLOY_GROUP="$(id -gn "$DEPLOY_USER")"
+if [ "$DEPLOY_USER" = root ]; then
+  read -r -p 'Confirm the webhook intentionally runs as root [yes/NO]: ' confirm_root
+  [ "$confirm_root" = yes ] || {
+    printf '%s\n' 'root deployment was not confirmed' >&2
+    exit 1
+  }
+  unset confirm_root
+fi
+```
+
 服务器 `/opt/coze-dev` 的部署文件清单固定为：
 
 ```text
@@ -77,22 +99,35 @@ deploy.env
 app.env
 ```
 
-先安装仓库中的前三个文件：
+在同一个管理 shell 中安装仓库里的前三个文件。`/opt/coze-dev` 必须由实际部署
+账号拥有并可写，因为 `deploy.sh` 会在目录根部创建 `deploy.lock` 和
+`deployments/`；脚本、Compose 文件和示例配置继续使用受限模式：
 
 ```bash
-sudo install -d -m 750 /opt/coze-dev
-sudo install -m 750 deploy/dev/deploy.sh /opt/coze-dev/deploy.sh
-sudo install -m 640 deploy/dev/docker-compose.yml /opt/coze-dev/docker-compose.yml
-sudo install -m 640 deploy/dev/.env.example /opt/coze-dev/.env.example
+sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 750 /opt/coze-dev
+sudo install -o root -g "$DEPLOY_GROUP" -m 750 \
+  deploy/dev/deploy.sh /opt/coze-dev/deploy.sh
+sudo install -o root -g "$DEPLOY_GROUP" -m 640 \
+  deploy/dev/docker-compose.yml /opt/coze-dev/docker-compose.yml
+sudo install -o root -g "$DEPLOY_GROUP" -m 640 \
+  deploy/dev/.env.example /opt/coze-dev/.env.example
+sudo -u "$DEPLOY_USER" test -w /opt/coze-dev
+sudo -u "$DEPLOY_USER" test -x /opt/coze-dev/deploy.sh
+sudo -u "$DEPLOY_USER" docker info >/dev/null
 ```
 
-`deploy.env` 和 `app.env` 按下文在服务器本地创建并保持 `600`。`nsq-data` 是由
-Docker 创建和管理的命名卷，不作为普通目录复制到 `/opt/coze-dev`。
+最后三条命令必须全部成功；实际 webhook 账号不仅需要读取部署文件，还必须拥有
+目录写权限并能访问 Docker。若刚调整 Docker 用户组，需要让宝塔执行环境重新登录
+或重启后再验证。`deploy.env` 和 `app.env` 按下文在服务器本地创建，归实际部署
+账号所有并保持 `600`。`nsq-data` 是由 Docker 创建和管理的命名卷，不作为普通
+目录复制到 `/opt/coze-dev`。
 
-宝塔 webhook 使用的系统账号必须能够读取该目录并访问 Docker。不要让无关账号
-获得 `app.env` 或 Docker socket 权限。
+不要让无关账号获得 `app.env`、`deploy.env` 或 Docker socket 权限。
 
 ## 配置文件
+
+以下所有权命令继续使用上文已确认的 `DEPLOY_USER` 和 `DEPLOY_GROUP`；若已打开新的
+管理 shell，先重新执行账号确认与主组查询，不能猜测账号。
 
 ### deploy.env
 
@@ -100,8 +135,12 @@ Docker 创建和管理的命名卷，不作为普通目录复制到 `/opt/coze-d
 
 ```bash
 cd /opt/coze-dev
-test -e deploy.env || cp .env.example deploy.env
-chmod 600 deploy.env
+if [ ! -e deploy.env ]; then
+  sudo install -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 600 \
+    .env.example deploy.env
+fi
+sudo chown "$DEPLOY_USER:$DEPLOY_GROUP" deploy.env
+sudo chmod 600 deploy.env
 ```
 
 按实际 ACR 修改 `ACR_REGISTRY` 和 `ACR_NAMESPACE`。日常发布保持
@@ -114,7 +153,13 @@ chmod 600 deploy.env
 后续宝塔反向代理上游。
 
 使用服务器只读账号登录 ACR。登录动作必须由实际执行 webhook 的同一系统账号
-完成，并在 `deploy.env` 配置后执行：
+完成；在管理 shell 中切换到该账号：
+
+```bash
+sudo -H -u "$DEPLOY_USER" bash
+```
+
+随后在该部署账号的 shell 中执行，并在登录完成后退出该 shell：
 
 ```bash
 cd /opt/coze-dev
@@ -125,6 +170,7 @@ printf '\n'
 printf '%s' "$ACR_PULL_PASSWORD" | docker login "$ACR_REGISTRY" \
   --username "$ACR_PULL_USERNAME" --password-stdin
 unset ACR_PULL_PASSWORD
+exit
 ```
 
 不要在脚本、命令历史或宝塔日志中写入凭据字面值。
@@ -135,8 +181,12 @@ unset ACR_PULL_PASSWORD
 
 ```bash
 cd /opt/coze-dev
-touch app.env
-chmod 600 app.env
+if [ ! -e app.env ]; then
+  sudo install -o "$DEPLOY_USER" -g "$DEPLOY_GROUP" -m 600 \
+    /dev/null app.env
+fi
+sudo chown "$DEPLOY_USER:$DEPLOY_GROUP" app.env
+sudo chmod 600 app.env
 ```
 
 `app.env` 至少需要按目标版本核对 MySQL DSN、Redis、Elasticsearch 和对象存储
@@ -297,12 +347,28 @@ SERVER_IMAGE_TAG="rollback-$transaction" WEB_IMAGE_TAG="rollback-$transaction" \
 
 ```bash
 cd /opt/coze-dev
-docker compose --env-file deploy.env -f docker-compose.yml ps nsqd
-docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 nsqd
-docker compose --env-file deploy.env -f docker-compose.yml exec -T nsqd \
+compose=(docker compose --env-file deploy.env -f docker-compose.yml)
+"${compose[@]}" ps nsqd
+"${compose[@]}" logs --tail=200 nsqd
+"${compose[@]}" exec -T nsqd \
   wget -q -O - http://127.0.0.1:4151/ping
-docker volume inspect coze-dev_nsq-data
+nsqd_container_id="$("${compose[@]}" ps -q nsqd)"
+[ -n "$nsqd_container_id" ] || {
+  printf '%s\n' 'nsqd container was not found' >&2
+  exit 1
+}
+nsq_volume_name="$(
+  docker inspect --format \
+    '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' \
+    "$nsqd_container_id"
+)"
+[ -n "$nsq_volume_name" ] || {
+  printf '%s\n' 'nsqd /data named volume was not found' >&2
+  exit 1
+}
+docker volume inspect "$nsq_volume_name"
 docker system df -v
+unset compose nsqd_container_id nsq_volume_name
 ```
 
 健康响应必须是 `OK`。日常部署和应用镜像回滚只更新 `coze-server` 与
@@ -312,32 +378,44 @@ docker system df -v
 
 ## 排障
 
+以下 Bash 片段会 `source` 本机的 `deploy.sh` 和 `deploy.env`。只在确认它们是按
+上述所有权和模式维护的可信本地文件后运行，不要 `source` 下载件或工单附件。该
+过程加载镜像地址和端口配置、复用部署脚本的校验 helper，但不会打印环境文件内容。
+
 ```bash
 cd /opt/coze-dev
-docker compose --env-file deploy.env -f docker-compose.yml ps
-docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 nsqd coze-server coze-web
-web_port="$(
-  awk -F= '
-    $1 == "WEB_PORT" {
-      value = substr($0, index($0, "=") + 1)
-    }
-    END { print value }
-  ' deploy.env
-)"
-web_port="${web_port:-8888}"
-case "$web_port" in
-  ''|*[!0-9]*)
-    printf '%s\n' 'deploy.env contains an invalid WEB_PORT' >&2
-    exit 1
-    ;;
-esac
-if [ "$web_port" -lt 1 ] || [ "$web_port" -gt 65535 ]; then
-  printf '%s\n' 'deploy.env contains an invalid WEB_PORT' >&2
+source ./deploy.sh
+set -a
+source ./deploy.env
+set +a
+
+WEB_BIND_IP=${WEB_BIND_IP:-0.0.0.0}
+WEB_PORT=${WEB_PORT:-8888}
+if ! is_ipv4 "$WEB_BIND_IP"; then
+  error 'WEB_BIND_IP must be a valid IPv4 address'
   exit 1
 fi
+if ! is_tcp_port "$WEB_PORT"; then
+  error 'WEB_PORT must be an integer from 1 to 65535'
+  exit 1
+fi
+if [ -z "${ACR_REGISTRY:-}" ] || [ -z "${ACR_NAMESPACE:-}" ]; then
+  error 'ACR_REGISTRY and ACR_NAMESPACE are required'
+  exit 1
+fi
+if ! validate_component "$ACR_REGISTRY" ||
+  ! validate_component "$ACR_NAMESPACE"; then
+  error 'ACR registry or namespace contains unsupported characters'
+  exit 1
+fi
+export WEB_BIND_IP WEB_PORT
+
+docker compose --env-file deploy.env -f docker-compose.yml ps
+docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 nsqd coze-server coze-web
+web_health_url="$(web_health_base_url)"
 curl --fail --silent --show-error --output /dev/null \
-  "http://127.0.0.1:${web_port}/healthz"
-unset web_port
+  "${web_health_url}/healthz"
+unset web_health_url
 docker image inspect "$ACR_REGISTRY/$ACR_NAMESPACE/coze-server:dev" \
   --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 docker image inspect "$ACR_REGISTRY/$ACR_NAMESPACE/coze-web:dev" \
