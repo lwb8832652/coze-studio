@@ -224,7 +224,20 @@ TARGET_REVISION=$(git -C "$TEST_REPO" rev-parse HEAD)
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
-  'if [ "$1" = pull ]; then exit 0; fi' \
+  'if [ "$1" = pull ]; then' \
+  '  case "${DOCKER_MODE:-deployed}" in' \
+  '    deployed) exit 0 ;;' \
+  '    missing)' \
+  '      printf "Error response from daemon: manifest unknown: manifest unknown\\n" >&2' \
+  '      exit 1' \
+  '      ;;' \
+  '    registry-error)' \
+  '      printf "Error response from daemon: registry connection timed out\\n" >&2' \
+  '      exit 1' \
+  '      ;;' \
+  '    *) exit 98 ;;' \
+  '  esac' \
+  'fi' \
   'if [ "$1" = image ] && [ "$2" = inspect ]; then' \
   '  printf "%s\\n" "$DEPLOYED_REVISION"' \
   '  exit 0' \
@@ -232,27 +245,60 @@ printf '%s\n' \
   'exit 97' > "$TEST_BIN/docker"
 chmod +x "$TEST_BIN/docker"
 
-(
-  cd -- "$TEST_REPO"
-  PATH="$TEST_BIN:$PATH" \
-    DEPLOYED_REVISION="$DEPLOYED_REVISION" \
-    GITHUB_EVENT_NAME=push \
-    GITHUB_SHA="$TARGET_REVISION" \
-    TARGET_SHA_INPUT= \
-    BEFORE_SHA="$BEFORE_REVISION" \
-    SERVER_DEV_IMAGE=registry.example/coze-server:dev \
-    WEB_DEV_IMAGE=registry.example/coze-web:dev \
-    GITHUB_OUTPUT="$GITHUB_OUTPUT_FILE" \
-    bash "$RESOLVE_SCRIPT"
-)
+run_preflight() {
+  docker_mode=$1
+  before_revision=$2
+  target_revision=$3
+  output_file=$4
 
-grep -qx "target_sha=$TARGET_REVISION" "$GITHUB_OUTPUT_FILE" || {
-  printf 'workflow contract failure: semantic preflight wrote the wrong target SHA\n' >&2
-  exit 1
+  : > "$output_file"
+  (
+    cd -- "$TEST_REPO"
+    PATH="$TEST_BIN:$PATH" \
+      DOCKER_MODE="$docker_mode" \
+      DEPLOYED_REVISION="$DEPLOYED_REVISION" \
+      GITHUB_EVENT_NAME=push \
+      GITHUB_SHA="$target_revision" \
+      TARGET_SHA_INPUT= \
+      BEFORE_SHA="$before_revision" \
+      SERVER_DEV_IMAGE=registry.example/coze-server:dev \
+      WEB_DEV_IMAGE=registry.example/coze-web:dev \
+      GITHUB_OUTPUT="$output_file" \
+      bash "$RESOLVE_SCRIPT"
+  )
 }
-grep -qx 'migration_changed=true' "$GITHUB_OUTPUT_FILE" || {
-  printf 'workflow contract failure: follow-up push bypassed the pending migration hold\n' >&2
-  exit 1
+
+assert_output() {
+  output_file=$1
+  expected=$2
+  message=$3
+
+  grep -qx "$expected" "$output_file" || {
+    printf 'workflow contract failure: %s\n' "$message" >&2
+    exit 1
+  }
 }
+
+run_preflight deployed "$BEFORE_REVISION" "$TARGET_REVISION" "$GITHUB_OUTPUT_FILE"
+
+assert_output "$GITHUB_OUTPUT_FILE" "target_sha=$TARGET_REVISION" \
+  'semantic preflight wrote the wrong target SHA'
+assert_output "$GITHUB_OUTPUT_FILE" 'migration_changed=true' \
+  'follow-up push bypassed the pending migration hold'
+
+BOOTSTRAP_OUTPUT=$SEMANTIC_ROOT/bootstrap-output
+run_preflight missing "$BEFORE_REVISION" "$TARGET_REVISION" "$BOOTSTRAP_OUTPUT"
+assert_output "$BOOTSTRAP_OUTPUT" 'migration_changed=false' \
+  'manifest-missing bootstrap push did not continue deployment'
+
+BOOTSTRAP_MIGRATION_OUTPUT=$SEMANTIC_ROOT/bootstrap-migration-output
+run_preflight missing "$DEPLOYED_REVISION" "$BEFORE_REVISION" "$BOOTSTRAP_MIGRATION_OUTPUT"
+assert_output "$BOOTSTRAP_MIGRATION_OUTPUT" 'migration_changed=true' \
+  'manifest-missing bootstrap bypassed a migration change'
+
+REGISTRY_ERROR_OUTPUT=$SEMANTIC_ROOT/registry-error-output
+run_preflight registry-error "$BEFORE_REVISION" "$TARGET_REVISION" "$REGISTRY_ERROR_OUTPUT"
+assert_output "$REGISTRY_ERROR_OUTPUT" 'migration_changed=true' \
+  'registry failure was mistaken for a manifest-missing bootstrap'
 
 printf 'workflow semantic contract: passed\n'
