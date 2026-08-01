@@ -163,7 +163,8 @@ end
 deploy = jobs.fetch('deploy')
 assert_contract(needs(deploy) == ['promote'], 'deploy must need promote only')
 deploy_text = job_text(deploy)
-%w[curl --fail-with-body BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN needs.promote.outputs.target_sha].each do |token|
+%w[curl --fail-with-body BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN BAOTA_WEBHOOK_PINNED_PUBKEY
+   needs.promote.outputs.target_sha --pinnedpubkey --insecure].each do |token|
   assert_contract(deploy_text.include?(token), "deploy webhook is missing #{token}")
 end
 assert_contract(deploy_text.match?(/header|-H/i), 'optional webhook token must be sent in a header')
@@ -273,7 +274,7 @@ assert_output() {
   expected=$2
   message=$3
 
-  grep -qx "$expected" "$output_file" || {
+  grep -qx -- "$expected" "$output_file" || {
     printf 'workflow contract failure: %s\n' "$message" >&2
     exit 1
   }
@@ -300,5 +301,52 @@ REGISTRY_ERROR_OUTPUT=$SEMANTIC_ROOT/registry-error-output
 run_preflight registry-error "$BEFORE_REVISION" "$TARGET_REVISION" "$REGISTRY_ERROR_OUTPUT"
 assert_output "$REGISTRY_ERROR_OUTPUT" 'migration_changed=true' \
   'registry failure was mistaken for a manifest-missing bootstrap'
+
+DEPLOY_SCRIPT=$SEMANTIC_ROOT/deploy.sh
+CURL_ARGS_FILE=$SEMANTIC_ROOT/curl-args
+
+ruby - "$WORKFLOW" > "$DEPLOY_SCRIPT" <<'EXTRACT'
+require 'yaml'
+
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+deploy_step = workflow.fetch('jobs').fetch('deploy').fetch('steps').find do |step|
+  step['name'] == 'Trigger dev deployment'
+end
+abort 'deploy step is missing' unless deploy_step
+puts deploy_step.fetch('run')
+EXTRACT
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf "%s\\n" "$@" > "$CURL_ARGS_FILE"' > "$TEST_BIN/curl"
+chmod +x "$TEST_BIN/curl"
+
+run_deploy() {
+  pinned_pubkey=$1
+  : > "$CURL_ARGS_FILE"
+  PATH="$TEST_BIN:$PATH" \
+    CURL_ARGS_FILE="$CURL_ARGS_FILE" \
+    BAOTA_WEBHOOK_URL='https://webhook.example.invalid/hook' \
+    BAOTA_WEBHOOK_TOKEN= \
+    BAOTA_WEBHOOK_PINNED_PUBKEY="$pinned_pubkey" \
+    TARGET_SHA="$TARGET_REVISION" \
+    bash "$DEPLOY_SCRIPT"
+}
+
+run_deploy ''
+if grep -Eqx -- '--insecure|--pinnedpubkey' "$CURL_ARGS_FILE"; then
+  printf 'workflow contract failure: public webhook unexpectedly disabled CA verification\n' >&2
+  exit 1
+fi
+
+DUMMY_PIN='sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+run_deploy "$DUMMY_PIN"
+assert_output "$CURL_ARGS_FILE" '--insecure' \
+  'self-signed webhook did not enable pinned-key transport'
+assert_output "$CURL_ARGS_FILE" '--pinnedpubkey' \
+  'self-signed webhook did not pass the pinned public key option'
+assert_output "$CURL_ARGS_FILE" "$DUMMY_PIN" \
+  'self-signed webhook did not pass the configured public key pin'
 
 printf 'workflow semantic contract: passed\n'

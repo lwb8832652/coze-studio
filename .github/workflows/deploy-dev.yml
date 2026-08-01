@@ -315,20 +315,30 @@ jobs:
     env:
       BAOTA_WEBHOOK_URL: ${{ secrets.BAOTA_WEBHOOK_URL }}
       BAOTA_WEBHOOK_TOKEN: ${{ secrets.BAOTA_WEBHOOK_TOKEN }}
+      BAOTA_WEBHOOK_PINNED_PUBKEY: ${{ vars.BAOTA_WEBHOOK_PINNED_PUBKEY }}
       TARGET_SHA: ${{ needs.promote.outputs.target_sha }}
     steps:
       - name: Trigger dev deployment
         shell: bash
         run: |
           set -euo pipefail
-          curl_headers=()
+          curl_args=(
+            --fail-with-body
+            --silent
+            --show-error
+            --request POST
+            --header 'Content-Type: application/json'
+          )
           if [ -n "${BAOTA_WEBHOOK_TOKEN:-}" ]; then
-            curl_headers+=(--header "Authorization: Bearer $BAOTA_WEBHOOK_TOKEN")
+            curl_args+=(--header "Authorization: Bearer $BAOTA_WEBHOOK_TOKEN")
+          fi
+          if [ -n "${BAOTA_WEBHOOK_PINNED_PUBKEY:-}" ]; then
+            if [[ ! "$BAOTA_WEBHOOK_PINNED_PUBKEY" =~ ^sha256//[A-Za-z0-9+/]{43}=$ ]]; then
+              echo "BAOTA_WEBHOOK_PINNED_PUBKEY must be a curl sha256 public key pin" >&2
+              exit 1
+            fi
+            curl_args+=(--insecure --pinnedpubkey "$BAOTA_WEBHOOK_PINNED_PUBKEY")
           fi
           payload=$(printf '{"target_sha":"%s"}' "$TARGET_SHA")
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header 'Content-Type: application/json' \
-            "${curl_headers[@]}" \
-            --data "$payload" \
-            "$BAOTA_WEBHOOK_URL"
+          curl_args+=(--data "$payload" "$BAOTA_WEBHOOK_URL")
+          curl "${curl_args[@]}"
