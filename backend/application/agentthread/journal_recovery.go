@@ -29,6 +29,7 @@ import (
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 var (
@@ -121,7 +122,10 @@ type JournalRecoveryRepository interface {
 func (s *ApplicationService) RecoverJournal(
 	ctx context.Context,
 	req RecoverJournalRequest,
-) (*RecoverJournalResult, error) {
+) (result *RecoverJournalResult, retErr error) {
+	defer func() {
+		s.recordJournalRecoveryOutcome(ctx, req, result, retErr)
+	}()
 	req.SourceAttemptID = strings.TrimSpace(req.SourceAttemptID)
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 	req.TraceID = strings.TrimSpace(req.TraceID)
@@ -142,6 +146,12 @@ func (s *ApplicationService) RecoverJournal(
 	}
 	if s == nil || s.ThreadSVC == nil || s.JournalRecoveryRepository == nil {
 		return nil, ErrJournalRecoveryDependencyMissing
+	}
+	if s.JournalFeatureGate != nil {
+		enabled, err := s.JournalFeatureGate.Enabled(ctx, JournalFeatureRecovery, req.SpaceID)
+		if err != nil || !enabled {
+			return nil, ErrJournalRecoveryDependencyMissing
+		}
 	}
 	if err := s.AuthorizeThreadAccess(ctx, ThreadAccessRequest{
 		ViewerID: req.ViewerID, SpaceID: req.SpaceID, ThreadID: req.ThreadID, RunID: req.RunID,
@@ -269,6 +279,82 @@ func (s *ApplicationService) RecoverJournal(
 		Run: DomainRunToSummary(bundle.Run), Attempt: bundle.Attempt,
 		Accepted: true, Created: bundle.Created,
 	}, nil
+}
+
+func (s *ApplicationService) recordJournalRecoveryOutcome(
+	ctx context.Context,
+	req RecoverJournalRequest,
+	result *RecoverJournalResult,
+	recoveryErr error,
+) {
+	if s == nil {
+		return
+	}
+	metricResult := "success"
+	errorCode := "none"
+	attemptID := strings.TrimSpace(req.SourceAttemptID)
+	version := domainentity.JournalSchemaVersion
+	if recoveryErr != nil {
+		metricResult = "failed"
+		errorCode = journalRecoveryErrorCode(recoveryErr)
+	}
+	if result != nil && result.Attempt != nil {
+		attemptID = strings.TrimSpace(result.Attempt.AttemptID)
+		if result.Attempt.EnrollmentVersion != "" {
+			version = result.Attempt.EnrollmentVersion
+		}
+	}
+	if attemptID == "" {
+		attemptID = "unknown"
+	}
+	labels := JournalMetricLabels{
+		Version: version, RolloutCohort: "treatment", TaskType: "unknown",
+		ClientVersion: "unknown", Result: metricResult, ErrorCode: errorCode,
+	}
+	if s.JournalMetrics != nil {
+		s.JournalMetrics.RecordRecovery(ctx, JournalRecoveryMetricObservation{Labels: labels})
+	}
+	if s.JournalTelemetry == nil || req.RunID <= 0 || !req.Action.Valid() {
+		return
+	}
+	if err := s.JournalTelemetry.RecordRecoveryResult(ctx, JournalRecoveryTelemetryEvent{
+		EventName: "journal_recovery_result",
+		RunID:     req.RunID, AttemptID: attemptID, TraceID: strings.TrimSpace(req.TraceID),
+		Action: string(req.Action), Result: metricResult, ErrorCode: errorCode,
+		Version: version, RolloutCohort: "treatment", TaskType: "unknown",
+	}); err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"[journal-telemetry] recovery result emit failed, run_id=%d attempt_id=%s error_code=%s err=%v",
+			req.RunID,
+			attemptID,
+			errorCode,
+			err,
+		)
+	}
+}
+
+func journalRecoveryErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, ErrJournalRecoveryInvalid):
+		return "invalid_request"
+	case errors.Is(err, ErrJournalRecoveryConflict):
+		return "conflict"
+	case errors.Is(err, ErrJournalRecoveryConfirmRequired):
+		return "confirmation_required"
+	case errors.Is(err, ErrJournalRecoveryCheckpointInvalid):
+		return "checkpoint_invalid"
+	case errors.Is(err, ErrJournalRecoveryCheckpointUnsafe):
+		return "checkpoint_unsafe"
+	case errors.Is(err, ErrJournalRecoveryDependencyMissing):
+		return "dependency_unavailable"
+	case errors.Is(err, ErrThreadAccessDenied):
+		return "no_permission"
+	default:
+		return "internal"
+	}
 }
 
 func (s *ApplicationService) replayedJournalRecovery(

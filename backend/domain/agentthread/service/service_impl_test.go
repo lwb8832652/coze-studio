@@ -150,6 +150,38 @@ func TestCreateThreadRunMessageAllocatesBeforePersistence(t *testing.T) {
 	require.Empty(t, repo.threads)
 }
 
+func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(1001)})
+
+	result, err := svc.CreateThreadRunMessage(
+		context.Background(),
+		&CreateThreadRunMessageRequest{
+			Thread: CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "journal task"},
+			Run: CreateRunRequest{
+				RunKind: entity.RunKindTask,
+				Input:   `{"messages":[{"role":"user","content":"start"}]}`,
+				Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+			},
+			Message:       CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+			EnrollJournal: true,
+			JournalEnrollment: &JournalEnrollmentOptions{
+				EnrollmentVersion: entity.JournalSchemaVersion,
+				SnapshotsEnabled:  true,
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, int64(1004), result.Attempt.ID)
+	require.Equal(t, result.Run.ID, result.Attempt.JournalRunID)
+	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
+	require.Equal(t, entity.JournalSchemaVersion, result.Attempt.EnrollmentVersion)
+	require.True(t, result.Attempt.SnapshotsEnabled)
+	require.Len(t, repo.runAttempts[result.Run.ID], 1)
+}
+
 func TestCreateRunBundleBindsMessageAndEventToGeneratedRun(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
@@ -2551,6 +2583,7 @@ func (r *memoryRepo) CreateThreadBundle(
 				return &repository.CreateThreadBundleResult{
 					Thread: cloneThread(r.threads[threadID]), Run: cloneRun(run),
 					Message: cloneMessage(r.messages[threadID][0]),
+					Attempt: cloneRunAttemptForServiceTest(firstRunAttempt(r.runAttempts[run.ID])),
 				}, nil
 			}
 		}
@@ -2561,10 +2594,23 @@ func (r *memoryRepo) CreateThreadBundle(
 	r.threads[req.Thread.ID] = cloneThread(req.Thread)
 	r.runs[req.Thread.ID] = append(r.runs[req.Thread.ID], cloneRun(req.Run))
 	r.messages[req.Thread.ID] = append(r.messages[req.Thread.ID], cloneMessage(req.Message))
+	if req.Attempt != nil {
+		r.runAttempts[req.Run.ID] = append(
+			r.runAttempts[req.Run.ID],
+			cloneRunAttemptForServiceTest(req.Attempt),
+		)
+	}
 	return &repository.CreateThreadBundleResult{
 		Thread: cloneThread(req.Thread), Run: cloneRun(req.Run),
-		Message: cloneMessage(req.Message), Created: true,
+		Message: cloneMessage(req.Message), Attempt: cloneRunAttemptForServiceTest(req.Attempt), Created: true,
 	}, nil
+}
+
+func firstRunAttempt(attempts []*entity.RunAttempt) *entity.RunAttempt {
+	if len(attempts) == 0 {
+		return nil
+	}
+	return attempts[0]
 }
 
 func (r *memoryRepo) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {

@@ -368,6 +368,31 @@ func TestJournalAppendValidatesEnvelopeAndFreezesDefaults(t *testing.T) {
 	require.Zero(t, attempt.LastCommittedSequence)
 }
 
+func TestDisableActiveJournalProjectionIsPermanentAndIdempotent(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+
+	disabled, changed, err := repo.DisableActiveJournalProjection(context.Background(), 10, 2_000)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, entity.JournalProjectionStateDisabled, disabled.ProjectionState)
+	require.Equal(t, int64(2_000), disabled.UpdatedAt)
+
+	disabledAgain, changed, err := repo.DisableActiveJournalProjection(context.Background(), 10, 3_000)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, entity.JournalProjectionStateDisabled, disabledAgain.ProjectionState)
+	require.Equal(t, int64(2_000), disabledAgain.UpdatedAt)
+
+	_, err = repo.AppendJournalEvent(context.Background(), &entity.JournalEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "after-disabled",
+		EventType: "tool.started", Payload: journalTestPayload,
+	})
+	require.ErrorIs(t, err, ErrJournalProjectionInactive)
+}
+
 func TestRunEventJournalProjectionKeepsBaseAndJournalViews(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	repo := NewThreadRepository(db)

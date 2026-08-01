@@ -153,6 +153,11 @@ func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
 		&agentArtifactScanJobPO{},
 		&agentRunPlanPO{},
 		&agentRunPlanItemPO{},
+		&sideEffectLedgerPO{},
+		&journalSnapshotPO{},
+		&journalSnapshotReservationPO{},
+		&journalSnapshotFragmentPO{},
+		&journalSnapshotAccessAuditPO{},
 	))
 
 	repo := NewThreadRepository(db)
@@ -3971,6 +3976,49 @@ func TestThreadRepositoryCreateThreadBundleCommitsAllRecords(t *testing.T) {
 	require.Equal(t, message.ID, replayed.Message.ID)
 	_, err = repo.GetThread(context.Background(), 11)
 	require.Error(t, err)
+}
+
+func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{}))
+
+	repo := NewThreadRepository(db)
+	thread := &entity.Thread{
+		ID: 110, SpaceID: 7, CreatorID: 8, Title: "journal task",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(120, thread.ID, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	message := &entity.Message{
+		ID: 130, ThreadID: thread.ID, RunID: run.ID, Role: entity.MessageRoleUser,
+		Content: "start", Metadata: `{}`, CreatedAt: 100,
+	}
+	activeSlot := uint8(1)
+	attempt := &entity.RunAttempt{
+		ID: 140, ThreadID: thread.ID, JournalRunID: run.ID, ExecutionRunID: run.ID,
+		AttemptID: "att_140", Ordinal: 1, Status: entity.RunAttemptStatusPending,
+		ActiveSlot: &activeSlot, NextSequence: 1,
+		EnrollmentVersion: entity.JournalSchemaVersion, SnapshotsEnabled: true,
+		ProjectionState: entity.JournalProjectionStateHealthy,
+		CreatedAt:       100, UpdatedAt: 100,
+	}
+
+	created, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: thread, Run: run, Message: message, Attempt: attempt,
+	})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.NotNil(t, created.Attempt)
+
+	var stored runAttemptPO
+	require.NoError(t, db.Where("id = ?", attempt.ID).First(&stored).Error)
+	require.Equal(t, run.ID, stored.JournalRunID)
+	require.Equal(t, run.ID, stored.ExecutionRunID)
+	require.Equal(t, entity.JournalSchemaVersion, stored.EnrollmentVersion)
+	require.True(t, stored.SnapshotsEnabled)
 }
 
 func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.T) {

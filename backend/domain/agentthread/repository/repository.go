@@ -123,6 +123,7 @@ type CreateThreadBundleRequest struct {
 	Thread                    *entity.Thread
 	Run                       *entity.Run
 	Message                   *entity.Message
+	Attempt                   *entity.RunAttempt
 	ValidateIdempotencyReplay bool
 }
 
@@ -130,6 +131,7 @@ type CreateThreadBundleResult struct {
 	Thread  *entity.Thread
 	Run     *entity.Run
 	Message *entity.Message
+	Attempt *entity.RunAttempt
 	Created bool
 }
 

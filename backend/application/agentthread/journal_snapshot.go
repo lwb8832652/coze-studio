@@ -613,6 +613,12 @@ func (s *ApplicationService) SubmitJournalContent(
 		!validJournalSnapshotIdentifier(req.IdempotencyKey, 191, false) || !req.Status.Valid() {
 		return nil, nil, fmt.Errorf("journal content submission identity is invalid")
 	}
+	if s.JournalFeatureGate != nil {
+		enabled, err := s.JournalFeatureGate.MasterEnabled(ctx, JournalFeatureSnapshots)
+		if err != nil || !enabled {
+			return nil, nil, ErrJournalSnapshotUnavailable
+		}
+	}
 	if strings.TrimSpace(req.SnapshotID) != "" {
 		return nil, nil, fmt.Errorf("journal snapshot id is server generated")
 	}
@@ -1154,11 +1160,21 @@ func chunkJournalSnapshotItems[T any](items []T) ([]journalSnapshotItemChunk, er
 func (s *ApplicationService) GetJournalSnapshot(
 	ctx context.Context,
 	req GetJournalSnapshotRequest,
-) (*JournalSnapshotEnvelope, error) {
+) (envelope *JournalSnapshotEnvelope, retErr error) {
+	startedAt := time.Now()
+	defer func() {
+		s.recordJournalSnapshotOutcome(ctx, envelope, retErr, time.Since(startedAt))
+	}()
 	if s == nil || s.JournalSnapshotRepository == nil || req.SpaceID <= 0 ||
 		req.ThreadID <= 0 || req.RunID <= 0 || req.ViewerID <= 0 ||
 		!journalSnapshotIDPattern.MatchString(strings.TrimSpace(req.SnapshotID)) {
 		return nil, domainrepo.ErrJournalSnapshotNotFound
+	}
+	if s.JournalFeatureGate != nil {
+		enabled, err := s.JournalFeatureGate.MasterEnabled(ctx, JournalFeatureSnapshots)
+		if err != nil || !enabled {
+			return nil, ErrJournalSnapshotUnavailable
+		}
 	}
 	snapshot, err := s.JournalSnapshotRepository.GetJournalSnapshot(
 		ctx,
@@ -1227,6 +1243,58 @@ func (s *ApplicationService) GetJournalSnapshot(
 	return s.loadJournalSnapshotEnvelope(ctx, snapshot, req.Cursor, req.Limit)
 }
 
+func (s *ApplicationService) recordJournalSnapshotOutcome(
+	ctx context.Context,
+	envelope *JournalSnapshotEnvelope,
+	snapshotErr error,
+	latency time.Duration,
+) {
+	if s == nil || s.JournalMetrics == nil {
+		return
+	}
+	result := "success"
+	errorCode := "none"
+	if envelope != nil && envelope.ErrorCode != "" {
+		errorCode = journalMetricToken(envelope.ErrorCode, "snapshot_unavailable", 64)
+		if envelope.ErrorCode == JournalErrorCodeNoPermission {
+			result = "no_permission"
+			errorCode = "no_permission"
+		} else {
+			result = "failed"
+		}
+	} else if snapshotErr != nil {
+		result = "failed"
+		errorCode = journalSnapshotMetricErrorCode(snapshotErr)
+	}
+	s.JournalMetrics.RecordSnapshot(ctx, JournalSnapshotMetricObservation{
+		Labels: JournalMetricLabels{
+			Version: entity.JournalSchemaVersion, RolloutCohort: "treatment",
+			TaskType: "unknown", ClientVersion: "unknown",
+			Result: result, ErrorCode: errorCode,
+		},
+		Latency: latency,
+	})
+}
+
+func journalSnapshotMetricErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, ErrJournalSnapshotNoPermission):
+		return "no_permission"
+	case errors.Is(err, domainrepo.ErrJournalSnapshotNotFound):
+		return "not_found"
+	case errors.Is(err, ErrJournalSnapshotUnsafeContent):
+		return "unsafe_content"
+	case errors.Is(err, ErrJournalSnapshotAuditUnavailable):
+		return "audit_unavailable"
+	case errors.Is(err, ErrJournalSnapshotUnavailable):
+		return "snapshot_unavailable"
+	default:
+		return "internal"
+	}
+}
+
 func (s *ApplicationService) AuditJournalSnapshotAction(
 	ctx context.Context,
 	req AuditJournalSnapshotActionRequest,
@@ -1235,6 +1303,12 @@ func (s *ApplicationService) AuditJournalSnapshotAction(
 		!validJournalSnapshotIdentifier(req.IdempotencyKey, 191, false) ||
 		!req.Action.UserAction() {
 		return nil, ErrJournalSnapshotActionUnavailable
+	}
+	if s.JournalFeatureGate != nil {
+		enabled, err := s.JournalFeatureGate.MasterEnabled(ctx, JournalFeatureSnapshots)
+		if err != nil || !enabled {
+			return nil, ErrJournalSnapshotActionUnavailable
+		}
 	}
 	if (req.Action == entity.JournalSnapshotActionDownloadFragment &&
 		strings.TrimSpace(req.FragmentID) == "") ||

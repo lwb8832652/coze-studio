@@ -258,6 +258,11 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 		&runPO{},
 		&runAttemptPO{},
 		&runEventPO{},
+		&sideEffectLedgerPO{},
+		&journalSnapshotPO{},
+		&journalSnapshotReservationPO{},
+		&journalSnapshotFragmentPO{},
+		&journalSnapshotAccessAuditPO{},
 		&checkpointPO{},
 		&memoryPO{},
 		&memoryAuditEventPO{},
@@ -278,6 +283,49 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 	require.NoError(t, db.Create(&messagePO{ID: 10, ThreadID: 1, Metadata: []byte(`{}`)}).Error)
 	require.NoError(t, db.Create(&runPO{ID: 11, ThreadID: 1, Command: []byte(`{}`), Input: []byte(`{}`), Config: []byte(`{}`), Context: []byte(`{}`), Metadata: []byte(`{}`), StreamMode: []byte(`[]`)}).Error)
 	require.NoError(t, db.Create(&runEventPO{ID: 12, ThreadID: 1, RunID: 11, Payload: []byte(`{}`)}).Error)
+	objectKey := "journal-snapshots/staging/snap-delete/content"
+	fragmentObjectKey := "journal-snapshots/staging/snap-delete/fragment"
+	require.NoError(t, db.Create(&journalSnapshotPO{
+		SnapshotID: "snap-delete", SpaceID: 10, ThreadID: 1, RunID: 11,
+		JournalRunID: 11, AttemptID: "att-delete", EventID: 12,
+		ActionID: "action-delete", Revision: 1, ContentType: string(entity.JournalSnapshotContentTypeDocument),
+		Status: string(entity.JournalContentStatusReady), Visibility: string(entity.JournalVisibilityUser),
+		MIMEType: "text/markdown", Encoding: "utf-8", Compression: "identity",
+		ContentJSON: []byte(`{"document":{"content":"must be revoked"}}`),
+		ObjectKey:   &objectKey, ContentLength: 20, ContentHash: strings.Repeat("a", 64),
+		ACLDomain: "space:10/thread:1", ExpiresAt: 2_592_000_100,
+		CleanupState: string(entity.JournalSnapshotCleanupStateActive), CreatedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&journalSnapshotFragmentPO{
+		FragmentID: "fragment-object", SnapshotID: "snap-delete", FragmentIndex: 0,
+		Kind: string(entity.JournalSnapshotFragmentKindDocumentBlock), ObjectKey: &fragmentObjectKey,
+		SizeBytes: 10, ContentHash: strings.Repeat("b", 64), CreatedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&journalSnapshotFragmentPO{
+		FragmentID: "fragment-inline", SnapshotID: "snap-delete", FragmentIndex: 1,
+		Kind: string(entity.JournalSnapshotFragmentKindDocumentBlock), InlineContent: []byte("revoked"),
+		SizeBytes: 7, ContentHash: strings.Repeat("c", 64), CreatedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&journalSnapshotReservationPO{
+		SnapshotID: "staging-delete", ReservationToken: "reservation-delete",
+		SpaceID: 10, ThreadID: 1, RunID: 11, JournalRunID: 11, AttemptID: "att-delete",
+		ActionID: "staging-action", Revision: 2, EventID: 13, IdempotencyKey: "staging-delete",
+		ContentHash: strings.Repeat("d", 64), ACLDomain: "space:10/thread:1",
+		StagingPrefix: "journal-snapshots/staging/staging-delete/", ExpiresAt: 9_999_999_999_999,
+		CreatedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&sideEffectLedgerPO{
+		ID: 30, ThreadID: 1, JournalRunID: 11, AttemptID: "att-delete",
+		IdempotencyKey: "effect-delete", ActionKind: "write_file", ReplayPolicy: "idempotent_write",
+		Status: "succeeded", RequestHash: strings.Repeat("e", 64), Version: 1,
+		PreparedAt: 100, CreatedAt: 100, UpdatedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&journalSnapshotAccessAuditPO{
+		ID: 31, SpaceID: 10, ThreadID: 1, RunID: 11, SnapshotID: "snap-delete",
+		Action: string(entity.JournalSnapshotActionReadContent), ActorID: 20,
+		PermissionResult: string(entity.JournalSnapshotPermissionAllowed),
+		IdempotencyKey:   "audit-delete", TargetHash: strings.Repeat("f", 64), CreatedAt: 100,
+	}).Error)
 	require.NoError(t, db.Create(&checkpointPO{ID: 13, ThreadID: 1, RunID: 11, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`)}).Error)
 	require.NoError(t, db.Create(&memoryPO{ID: 14, ThreadID: 1, Metadata: []byte(`{}`)}).Error)
 	require.NoError(t, db.Create(&memoryAuditEventPO{ID: 15, ThreadID: 1}).Error)
@@ -296,6 +344,7 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 	require.True(t, deleted)
 	for _, model := range []any{
 		&threadPO{}, &messagePO{}, &runPO{}, &runAttemptPO{}, &runEventPO{}, &checkpointPO{},
+		&sideEffectLedgerPO{}, &journalSnapshotAccessAuditPO{},
 		&memoryPO{}, &memoryAuditEventPO{}, &transcriptSnapshotPO{}, &memoryFlushJobPO{},
 		&tokenUsagePO{}, &agentFilePO{}, &agentArtifactPO{}, &agentArtifactScanJobPO{},
 		&agentRunPlanPO{}, &agentRunPlanItemPO{},
@@ -304,6 +353,29 @@ func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
 		require.NoError(t, db.Model(model).Count(&count).Error)
 		require.Zero(t, count)
 	}
+	var snapshot journalSnapshotPO
+	require.NoError(t, db.Where("snapshot_id = ?", "snap-delete").First(&snapshot).Error)
+	require.Equal(t, string(entity.JournalSnapshotCleanupStatePending), snapshot.CleanupState)
+	require.NotNil(t, snapshot.DeletedAt)
+	require.Empty(t, snapshot.ContentJSON)
+	require.Empty(t, snapshot.SummaryJSON)
+	require.Equal(t, objectKey, *snapshot.ObjectKey)
+
+	var fragments []journalSnapshotFragmentPO
+	require.NoError(t, db.Where("snapshot_id = ?", "snap-delete").Find(&fragments).Error)
+	require.Len(t, fragments, 1)
+	require.Equal(t, fragmentObjectKey, *fragments[0].ObjectKey)
+	require.Empty(t, fragments[0].InlineContent)
+	require.Empty(t, fragments[0].MetadataJSON)
+
+	var reservation journalSnapshotReservationPO
+	require.NoError(t, db.Where("snapshot_id = ?", "staging-delete").First(&reservation).Error)
+	require.LessOrEqual(t, reservation.ExpiresAt, *snapshot.DeletedAt)
+
+	_, err = repo.GetJournalSnapshot(context.Background(), GetJournalSnapshotRequest{
+		SpaceID: 10, ThreadID: 1, RunID: 11, SnapshotID: "snap-delete",
+	})
+	require.ErrorIs(t, err, ErrJournalSnapshotNotFound)
 }
 
 func TestCanonicalSearchThreadsUsesExactOffsetMetadataAndPermissionTotal(t *testing.T) {
@@ -898,6 +970,41 @@ func TestCanonicalDeleteThreadIfIdleBlocksOnlyActiveTopLevelTaskRuns(t *testing.
 	}
 }
 
+func TestCanonicalDeleteThreadIfIdleBlocksActiveJournalAttempt(t *testing.T) {
+	db := canonicalDeleteRepositoryTestDB(t, ":memory:")
+	repo := &threadRepository{db: db}
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 77, SpaceID: 10, CreatorID: 20, Title: "active Journal attempt",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+	}))
+	run := newCanonicalRepositoryRun(770, 77, 0, 100)
+	run.Status = entity.RunStatusSucceeded
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+	activeSlot := uint8(1)
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 771, ThreadID: 77, JournalRunID: 770, ExecutionRunID: 770,
+		AttemptID: "att-active-delete", Ordinal: 1,
+		Status: string(entity.RunAttemptStatusRunning), ActiveSlot: &activeSlot,
+		NextSequence: 2, LastCommittedSequence: 1,
+		EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState:   string(entity.JournalProjectionStateHealthy),
+		CreatedAt:         100, UpdatedAt: 100,
+	}).Error)
+
+	deleted, err := repo.DeleteThreadIfIdle(context.Background(), DeleteThreadIfIdleRequest{ThreadID: 77})
+	require.False(t, deleted)
+	require.ErrorIs(t, err, ErrActiveRunExists)
+
+	endedAt := int64(200)
+	require.NoError(t, db.Model(&runAttemptPO{}).Where("id = ?", 771).Updates(map[string]any{
+		"status": entity.RunAttemptStatusCompleted, "active_slot": nil,
+		"ended_at": endedAt, "updated_at": endedAt,
+	}).Error)
+	deleted, err = repo.DeleteThreadIfIdle(context.Background(), DeleteThreadIfIdleRequest{ThreadID: 77})
+	require.NoError(t, err)
+	require.True(t, deleted)
+}
+
 func TestCanonicalDeleteThreadIfIdleLinearizesWithCreateRunBundle(t *testing.T) {
 	db := canonicalDeleteRepositoryTestDB(
 		t,
@@ -1168,6 +1275,11 @@ func canonicalDeleteRepositoryTestDB(t *testing.T, dsn string) *gorm.DB {
 		&runPO{},
 		&runAttemptPO{},
 		&runEventPO{},
+		&sideEffectLedgerPO{},
+		&journalSnapshotPO{},
+		&journalSnapshotReservationPO{},
+		&journalSnapshotFragmentPO{},
+		&journalSnapshotAccessAuditPO{},
 		&checkpointPO{},
 		&memoryPO{},
 		&memoryAuditEventPO{},

@@ -18,9 +18,12 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
@@ -30,6 +33,12 @@ import (
 
 func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing.T) {
 	app, threadSVC, repo := newJournalRecoveryTestService(t)
+	registry := prometheus.NewRegistry()
+	metrics, err := NewJournalPrometheusMetricsCollector(registry)
+	require.NoError(t, err)
+	telemetrySink := &journalTelemetrySinkStub{}
+	app.JournalMetrics = metrics
+	app.JournalTelemetry = NewJournalTelemetry(telemetrySink)
 
 	result, err := app.RecoverJournal(context.Background(), RecoverJournalRequest{
 		ViewerID: 9, SpaceID: 7, ThreadID: 42, RunID: 10,
@@ -49,6 +58,29 @@ func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing
 	require.Equal(t, "att_100", threadSVC.createRunBundleReq.JournalEnrollment.Recovery.SourceAttemptID)
 	require.Equal(t, "recover-1", threadSVC.createRunBundleReq.JournalEnrollment.Recovery.IdempotencyKey)
 	require.Empty(t, repo.resolveRequests)
+	require.Equal(t, []JournalRecoveryTelemetryEvent{{
+		EventName: "journal_recovery_result", RunID: 10, AttemptID: "att_200", TraceID: "trace-1",
+		Action: "resume", Result: "success", ErrorCode: "none",
+		Version: domainentity.JournalSchemaVersion, RolloutCohort: "treatment", TaskType: "unknown",
+	}}, telemetrySink.events)
+	require.Equal(t, float64(1), testutil.ToFloat64(metrics.recoveryResultsTotal.With(
+		prometheus.Labels((JournalMetricLabels{
+			Version: domainentity.JournalSchemaVersion, RolloutCohort: "treatment", TaskType: "unknown",
+			ClientVersion: "unknown", Result: "success", ErrorCode: "none",
+		}).prometheusLabels()),
+	)))
+}
+
+func TestJournalRecoveryTelemetryFailureDoesNotChangeRecoveryResult(t *testing.T) {
+	app, _, _ := newJournalRecoveryTestService(t)
+	app.JournalTelemetry = NewJournalTelemetry(&journalTelemetrySinkStub{err: errors.New("telemetry unavailable")})
+
+	result, err := app.RecoverJournal(context.Background(), RecoverJournalRequest{
+		ViewerID: 9, SpaceID: 7, ThreadID: 42, RunID: 10,
+		Action: JournalRecoveryActionResume, IdempotencyKey: "recover-telemetry-failure",
+	})
+	require.NoError(t, err)
+	require.True(t, result.Accepted)
 }
 
 func TestJournalRecoverySameKeyReturnsExistingPhysicalRunAndAttempt(t *testing.T) {
@@ -413,6 +445,7 @@ func newJournalRecoveryTestService(
 			Attempt: &domainentity.RunAttempt{
 				ID: 200, ThreadID: 42, JournalRunID: 10, ExecutionRunID: 20,
 				AttemptID: "att_200", Ordinal: 2, Status: domainentity.RunAttemptStatusPending,
+				EnrollmentVersion: domainentity.JournalSchemaVersion,
 			},
 			Created: true,
 		},

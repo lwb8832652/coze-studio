@@ -45,7 +45,7 @@ type threadRepository struct {
 	db *gorm.DB
 }
 
-func NewThreadRepository(db *gorm.DB) Repository {
+func NewThreadRepository(db *gorm.DB) PersistentRepository {
 	return &threadRepository{db: db}
 }
 
@@ -223,58 +223,66 @@ type sideEffectLedgerPO struct {
 }
 
 type journalSnapshotPO struct {
-	SnapshotID         string  `gorm:"column:snapshot_id;size:64;primaryKey"`
-	SpaceID            int64   `gorm:"column:space_id;index:idx_agent_journal_snapshots_scope,priority:1;index:idx_agent_journal_snapshots_hash_scope,priority:1"`
-	ThreadID           int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshots_scope,priority:2"`
-	RunID              int64   `gorm:"column:run_id;index:idx_agent_journal_snapshots_scope,priority:3"`
-	JournalRunID       int64   `gorm:"column:journal_run_id;index:idx_agent_journal_snapshots_attempt,priority:1;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:1"`
-	AttemptID          string  `gorm:"column:attempt_id;size:64;index:idx_agent_journal_snapshots_attempt,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:2"`
-	EventID            int64   `gorm:"column:event_id;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:1"`
-	ActionID           string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:3"`
-	Revision           uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:4"`
-	ContentType        string  `gorm:"column:content_type;size:32"`
-	Status             string  `gorm:"column:status;size:32"`
-	IsFragmented       bool    `gorm:"column:is_fragmented"`
-	FragmentCount      uint32  `gorm:"column:fragment_count"`
-	Visibility         string  `gorm:"column:visibility;size:16"`
-	ErrorCode          *string `gorm:"column:error_code;size:64"`
-	MIMEType           string  `gorm:"column:mime_type;size:191"`
-	Encoding           string  `gorm:"column:encoding;size:32"`
-	Compression        string  `gorm:"column:compression;size:32"`
-	ContentJSON        []byte  `gorm:"column:content_json;type:mediumblob"`
-	ObjectKey          *string `gorm:"column:object_key;size:1024"`
-	SummaryJSON        []byte  `gorm:"column:summary_json;type:mediumblob"`
-	SummaryHash        *string `gorm:"column:summary_hash;size:64"`
-	ContentLength      int64   `gorm:"column:content_length"`
-	ContentHash        string  `gorm:"column:content_hash;size:64;index:idx_agent_journal_snapshots_hash_scope,priority:3"`
-	ACLDomain          string  `gorm:"column:acl_domain;size:191;index:idx_agent_journal_snapshots_hash_scope,priority:2"`
-	SourceResourceType *string `gorm:"column:source_resource_type;size:64"`
-	SourceResourceID   *string `gorm:"column:source_resource_id;size:191"`
-	SourceRevision     *string `gorm:"column:source_revision;size:64"`
-	OriginalObjectKey  *string `gorm:"column:original_object_key;size:1024"`
-	ExpiresAt          int64   `gorm:"column:expires_at"`
-	CleanupState       string  `gorm:"column:cleanup_state;size:32;index:idx_agent_journal_snapshots_cleanup,priority:1"`
-	DeletedAt          *int64  `gorm:"column:deleted_at"`
-	CreatedAt          int64   `gorm:"column:created_at;index:idx_agent_journal_snapshots_attempt,priority:3"`
+	SnapshotID            string  `gorm:"column:snapshot_id;size:64;primaryKey"`
+	SpaceID               int64   `gorm:"column:space_id;index:idx_agent_journal_snapshots_scope,priority:1;index:idx_agent_journal_snapshots_hash_scope,priority:1"`
+	ThreadID              int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshots_scope,priority:2"`
+	RunID                 int64   `gorm:"column:run_id;index:idx_agent_journal_snapshots_scope,priority:3"`
+	JournalRunID          int64   `gorm:"column:journal_run_id;index:idx_agent_journal_snapshots_attempt,priority:1;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:1"`
+	AttemptID             string  `gorm:"column:attempt_id;size:64;index:idx_agent_journal_snapshots_attempt,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:2"`
+	EventID               int64   `gorm:"column:event_id;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:1"`
+	ActionID              string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:3"`
+	Revision              uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:4"`
+	ContentType           string  `gorm:"column:content_type;size:32"`
+	Status                string  `gorm:"column:status;size:32"`
+	IsFragmented          bool    `gorm:"column:is_fragmented"`
+	FragmentCount         uint32  `gorm:"column:fragment_count"`
+	Visibility            string  `gorm:"column:visibility;size:16"`
+	ErrorCode             *string `gorm:"column:error_code;size:64"`
+	MIMEType              string  `gorm:"column:mime_type;size:191"`
+	Encoding              string  `gorm:"column:encoding;size:32"`
+	Compression           string  `gorm:"column:compression;size:32"`
+	ContentJSON           []byte  `gorm:"column:content_json;type:mediumblob"`
+	ObjectKey             *string `gorm:"column:object_key;size:1024"`
+	SummaryJSON           []byte  `gorm:"column:summary_json;type:mediumblob"`
+	SummaryHash           *string `gorm:"column:summary_hash;size:64"`
+	ContentLength         int64   `gorm:"column:content_length"`
+	ContentHash           string  `gorm:"column:content_hash;size:64;index:idx_agent_journal_snapshots_hash_scope,priority:3"`
+	ACLDomain             string  `gorm:"column:acl_domain;size:191;index:idx_agent_journal_snapshots_hash_scope,priority:2"`
+	SourceResourceType    *string `gorm:"column:source_resource_type;size:64"`
+	SourceResourceID      *string `gorm:"column:source_resource_id;size:191"`
+	SourceRevision        *string `gorm:"column:source_revision;size:64"`
+	OriginalObjectKey     *string `gorm:"column:original_object_key;size:1024"`
+	ExpiresAt             int64   `gorm:"column:expires_at"`
+	CleanupState          string  `gorm:"column:cleanup_state;size:32;index:idx_agent_journal_snapshots_cleanup,priority:1"`
+	DeletedAt             *int64  `gorm:"column:deleted_at"`
+	CleanupClaimToken     *string `gorm:"column:cleanup_claim_token;size:64"`
+	CleanupClaimExpiresAt *int64  `gorm:"column:cleanup_claim_expires_at;index:idx_agent_journal_snapshots_claim,priority:2"`
+	CleanupAttemptCount   uint32  `gorm:"column:cleanup_attempt_count"`
+	CleanupLastErrorCode  *string `gorm:"column:cleanup_last_error_code;size:64"`
+	CreatedAt             int64   `gorm:"column:created_at;index:idx_agent_journal_snapshots_attempt,priority:3"`
 }
 
 type journalSnapshotReservationPO struct {
-	SnapshotID       string `gorm:"column:snapshot_id;size:64;primaryKey"`
-	ReservationToken string `gorm:"column:reservation_token;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_token"`
-	SpaceID          int64  `gorm:"column:space_id;index:idx_agent_journal_snapshot_reservations_expiry,priority:1"`
-	ThreadID         int64  `gorm:"column:thread_id"`
-	RunID            int64  `gorm:"column:run_id"`
-	JournalRunID     int64  `gorm:"column:journal_run_id;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:1"`
-	AttemptID        string `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:2"`
-	ActionID         string `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:3"`
-	Revision         uint32 `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:4"`
-	EventID          int64  `gorm:"column:event_id"`
-	IdempotencyKey   string `gorm:"column:idempotency_key;size:191"`
-	ContentHash      string `gorm:"column:content_hash;size:64"`
-	ACLDomain        string `gorm:"column:acl_domain;size:191"`
-	StagingPrefix    string `gorm:"column:staging_prefix;size:1024"`
-	ExpiresAt        int64  `gorm:"column:expires_at;index:idx_agent_journal_snapshot_reservations_expiry,priority:2"`
-	CreatedAt        int64  `gorm:"column:created_at"`
+	SnapshotID            string  `gorm:"column:snapshot_id;size:64;primaryKey"`
+	ReservationToken      string  `gorm:"column:reservation_token;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_token"`
+	SpaceID               int64   `gorm:"column:space_id;index:idx_agent_journal_snapshot_reservations_expiry,priority:1"`
+	ThreadID              int64   `gorm:"column:thread_id"`
+	RunID                 int64   `gorm:"column:run_id"`
+	JournalRunID          int64   `gorm:"column:journal_run_id;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:1"`
+	AttemptID             string  `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:2"`
+	ActionID              string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:3"`
+	Revision              uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:4"`
+	EventID               int64   `gorm:"column:event_id"`
+	IdempotencyKey        string  `gorm:"column:idempotency_key;size:191"`
+	ContentHash           string  `gorm:"column:content_hash;size:64"`
+	ACLDomain             string  `gorm:"column:acl_domain;size:191"`
+	StagingPrefix         string  `gorm:"column:staging_prefix;size:1024"`
+	ExpiresAt             int64   `gorm:"column:expires_at;index:idx_agent_journal_snapshot_reservations_expiry,priority:2"`
+	CleanupClaimToken     *string `gorm:"column:cleanup_claim_token;size:64"`
+	CleanupClaimExpiresAt *int64  `gorm:"column:cleanup_claim_expires_at;index:idx_agent_journal_snapshot_reservations_claim,priority:1"`
+	CleanupAttemptCount   uint32  `gorm:"column:cleanup_attempt_count"`
+	CleanupLastErrorCode  *string `gorm:"column:cleanup_last_error_code;size:64"`
+	CreatedAt             int64   `gorm:"column:created_at"`
 }
 
 type journalSnapshotFragmentPO struct {
@@ -626,6 +634,10 @@ func (r *threadRepository) CreateThreadBundle(
 	if req.Run.SpaceID != req.Thread.SpaceID || req.Run.CreatorID != req.Thread.CreatorID {
 		return nil, fmt.Errorf("thread bundle run ownership does not match thread")
 	}
+	if req.Attempt != nil && (req.Attempt.ThreadID != req.Thread.ID ||
+		req.Attempt.JournalRunID != req.Run.ID || req.Attempt.ExecutionRunID != req.Run.ID) {
+		return nil, fmt.Errorf("thread bundle journal attempt does not belong to run")
+	}
 
 	now := time.Now().UnixMilli()
 	thread := *req.Thread
@@ -649,6 +661,58 @@ func (r *threadRepository) CreateThreadBundle(
 	if message.CreatedAt == 0 {
 		message.CreatedAt = run.CreatedAt
 	}
+	var attempt *entity.RunAttempt
+	if req.Attempt != nil {
+		normalizedAttempt := *req.Attempt
+		expectedStatus, err := journalAttemptStatusFromRun(run.Status)
+		if err != nil {
+			return nil, err
+		}
+		if normalizedAttempt.Status != expectedStatus || normalizedAttempt.Ordinal != 1 {
+			return nil, fmt.Errorf("thread bundle journal attempt does not match initial run")
+		}
+		normalizedAttempt.EnrollmentVersion = strings.TrimSpace(normalizedAttempt.EnrollmentVersion)
+		if normalizedAttempt.EnrollmentVersion != entity.JournalSchemaVersion {
+			return nil, fmt.Errorf(
+				"%w %q",
+				ErrUnsupportedJournalEnrollmentVersion,
+				normalizedAttempt.EnrollmentVersion,
+			)
+		}
+		if normalizedAttempt.NextSequence == 0 {
+			normalizedAttempt.NextSequence = 1
+		}
+		if normalizedAttempt.NextSequence != 1 || normalizedAttempt.LastCommittedSequence != 0 {
+			return nil, fmt.Errorf("thread bundle journal attempt sequence must start at one")
+		}
+		if normalizedAttempt.ProjectionState == "" {
+			normalizedAttempt.ProjectionState = entity.JournalProjectionStateHealthy
+		}
+		if normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy ||
+			normalizedAttempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy")
+		}
+		activeSlot := uint8(1)
+		normalizedAttempt.ActiveSlot = &activeSlot
+		normalizedAttempt.TerminalEventID = nil
+		normalizedAttempt.EndedAt = nil
+		if normalizedAttempt.CreatedAt == 0 {
+			normalizedAttempt.CreatedAt = run.CreatedAt
+		}
+		if normalizedAttempt.UpdatedAt == 0 {
+			normalizedAttempt.UpdatedAt = normalizedAttempt.CreatedAt
+		}
+		if normalizedAttempt.Status == entity.RunAttemptStatusPending {
+			normalizedAttempt.StartedAt = nil
+		} else if normalizedAttempt.StartedAt == nil {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = normalizedAttempt.CreatedAt
+			}
+			normalizedAttempt.StartedAt = &startedAt
+		}
+		attempt = &normalizedAttempt
+	}
 
 	threadPO, err := threadToPO(&thread)
 	if err != nil {
@@ -664,7 +728,7 @@ func (r *threadRepository) CreateThreadBundle(
 	}
 
 	normalized := CreateThreadBundleRequest{
-		Thread: &thread, Run: &run, Message: &message,
+		Thread: &thread, Run: &run, Message: &message, Attempt: attempt,
 		ValidateIdempotencyReplay: req.ValidateIdempotencyReplay,
 	}
 	var result *CreateThreadBundleResult
@@ -684,11 +748,16 @@ func (r *threadRepository) CreateThreadBundle(
 		if err := tx.Create(runPO).Error; err != nil {
 			return err
 		}
+		if normalized.Attempt != nil {
+			if err := tx.Create(runAttemptToPO(normalized.Attempt)).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(messagePO).Error; err != nil {
 			return err
 		}
 		result = &CreateThreadBundleResult{
-			Thread: &thread, Run: &run, Message: &message, Created: true,
+			Thread: &thread, Run: &run, Message: &message, Attempt: attempt, Created: true,
 		}
 		return nil
 	})
@@ -748,9 +817,30 @@ func findExistingThreadBundle(
 		return nil, false, err
 	}
 
-	return &CreateThreadBundleResult{
+	result := &CreateThreadBundleResult{
 		Thread: thread.toEntity(), Run: run.toEntity(), Message: message.toEntity(),
-	}, true, nil
+	}
+	if req.Attempt == nil {
+		return result, true, nil
+	}
+	var attempt runAttemptPO
+	attemptErr := db.Where("execution_run_id = ?", run.ID).First(&attempt).Error
+	if attemptErr != nil && !errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, attemptErr
+	}
+	if errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, fmt.Errorf(
+			"%w: idempotent thread bundle is missing journal attempt",
+			ErrRunIdempotencyConflict,
+		)
+	}
+	if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+		attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+		return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+	}
+	result.Attempt = attempt.toEntity()
+	return result, true, nil
 }
 
 func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
@@ -848,6 +938,12 @@ func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadReq
 
 	var deleted bool
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, req.ThreadID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
 		var err error
 		deleted, err = deleteThreadCascade(tx, req.ThreadID)
 		return err
@@ -856,6 +952,9 @@ func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadReq
 }
 
 func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
+	if err := tombstoneJournalSnapshotsForThread(tx, threadID, time.Now().UnixMilli()); err != nil {
+		return false, err
+	}
 	runPlanIDs := tx.Model(&agentRunPlanPO{}).
 		Select("run_id").
 		Where("thread_id = ?", threadID)
@@ -878,6 +977,8 @@ func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
 		{model: &memoryPO{}, where: "thread_id = ?"},
 		{model: &checkpointPO{}, where: "thread_id = ?"},
 		{model: &runEventPO{}, where: "thread_id = ?"},
+		{model: &sideEffectLedgerPO{}, where: "thread_id = ?"},
+		{model: &journalSnapshotAccessAuditPO{}, where: "thread_id = ?"},
 		{model: &runAttemptPO{}, where: "thread_id = ?"},
 		{model: &messagePO{}, where: "thread_id = ?"},
 		{model: &runPO{}, where: "thread_id = ?"},
@@ -893,6 +994,55 @@ func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func tombstoneJournalSnapshotsForThread(tx *gorm.DB, threadID, deletedAt int64) error {
+	if threadID <= 0 || deletedAt <= 0 {
+		return fmt.Errorf("journal snapshot tombstone scope is invalid")
+	}
+	snapshotIDs := tx.Model(&journalSnapshotPO{}).
+		Select("snapshot_id").Where("thread_id = ?", threadID)
+	if err := tx.Where("snapshot_id IN (?) AND object_key IS NULL", snapshotIDs).
+		Delete(&journalSnapshotFragmentPO{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotFragmentPO{}).
+		Where("snapshot_id IN (?)", snapshotIDs).
+		Updates(map[string]any{
+			"metadata_json":  nil,
+			"inline_content": nil,
+		}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotPO{}).
+		Where("thread_id = ?", threadID).
+		Updates(map[string]any{
+			"cleanup_state":            entity.JournalSnapshotCleanupStatePending,
+			"deleted_at":               deletedAt,
+			"cleanup_claim_token":      nil,
+			"cleanup_claim_expires_at": nil,
+			"cleanup_last_error_code":  nil,
+			"content_json":             nil,
+			"summary_json":             nil,
+			"summary_hash":             nil,
+		}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotReservationPO{}).
+		Where("thread_id = ?", threadID).
+		Updates(map[string]any{
+			"expires_at": gorm.Expr(
+				"CASE WHEN expires_at > ? THEN ? ELSE expires_at END",
+				deletedAt,
+				deletedAt,
+			),
+			"cleanup_claim_token":      nil,
+			"cleanup_claim_expires_at": nil,
+			"cleanup_last_error_code":  nil,
+		}).Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error) {

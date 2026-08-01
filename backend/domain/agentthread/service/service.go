@@ -102,15 +102,18 @@ type CreateRunEventSpec struct {
 }
 
 type CreateThreadRunMessageRequest struct {
-	Thread  CreateThreadRequest
-	Run     CreateRunRequest
-	Message CreateMessageSpec
+	Thread            CreateThreadRequest
+	Run               CreateRunRequest
+	Message           CreateMessageSpec
+	EnrollJournal     bool
+	JournalEnrollment *JournalEnrollmentOptions
 }
 
 type CreateThreadRunMessageResult struct {
 	Thread  *entity.Thread
 	Run     *entity.Run
 	Message *entity.Message
+	Attempt *entity.RunAttempt
 }
 
 type CreateRunBundleRequest struct {

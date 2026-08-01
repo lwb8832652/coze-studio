@@ -53,6 +53,14 @@ type JournalRepository interface {
 	JournalSnapshotRepository
 }
 
+type JournalProjectionRepository interface {
+	DisableActiveJournalProjection(
+		ctx context.Context,
+		runID int64,
+		disabledAt int64,
+	) (*entity.RunAttempt, bool, error)
+}
+
 type JournalSnapshotRepository interface {
 	ReserveJournalSnapshot(
 		ctx context.Context,
@@ -141,6 +149,15 @@ type Repository interface {
 	ThreadRepository
 	JournalRepository
 	JournalExecutionRepository
+}
+
+// PersistentRepository exposes background-maintenance capabilities implemented
+// by the production repository without widening the core domain repository
+// contract used by in-memory implementations and tests.
+type PersistentRepository interface {
+	Repository
+	JournalProjectionRepository
+	JournalRetentionRepository
 }
 
 type PrepareSideEffectRequest struct {

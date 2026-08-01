@@ -682,6 +682,53 @@ func (r *threadRepository) GetActiveJournalAttempt(
 	return nil, ErrJournalAttemptTerminal
 }
 
+func (r *threadRepository) DisableActiveJournalProjection(
+	ctx context.Context,
+	runID int64,
+	disabledAt int64,
+) (*entity.RunAttempt, bool, error) {
+	if runID <= 0 {
+		return nil, false, ErrJournalNotEnrolled
+	}
+	attempt, err := r.GetActiveJournalAttempt(ctx, runID)
+	if err != nil {
+		return nil, false, err
+	}
+	if attempt.ProjectionState == entity.JournalProjectionStateDisabled {
+		return attempt, false, nil
+	}
+	if disabledAt <= 0 {
+		disabledAt = time.Now().UnixMilli()
+	}
+	result := r.db.WithContext(ctx).Model(&runAttemptPO{}).
+		Where(
+			"id = ? AND active_slot = ? AND status IN ? AND projection_state IN ?",
+			attempt.ID,
+			1,
+			[]string{
+				string(entity.RunAttemptStatusPending),
+				string(entity.RunAttemptStatusRunning),
+			},
+			[]string{
+				string(entity.JournalProjectionStateHealthy),
+				string(entity.JournalProjectionStateDegraded),
+			},
+		).
+		Updates(map[string]any{
+			"projection_state": string(entity.JournalProjectionStateDisabled),
+			"updated_at":       disabledAt,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return attempt, false, nil
+	}
+	attempt.ProjectionState = entity.JournalProjectionStateDisabled
+	attempt.UpdatedAt = disabledAt
+	return attempt, true, nil
+}
+
 func (r *threadRepository) ListJournalAttempts(
 	ctx context.Context,
 	runID int64,

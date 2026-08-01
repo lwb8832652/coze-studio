@@ -49,6 +49,9 @@ func (r *threadRepository) ReserveJournalSnapshot(
 	}
 	result := &ReserveJournalSnapshotResult{}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, reservation.ThreadID); err != nil {
+			return err
+		}
 		executionRoot, executionPath, err := resolveJournalRunPath(tx, reservation.RunID)
 		if err != nil {
 			return err
@@ -188,6 +191,9 @@ func (r *threadRepository) CreateJournalSnapshot(
 	var appended *entity.JournalEvent
 	var replayed bool
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, snapshot.ThreadID); err != nil {
+			return err
+		}
 		executionRoot, executionPath, err := resolveJournalRunPath(tx, snapshot.RunID)
 		if err != nil {
 			return err

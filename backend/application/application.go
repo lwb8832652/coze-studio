@@ -91,6 +91,7 @@ import (
 	crossworkflow "github.com/coze-dev/coze-studio/backend/crossdomain/workflow"
 	workflowImpl "github.com/coze-dev/coze-studio/backend/crossdomain/workflow/impl"
 	threadrepository "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	infraagentthread "github.com/coze-dev/coze-studio/backend/infra/agentthread"
 	infraappdev "github.com/coze-dev/coze-studio/backend/infra/appdev"
 	"github.com/coze-dev/coze-studio/backend/infra/checkpoint"
 	"github.com/coze-dev/coze-studio/backend/infra/document/progressbar"
@@ -439,6 +440,15 @@ func Init(ctx context.Context) (err error) {
 		primaryServices.agentThreadSVC.GuardrailAuditRepository,
 		primaryServices.infra.OSS,
 	)
+	_, journalRetentionStatus := agentthread.StartJournalRetentionWorkerFromEnvWithStatus(
+		ctx,
+		primaryServices.agentThreadSVC.JournalRetentionRepository,
+		primaryServices.agentThreadSVC.JournalSnapshotObjectStorage,
+		primaryServices.agentThreadSVC.JournalMetrics,
+	)
+	if journalRetentionStatus.Enabled && !journalRetentionStatus.Started {
+		return fmt.Errorf("Init - start Journal retention worker: %s", journalRetentionStatus.Reason)
+	}
 	_, mcpWorkdirReaperStatus := agentthread.StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnvWithStatus(
 		ctx,
 		mcpWorkdirLeaseRepository,
@@ -649,6 +659,24 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		ObjectStorage:   basicServices.infra.OSS,
 		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
+	agentThreadSVC.JournalFeatureGate = agentthread.NewJournalFeatureGate(
+		bizconfig.Base(),
+		agentthread.JournalFeatureGateOptions{},
+	)
+	agentThreadSVC.JournalMetrics = agentthread.NewJournalPrometheusMetricsCollectorFromEnv()
+	agentThreadSVC.JournalTelemetry = agentthread.NewJournalLogTelemetry()
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
+		journalLimiter, limiterErr := infraagentthread.NewRedisJournalRateLimiter(
+			basicServices.infra.CacheCli,
+			bizconfig.Base(),
+			infraagentthread.RedisJournalRateLimiterOptions{Environment: "production"},
+		)
+		if limiterErr != nil {
+			return nil, fmt.Errorf("init Journal admission limiter: %w", limiterErr)
+		}
+		agentThreadSVC.JournalAdmissionLimiter = journalLimiter
+		agentThreadSVC.JournalAdmissionRequired = true
+	}
 	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpManagementEnabled)
 	if err != nil {
 		return nil, err

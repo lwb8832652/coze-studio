@@ -124,6 +124,19 @@ func (s *threadService) CreateThreadRunMessage(
 	if req.Run.ParentRunID > 0 {
 		return nil, InvalidArgumentErrorf("new thread run cannot have parent run")
 	}
+	if req.EnrollJournal {
+		if req.JournalEnrollment == nil {
+			return nil, InvalidArgumentErrorf("journal enrollment options are required")
+		}
+		if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) == "" {
+			return nil, InvalidArgumentErrorf("journal enrollment version is required")
+		}
+		if req.JournalEnrollment.Recovery != nil {
+			return nil, InvalidArgumentErrorf("new thread run cannot be a journal recovery")
+		}
+	} else if req.JournalEnrollment != nil {
+		return nil, InvalidArgumentErrorf("journal enrollment options require journal enrollment")
+	}
 	runKind, err := normalizeRunKind(req.Run.RunKind, req.Run.ParentRunID)
 	if err != nil {
 		return nil, err
@@ -148,12 +161,16 @@ func (s *threadService) CreateThreadRunMessage(
 		return nil, InvalidArgumentErrorf("message content is required")
 	}
 
-	ids, err := s.idGen.GenMultiIDs(ctx, 3)
+	entityCount := 3
+	if req.EnrollJournal {
+		entityCount++
+	}
+	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) != 3 {
-		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected 3", len(ids))
+	if len(ids) != entityCount {
+		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected %d", len(ids), entityCount)
 	}
 	now := time.Now().UnixMilli()
 	source := req.Thread.Source
@@ -189,8 +206,38 @@ func (s *threadService) CreateThreadRunMessage(
 		Metadata:  req.Message.Metadata,
 		CreatedAt: now,
 	}
+	var attempt *entity.RunAttempt
+	if req.EnrollJournal {
+		attemptStatus, err := journalAttemptStatusForRun(status)
+		if err != nil {
+			return nil, err
+		}
+		attemptID := ids[3]
+		activeSlot := uint8(1)
+		traceID := strings.TrimSpace(req.JournalEnrollment.TraceID)
+		attempt = &entity.RunAttempt{
+			ID: attemptID, ThreadID: thread.ID,
+			JournalRunID: run.ID, ExecutionRunID: run.ID,
+			AttemptID: fmt.Sprintf("att_%d", attemptID), Ordinal: 1,
+			Status: attemptStatus, ActiveSlot: &activeSlot,
+			NextSequence: 1, LastCommittedSequence: 0,
+			EnrollmentVersion: strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion),
+			SnapshotsEnabled:  req.JournalEnrollment.SnapshotsEnabled,
+			ProjectionState:   entity.JournalProjectionStateHealthy,
+			TraceID:           journalStringPointer(traceID),
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		}
+		if attemptStatus == entity.RunAttemptStatusRunning {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = now
+			}
+			attempt.StartedAt = &startedAt
+		}
+	}
 	result, err := s.repo.CreateThreadBundle(ctx, repository.CreateThreadBundleRequest{
-		Thread: thread, Run: run, Message: message,
+		Thread: thread, Run: run, Message: message, Attempt: attempt,
 		ValidateIdempotencyReplay: strings.TrimSpace(req.Run.IdempotencyOperation) != "",
 	})
 	if err != nil {
@@ -199,9 +246,12 @@ func (s *threadService) CreateThreadRunMessage(
 	if result == nil || result.Thread == nil || result.Run == nil || result.Message == nil {
 		return nil, fmt.Errorf("agent thread repository returned incomplete thread bundle")
 	}
+	if req.EnrollJournal && result.Attempt == nil {
+		return nil, fmt.Errorf("agent thread repository returned thread bundle without journal attempt")
+	}
 
 	return &CreateThreadRunMessageResult{
-		Thread: result.Thread, Run: result.Run, Message: result.Message,
+		Thread: result.Thread, Run: result.Run, Message: result.Message, Attempt: result.Attempt,
 	}, nil
 }
 

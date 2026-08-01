@@ -81,6 +81,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(SVC.ThreadSVC)
 	SVC.JournalSnapshotRepository = repo
 	SVC.JournalQueryRepository = repo
+	SVC.JournalProjectionController = repo
+	SVC.JournalRetentionRepository = repo
 	SVC.JournalSnapshotAttemptReader = repo
 	SVC.JournalSnapshotObjectStorage = newJournalSnapshotStorageAdapter(c.ObjectStorage)
 	SVC.JournalSnapshotAuthorizer = NewThreadOwnerJournalSnapshotAuthorizer(

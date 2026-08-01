@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
@@ -381,6 +383,10 @@ func TestJournalSnapshotSanitizesDocumentControlMetadata(t *testing.T) {
 
 func TestJournalSnapshotReadReauthorizesAndAuditsEveryOutcome(t *testing.T) {
 	service, repo, _ := newJournalSnapshotApplicationTestService()
+	registry := prometheus.NewRegistry()
+	metrics, err := NewJournalPrometheusMetricsCollector(registry)
+	require.NoError(t, err)
+	service.JournalMetrics = metrics
 	authorizer := &journalSnapshotAuthorizerStub{allowed: true}
 	service.JournalSnapshotAuthorizer = authorizer
 	service.JournalSnapshotNow = func() int64 { return 1_000 }
@@ -426,6 +432,16 @@ func TestJournalSnapshotReadReauthorizesAndAuditsEveryOutcome(t *testing.T) {
 	require.Nil(t, view.Content.Document)
 	require.Equal(t, entity.JournalSnapshotPermissionExpired, repo.audits[2].PermissionResult)
 	require.Equal(t, 3, authorizer.calls)
+
+	for _, expected := range []JournalMetricLabels{
+		{Version: entity.JournalSchemaVersion, RolloutCohort: "treatment", TaskType: "unknown", ClientVersion: "unknown", Result: "success", ErrorCode: "none"},
+		{Version: entity.JournalSchemaVersion, RolloutCohort: "treatment", TaskType: "unknown", ClientVersion: "unknown", Result: "no_permission", ErrorCode: "no_permission"},
+		{Version: entity.JournalSchemaVersion, RolloutCohort: "treatment", TaskType: "unknown", ClientVersion: "unknown", Result: "failed", ErrorCode: "snapshot_unavailable"},
+	} {
+		require.Equal(t, float64(1), testutil.ToFloat64(metrics.snapshotRequestsTotal.With(
+			prometheus.Labels(expected.prometheusLabels()),
+		)))
+	}
 }
 
 func TestJournalSnapshotAuthorizationBackendFailureIsUnavailable(t *testing.T) {

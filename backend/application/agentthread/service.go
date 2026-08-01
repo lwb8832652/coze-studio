@@ -114,6 +114,11 @@ type ApplicationService struct {
 	JournalSettingsNow                      func() int64
 	JournalAdmissionLimiter                 JournalAdmissionLimiter
 	JournalAdmissionRequired                bool
+	JournalFeatureGate                      JournalFeatureGateEvaluator
+	JournalProjectionController             JournalProjectionController
+	JournalMetrics                          *JournalPrometheusMetricsCollector
+	JournalTelemetry                        *JournalTelemetry
+	JournalRetentionRepository              JournalRetentionRepository
 	JournalRecoveryRepository               JournalRecoveryRepository
 	JournalRecoveryIDGenerator              idgen.IDGenerator
 	JournalSideEffectRepository             ADKSideEffectRepository
@@ -121,6 +126,14 @@ type ApplicationService struct {
 
 type ArtifactObjectStorage interface {
 	GetObject(ctx context.Context, objectKey string) ([]byte, error)
+}
+
+type JournalProjectionController interface {
+	DisableActiveJournalProjection(
+		context.Context,
+		int64,
+		int64,
+	) (*domainentity.RunAttempt, bool, error)
 }
 
 type ArtifactObjectStreamStorage interface {
@@ -294,6 +307,13 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if err != nil {
 		return nil, err
 	}
+	enrollJournal, journalEnrollment := s.journalEnrollmentForRun(
+		ctx,
+		req.SpaceID,
+		domainentity.RunKindTask,
+		0,
+		runConfig,
+	)
 	bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{
 		Thread: domainservice.CreateThreadRequest{
 			SpaceID: req.SpaceID, UserID: userID, Title: title,
@@ -312,6 +332,8 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 			Role: domainentity.MessageRoleUser, Content: message,
 			Metadata: `{"source":"workbench_new_task"}`,
 		},
+		EnrollJournal:     enrollJournal,
+		JournalEnrollment: journalEnrollment,
 	})
 	if err != nil {
 		return nil, err
@@ -874,6 +896,13 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		return nil, fmt.Errorf("run message content is required when message metadata is set")
 	}
 	if messageContent != "" {
+		enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+			ctx,
+			req.ThreadID,
+			domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID),
+			req.ParentRunID,
+			runConfig,
+		)
 		authoritativeInput, err := s.buildAuthoritativeRunInput(
 			ctx,
 			req.ThreadID,
@@ -899,6 +928,8 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				Role: domainentity.MessageRoleUser, Content: messageContent,
 				Metadata: req.MessageMetadata,
 			},
+			EnrollJournal:           enrollJournal,
+			JournalEnrollment:       journalEnrollment,
 			PersistMessageReference: req.PersistMessageReference,
 		})
 		if err != nil {
@@ -913,6 +944,13 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		}, nil
 	}
 	if domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID) == domainentity.RunKindTask {
+		enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+			ctx,
+			req.ThreadID,
+			domainentity.RunKindTask,
+			req.ParentRunID,
+			runConfig,
+		)
 		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 			Run: domainservice.CreateRunRequest{
 				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
@@ -925,6 +963,8 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				IdempotencyOperation:   req.IdempotencyOperation,
 				IdempotencyFingerprint: req.IdempotencyFingerprint,
 			},
+			EnrollJournal:     enrollJournal,
+			JournalEnrollment: journalEnrollment,
 		})
 		if err != nil {
 			return nil, err
@@ -1003,6 +1043,13 @@ func (s *ApplicationService) createTopLevelRetryRun(
 	if err != nil {
 		return nil, err
 	}
+	enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+		ctx,
+		req.ThreadID,
+		domainentity.RunKindTask,
+		0,
+		runConfig,
+	)
 	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 		Run: domainservice.CreateRunRequest{
 			ThreadID: req.ThreadID, AssistantID: req.AssistantID,
@@ -1014,6 +1061,8 @@ func (s *ApplicationService) createTopLevelRetryRun(
 			IdempotencyOperation:   req.IdempotencyOperation,
 			IdempotencyFingerprint: req.IdempotencyFingerprint,
 		},
+		EnrollJournal:     enrollJournal,
+		JournalEnrollment: journalEnrollment,
 	})
 	if err != nil {
 		return nil, err
@@ -1025,6 +1074,51 @@ func (s *ApplicationService) createTopLevelRetryRun(
 	}
 	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 	return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
+}
+
+func (s *ApplicationService) journalEnrollmentForExistingThreadRun(
+	ctx context.Context,
+	threadID int64,
+	runKind domainentity.RunKind,
+	parentRunID int64,
+	runConfig string,
+) (bool, *domainservice.JournalEnrollmentOptions) {
+	if s == nil || s.JournalFeatureGate == nil || threadID <= 0 ||
+		parentRunID != 0 || runKind != domainentity.RunKindTask {
+		return false, nil
+	}
+	thread, err := s.ThreadSVC.GetThread(ctx, threadID)
+	if err != nil || thread == nil {
+		logs.CtxWarnf(ctx, "journal enrollment skipped: resolve thread %d: %v", threadID, err)
+		return false, nil
+	}
+	return s.journalEnrollmentForRun(ctx, thread.SpaceID, runKind, parentRunID, runConfig)
+}
+
+func (s *ApplicationService) journalEnrollmentForRun(
+	ctx context.Context,
+	spaceID int64,
+	runKind domainentity.RunKind,
+	parentRunID int64,
+	runConfig string,
+) (bool, *domainservice.JournalEnrollmentOptions) {
+	if s == nil || s.JournalFeatureGate == nil {
+		return false, nil
+	}
+	decision, err := s.JournalFeatureGate.DecideEnrollment(ctx, JournalEnrollmentInput{
+		SpaceID: spaceID, RunKind: runKind, ParentRunID: parentRunID, RunConfig: runConfig,
+	})
+	if err != nil {
+		logs.CtxWarnf(ctx, "journal enrollment skipped for space %d: %v", spaceID, err)
+		return false, nil
+	}
+	if !decision.Enrolled {
+		return false, nil
+	}
+	return true, &domainservice.JournalEnrollmentOptions{
+		EnrollmentVersion: decision.EnrollmentVersion,
+		SnapshotsEnabled:  decision.SnapshotsEnabled,
+	}
 }
 
 func topLevelRetryRunMetadata(metadata string, sourceRunID int64) (string, error) {
@@ -1433,6 +1527,38 @@ func (s *ApplicationService) appendProjectedRunEvent(
 	ctx context.Context,
 	sourceEvent RunEvent,
 ) (*domainentity.RunEvent, error) {
+	if s != nil && s.JournalFeatureGate != nil {
+		thread, err := s.ThreadSVC.GetThread(ctx, sourceEvent.ThreadID)
+		if err != nil {
+			return nil, err
+		}
+		enabled, gateErr := s.JournalFeatureGate.MasterEnabled(ctx, JournalFeatureProjection)
+		if gateErr != nil {
+			logs.CtxWarnf(ctx, "[journal-projection] feature gate unavailable, run_id=%d err=%v", sourceEvent.RunID, gateErr)
+			enabled = false
+		}
+		if thread == nil || thread.SpaceID <= 0 {
+			return nil, fmt.Errorf("journal projection thread scope is unavailable")
+		}
+		if !enabled {
+			if s.JournalProjectionController == nil {
+				return nil, fmt.Errorf("journal projection controller is unavailable")
+			}
+			_, _, disableErr := s.JournalProjectionController.DisableActiveJournalProjection(
+				ctx,
+				sourceEvent.RunID,
+				time.Now().UnixMilli(),
+			)
+			if disableErr != nil && !errors.Is(disableErr, domainrepo.ErrJournalNotEnrolled) &&
+				!errors.Is(disableErr, domainrepo.ErrJournalAttemptTerminal) {
+				return nil, disableErr
+			}
+			return s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+				ThreadID: sourceEvent.ThreadID, RunID: sourceEvent.RunID,
+				EventType: sourceEvent.EventType, Payload: sourceEvent.Payload,
+			})
+		}
+	}
 	projection, projectionErr := ProjectRunEventToJournal(sourceEvent)
 	if projectionErr != nil {
 		logs.CtxWarnf(ctx, "[journal-projection] project event failed, run_id=%d event_type=%s err=%v", sourceEvent.RunID, sourceEvent.EventType, projectionErr)

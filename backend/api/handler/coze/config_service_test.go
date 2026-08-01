@@ -97,6 +97,43 @@ func TestBasicConfigurationHandlerReturnsStableConflict(t *testing.T) {
 	require.Contains(t, string(response.Result().Body()), `"error_code":"BASE_CONFIG_VERSION_CONFLICT"`)
 }
 
+func TestBasicConfigurationHandlerForwardsJournalRuntimePatch(t *testing.T) {
+	stub := &basicConfigurationBackendStub{revision: "rev-7"}
+	h := newBasicConfigurationTestServer(stub)
+	requestBody := `{
+		"expected_revision":"rev-7",
+		"configuration":{
+			"journal_runtime_configuration":{
+				"journal_projection":true,
+				"journal_projection_rollout_basis_points":2500,
+				"sse_tenant_connection_cap":32,
+				"sse_cluster_connection_cap":4096,
+				"sse_send_queue_high_watermark":128,
+				"sse_send_queue_max":256,
+				"short_request_qps":20,
+				"short_request_burst":40,
+				"lease_ttl_seconds":90,
+				"snapshot_fragment_threshold_bytes":4194304,
+				"config_revision":"rev-7"
+			}
+		}
+	}`
+
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/config/basic/save",
+		&ut.Body{Body: stringsReader(requestBody), Len: len(requestBody)},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+	require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
+	require.Equal(t, 1, stub.saveCalls)
+	require.NotNil(t, stub.patch.JournalRuntimeConfiguration)
+	require.True(t, stub.patch.JournalRuntimeConfiguration.JournalProjection)
+	require.Equal(t, int32(2500), stub.patch.JournalRuntimeConfiguration.JournalProjectionRolloutBasisPoints)
+	require.Equal(t, "rev-7", stub.patch.JournalRuntimeConfiguration.ConfigRevision)
+}
+
 func TestBasicConfigurationHandlerCanonicalizesAdminEmailsBeforeSave(t *testing.T) {
 	stub := &basicConfigurationBackendStub{revision: "rev-8"}
 	h := newBasicConfigurationTestServer(stub)
@@ -156,7 +193,7 @@ func TestBasicConfigurationHandlerRejectsInvalidAdminEmailsBeforeStorage(t *test
 				"/api/admin/config/basic/save",
 				&ut.Body{
 					Body: stringsReader(string(body)),
-					Len: len(body),
+					Len:  len(body),
 				},
 				ut.Header{Key: "content-type", Value: "application/json"},
 			)

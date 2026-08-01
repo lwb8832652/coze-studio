@@ -19,9 +19,11 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
@@ -89,6 +91,15 @@ func (s *ApplicationService) GetJournalBootstrap(
 		req.RunID <= 0 || afterSequenceSet && strings.TrimSpace(req.AttemptID) == "" {
 		return nil, fmt.Errorf("journal query identity is invalid")
 	}
+	if s.JournalFeatureGate != nil {
+		enabled, err := s.JournalFeatureGate.Enabled(ctx, JournalFeatureUI, req.SpaceID)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			return nil, domainrepo.ErrJournalNotEnrolled
+		}
+	}
 	// Journal streams are long-lived. Shadow the request-local Thread/Run cache so
 	// each pull observes deletion, ownership, and workspace membership changes.
 	authorizationCtx := context.WithValue(
@@ -129,18 +140,58 @@ func (s *ApplicationService) GetJournalBootstrap(
 		return nil, err
 	}
 	selected := bootstrap.SelectedAttempt
+	if s.JournalFeatureGate != nil && selected.Status.IsActive() {
+		projectionEnabled, gateErr := s.JournalFeatureGate.MasterEnabled(ctx, JournalFeatureProjection)
+		if gateErr != nil {
+			return nil, gateErr
+		}
+		if !projectionEnabled {
+			if s.JournalProjectionController == nil {
+				return nil, fmt.Errorf("journal projection controller is unavailable")
+			}
+			disabled, _, disableErr := s.JournalProjectionController.DisableActiveJournalProjection(
+				ctx,
+				req.RunID,
+				time.Now().UnixMilli(),
+			)
+			if disableErr != nil && !errors.Is(disableErr, domainrepo.ErrJournalAttemptTerminal) {
+				return nil, disableErr
+			}
+			selected = cloneJournalRunAttempt(selected)
+			selected.ProjectionState = domainentity.JournalProjectionStateDisabled
+			if disabled != nil {
+				selected = disabled
+			}
+		}
+	}
 	journalEnabled := selected.ProjectionState != domainentity.JournalProjectionStateDisabled
 	snapshotsEnabled := journalEnabled &&
 		selected.ProjectionState == domainentity.JournalProjectionStateHealthy &&
 		selected.SnapshotsEnabled
+	attempts := make([]*domainentity.RunAttempt, 0, len(bootstrap.Attempts))
+	for _, attempt := range bootstrap.Attempts {
+		cloned := cloneJournalRunAttempt(attempt)
+		if cloned != nil && cloned.AttemptID == selected.AttemptID {
+			cloned = cloneJournalRunAttempt(selected)
+		}
+		attempts = append(attempts, cloned)
+	}
 	return &JournalBootstrapResult{
-		Attempts: bootstrap.Attempts, SelectedAttempt: selected,
+		Attempts: attempts, SelectedAttempt: selected,
 		Events: bootstrap.Events, LatestSequence: bootstrap.LatestSequence,
 		ResolvedAfterSequence: bootstrap.ResolvedAfterSequence,
 		HasMore:               bootstrap.HasMore, JournalEnabled: journalEnabled,
 		SnapshotsEnabled: snapshotsEnabled,
 		ContentTypes:     append([]JournalContentType(nil), journalFixedContentTypes...),
 	}, nil
+}
+
+func cloneJournalRunAttempt(attempt *domainentity.RunAttempt) *domainentity.RunAttempt {
+	if attempt == nil {
+		return nil
+	}
+	cloned := *attempt
+	return &cloned
 }
 
 func (s *ApplicationService) authorizeJournalBootstrapEvents(
