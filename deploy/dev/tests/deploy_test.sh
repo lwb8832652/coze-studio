@@ -416,6 +416,15 @@ test_web_health_base_url_uses_configured_host_port() (
     fail "specific web health URL used the wrong host or port: $actual"
 )
 
+test_web_health_base_url_defaults_port() (
+  WEB_BIND_IP=192.0.2.10
+  unset WEB_PORT
+
+  actual=$(web_health_base_url) || fail 'default web health URL could not be built'
+  [ "$actual" = 'http://192.0.2.10:8888' ] || \
+    fail "web health URL did not default to port 8888: $actual"
+)
+
 test_health_checks_stop_at_unhealthy_nsqd() (
   case_dir=$(mktemp -d "$TEST_ROOT/unhealthy-nsqd.XXXXXX")
   command_log=$case_dir/commands.log
@@ -454,12 +463,106 @@ test_health_checks_stop_at_unhealthy_nsqd() (
   fi
   assert_file_contains "$command_log" '^compose ps -q nsqd$' \
     'health checks did not inspect the nsqd service first'
-  assert_file_contains "$command_log" '^docker inspect .* nsqd-container$' \
+  assert_file_contains "$command_log" '^docker inspect --format \{\{\.State\.Health\.Status\}\} nsqd-container$' \
     'health checks did not inspect the nsqd container health'
   assert_file_not_contains "$command_log" '^compose exec ' \
     'health checks called the backend while nsqd was unhealthy'
   assert_file_not_contains "$command_log" '^curl ' \
     'health checks called the web endpoint while nsqd was unhealthy'
+)
+
+test_service_health_status_rejects_empty_inspect_output() (
+  case_dir=$(mktemp -d "$TEST_ROOT/empty-nsqd-health.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+
+  compose_cmd() {
+    [ "$#" -eq 3 ] && [ "$1" = ps ] && [ "$2" = -q ] && [ "$3" = nsqd ] || return 1
+    printf 'nsqd-container\n'
+  }
+
+  docker_cmd() {
+    {
+      printf 'docker'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+  }
+
+  if service_health_status nsqd; then
+    fail 'service health status accepted empty docker inspect output'
+  fi
+  assert_file_contains "$command_log" '^docker inspect --format \{\{\.State\.Health\.Status\}\} nsqd-container$' \
+    'service health status used the wrong docker inspect template'
+)
+
+test_health_checks_use_configured_web_url() (
+  case_dir=$(mktemp -d "$TEST_ROOT/custom-web-health-url.XXXXXX")
+  url_log=$case_dir/urls.log
+  WEB_BIND_IP=192.0.2.10
+  WEB_PORT=18888
+  : > "$url_log"
+
+  service_is_healthy() {
+    [ "$1" = nsqd ]
+  }
+
+  compose_cmd() {
+    [ "$1" = exec ] && [ "$2" = -T ] && [ "$3" = coze-server ] || return 1
+    printf '{"status":"ok","revision":"%s"}\n' "$REV_A"
+  }
+
+  curl() {
+    url=${!#}
+    printf '%s\n' "$url" >> "$url_log"
+    case "$url" in
+      'http://192.0.2.10:18888/healthz')
+        printf '{"status":"ok","revision":"%s"}\n' "$REV_A"
+        ;;
+      'http://192.0.2.10:18888/') return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  health_checks_pass "$REV_A" || fail 'health checks rejected healthy mocked services'
+  actual=$(<"$url_log")
+  expected=$'http://192.0.2.10:18888/healthz\nhttp://192.0.2.10:18888/'
+  [ "$actual" = "$expected" ] || \
+    fail "health checks used unexpected web URLs: $actual"
+)
+
+test_is_ipv4_rejects_malformed_addresses() (
+  for value in \
+    '192.0.2' \
+    '192.0.2.10.1' \
+    '+192.0.2.10' \
+    '192.-1.2.10' \
+    ' 192.0.2.10' \
+    '192.0.2.10 ' \
+    '192. 0.2.10' \
+    '256.0.0.1' \
+    '1.2.3.999' \
+    '1..2.3'; do
+    if is_ipv4 "$value"; then
+      fail "is_ipv4 accepted malformed address: $value"
+    fi
+  done
+)
+
+test_is_tcp_port_rejects_non_strict_values() (
+  for value in \
+    '0' \
+    '+1' \
+    '-1' \
+    ' 80' \
+    '80 ' \
+    '65536' \
+    '01' \
+    '00080'; do
+    if is_tcp_port "$value"; then
+      fail "is_tcp_port accepted invalid value: $value"
+    fi
+  done
 )
 
 write_direct_case_files() {
@@ -678,7 +781,12 @@ run_test 'success record failure rolls back atomically' test_success_record_fail
 run_test 'rollback verifies restored image identities' test_rollback_rejects_restored_container_image_mismatch
 run_test 'first deployment failure has no fake rollback' test_first_deployment_failure_cannot_claim_rollback
 run_test 'web health URL uses the configured host port' test_web_health_base_url_uses_configured_host_port
+run_test 'web health URL defaults to port 8888' test_web_health_base_url_defaults_port
 run_test 'unhealthy nsqd blocks application health checks' test_health_checks_stop_at_unhealthy_nsqd
+run_test 'empty inspect health status is rejected' test_service_health_status_rejects_empty_inspect_output
+run_test 'health checks use the configured web URL' test_health_checks_use_configured_web_url
+run_test 'malformed IPv4 addresses are rejected' test_is_ipv4_rejects_malformed_addresses
+run_test 'invalid TCP port forms are rejected' test_is_tcp_port_rejects_non_strict_values
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction
 run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker
 run_test 'invalid web bind IP fails before Docker' test_invalid_web_bind_ip_fails_before_docker

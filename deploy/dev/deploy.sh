@@ -62,12 +62,7 @@ is_ipv4() {
 is_tcp_port() {
   local port=${1:-}
 
-  [[ "$port" =~ ^[0-9]+$ ]] || return 1
-  while [[ "$port" == 0* ]]; do
-    port=${port#0}
-  done
-  [ -n "$port" ] || return 1
-  [ "${#port}" -le 5 ] || return 1
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
   ((10#$port <= 65535))
 }
 
@@ -91,13 +86,17 @@ compose_cmd() {
 
 service_health_status() {
   local service=$1
-  local container_id
+  local container_id status
 
   if ! container_id=$(compose_cmd ps -q "$service"); then
     return 1
   fi
   [ -n "$container_id" ] || return 1
-  docker_cmd inspect --format '{{.State.Health.Status}}' "$container_id"
+  if ! status=$(docker_cmd inspect --format '{{.State.Health.Status}}' "$container_id"); then
+    return 1
+  fi
+  [ -n "$status" ] || return 1
+  printf '%s\n' "$status"
 }
 
 service_is_healthy() {
