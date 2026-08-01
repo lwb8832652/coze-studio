@@ -6,11 +6,96 @@ package redis
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 )
+
+func cleanupTestClient(t *testing.T, client Cmdable) {
+	t.Helper()
+	impl, ok := client.(*redisImpl)
+	if !ok {
+		t.Fatalf("redis client has type %T, want *redisImpl", client)
+	}
+	t.Cleanup(func() {
+		if err := impl.client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
+}
+
+type silentTCPServer struct {
+	listener net.Listener
+	done     chan struct{}
+
+	mu          sync.Mutex
+	connections []net.Conn
+	accepted    int
+	closed      bool
+	closeOnce   sync.Once
+}
+
+func newSilentTCPServer(t *testing.T) *silentTCPServer {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("start silent TCP server: %v", err)
+	}
+	server := &silentTCPServer{
+		listener: listener,
+		done:     make(chan struct{}),
+	}
+	go server.acceptConnections()
+	t.Cleanup(server.Close)
+	return server
+}
+
+func (s *silentTCPServer) acceptConnections() {
+	defer close(s.done)
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.accepted++
+		if s.closed {
+			_ = conn.Close()
+		} else {
+			s.connections = append(s.connections, conn)
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *silentTCPServer) Addr() string {
+	return s.listener.Addr().String()
+}
+
+func (s *silentTCPServer) AcceptedConnections() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accepted
+}
+
+func (s *silentTCPServer) Close() {
+	s.closeOnce.Do(func() {
+		_ = s.listener.Close()
+		s.mu.Lock()
+		s.closed = true
+		connections := append([]net.Conn(nil), s.connections...)
+		s.connections = nil
+		s.mu.Unlock()
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+		<-s.done
+	})
+}
 
 func TestRedisRunScriptUsesKeysAndArguments(t *testing.T) {
 	server, err := miniredis.Run()
@@ -20,6 +105,7 @@ func TestRedisRunScriptUsesKeysAndArguments(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewWithAddrAndPassword(server.Addr(), "")
+	cleanupTestClient(t, client)
 	script := `return {KEYS[1], ARGV[1]}`
 
 	for _, value := range []string{"first", "second"} {
@@ -45,6 +131,7 @@ func TestRedisRunScriptPropagatesCancellation(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewWithAddrAndPassword(server.Addr(), "")
+	cleanupTestClient(t, client)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -62,6 +149,7 @@ func TestRedisRunScriptPipelineExecutesWithEmptyScriptCache(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewWithAddrAndPassword(server.Addr(), "")
+	cleanupTestClient(t, client)
 	pipeline := client.Pipeline()
 	command := pipeline.RunScript(
 		context.Background(),
@@ -136,6 +224,7 @@ func TestNewUsesConfiguredRedisDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initialize redis: %v", err)
 	}
+	cleanupTestClient(t, client)
 	if err := client.Set(context.Background(), "selected-db", "ok", 0).Err(); err != nil {
 		t.Fatalf("write selected database: %v", err)
 	}
@@ -163,6 +252,65 @@ func TestNewPropagatesReadinessFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "redis readiness check failed") {
 		t.Fatalf("New() readiness error = %v", err)
 	}
+}
+
+func TestNewHonorsParentDeadlineDuringReadiness(t *testing.T) {
+	server := newSilentTCPServer(t)
+	t.Setenv("REDIS_ADDR", server.Addr())
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("REDIS_DB", "0")
+
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	type newResult struct {
+		client Cmdable
+		err    error
+	}
+	resultCh := make(chan newResult, 1)
+	go func() {
+		client, err := New(ctx)
+		resultCh <- newResult{client: client, err: err}
+	}()
+
+	const maxWait = time.Second
+	timer := time.NewTimer(maxWait)
+	defer timer.Stop()
+	var result newResult
+	select {
+	case result = <-resultCh:
+	case <-timer.C:
+		elapsed := time.Since(started)
+		server.Close()
+		result = <-resultCh
+		if result.client != nil {
+			cleanupTestClient(t, result.client)
+		}
+		t.Fatalf("New did not honor the parent deadline; still blocked after %s", elapsed)
+	}
+
+	elapsed := time.Since(started)
+	if result.client != nil {
+		cleanupTestClient(t, result.client)
+		t.Fatalf("New returned an unexpected client after %s", elapsed)
+	}
+	if result.err == nil {
+		t.Fatalf("New unexpectedly succeeded after %s", elapsed)
+	}
+	if !strings.Contains(result.err.Error(), "redis readiness check failed") {
+		t.Fatalf("New readiness error = %v", result.err)
+	}
+	if !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("New readiness error = %v, want context deadline exceeded", result.err)
+	}
+	if server.AcceptedConnections() == 0 {
+		t.Fatal("silent TCP server accepted no connections")
+	}
+	if elapsed >= maxWait {
+		t.Fatalf("New returned after %s, want less than %s", elapsed, maxWait)
+	}
+	t.Logf("New honored the parent deadline in %s", elapsed)
 }
 
 func TestNewRejectsNilContext(t *testing.T) {

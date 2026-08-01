@@ -91,9 +91,10 @@ func newWithAddrPasswordAndDB(addr, password string, db int) *redisImpl {
 		ConnMaxIdleTime: 5 * time.Minute, // Idle connection timeout
 
 		// timeout configuration
-		DialTimeout:  5 * time.Second, // Connection establishment timed out
-		ReadTimeout:  3 * time.Second, // read operation timed out
-		WriteTimeout: 3 * time.Second, // write operation timed out
+		DialTimeout:           5 * time.Second, // Connection establishment timed out
+		ReadTimeout:           3 * time.Second, // read operation timed out
+		WriteTimeout:          3 * time.Second, // write operation timed out
+		ContextTimeoutEnabled: true,
 	})
 
 	return &redisImpl{client: rdb}
