@@ -61,8 +61,13 @@ revision，服务器在记录成功前还会核对两个运行容器的实际 im
 
 Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
 不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
-完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。该服务器只运行
-两个应用容器，MySQL、Elasticsearch、Redis 和对象存储均为远程服务。
+完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。
+
+该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
+Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚
+保留其命名卷。dev 部署允许省略向量数据库配置，未配置时保留 Elasticsearch
+全文检索并关闭语义向量检索。Web 默认通过可配置的公网 HTTP 端口发布，域名与
+TLS 由宝塔独立终止。
 
 这是允许短时中断的单实例 dev/预发布流程，不等于生产发布。推送授权、数据库
 操作和生产发布保持独立权限边界。

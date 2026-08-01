@@ -2,14 +2,13 @@
 
 ## 适用范围
 
-本目录用于单实例 dev/预发布环境。服务器只运行 `coze-server` 和 `coze-web`
-两个容器，MySQL、Elasticsearch、Redis 和对象存储使用远程云服务。2C4G Linux
-服务器可以承载这两个应用容器，但需要为镜像拉取、日志和构建外的运行峰值保留
-磁盘与内存余量。
+本目录用于单实例 dev/预发布环境。服务器运行 `nsqd`、`coze-server` 和
+`coze-web` 三个容器；MySQL、Elasticsearch、Redis 和对象存储继续使用远程
+云服务。`nsqd` 使用 `nsq-data` 命名卷持久化消息，并固定为磁盘队列模式。
 
-`coze-web` 只绑定 `127.0.0.1:8888`，`coze-server` 只在 Docker 网络内暴露
-`8888`。宝塔 Nginx 负责公网 HTTPS。该拓扑没有蓝绿或多实例滚动能力，发布时
-允许约 10 到 30 秒中断，不能直接作为生产发布方案。
+`coze-web` 默认发布到 `0.0.0.0:8888`，可通过公网 IP 和端口直接访问；
+`coze-server` 与 NSQ 不发布宿主机端口。公网端口是 HTTP，正式域名和 HTTPS
+由宝塔 Nginx 反向代理处理。该拓扑允许短时发布中断，不是高可用生产方案。
 
 对象存储配置必须以目标 SHA 已合入的 provider 为准。当前部署分支不包含七牛
 适配时，不能只修改 `app.env` 来启用七牛；应先完成对应功能分支的审计和合入。
@@ -68,7 +67,17 @@ curl --version
 flock --version
 ```
 
-将部署文件安装到固定目录：
+服务器 `/opt/coze-dev` 的部署文件清单固定为：
+
+```text
+.env.example
+docker-compose.yml
+deploy.sh
+deploy.env
+app.env
+```
+
+先安装仓库中的前三个文件：
 
 ```bash
 sudo install -d -m 750 /opt/coze-dev
@@ -76,6 +85,9 @@ sudo install -m 750 deploy/dev/deploy.sh /opt/coze-dev/deploy.sh
 sudo install -m 640 deploy/dev/docker-compose.yml /opt/coze-dev/docker-compose.yml
 sudo install -m 640 deploy/dev/.env.example /opt/coze-dev/.env.example
 ```
+
+`deploy.env` 和 `app.env` 按下文在服务器本地创建并保持 `600`。`nsq-data` 是由
+Docker 创建和管理的命名卷，不作为普通目录复制到 `/opt/coze-dev`。
 
 宝塔 webhook 使用的系统账号必须能够读取该目录并访问 Docker。不要让无关账号
 获得 `app.env` 或 Docker socket 权限。
@@ -95,6 +107,11 @@ chmod 600 deploy.env
 按实际 ACR 修改 `ACR_REGISTRY` 和 `ACR_NAMESPACE`。日常发布保持
 `SERVER_IMAGE_TAG=dev`、`WEB_IMAGE_TAG=dev`。`DEPLOY_HEALTH_TIMEOUT_SECONDS`
 必须是正整数。`deploy.env` 是服务器本地文件，不要提交或附到工单中。
+
+`WEB_BIND_IP` 必须是合法 IPv4 地址，默认 `0.0.0.0`；`WEB_PORT` 必须是
+`1` 到 `65535` 的整数，默认 `8888`。调试公网访问时需要同步放行安全组和主机
+防火墙；自定义公网端口时三处使用同一个 `WEB_PORT`：`deploy.env`、放行规则和
+后续宝塔反向代理上游。
 
 使用服务器只读账号登录 ACR。登录动作必须由实际执行 webhook 的同一系统账号
 完成，并在 `deploy.env` 配置后执行：
@@ -127,6 +144,18 @@ chmod 600 app.env
 服务名，也不能误写服务器容器内的 `127.0.0.1`。对象存储 credential 只写入此
 文件；后台配置能力合入后，按该能力的加密存储合同执行，不把 secret 回显到页面。
 
+Compose 固定向后端注入 `COZE_MQ_TYPE=nsq` 和 `MQ_NAME_SERVER=nsqd:4150`，
+不要在 `app.env` 重复配置消息队列。`REDIS_DB` 可省略，默认使用逻辑库 `0`；
+显式值必须是非负十进制整数。Redis Cluster 或只支持 DB 0 的云实例必须保持
+`REDIS_DB=0`。
+
+`VECTOR_STORE_TYPE` 及 provider 专属变量可以全部省略。此时 Elasticsearch
+全文检索继续工作，语义向量检索关闭；显式配置 `milvus`、`vikingdb` 或
+`oceanbase` 后仍会严格校验并在依赖不可用时阻止启动。
+
+`app.env` 不要求 `USE_SSL` 或 `SERVER_HOST`。容器内后端保持 HTTP；公网 URL
+先在系统管理页面配置为公网 IP 与端口，宝塔域名启用后再改为最终 HTTPS 域名。
+
 该文件以只读方式挂载到 `/app/.env`。不要提交、打印或通过 webhook 传输它。
 
 ## 宝塔配置
@@ -148,7 +177,8 @@ GitHub 会在 JSON body 中发送目标 SHA。即使宝塔忽略 body，`deploy.
 
 ### Nginx
 
-在宝塔站点启用 HTTPS，将流量代理到本机 Web 容器：
+在宝塔站点启用 HTTPS，将流量代理到 Web 容器发布的同一宿主机端口。以下为默认
+`WEB_BIND_IP=0.0.0.0`、`WEB_PORT=8888` 的上游示例：
 
 ```nginx
 location / {
@@ -165,8 +195,13 @@ location / {
 }
 ```
 
-根据业务上传上限配置站点的 `client_max_body_size`。防火墙不要向公网开放
-`8888`；公网只暴露宝塔 Nginx 的 HTTPS 端口和受限管理入口。
+根据业务上传上限配置站点的 `client_max_body_size`。自定义 `WEB_PORT` 时同步修改
+`proxy_pass`；若 `WEB_BIND_IP` 改为宿主机的特定地址，上游也必须使用该可达地址，
+不能继续假定回环地址已监听。
+
+调试期可在安全组和主机防火墙中放行 `WEB_PORT`，最好限制来源 IP。该端口提供
+明文 HTTP，会绕过宝塔的域名和 TLS 策略；正式域名启用后可关闭公网入站或继续
+限制来源，公网业务流量只经宝塔 Nginx 的 HTTPS 端口进入。
 
 ## 发布流程
 
@@ -258,13 +293,51 @@ SERVER_IMAGE_TAG="rollback-$transaction" WEB_IMAGE_TAG="rollback-$transaction" \
 先从失败记录读取并人工核对 `OLD_SERVER_IMAGE_ID`、`OLD_WEB_IMAGE_ID`，再导出这
 两个变量。禁止只回滚一个服务。恢复后执行完整健康检查，并保留操作记录。
 
+## NSQ 数据与排障
+
+```bash
+cd /opt/coze-dev
+docker compose --env-file deploy.env -f docker-compose.yml ps nsqd
+docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 nsqd
+docker compose --env-file deploy.env -f docker-compose.yml exec -T nsqd \
+  wget -q -O - http://127.0.0.1:4151/ping
+docker volume inspect coze-dev_nsq-data
+docker system df -v
+```
+
+健康响应必须是 `OK`。日常部署和应用镜像回滚只更新 `coze-server` 与
+`coze-web`，保留 `nsqd` 和 `nsq-data`。禁止执行 `docker compose down -v`；
+升级 NSQ、迁移卷或清理队列必须作为独立运维变更执行。单节点 NSQ 没有副本，
+宿主机磁盘损坏或强制删除卷仍会丢失消息。
+
 ## 排障
 
 ```bash
 cd /opt/coze-dev
 docker compose --env-file deploy.env -f docker-compose.yml ps
-docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 coze-server coze-web
-curl --fail --silent --show-error http://127.0.0.1:8888/healthz
+docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 nsqd coze-server coze-web
+web_port="$(
+  awk -F= '
+    $1 == "WEB_PORT" {
+      value = substr($0, index($0, "=") + 1)
+    }
+    END { print value }
+  ' deploy.env
+)"
+web_port="${web_port:-8888}"
+case "$web_port" in
+  ''|*[!0-9]*)
+    printf '%s\n' 'deploy.env contains an invalid WEB_PORT' >&2
+    exit 1
+    ;;
+esac
+if [ "$web_port" -lt 1 ] || [ "$web_port" -gt 65535 ]; then
+  printf '%s\n' 'deploy.env contains an invalid WEB_PORT' >&2
+  exit 1
+fi
+curl --fail --silent --show-error --output /dev/null \
+  "http://127.0.0.1:${web_port}/healthz"
+unset web_port
 docker image inspect "$ACR_REGISTRY/$ACR_NAMESPACE/coze-server:dev" \
   --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 docker image inspect "$ACR_REGISTRY/$ACR_NAMESPACE/coze-web:dev" \
