@@ -1,10 +1,44 @@
 # Copyright 2025 coze-dev Authors
 # SPDX-License-Identifier: Apache-2.0
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
+  nsqd:
+    image: nsqio/nsq:v1.3.0
+    pull_policy: missing
+    command:
+      - /nsqd
+      - --data-path=/data
+      - --mem-queue-size=0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 384m
+    cpus: 0.50
+    pids_limit: 128
+    expose:
+      - "4150"
+      - "4151"
+    volumes:
+      - nsq-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:4151/ping | grep -qx OK
+    networks:
+      - coze-dev
+    logging: *default-logging
+
   coze-server:
     image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-server:${SERVER_IMAGE_TAG:-dev}
     restart: unless-stopped
+    environment:
+      COZE_MQ_TYPE: nsq
+      MQ_NAME_SERVER: nsqd:4150
     expose:
       - "8888"
     volumes:
@@ -26,14 +60,19 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    depends_on:
+      nsqd:
+        condition: service_healthy
+        restart: true
     networks:
       - coze-dev
+    logging: *default-logging
 
   coze-web:
     image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-web:${WEB_IMAGE_TAG:-dev}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8888:80"
+      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8888}:80"
     depends_on:
       coze-server:
         condition: service_healthy
@@ -52,7 +91,11 @@ services:
       start_period: 10s
     networks:
       - coze-dev
+    logging: *default-logging
 
 networks:
   coze-dev:
     driver: bridge
+
+volumes:
+  nsq-data:
