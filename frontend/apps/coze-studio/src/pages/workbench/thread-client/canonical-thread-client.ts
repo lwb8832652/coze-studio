@@ -20,6 +20,7 @@ import { fetchStream } from '@coze-arch/fetch-stream';
 
 import type {
   AppendWorkbenchMessageRequest,
+  AuditWorkbenchJournalSnapshotActionRequest,
   CancelWorkbenchRunRequest,
   ClearWorkbenchMemoriesRequest,
   CreateWorkbenchRunRequest,
@@ -28,6 +29,9 @@ import type {
   ExportWorkbenchGuardrailAuditEventsRequest,
   ExportWorkbenchMemoriesRequest,
   GenerateWorkbenchSuggestionsRequest,
+  GetWorkbenchJournalSettingsRequest,
+  GetWorkbenchJournalSnapshotRequest,
+  GetWorkbenchRunJournalRequest,
   GetWorkbenchArtifactContentRequest,
   GetWorkbenchArtifactSignedURLRequest,
   GetWorkbenchRunRequest,
@@ -37,6 +41,7 @@ import type {
   ListWorkbenchArtifactsRequest,
   ListWorkbenchArtifactScanJobsRequest,
   ListWorkbenchGuardrailAuditEventsRequest,
+  ListWorkbenchJournalEventsRequest,
   ListWorkbenchMCPRuntimeAuditEventsRequest,
   ListWorkbenchMemoriesRequest,
   ListWorkbenchMemoryAuditEventsRequest,
@@ -45,18 +50,22 @@ import type {
   ListWorkbenchRunsRequest,
   ListWorkbenchUploadsRequest,
   ResumeWorkbenchRunRequest,
+  RecoverWorkbenchJournalRequest,
   RetryWorkbenchArtifactScanJobRequest,
   RetryWorkbenchSubagentRunRequest,
   ReviewWorkbenchArtifactScanRequest,
   SearchWorkbenchThreadsRequest,
+  SubscribeWorkbenchJournalEventsRequest,
   SubscribeWorkbenchRunEventsRequest,
   UpdateWorkbenchMemoryRequest,
+  PatchWorkbenchJournalSettingsRequest,
   UploadWorkbenchFilesRequest,
   WorkbenchArtifactRequest,
   WorkbenchMemoryImportItem,
   WorkbenchMemoryRequest,
   WorkbenchThreadClient,
 } from './workbench-thread-client';
+import type { WorkbenchJournalStreamMessage } from './types';
 import {
   createRunEventCursorStore,
   greatestRunEventCursor,
@@ -90,6 +99,15 @@ import {
   adaptCanonicalArtifactSignedURL,
   adaptCanonicalGuardrailAuditExport,
   adaptCanonicalGuardrailAuditPage,
+  adaptCanonicalJournalBootstrap,
+  adaptCanonicalJournalEnd,
+  adaptCanonicalJournalEventPage,
+  adaptCanonicalJournalMetadata,
+  adaptCanonicalJournalRecovery,
+  adaptCanonicalJournalSettings,
+  adaptCanonicalJournalSnapshot,
+  adaptCanonicalJournalSnapshotAction,
+  adaptCanonicalJournalStreamWrapper,
   adaptCanonicalMCPRuntimeAuditPage,
   adaptCanonicalMemoryAuditPage,
   adaptCanonicalMemoryClear,
@@ -113,6 +131,7 @@ import {
   adaptCanonicalUploadCreation,
   adaptCanonicalUploadPage,
   assertCanonicalRequestResourceID,
+  isWorkbenchJournalSnapshotAction,
   parseCanonicalWriteJSON,
   parseCanonicalWriteJSONObject,
   parseRequiredCanonicalWriteJSONObject,
@@ -131,6 +150,14 @@ export type CanonicalWorkbenchCoreClient = Pick<
   | 'cancelRun'
   | 'resumeRun'
   | 'listRunEvents'
+  | 'getRunJournal'
+  | 'listJournalEvents'
+  | 'subscribeJournalEvents'
+  | 'getJournalSnapshot'
+  | 'auditJournalSnapshotAction'
+  | 'recoverJournal'
+  | 'getJournalSettings'
+  | 'patchJournalSettings'
 >;
 
 export type CanonicalWorkbenchProductClient = WorkbenchThreadClient;
@@ -153,6 +180,8 @@ const coreMaximumPageSize = 100;
 const productMaximumPageSize = 200;
 const maxCanonicalPageValue = 2_147_483_647;
 const nonNegativeDecimal = /^(0|[1-9]\d*)$/;
+const canonicalJournalProtocolVersion = '1.1';
+const canonicalJournalMaximumPageSize = 200;
 
 const requiredBody = (body: unknown | undefined): unknown => {
   if (body === undefined) {
@@ -432,6 +461,88 @@ const optionalNonNegativeInteger = (
     );
   }
   return value;
+};
+
+const canonicalJournalAttemptID = (
+  value: string | undefined,
+  required: boolean,
+): string | undefined => {
+  const attemptID = optionalTrimmed(value);
+  if (required && attemptID === undefined) {
+    throw invalidCanonicalRequest(
+      'invalid_journal_attempt',
+      'attempt_id is required',
+    );
+  }
+  return attemptID;
+};
+
+const canonicalJournalEventCursor = (
+  value: string | undefined,
+): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!nonNegativeDecimal.test(value)) {
+    throw invalidCanonicalRequest(
+      'invalid_event_cursor',
+      'after_event_id must be a non-negative decimal event ID',
+    );
+  }
+  return value;
+};
+
+const canonicalJournalSequence = (
+  value: number | undefined,
+): number | undefined => optionalNonNegativeInteger(value, 'after_sequence');
+
+const canonicalJournalLimit = (value: number | undefined): number =>
+  Math.min(
+    asPageValue(value, canonicalJournalMaximumPageSize, 'limit'),
+    canonicalJournalMaximumPageSize,
+  );
+
+const canonicalJournalVersion = (value: string | undefined): string => {
+  const version = optionalTrimmed(value) ?? canonicalJournalProtocolVersion;
+  if (version !== canonicalJournalProtocolVersion) {
+    throw invalidCanonicalRequest(
+      'invalid_journal_protocol',
+      `journal_protocol_version must be ${canonicalJournalProtocolVersion}`,
+    );
+  }
+  return version;
+};
+
+const setCanonicalJournalCursors = (
+  query: URLSearchParams,
+  request: {
+    attempt_id?: string;
+    after_sequence?: number;
+    after_event_id?: string;
+  },
+  requireAttempt: boolean,
+): void => {
+  const attemptID = canonicalJournalAttemptID(
+    request.attempt_id,
+    requireAttempt,
+  );
+  const sequence = canonicalJournalSequence(request.after_sequence);
+  const eventID = canonicalJournalEventCursor(request.after_event_id);
+  if (sequence !== undefined && attemptID === undefined) {
+    throw invalidCanonicalRequest(
+      'invalid_journal_attempt',
+      'attempt_id is required with after_sequence',
+    );
+  }
+  if (attemptID !== undefined) {
+    query.set('attempt_id', attemptID);
+  }
+  if (sequence !== undefined) {
+    query.set('after_sequence', String(sequence));
+  }
+  if (eventID !== undefined) {
+    query.set('after_event_id', eventID);
+  }
 };
 
 const optionalFiniteNumber = (
@@ -848,6 +959,179 @@ class CanonicalRunStreamLifecycle {
   }
 
   private readonly onAbort = () => this.finish('canceled');
+}
+
+type CanonicalJournalStreamProjection =
+  | { kind: 'message'; message: WorkbenchJournalStreamMessage }
+  | { kind: 'error'; error: WorkbenchClientError };
+
+const canonicalJournalStreamProjection = (
+  frame: { event?: string; id?: string; data: string },
+  scope: RunEventCursorScope,
+): CanonicalJournalStreamProjection | undefined => {
+  if (!frame.event) {
+    return undefined;
+  }
+  try {
+    if (frame.event === 'metadata') {
+      return {
+        kind: 'message',
+        message: {
+          kind: 'metadata',
+          metadata: adaptCanonicalJournalMetadata(
+            streamJSONRecord(frame.data, 'Canonical Journal metadata'),
+            {
+              spaceId: scope.spaceId,
+              threadId: scope.threadId,
+              runId: scope.runId,
+            },
+          ),
+        },
+      };
+    }
+    if (frame.event === 'events') {
+      if (!frame.id || !/^[1-9]\d*$/.test(frame.id)) {
+        throw invalidCanonicalResponse(
+          'Canonical Journal event ID must be a positive decimal',
+        );
+      }
+      const message = adaptCanonicalJournalStreamWrapper(
+        'event',
+        streamJSONRecord(frame.data, 'Canonical Journal event frame'),
+        {
+          spaceId: scope.spaceId,
+          threadId: scope.threadId,
+          runId: scope.runId,
+        },
+      );
+      if (message.kind !== 'event' || message.event.event_id !== frame.id) {
+        throw invalidCanonicalResponse(
+          'Canonical Journal stream frame ID does not match event_id',
+        );
+      }
+      return { kind: 'message', message };
+    }
+    if (frame.event === 'heartbeat' || frame.event === 'control') {
+      return {
+        kind: 'message',
+        message: adaptCanonicalJournalStreamWrapper(
+          frame.event,
+          streamJSONRecord(
+            frame.data,
+            `Canonical Journal ${frame.event} frame`,
+          ),
+          {
+            spaceId: scope.spaceId,
+            threadId: scope.threadId,
+            runId: scope.runId,
+          },
+        ),
+      };
+    }
+    if (frame.event === 'end') {
+      return {
+        kind: 'message',
+        message: adaptCanonicalJournalEnd(
+          streamJSONRecord(frame.data, 'Canonical Journal end frame'),
+        ),
+      };
+    }
+    if (frame.event === 'error') {
+      return { kind: 'error', error: canonicalRunStreamError(frame.data) };
+    }
+    return undefined;
+  } catch (error) {
+    return {
+      kind: 'error',
+      error:
+        error instanceof WorkbenchClientError
+          ? error
+          : invalidCanonicalResponse(
+              'Canonical Journal stream frame could not be projected',
+            ),
+    };
+  }
+};
+
+const normalizeCanonicalJournalStreamFailure = (
+  error: unknown,
+): WorkbenchClientError =>
+  error instanceof WorkbenchClientError
+    ? error
+    : new WorkbenchClientError({
+        message: 'Canonical Journal stream failed',
+        code: 'journal_stream_transport_error',
+        retryable: true,
+        outcome: 'failed',
+      });
+
+class CanonicalJournalStreamLifecycle {
+  readonly controller = new AbortController();
+  readonly closed: Promise<void>;
+
+  private resolveClosed: () => void = () => undefined;
+  private finished = false;
+
+  constructor(
+    private readonly request: SubscribeWorkbenchJournalEventsRequest,
+  ) {
+    this.closed = new Promise<void>(resolve => {
+      this.resolveClosed = resolve;
+    });
+    request.signal.addEventListener('abort', this.onAbort, { once: true });
+    if (request.signal.aborted) {
+      this.finish();
+    }
+  }
+
+  get isFinished(): boolean {
+    return this.finished;
+  }
+
+  subscription() {
+    return {
+      close: () => this.finish(),
+      closed: this.closed,
+    };
+  }
+
+  handle(projection: CanonicalJournalStreamProjection): void {
+    if (this.finished) {
+      return;
+    }
+    if (projection.kind === 'error') {
+      this.finish(projection.error);
+      return;
+    }
+    try {
+      this.request.onMessage(projection.message);
+      if (projection.message.kind === 'end') {
+        this.finish();
+      }
+    } catch (error) {
+      this.finish(normalizeCanonicalJournalStreamFailure(error));
+    }
+  }
+
+  finish(error?: WorkbenchClientError): void {
+    if (this.finished) {
+      return;
+    }
+    this.finished = true;
+    this.request.signal.removeEventListener('abort', this.onAbort);
+    if (!this.controller.signal.aborted) {
+      this.controller.abort();
+    }
+    try {
+      if (error) {
+        this.request.onError(error);
+      }
+    } finally {
+      this.resolveClosed();
+    }
+  }
+
+  private readonly onAbort = () => this.finish();
 }
 
 export class CanonicalThreadCoreClient
@@ -1375,6 +1659,299 @@ export class CanonicalThreadCoreClient
     });
 
     return subscription;
+  }
+
+  async getRunJournal(request: GetWorkbenchRunJournalRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const query = new URLSearchParams();
+    setCanonicalJournalCursors(query, request, false);
+    query.set('limit', String(canonicalJournalLimit(request.limit)));
+    query.set(
+      'journal_protocol_version',
+      canonicalJournalVersion(request.journal_protocol_version),
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/journal?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalJournalBootstrap(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    });
+  }
+
+  async listJournalEvents(request: ListWorkbenchJournalEventsRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const query = new URLSearchParams();
+    setCanonicalJournalCursors(query, request, true);
+    query.set('limit', String(canonicalJournalLimit(request.limit)));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/events?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalJournalEventPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    });
+  }
+
+  subscribeJournalEvents(request: SubscribeWorkbenchJournalEventsRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const query = new URLSearchParams();
+    query.set(
+      'journal_protocol_version',
+      canonicalJournalVersion(request.journal_protocol_version),
+    );
+    setCanonicalJournalCursors(query, request, false);
+    query.set('cancel_on_disconnect', 'false');
+    const scope: RunEventCursorScope = {
+      contract: this.contract,
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    };
+    const lifecycle = new CanonicalJournalStreamLifecycle(request);
+    const subscription = lifecycle.subscription();
+    if (lifecycle.isFinished) {
+      return subscription;
+    }
+    const url = `/api/workbench/threads/${threadID}/runs/${runID}/stream?${query.toString()}`;
+    void this.streamer<CanonicalJournalStreamProjection>(url, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'text/event-stream',
+        'X-Coze-Space-ID': spaceID,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      signal: lifecycle.controller.signal,
+      onStart: async response => {
+        if (!response.ok) {
+          throw await canonicalErrorFromResponse(response);
+        }
+        const contentType = response.headers.get('content-type');
+        const mediaType = contentType?.split(';', 1)[0].trim().toLowerCase();
+        if (mediaType !== 'text/event-stream') {
+          throw invalidCanonicalResponse(
+            'Canonical Journal stream response must be text/event-stream',
+            response.status,
+          );
+        }
+      },
+      streamParser: frame =>
+        frame.type === 'event'
+          ? canonicalJournalStreamProjection(frame, scope)
+          : undefined,
+      onMessage: ({ message }) => lifecycle.handle(message),
+      onAllSuccess: () => {
+        lifecycle.finish(
+          new WorkbenchClientError({
+            message: 'Canonical Journal stream disconnected before end',
+            code: 'journal_stream_disconnected',
+            retryable: true,
+            outcome: 'failed',
+          }),
+        );
+      },
+      onError: ({ fetchStreamError }) => {
+        lifecycle.finish(
+          normalizeCanonicalJournalStreamFailure(fetchStreamError.error),
+        );
+      },
+    }).catch(error => {
+      lifecycle.finish(normalizeCanonicalJournalStreamFailure(error));
+    });
+    return subscription;
+  }
+
+  async getJournalSnapshot(request: GetWorkbenchJournalSnapshotRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const snapshotID = asNonEmptyRequestString(
+      request.snapshot_id,
+      'snapshot_id',
+    );
+    const query = new URLSearchParams();
+    setOptionalString(query, 'cursor', request.cursor);
+    if (request.limit !== undefined) {
+      query.set('limit', String(canonicalJournalLimit(request.limit)));
+    }
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/snapshots/${encodeURIComponent(snapshotID)}${suffix}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalJournalSnapshot(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    });
+  }
+
+  async auditJournalSnapshotAction(
+    request: AuditWorkbenchJournalSnapshotActionRequest,
+  ) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const snapshotID = asNonEmptyRequestString(
+      request.snapshot_id,
+      'snapshot_id',
+    );
+    if (!isWorkbenchJournalSnapshotAction(request.action)) {
+      throw invalidCanonicalRequest(
+        'invalid_snapshot_action',
+        'action is not supported for Journal snapshots',
+      );
+    }
+    const fragmentID = optionalTrimmed(request.fragment_id);
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/snapshots/${encodeURIComponent(snapshotID)}/actions`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        idempotencyKey: asNonEmptyRequestString(
+          request.idempotency_key,
+          'idempotency_key',
+        ),
+        json: {
+          action: request.action,
+          ...(fragmentID === undefined ? {} : { fragment_id: fragmentID }),
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalJournalSnapshotAction(requiredBody(result.body));
+  }
+
+  async recoverJournal(request: RecoverWorkbenchJournalRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const sourceAttemptID = canonicalJournalAttemptID(
+      request.source_attempt_id,
+      false,
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/recover`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        idempotencyKey: asNonEmptyRequestString(
+          request.idempotency_key,
+          'idempotency_key',
+        ),
+        json: {
+          ...(sourceAttemptID === undefined
+            ? {}
+            : { source_attempt_id: sourceAttemptID }),
+          action: asNonEmptyRequestString(request.action, 'action'),
+          ...(request.confirmed === undefined
+            ? {}
+            : { confirmed: request.confirmed }),
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalJournalRecovery(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    });
+  }
+
+  async getJournalSettings(request: GetWorkbenchJournalSettingsRequest) {
+    const result = await fetchCanonicalJSON('/api/workbench/journal/settings', {
+      fetch: this.fetcher,
+      method: 'GET',
+      signal: request.signal,
+    });
+    return adaptCanonicalJournalSettings(requiredBody(result.body));
+  }
+
+  async patchJournalSettings(request: PatchWorkbenchJournalSettingsRequest) {
+    if (
+      !Number.isFinite(request.split_ratio) ||
+      request.split_ratio < 0.4 ||
+      request.split_ratio > 0.7
+    ) {
+      throw invalidCanonicalRequest(
+        'invalid_split_ratio',
+        'split_ratio must be between 0.4 and 0.7',
+      );
+    }
+    const result = await fetchCanonicalJSON('/api/workbench/journal/settings', {
+      fetch: this.fetcher,
+      method: 'PATCH',
+      json: {
+        split_ratio: request.split_ratio,
+        revision: asNonEmptyRequestString(request.revision, 'revision'),
+      },
+      signal: request.signal,
+    });
+    return adaptCanonicalJournalSettings(requiredBody(result.body));
   }
 
   async appendMessage(request: AppendWorkbenchMessageRequest) {
