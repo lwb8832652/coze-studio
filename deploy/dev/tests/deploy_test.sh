@@ -402,12 +402,74 @@ test_first_deployment_failure_cannot_claim_rollback() (
     'first deployment failure attempted to create rollback tags'
 )
 
+test_web_health_base_url_uses_configured_host_port() (
+  WEB_BIND_IP=0.0.0.0
+  WEB_PORT=18888
+  actual=$(web_health_base_url) || fail 'wildcard web health URL could not be built'
+  [ "$actual" = 'http://127.0.0.1:18888' ] || \
+    fail "wildcard web health URL used the wrong host or port: $actual"
+
+  WEB_BIND_IP=192.0.2.10
+  WEB_PORT=18889
+  actual=$(web_health_base_url) || fail 'specific web health URL could not be built'
+  [ "$actual" = 'http://192.0.2.10:18889' ] || \
+    fail "specific web health URL used the wrong host or port: $actual"
+)
+
+test_health_checks_stop_at_unhealthy_nsqd() (
+  case_dir=$(mktemp -d "$TEST_ROOT/unhealthy-nsqd.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+
+  compose_cmd() {
+    {
+      printf 'compose'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    if [ "$#" -eq 3 ] && [ "$1" = ps ] && [ "$2" = -q ] && [ "$3" = nsqd ]; then
+      printf 'nsqd-container\n'
+    fi
+  }
+
+  docker_cmd() {
+    {
+      printf 'docker'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    printf 'starting\n'
+  }
+
+  curl() {
+    {
+      printf 'curl'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+  }
+
+  if health_checks_pass "$REV_A"; then
+    fail 'health checks passed while nsqd was unhealthy'
+  fi
+  assert_file_contains "$command_log" '^compose ps -q nsqd$' \
+    'health checks did not inspect the nsqd service first'
+  assert_file_contains "$command_log" '^docker inspect .* nsqd-container$' \
+    'health checks did not inspect the nsqd container health'
+  assert_file_not_contains "$command_log" '^compose exec ' \
+    'health checks called the backend while nsqd was unhealthy'
+  assert_file_not_contains "$command_log" '^curl ' \
+    'health checks called the web endpoint while nsqd was unhealthy'
+)
+
 write_direct_case_files() {
   case_dir=$1
   mkdir -p -- "$case_dir/bin"
   printf '%s\n' \
     'ACR_REGISTRY=registry.example' \
     'ACR_NAMESPACE=example' \
+    'WEB_BIND_IP=0.0.0.0' \
+    'WEB_PORT=8888' \
     'ACR_PASSWORD=sentinel-acr-password' \
     'APP_SECRET=sentinel-app-secret' \
     'BAOTA_WEBHOOK_TOKEN=sentinel-webhook-token' > "$case_dir/deploy.env"
@@ -478,6 +540,42 @@ test_invalid_sha_fails_before_docker() (
   [ ! -e "$marker" ] || fail 'invalid SHA reached Docker'
   assert_file_contains "$case_dir/output.log" 'expected zero arguments or one full 40-hex SHA' \
     'invalid SHA error was not reported'
+)
+
+test_invalid_web_bind_ip_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/invalid-web-bind-ip.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_BIND_IP=999.0.0.1\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'invalid WEB_BIND_IP unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'invalid WEB_BIND_IP reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_BIND_IP must be a valid IPv4 address' \
+    'invalid WEB_BIND_IP error was not reported'
+)
+
+test_invalid_web_port_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/invalid-web-port.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_PORT=65536\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'invalid WEB_PORT unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'invalid WEB_PORT reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_PORT must be an integer from 1 to 65535' \
+    'invalid WEB_PORT error was not reported'
 )
 
 test_logs_never_disclose_secret_sentinels() (
@@ -579,8 +677,12 @@ run_test 'health failure rolls back atomically' test_health_failure_rolls_back_b
 run_test 'success record failure rolls back atomically' test_success_record_failure_rolls_back_both_images
 run_test 'rollback verifies restored image identities' test_rollback_rejects_restored_container_image_mismatch
 run_test 'first deployment failure has no fake rollback' test_first_deployment_failure_cannot_claim_rollback
+run_test 'web health URL uses the configured host port' test_web_health_base_url_uses_configured_host_port
+run_test 'unhealthy nsqd blocks application health checks' test_health_checks_stop_at_unhealthy_nsqd
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction
 run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker
+run_test 'invalid web bind IP fails before Docker' test_invalid_web_bind_ip_fails_before_docker
+run_test 'invalid web port fails before Docker' test_invalid_web_port_fails_before_docker
 run_test 'logs do not disclose secret sentinels' test_logs_never_disclose_secret_sentinels
 run_test 'success record is atomic and complete' test_record_success_is_atomic_and_complete
 run_test 'success record cleans failed temporary file' test_record_success_cleans_temporary_file_when_finalize_fails
