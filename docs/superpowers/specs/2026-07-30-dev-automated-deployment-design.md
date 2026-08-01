@@ -202,7 +202,8 @@ Workflow 比较已晋级 SHA 到当前目标 SHA 的完整迁移目录变化。�
 
 GitHub 配置：
 
-- Variables：`ACR_REGISTRY`、`ACR_NAMESPACE`。
+- Variables：`ACR_REGISTRY`、`ACR_NAMESPACE`；宝塔使用自签名证书时还需
+  `BAOTA_WEBHOOK_PINNED_PUBKEY`。
 - Secrets：`ACR_USERNAME`、`ACR_PASSWORD`、`BAOTA_WEBHOOK_URL`。
 - 可选 Secret：`BAOTA_WEBHOOK_TOKEN`。
 - Workflow 权限：`contents: read`。
@@ -210,6 +211,10 @@ GitHub 配置：
 GitHub ACR 账号只允许向目标命名空间推送镜像。服务器 ACR 账号只允许拉取。
 Webhook URL 本身按密钥管理；宝塔支持请求头时，再发送 Bearer Token。请求体可以
 包含 revision 供日志使用，但服务器部署不能依赖该字段。
+
+Webhook 优先使用与域名匹配且受公共 CA 信任的证书。必须保留宝塔自签名证书时，
+workflow 仅在配置合法 SHA-256 公钥指纹后组合使用 curl `--insecure` 与
+`--pinnedpubkey`；禁止只关闭证书校验。证书或私钥轮换必须同步更新指纹。
 
 只允许 `push` 到仓库自身的 `dev` 触发部署。Pull Request、fork 和普通需求分支
 不能访问部署 Secrets，也不能调用 webhook。

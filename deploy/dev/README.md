@@ -34,9 +34,27 @@
 | Secret | `ACR_PASSWORD` | Actions 推送凭据 |
 | Secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
 | Secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
+| Variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
 
 Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。不要配置 SSH 私钥、数据库
 连接串或 `app.env` 内容。
+
+优先为宝塔 webhook 配置与域名匹配、受公共 CA 信任的证书，此时不要设置
+`BAOTA_WEBHOOK_PINNED_PUBKEY`。如果必须使用宝塔自签名证书，生成并核对当前服务端
+证书的公钥指纹：
+
+```bash
+openssl s_client -connect bt.example.com:8888 -servername bt.example.com \
+  -showcerts </dev/null 2>/dev/null \
+  | openssl x509 -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary \
+  | openssl base64
+```
+
+在结果前加 `sha256//` 后写入该 Variable。Workflow 只会在配置了合法公钥指纹时
+组合使用 curl 的 `--insecure` 和 `--pinnedpubkey`；连接仍必须匹配固定公钥，不会
+退化为无校验 HTTPS。宝塔证书或私钥轮换后，需要先同步更新该 Variable。
 
 ## 安装服务器目录
 
