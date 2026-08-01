@@ -28,7 +28,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - wget -qO- http://127.0.0.1:4151/ping | grep -qx OK
+        - wget -q -O - http://127.0.0.1:4151/ping | grep -qx OK
     networks:
       - coze-dev
     logging: *default-logging

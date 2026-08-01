@@ -58,6 +58,27 @@ service_block() {
   '
 }
 
+dependency_block() {
+  printf '%s\n' "$1" | awk -v dependency="$2" '
+    $0 == "    depends_on:" {
+      in_depends_on=1
+      next
+    }
+    in_depends_on && $0 ~ /^    [^[:space:]]/ {
+      exit
+    }
+    in_depends_on && $0 == "      " dependency ":" {
+      in_dependency=1
+    }
+    in_dependency && $0 ~ /^      [^[:space:]]/ && $0 != "      " dependency ":" {
+      exit
+    }
+    in_dependency {
+      print
+    }
+  '
+}
+
 render_config() {
   server_tag=$1
   web_tag=$2
@@ -85,12 +106,19 @@ require_text "$env_source" '^WEB_IMAGE_TAG=dev$' '.env.example must default the 
 require_text "$env_source" '^WEB_BIND_IP=0\.0\.0\.0$' '.env.example must default the web bind IP to all interfaces'
 require_text "$env_source" '^WEB_PORT=8888$' '.env.example must default the web port to 8888'
 require_text "$env_source" '^DEPLOY_HEALTH_TIMEOUT_SECONDS=120$' '.env.example must define the deployment health timeout'
+env_web_settings_order=$(printf '%s\n' "$env_source" | awk '
+  /^WEB_BIND_IP=/ {print "WEB_BIND_IP"}
+  /^WEB_PORT=/ {print "WEB_PORT"}
+  /^DEPLOY_HEALTH_TIMEOUT_SECONDS=/ {print "DEPLOY_HEALTH_TIMEOUT_SECONDS"}
+')
+require_exact_text "$env_web_settings_order" $'WEB_BIND_IP\nWEB_PORT\nDEPLOY_HEALTH_TIMEOUT_SECONDS' 'web bind defaults must precede the deployment health timeout'
 services=$(printf '%s\n' "$compose_source" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
 require_exact_text "$services" $'nsqd\ncoze-server\ncoze-web' 'services must be exactly nsqd, coze-server, then coze-web'
 nsqd_config=$(service_block "$config" nsqd)
 server_config=$(service_block "$config" coze-server)
 web_config=$(service_block "$config" coze-web)
 nsqd_source=$(service_block "$compose_source" nsqd)
+web_source=$(service_block "$compose_source" coze-web)
 
 require_text "$nsqd_config" '^    image: nsqio/nsq:v1\.3\.0$' 'nsqd image must be pinned to v1.3.0'
 nsqd_command=$(printf '%s\n' "$nsqd_config" | awk '
@@ -112,7 +140,7 @@ require_text "$nsqd_config" '^      - type: volume$' 'nsqd data must use a named
 require_text "$nsqd_config" '^        source: nsq-data$' 'nsqd data volume must use nsq-data'
 require_text "$nsqd_config" '^        target: /data$' 'nsqd data volume must mount at /data'
 require_text "$nsqd_config" '^        - CMD-SHELL$' 'nsqd healthcheck must execute through a shell'
-require_text "$nsqd_config" 'wget -qO- http://127\.0\.0\.1:4151/ping \| grep -qx OK' 'nsqd healthcheck must require an exact OK response'
+require_text "$nsqd_source" '^        - wget -q -O - http://127\.0\.0\.1:4151/ping \| grep -qx OK$' 'nsqd healthcheck command must require an exact OK response'
 require_text "$nsqd_config" '^    restart: unless-stopped$' 'nsqd must restart unless stopped'
 require_text "$nsqd_config" '^    pull_policy: missing$' 'nsqd must pull only when its image is missing'
 require_text "$nsqd_config" '^    stop_grace_period: 30s$' 'nsqd must allow 30 seconds for a graceful stop'
@@ -144,8 +172,13 @@ require_text "$server_config" 'restart: unless-stopped' 'coze-server must restar
 
 require_text "$web_config" 'image: registry\.example\.aliyuncs\.com/example/coze-web:dev' 'coze-web image must use the dev tag by default'
 require_text "$web_config" 'condition: service_healthy' 'coze-web must wait for a healthy coze-server'
+web_server_dependency=$(dependency_block "$web_config" coze-server)
+require_text "$web_server_dependency" '^      coze-server:$' 'coze-web must depend specifically on coze-server'
+require_text "$web_server_dependency" '^        condition: service_healthy$' 'coze-web must wait for a healthy coze-server dependency'
+require_text "$web_server_dependency" '^        restart: true$' 'coze-web must restart when coze-server is explicitly restarted'
 require_text "$web_config" 'wget' 'web healthcheck must use wget'
 require_text "$web_config" 'http://127\.0\.0\.1/healthz' 'web healthcheck must call /healthz'
+require_text "$web_source" '^      - "\$\{WEB_BIND_IP:-0\.0\.0\.0\}:\$\{WEB_PORT:-8888\}:80"$' 'coze-web must retain the defaulted bind and port expression'
 require_text "$web_config" 'host_ip: 0\.0\.0\.0' 'coze-web must bind to all interfaces by default'
 require_text "$web_config" 'target: 80' 'coze-web must target container port 80'
 require_text "$web_config" 'published: "8888"' 'coze-web must publish host port 8888'
@@ -156,8 +189,15 @@ for service_config in "$nsqd_config" "$server_config" "$web_config"; do
   require_text "$service_config" '^      driver: json-file$' 'every service must use the json-file log driver'
   require_text "$service_config" '^        max-file: "3"$' 'every service must retain three log files'
   require_text "$service_config" '^        max-size: 10m$' 'every service log file must be limited to 10m'
+  require_text "$service_config" '^      coze-dev: null$' 'every service must attach to the coze-dev network'
 done
 
+networks=$(printf '%s\n' "$config" | awk '
+  /^networks:$/ {in_networks=1; next}
+  in_networks && /^[^[:space:]]/ {exit}
+  in_networks && /^  [^[:space:]]/ {sub(/^  /, ""); sub(/:$/, ""); print}
+')
+require_exact_text "$networks" 'coze-dev' 'coze-dev must be the only top-level network'
 require_text "$config" 'driver: bridge' 'the deployment network must be a bridge network'
 if printf '%s\n' "$config" | grep -Eq -- 'internal: true'; then
   fail 'the deployment network must allow backend outbound connectivity'
