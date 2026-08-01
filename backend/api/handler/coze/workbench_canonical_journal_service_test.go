@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/mockey"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -344,16 +345,69 @@ func TestCanonicalJournalCoreRoutesNoLongerReturnNotImplemented(t *testing.T) {
 		require.NotEqual(t, http.StatusNotImplemented, response.Code, response.Result().Body())
 		require.NotContains(t, string(response.Result().Body()), "journal_not_implemented")
 		if request.path == base+"/recover" {
-			require.Equal(t, http.StatusServiceUnavailable, response.Code)
+			require.Equal(t, http.StatusNotFound, response.Code)
 			require.JSONEq(t, `{
-				"detail":"Required service is unavailable",
-				"error_code":"dependency_unavailable",
-				"code":"dependency_unavailable",
-				"retryable":true,
+				"detail":"Resource not found",
+				"error_code":"RESOURCE_NOT_FOUND",
+				"code":"RESOURCE_NOT_FOUND",
+				"retryable":false,
 				"trace_id":""
 			}`, string(response.Result().Body()))
 		}
 	}
+}
+
+func TestRecoverCanonicalRunJournalForwardsControlledRecovery(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunFixture(t, 1, "journal recovery")
+	var captured appagentthread.RecoverJournalRequest
+	patch := mockey.Mock((*appagentthread.ApplicationService).RecoverJournal).To(
+		func(
+			_ *appagentthread.ApplicationService,
+			_ context.Context,
+			req appagentthread.RecoverJournalRequest,
+		) (*appagentthread.RecoverJournalResult, error) {
+			captured = req
+			activeSlot := uint8(1)
+			return &appagentthread.RecoverJournalResult{
+				Attempt: &domainentity.RunAttempt{
+					ID: 300, ThreadID: req.ThreadID, JournalRunID: req.RunID,
+					ExecutionRunID: 301, AttemptID: "att_recovery", Ordinal: 2,
+					Status: domainentity.RunAttemptStatusPending, ActiveSlot: &activeSlot,
+					NextSequence: 1, ProjectionState: domainentity.JournalProjectionStateHealthy,
+					CreatedAt: 1000,
+				},
+				Accepted: true, Created: true,
+			}, nil
+		},
+	).Build()
+	t.Cleanup(func() { patch.UnPatch() })
+
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1)
+	h.POST("/api/workbench/threads/:thread_id/runs/:run_id/recover", RecoverCanonicalRunJournal)
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/"+strconv.FormatInt(run.RunID, 10)+"/recover",
+		`{"source_attempt_id":"att_source","action":"skip","confirmed":true}`,
+		ut.Header{Key: "Idempotency-Key", Value: "recovery-handler-1"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	require.Equal(t, int64(2), captured.ViewerID)
+	require.Equal(t, int64(1), captured.SpaceID)
+	require.Equal(t, int64(1), captured.ThreadID)
+	require.Equal(t, run.RunID, captured.RunID)
+	require.Equal(t, "att_source", captured.SourceAttemptID)
+	require.Equal(t, appagentthread.JournalRecoveryActionSkip, captured.Action)
+	require.True(t, captured.Confirmed)
+	require.NotEmpty(t, captured.IdempotencyKey)
+	require.NotEqual(t, "recovery-handler-1", captured.IdempotencyKey)
+	var body journalcontract.RecoverCanonicalRunJournalResponse
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &body))
+	require.True(t, body.Accepted)
+	require.Equal(t, "att_recovery", body.Attempt.AttemptID)
 }
 
 func TestProjectCanonicalJournalSnapshotUsesTypedSafeViews(t *testing.T) {

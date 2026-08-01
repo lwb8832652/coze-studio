@@ -219,6 +219,48 @@ func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
 	require.Equal(t, "trace-enrollment", *result.Attempt.TraceID)
 }
 
+func TestCreateRunBundleBuildsAtomicExpiredLeaseRecoveryBoundary(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2201)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			IdempotencyKey: "lease-recovery-1", MultitaskStrategy: "reject",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			Recovery: &JournalRecoveryEnrollmentOptions{
+				JournalRunID: 50, SourceCheckpointID: 700,
+				SourceAttemptID: "att_100", IdempotencyKey: "lease-recovery-1",
+				ExpiredLease: &JournalRecoveryExpiredLeaseOptions{
+					RunID: 50, LeaseOwner: "worker-a", LeaseToken: "lease-50",
+					ExecutionGeneration: 3, Now: 2000,
+					ErrorCode:    "run_recovered",
+					ErrorMessage: "execution recovered from a durable checkpoint",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, int64(2201), result.Run.ID)
+	require.Equal(t, int64(2203), result.Attempt.ID)
+	require.NotNil(t, repo.lastCreateRunBundleReq)
+	source := repo.lastCreateRunBundleReq.RecoverySourceLease
+	require.NotNil(t, source)
+	require.Equal(t, int64(50), source.RunID)
+	require.Equal(t, entity.RunStatusFailed, source.ToStatus)
+	require.Equal(t, int64(2202), source.Event.ID)
+	require.Equal(t, "run.failed", source.Event.EventType)
+	require.Contains(t, source.Event.Payload, `"error_code":"run_recovered"`)
+	require.NotNil(t, source.JournalEvent)
+	require.Equal(t, "run.lifecycle", source.JournalEvent.EventType)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), source.JournalEvent.Status)
+}
+
 func TestCreateRunBundleRejectsUnsupportedJournalEnrollmentVersion(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
@@ -2388,6 +2430,7 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 }
 
 type memoryRepo struct {
+	repository.JournalExecutionRepository
 	mu                                 sync.Mutex
 	threads                            map[int64]*entity.Thread
 	messages                           map[int64][]*entity.Message
@@ -2397,6 +2440,7 @@ type memoryRepo struct {
 	journalEvents                      map[int64]*entity.JournalEvent
 	lastJournalAttempt                 *entity.RunAttempt
 	lastJournalEvent                   *entity.JournalEvent
+	lastCreateRunBundleReq             *repository.CreateRunBundleRequest
 	lastFinalizeJournalReq             repository.FinalizeJournalAttemptRequest
 	checkpoints                        map[int64][]*entity.Checkpoint
 	memories                           map[int64][]*entity.Memory
@@ -2718,6 +2762,8 @@ func (r *memoryRepo) CreateRunBundle(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.createRunBundleCalls++
+	requestCopy := req
+	r.lastCreateRunBundleReq = &requestCopy
 	if req.Run == nil {
 		return nil, fmt.Errorf("run is required")
 	}
@@ -2769,7 +2815,8 @@ func (r *memoryRepo) CreateRunBundle(
 			}
 		}
 	}
-	if req.Attempt != nil && req.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
+	if req.Attempt != nil && req.Attempt.RecoveryIdempotencyKey == nil &&
+		req.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
 		return nil, repository.ErrUnsupportedJournalEnrollmentVersion
 	}
 

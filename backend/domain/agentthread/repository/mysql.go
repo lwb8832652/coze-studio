@@ -192,6 +192,36 @@ type runAttemptPO struct {
 	EndedAt                *int64  `gorm:"column:ended_at"`
 }
 
+type sideEffectLedgerPO struct {
+	ID                       int64          `gorm:"column:id;primaryKey"`
+	ThreadID                 int64          `gorm:"column:thread_id"`
+	JournalRunID             int64          `gorm:"column:journal_run_id;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:1;uniqueIndex:uk_agent_side_effect_ledger_resolution,priority:1;index:idx_agent_side_effect_ledger_attempt,priority:1"`
+	AttemptID                string         `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:2;index:idx_agent_side_effect_ledger_attempt,priority:2"`
+	IdempotencyKey           string         `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:3"`
+	ActionKind               string         `gorm:"column:action_kind;size:128"`
+	ReplayPolicy             string         `gorm:"column:replay_policy;size:32"`
+	Status                   string         `gorm:"column:status;size:32;index:idx_agent_side_effect_ledger_status,priority:1"`
+	RequestHash              string         `gorm:"column:request_hash;size:64"`
+	RequestSummary           datatypes.JSON `gorm:"column:request_summary;type:json"`
+	ExternalReferenceDigest  *string        `gorm:"column:external_reference_digest;size:64"`
+	ResultSnapshotID         *string        `gorm:"column:result_snapshot_id;size:64"`
+	ResultEventID            *int64         `gorm:"column:result_event_id"`
+	CheckpointID             *int64         `gorm:"column:checkpoint_id"`
+	CompensationKind         *string        `gorm:"column:compensation_kind;size:128"`
+	ResolutionAction         *string        `gorm:"column:resolution_action;size:32"`
+	ResolutionIdempotencyKey *string        `gorm:"column:resolution_idempotency_key;size:191;uniqueIndex:uk_agent_side_effect_ledger_resolution,priority:2"`
+	ResolvedAt               *int64         `gorm:"column:resolved_at"`
+	Version                  uint64         `gorm:"column:version"`
+	PreparedAt               int64          `gorm:"column:prepared_at"`
+	ExecutingAt              *int64         `gorm:"column:executing_at"`
+	SucceededAt              *int64         `gorm:"column:succeeded_at"`
+	FailedAt                 *int64         `gorm:"column:failed_at"`
+	UnknownAt                *int64         `gorm:"column:unknown_at"`
+	CompensatedAt            *int64         `gorm:"column:compensated_at"`
+	CreatedAt                int64          `gorm:"column:created_at;index:idx_agent_side_effect_ledger_attempt,priority:3"`
+	UpdatedAt                int64          `gorm:"column:updated_at;index:idx_agent_side_effect_ledger_status,priority:2"`
+}
+
 type journalSnapshotPO struct {
 	SnapshotID         string  `gorm:"column:snapshot_id;size:64;primaryKey"`
 	SpaceID            int64   `gorm:"column:space_id;index:idx_agent_journal_snapshots_scope,priority:1;index:idx_agent_journal_snapshots_hash_scope,priority:1"`
@@ -494,6 +524,10 @@ func (runEventPO) TableName() string {
 
 func (runAttemptPO) TableName() string {
 	return "agent_run_attempts"
+}
+
+func (sideEffectLedgerPO) TableName() string {
+	return "agent_side_effect_ledger"
 }
 
 func (journalSnapshotPO) TableName() string {
@@ -1061,9 +1095,19 @@ func (r *threadRepository) CreateRunBundle(
 		return nil, fmt.Errorf("run bundle event journal does not belong to event")
 	}
 	if req.Attempt != nil &&
-		(req.Attempt.ThreadID != req.Run.ThreadID ||
-			req.Attempt.JournalRunID != req.Run.ID || req.Attempt.ExecutionRunID != req.Run.ID) {
-		return nil, fmt.Errorf("run bundle attempt does not belong to run")
+		(req.Attempt.ThreadID != req.Run.ThreadID || req.Attempt.ExecutionRunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle attempt does not belong to execution run")
+	}
+	isRecoveryBundle := isRecoveryRunBundleAttempt(req.Attempt)
+	if req.RecoverySourceLease != nil && !isRecoveryBundle {
+		return nil, fmt.Errorf("run bundle recovery source lease requires a recovery attempt")
+	}
+	if req.Attempt != nil && !isRecoveryBundle && req.Attempt.JournalRunID != req.Run.ID {
+		return nil, fmt.Errorf("initial run bundle attempt does not belong to run")
+	}
+	if isRecoveryBundle &&
+		(req.Attempt.JournalRunID <= 0 || req.Attempt.JournalRunID == req.Run.ID) {
+		return nil, fmt.Errorf("recovery run bundle requires a distinct logical journal run")
 	}
 	if req.Attempt != nil &&
 		(req.Attempt.ID <= 0 || strings.TrimSpace(req.Attempt.AttemptID) == "") {
@@ -1089,27 +1133,40 @@ func (r *threadRepository) CreateRunBundle(
 		ValidateIdempotencyReplay:    req.ValidateIdempotencyReplay,
 		AllocateInterruptedEventIDs:  req.AllocateInterruptedEventIDs,
 	}
+	if req.RecoverySourceLease != nil {
+		sourceLease, err := normalizeRecoverySourceLease(req.RecoverySourceLease)
+		if err != nil {
+			return nil, err
+		}
+		normalized.RecoverySourceLease = sourceLease
+	}
 	if req.Attempt != nil {
 		attempt := *req.Attempt
 		expectedStatus, err := journalAttemptStatusFromRun(run.Status)
 		if err != nil {
 			return nil, err
 		}
-		if attempt.Status != expectedStatus || attempt.Ordinal != 1 {
-			return nil, fmt.Errorf("initial journal attempt status or ordinal does not match run")
+		if attempt.Status != expectedStatus {
+			return nil, fmt.Errorf("journal attempt status does not match run")
 		}
 		if attempt.NextSequence == 0 {
 			attempt.NextSequence = 1
 		}
 		if attempt.NextSequence != 1 || attempt.LastCommittedSequence != 0 {
-			return nil, fmt.Errorf("initial journal attempt sequence must start at one")
+			return nil, fmt.Errorf("journal attempt sequence must start at one")
 		}
-		if attempt.RecoveryIdempotencyKey != nil {
-			return nil, fmt.Errorf("initial journal attempt cannot have a recovery idempotency key")
-		}
-		attempt.EnrollmentVersion = strings.TrimSpace(attempt.EnrollmentVersion)
-		if attempt.EnrollmentVersion == "" {
-			return nil, fmt.Errorf("initial journal attempt enrollment version is required")
+		if isRecoveryBundle {
+			if err := validateRecoveryRunBundleInput(&run, &attempt); err != nil {
+				return nil, err
+			}
+		} else {
+			if attempt.Ordinal != 1 {
+				return nil, fmt.Errorf("initial journal attempt ordinal must be one")
+			}
+			attempt.EnrollmentVersion = strings.TrimSpace(attempt.EnrollmentVersion)
+			if attempt.EnrollmentVersion == "" {
+				return nil, fmt.Errorf("initial journal attempt enrollment version is required")
+			}
 		}
 		if attempt.ProjectionState == "" {
 			attempt.ProjectionState = entity.JournalProjectionStateHealthy
@@ -1188,6 +1245,16 @@ func (r *threadRepository) CreateRunBundle(
 		}
 		if found {
 			return nil
+		}
+		if isRecoveryBundle {
+			if err := prepareRecoveryRunBundleAttempt(
+				tx,
+				normalized.Run,
+				normalized.Attempt,
+				normalized.RecoverySourceLease,
+			); err != nil {
+				return err
+			}
 		}
 		if normalized.Attempt != nil &&
 			normalized.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
@@ -1311,6 +1378,263 @@ func lockThreadForUpdate(tx *gorm.DB, threadID int64) (*threadPO, error) {
 func isTopLevelTaskRun(run *entity.Run) bool {
 	return run != nil && run.ParentRunID == 0 &&
 		(run.RunKind == "" || run.RunKind == entity.RunKindTask)
+}
+
+func isRecoveryRunBundleAttempt(attempt *entity.RunAttempt) bool {
+	return attempt != nil && attempt.RecoveryIdempotencyKey != nil
+}
+
+func validateRecoveryRunBundleInput(run *entity.Run, attempt *entity.RunAttempt) error {
+	if run == nil || attempt == nil || !isTopLevelTaskRun(run) {
+		return fmt.Errorf("journal recovery execution run must be a top-level task")
+	}
+	recoveryKey := strings.TrimSpace(stringFromPtr(attempt.RecoveryIdempotencyKey))
+	if recoveryKey == "" || len(recoveryKey) > 191 {
+		return fmt.Errorf("journal recovery idempotency key is required")
+	}
+	if strings.TrimSpace(run.IdempotencyKey) != recoveryKey {
+		return fmt.Errorf("recovery run and attempt idempotency keys must match")
+	}
+	if attempt.SourceCheckpointID == nil || *attempt.SourceCheckpointID <= 0 ||
+		attempt.SourceAttemptID == nil || strings.TrimSpace(*attempt.SourceAttemptID) == "" {
+		return fmt.Errorf("journal recovery source checkpoint and attempt are required")
+	}
+	if attempt.Ordinal != 0 || strings.TrimSpace(attempt.EnrollmentVersion) != "" ||
+		attempt.ActiveSlot != nil || attempt.StartedAt != nil || attempt.EndedAt != nil ||
+		attempt.TerminalEventID != nil {
+		return fmt.Errorf("journal recovery attempt lifecycle is repository assigned")
+	}
+	if attempt.ProjectionState != "" &&
+		attempt.ProjectionState != entity.JournalProjectionStateHealthy {
+		return fmt.Errorf("journal recovery attempt projection must start healthy")
+	}
+	if attempt.ProjectionDegradedAt != nil {
+		return fmt.Errorf("journal recovery attempt cannot start degraded")
+	}
+	return nil
+}
+
+func prepareRecoveryRunBundleAttempt(
+	tx *gorm.DB,
+	run *entity.Run,
+	attempt *entity.RunAttempt,
+	sourceLease *ReconcileExpiredRunLeaseRequest,
+) error {
+	if tx == nil || run == nil || attempt == nil {
+		return fmt.Errorf("journal recovery bundle is required")
+	}
+
+	var root runPO
+	rootQuery := tx.Where("id = ?", attempt.JournalRunID)
+	if tx.Dialector.Name() != "sqlite" {
+		rootQuery = rootQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := rootQuery.First(&root).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrJournalNotEnrolled
+		}
+		return err
+	}
+	if root.ThreadID != run.ThreadID || root.SpaceID != run.SpaceID ||
+		root.CreatorID != run.CreatorID || root.ParentRunID != 0 ||
+		(root.RunKind != "" && root.RunKind != string(entity.RunKindTask)) {
+		return ErrJournalParentMismatch
+	}
+
+	sourceAttempt, err := lockJournalAttemptByIdentity(
+		tx, attempt.JournalRunID, strings.TrimSpace(*attempt.SourceAttemptID),
+	)
+	if err != nil {
+		return err
+	}
+	if sourceAttempt.ThreadID != run.ThreadID {
+		return ErrJournalParentMismatch
+	}
+	sourceStatus := entity.RunAttemptStatus(sourceAttempt.Status)
+	if !sourceStatus.IsTerminal() && !sourceStatus.IsActive() {
+		return ErrJournalInvalidStateTransition
+	}
+
+	var checkpoint checkpointPO
+	checkpointQuery := tx.Where("id = ?", *attempt.SourceCheckpointID)
+	if tx.Dialector.Name() != "sqlite" {
+		checkpointQuery = checkpointQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := checkpointQuery.First(&checkpoint).Error; err != nil {
+		return err
+	}
+	if checkpoint.ThreadID != run.ThreadID || checkpoint.RunID != sourceAttempt.ExecutionRunID ||
+		checkpoint.RuntimeDeletedAt != 0 {
+		return ErrJournalParentMismatch
+	}
+	if sourceStatus.IsActive() {
+		if sourceLease == nil || sourceLease.RunID != sourceAttempt.ExecutionRunID {
+			return ErrJournalInvalidStateTransition
+		}
+		if err := finalizeExpiredJournalRecoverySource(
+			tx,
+			run,
+			sourceAttempt,
+			sourceLease,
+		); err != nil {
+			return err
+		}
+	} else if sourceLease != nil {
+		return ErrJournalInvalidStateTransition
+	}
+
+	var active runAttemptPO
+	activeQuery := tx.Where(
+		"journal_run_id = ? AND active_slot = ?", attempt.JournalRunID, 1,
+	)
+	if tx.Dialector.Name() != "sqlite" {
+		activeQuery = activeQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := activeQuery.First(&active).Error; err == nil {
+		return ErrActiveJournalAttemptExists
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	var existingKey runAttemptPO
+	key := strings.TrimSpace(*attempt.RecoveryIdempotencyKey)
+	err = tx.Where(
+		"journal_run_id = ? AND recovery_idempotency_key = ?", attempt.JournalRunID, key,
+	).First(&existingKey).Error
+	if err == nil {
+		return ErrRunIdempotencyConflict
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	var maxOrdinal uint32
+	if err := tx.Model(&runAttemptPO{}).
+		Select("COALESCE(MAX(ordinal), 0)").
+		Where("journal_run_id = ?", attempt.JournalRunID).
+		Scan(&maxOrdinal).Error; err != nil {
+		return err
+	}
+
+	attempt.Ordinal = maxOrdinal + 1
+	attempt.EnrollmentVersion = sourceAttempt.EnrollmentVersion
+	attempt.SnapshotsEnabled = sourceAttempt.SnapshotsEnabled
+	attempt.ProjectionState = entity.JournalProjectionStateHealthy
+	attempt.ProjectionDegradedAt = nil
+	attempt.RecoveryIdempotencyKey = &key
+	sourceID := strings.TrimSpace(*attempt.SourceAttemptID)
+	attempt.SourceAttemptID = &sourceID
+	activeSlot := uint8(1)
+	attempt.ActiveSlot = &activeSlot
+	attempt.TerminalEventID = nil
+	attempt.EndedAt = nil
+	attempt.NextSequence = 1
+	attempt.LastCommittedSequence = 0
+	if attempt.CreatedAt <= 0 {
+		attempt.CreatedAt = run.CreatedAt
+	}
+	if attempt.UpdatedAt <= 0 {
+		attempt.UpdatedAt = attempt.CreatedAt
+	}
+	if attempt.Status == entity.RunAttemptStatusPending {
+		attempt.StartedAt = nil
+	} else {
+		startedAt := run.StartedAt
+		if startedAt <= 0 {
+			startedAt = attempt.CreatedAt
+		}
+		attempt.StartedAt = &startedAt
+	}
+	return nil
+}
+
+func normalizeRecoverySourceLease(
+	req *ReconcileExpiredRunLeaseRequest,
+) (*ReconcileExpiredRunLeaseRequest, error) {
+	if req == nil {
+		return nil, nil
+	}
+	if req.RunID <= 0 || strings.TrimSpace(req.LeaseOwner) == "" ||
+		strings.TrimSpace(req.LeaseToken) == "" || req.ExecutionGeneration == 0 {
+		return nil, fmt.Errorf("journal recovery source lease fence is required")
+	}
+	if req.ToStatus != entity.RunStatusFailed {
+		return nil, fmt.Errorf("journal recovery source lease must fail the expired execution")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	event, _, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, now)
+	if err != nil {
+		return nil, err
+	}
+	if req.JournalEvent == nil {
+		return nil, fmt.Errorf("journal recovery source terminal projection is required")
+	}
+	normalized := *req
+	normalized.LeaseOwner = strings.TrimSpace(req.LeaseOwner)
+	normalized.LeaseToken = strings.TrimSpace(req.LeaseToken)
+	normalized.Now = now
+	normalized.ErrorCode = strings.TrimSpace(req.ErrorCode)
+	normalized.ErrorMessage = strings.TrimSpace(req.ErrorMessage)
+	normalized.Event = event
+	journal := *req.JournalEvent
+	normalized.JournalEvent = &journal
+	return &normalized, nil
+}
+
+func finalizeExpiredJournalRecoverySource(
+	tx *gorm.DB,
+	recoveryRun *entity.Run,
+	sourceAttempt *runAttemptPO,
+	req *ReconcileExpiredRunLeaseRequest,
+) error {
+	if tx == nil || recoveryRun == nil || sourceAttempt == nil || req == nil {
+		return fmt.Errorf("journal recovery source transaction is required")
+	}
+	if sourceAttempt.ExecutionRunID != req.RunID || sourceAttempt.ThreadID != recoveryRun.ThreadID ||
+		entity.RunAttemptStatus(sourceAttempt.Status).IsTerminal() {
+		return ErrJournalInvalidStateTransition
+	}
+	event, eventPO, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, req.Now)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		"status":        string(req.ToStatus),
+		"error_code":    req.ErrorCode,
+		"error_message": req.ErrorMessage,
+		"ended_at":      req.Now,
+		"updated_at":    req.Now,
+	}
+	clearRunLeaseUpdates(updates)
+	updated := tx.Model(&runPO{}).
+		Where("id = ?", req.RunID).
+		Where("thread_id = ?", recoveryRun.ThreadID).
+		Where("space_id = ?", recoveryRun.SpaceID).
+		Where("creator_id = ?", recoveryRun.CreatorID).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("lease_owner = ?", req.LeaseOwner).
+		Where("lease_token = ?", req.LeaseToken).
+		Where("execution_generation = ?", req.ExecutionGeneration).
+		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", req.Now).
+		Updates(updates)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return fmt.Errorf(
+			"%w: run %d expired lease cannot be recovered",
+			ErrRunLeaseLost,
+			req.RunID,
+		)
+	}
+	return persistTerminalRunEventWithJournal(
+		tx,
+		event,
+		eventPO,
+		req.JournalEvent,
+		journalAttemptStatusForTerminalRun(req.ToStatus, req.ErrorCode),
+		req.Now,
+	)
 }
 
 func lockActiveTopLevelRuns(tx *gorm.DB, run *entity.Run, skipAdmission bool) ([]runPO, error) {
@@ -1514,7 +1838,7 @@ func findExistingRunBundle(
 
 	result := &CreateRunBundleResult{Run: run.toEntity()}
 	var attempt runAttemptPO
-	attemptErr := db.Where("journal_run_id = ? AND ordinal = ?", run.ID, 1).First(&attempt).Error
+	attemptErr := db.Where("execution_run_id = ?", run.ID).First(&attempt).Error
 	hasAttempt := attemptErr == nil
 	if attemptErr != nil && !errors.Is(attemptErr, gorm.ErrRecordNotFound) {
 		return nil, false, attemptErr
@@ -1529,7 +1853,18 @@ func findExistingRunBundle(
 				ErrRunIdempotencyConflict,
 			)
 		}
-		if attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+		if isRecoveryRunBundleAttempt(req.Attempt) {
+			if attempt.JournalRunID != req.Attempt.JournalRunID ||
+				attempt.ExecutionRunID != run.ID ||
+				strings.TrimSpace(stringFromPtr(attempt.RecoveryIdempotencyKey)) !=
+					strings.TrimSpace(stringFromPtr(req.Attempt.RecoveryIdempotencyKey)) ||
+				!equalInt64Pointers(attempt.SourceCheckpointID, req.Attempt.SourceCheckpointID) ||
+				!equalStringPointers(attempt.SourceAttemptID, req.Attempt.SourceAttemptID) {
+				return nil, false, fmt.Errorf("%w: journal recovery semantics changed", ErrRunIdempotencyConflict)
+			}
+		} else if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+			attempt.RecoveryIdempotencyKey != nil ||
+			attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
 			attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
 			return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
 		}

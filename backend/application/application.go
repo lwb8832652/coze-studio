@@ -390,7 +390,17 @@ func Init(ctx context.Context) (err error) {
 		),
 		adkEventSink,
 		func(run *agentthread.RunSummary) (adk.CheckPointStore, error) {
-			return agentthread.NewADKCheckpointStore(primaryServices.agentThreadSVC, run)
+			return agentthread.NewADKCheckpointStore(
+				primaryServices.agentThreadSVC,
+				run,
+				agentthread.WithADKJournalCheckpointStateReader(
+					primaryServices.agentThreadSVC.JournalRecoveryRepository,
+				),
+				agentthread.WithADKSideEffectBoundary(
+					primaryServices.agentThreadSVC.JournalSideEffectRepository,
+					infra.IDGenSVC,
+				),
+			)
 		},
 		agentthread.NewThreadUsageCollectorWithOptions(
 			primaryServices.agentThreadSVC,

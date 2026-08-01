@@ -133,6 +133,116 @@ type JournalEvent struct {
 	CreatedAt          int64
 }
 
+type SideEffectReplayPolicy string
+
+const (
+	SideEffectReplayPolicyReadOnly        SideEffectReplayPolicy = "read_only"
+	SideEffectReplayPolicyIdempotentWrite SideEffectReplayPolicy = "idempotent_write"
+	SideEffectReplayPolicyNonReplayable   SideEffectReplayPolicy = "non_replayable"
+)
+
+func (p SideEffectReplayPolicy) Valid() bool {
+	switch p {
+	case SideEffectReplayPolicyReadOnly,
+		SideEffectReplayPolicyIdempotentWrite,
+		SideEffectReplayPolicyNonReplayable:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p SideEffectReplayPolicy) AllowsAutomaticRecovery() bool {
+	return p == SideEffectReplayPolicyReadOnly ||
+		p == SideEffectReplayPolicyIdempotentWrite
+}
+
+type SideEffectLedgerStatus string
+
+const (
+	SideEffectLedgerStatusPrepared    SideEffectLedgerStatus = "prepared"
+	SideEffectLedgerStatusExecuting   SideEffectLedgerStatus = "executing"
+	SideEffectLedgerStatusSucceeded   SideEffectLedgerStatus = "succeeded"
+	SideEffectLedgerStatusFailed      SideEffectLedgerStatus = "failed"
+	SideEffectLedgerStatusUnknown     SideEffectLedgerStatus = "unknown"
+	SideEffectLedgerStatusCompensated SideEffectLedgerStatus = "compensated"
+)
+
+func (s SideEffectLedgerStatus) Valid() bool {
+	switch s {
+	case SideEffectLedgerStatusPrepared,
+		SideEffectLedgerStatusExecuting,
+		SideEffectLedgerStatusSucceeded,
+		SideEffectLedgerStatusFailed,
+		SideEffectLedgerStatusUnknown,
+		SideEffectLedgerStatusCompensated:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s SideEffectLedgerStatus) IsTerminal() bool {
+	switch s {
+	case SideEffectLedgerStatusSucceeded,
+		SideEffectLedgerStatusFailed,
+		SideEffectLedgerStatusUnknown,
+		SideEffectLedgerStatusCompensated:
+		return true
+	default:
+		return false
+	}
+}
+
+type SideEffectResolutionAction string
+
+const (
+	SideEffectResolutionActionMarkSucceeded SideEffectResolutionAction = "mark_succeeded"
+	SideEffectResolutionActionSkip          SideEffectResolutionAction = "skip"
+	SideEffectResolutionActionRetry         SideEffectResolutionAction = "retry"
+)
+
+func (a SideEffectResolutionAction) Valid() bool {
+	switch a {
+	case SideEffectResolutionActionMarkSucceeded,
+		SideEffectResolutionActionSkip,
+		SideEffectResolutionActionRetry:
+		return true
+	default:
+		return false
+	}
+}
+
+type SideEffectLedger struct {
+	ID                       int64
+	ThreadID                 int64
+	JournalRunID             int64
+	AttemptID                string
+	IdempotencyKey           string
+	ActionKind               string
+	ReplayPolicy             SideEffectReplayPolicy
+	Status                   SideEffectLedgerStatus
+	RequestHash              string
+	RequestSummary           string
+	ExternalReferenceDigest  string
+	ResultSnapshotID         string
+	ResultEventID            *int64
+	CheckpointID             *int64
+	CompensationKind         string
+	ResolutionAction         SideEffectResolutionAction
+	ResolutionIdempotencyKey string
+	Version                  uint64
+	PreparedAt               int64
+	ExecutingAt              *int64
+	SucceededAt              *int64
+	FailedAt                 *int64
+	UnknownAt                *int64
+	CompensatedAt            *int64
+	ResolvedAt               *int64
+	CreatedAt                int64
+	UpdatedAt                int64
+}
+
 type JournalSnapshotContentType string
 
 const (

@@ -141,6 +141,7 @@ type CreateRunBundleRequest struct {
 	EventJournal                 *entity.JournalEvent
 	EventJournalProjectionFailed bool
 	Attempt                      *entity.RunAttempt
+	RecoverySourceLease          *ReconcileExpiredRunLeaseRequest
 	SkipTopLevelAdmission        bool
 	ValidateIdempotencyReplay    bool
 	AllocateInterruptedEventIDs  func(count int) ([]int64, error)

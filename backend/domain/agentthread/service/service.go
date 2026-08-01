@@ -127,6 +127,25 @@ type JournalEnrollmentOptions struct {
 	EnrollmentVersion string
 	SnapshotsEnabled  bool
 	TraceID           string
+	Recovery          *JournalRecoveryEnrollmentOptions
+}
+
+type JournalRecoveryEnrollmentOptions struct {
+	JournalRunID       int64
+	SourceCheckpointID int64
+	SourceAttemptID    string
+	IdempotencyKey     string
+	ExpiredLease       *JournalRecoveryExpiredLeaseOptions
+}
+
+type JournalRecoveryExpiredLeaseOptions struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
 }
 
 type CreateRunBundleResult struct {

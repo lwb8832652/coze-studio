@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -182,6 +183,450 @@ func (r *threadRepository) CreateJournalAttempt(
 		return nil, ErrActiveJournalAttemptExists
 	}
 	return nil, err
+}
+
+func (r *threadRepository) PrepareSideEffect(
+	ctx context.Context,
+	req PrepareSideEffectRequest,
+) (*entity.SideEffectLedger, bool, error) {
+	ledger, err := normalizePreparedSideEffect(req.Ledger)
+	if err != nil {
+		return nil, false, err
+	}
+	audit, err := normalizeSideEffectAuditEvent(req.AuditEvent, ledger)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var stored *entity.SideEffectLedger
+	var created bool
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		attempt, err := lockJournalAttemptByIdentity(tx, ledger.JournalRunID, ledger.AttemptID)
+		if err != nil {
+			return err
+		}
+		if replay, found, err := findSideEffectLedgerByIdentity(
+			tx, ledger.JournalRunID, ledger.AttemptID, ledger.IdempotencyKey,
+		); err != nil {
+			return err
+		} else if found {
+			if err := validateSideEffectReplay(replay, ledger); err != nil {
+				return err
+			}
+			stored = replay
+			return nil
+		}
+		if !entity.RunAttemptStatus(attempt.Status).IsActive() {
+			return ErrJournalAttemptTerminal
+		}
+		if attempt.ThreadID != ledger.ThreadID {
+			return ErrJournalParentMismatch
+		}
+		if err := ensureJournalAttemptRunning(tx, attempt, ledger.PreparedAt); err != nil {
+			return err
+		}
+		if err := tx.Create(sideEffectLedgerToPO(ledger)).Error; err != nil {
+			return err
+		}
+		if _, err := appendSideEffectAuditLocked(tx, attempt, audit); err != nil {
+			return err
+		}
+		stored = cloneSideEffectLedger(ledger)
+		created = true
+		return nil
+	})
+	if err == nil {
+		return stored, created, nil
+	}
+
+	// The unique identity is the WAL idempotency boundary. A concurrent
+	// prepare that committed first is a replay only when every immutable field
+	// still describes the same external action.
+	replay, found, replayErr := findSideEffectLedgerByIdentity(
+		r.db.WithContext(ctx), ledger.JournalRunID, ledger.AttemptID, ledger.IdempotencyKey,
+	)
+	if replayErr != nil {
+		return nil, false, replayErr
+	}
+	if found {
+		if replayErr := validateSideEffectReplay(replay, ledger); replayErr != nil {
+			return nil, false, replayErr
+		}
+		return replay, false, nil
+	}
+	return nil, false, err
+}
+
+func (r *threadRepository) TransitionSideEffect(
+	ctx context.Context,
+	req TransitionSideEffectRequest,
+) (*entity.SideEffectLedger, bool, error) {
+	if req.JournalRunID <= 0 || strings.TrimSpace(req.AttemptID) == "" ||
+		req.LedgerID <= 0 || req.ExpectedVersion == 0 ||
+		!req.FromStatus.Valid() || !req.ToStatus.Valid() {
+		return nil, false, fmt.Errorf("side effect transition identity is required")
+	}
+	if !validStandaloneSideEffectTransition(req) {
+		return nil, false, ErrSideEffectTransitionInvalid
+	}
+	if req.OccurredAt <= 0 {
+		req.OccurredAt = time.Now().UnixMilli()
+	}
+	if req.ExternalReferenceDigest != "" && !validSideEffectDigest(req.ExternalReferenceDigest) {
+		return nil, false, fmt.Errorf("external reference digest must be a SHA-256 digest")
+	}
+
+	var stored *entity.SideEffectLedger
+	var changed bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		attempt, err := lockJournalAttemptByIdentity(
+			tx, req.JournalRunID, strings.TrimSpace(req.AttemptID),
+		)
+		if err != nil {
+			return err
+		}
+		ledger, err := lockSideEffectLedger(tx, req.JournalRunID, req.AttemptID, req.LedgerID)
+		if err != nil {
+			return err
+		}
+		if entity.SideEffectLedgerStatus(ledger.Status) == req.ToStatus {
+			if ledger.Version != req.ExpectedVersion+1 {
+				return ErrSideEffectLedgerConflict
+			}
+			stored = ledger.toEntity()
+			return nil
+		}
+		if entity.SideEffectLedgerStatus(ledger.Status) != req.FromStatus ||
+			ledger.Version != req.ExpectedVersion {
+			return ErrSideEffectLedgerConflict
+		}
+		if req.ToStatus == entity.SideEffectLedgerStatusCompensated &&
+			strings.TrimSpace(stringFromPtr(ledger.CompensationKind)) == "" {
+			return ErrSideEffectTransitionInvalid
+		}
+		audit, err := normalizeSideEffectAuditEvent(req.AuditEvent, ledger.toEntity())
+		if err != nil {
+			return err
+		}
+		updates := sideEffectTransitionUpdates(req)
+		updates["version"] = req.ExpectedVersion + 1
+		updates["updated_at"] = req.OccurredAt
+		result := tx.Model(&sideEffectLedgerPO{}).
+			Where("id = ? AND version = ? AND status = ?", ledger.ID, req.ExpectedVersion, req.FromStatus).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrSideEffectLedgerConflict
+		}
+		if _, err := appendSideEffectAuditLocked(tx, attempt, audit); err != nil {
+			return err
+		}
+		applySideEffectTransition(ledger, req)
+		stored = ledger.toEntity()
+		changed = true
+		return nil
+	})
+	return stored, changed, err
+}
+
+func (r *threadRepository) ResolveUnknownSideEffect(
+	ctx context.Context,
+	req ResolveUnknownSideEffectRequest,
+) (*entity.SideEffectLedger, bool, error) {
+	key := strings.TrimSpace(req.IdempotencyKey)
+	if req.JournalRunID <= 0 || strings.TrimSpace(req.AttemptID) == "" ||
+		req.LedgerID <= 0 || req.ExpectedVersion == 0 || !req.Action.Valid() || key == "" {
+		return nil, false, fmt.Errorf("unknown side effect resolution identity is required")
+	}
+	if len(key) > 191 {
+		return nil, false, fmt.Errorf("unknown side effect resolution idempotency key is too long")
+	}
+	if req.OccurredAt <= 0 {
+		req.OccurredAt = time.Now().UnixMilli()
+	}
+
+	var stored *entity.SideEffectLedger
+	var changed bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		attempt, err := lockJournalAttemptByIdentity(
+			tx, req.JournalRunID, strings.TrimSpace(req.AttemptID),
+		)
+		if err != nil {
+			return err
+		}
+		ledger, err := lockSideEffectLedger(tx, req.JournalRunID, req.AttemptID, req.LedgerID)
+		if err != nil {
+			return err
+		}
+		if ledger.ResolutionIdempotencyKey != nil {
+			if strings.TrimSpace(stringFromPtr(ledger.ResolutionIdempotencyKey)) == key &&
+				entity.SideEffectResolutionAction(stringFromPtr(ledger.ResolutionAction)) == req.Action {
+				stored = ledger.toEntity()
+				return nil
+			}
+			return ErrSideEffectLedgerConflict
+		}
+		if entity.SideEffectLedgerStatus(ledger.Status) != entity.SideEffectLedgerStatusUnknown ||
+			ledger.Version != req.ExpectedVersion {
+			return ErrSideEffectLedgerConflict
+		}
+		audit, err := normalizeSideEffectAuditEvent(req.AuditEvent, ledger.toEntity())
+		if err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"resolution_action":          string(req.Action),
+			"resolution_idempotency_key": key,
+			"resolved_at":                req.OccurredAt,
+			"version":                    req.ExpectedVersion + 1,
+			"updated_at":                 req.OccurredAt,
+		}
+		result := tx.Model(&sideEffectLedgerPO{}).
+			Where(
+				"id = ? AND version = ? AND status = ? AND resolution_idempotency_key IS NULL",
+				ledger.ID, req.ExpectedVersion, entity.SideEffectLedgerStatusUnknown,
+			).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrSideEffectLedgerConflict
+		}
+		if _, err := appendSideEffectAuditLocked(tx, attempt, audit); err != nil {
+			return err
+		}
+		action := string(req.Action)
+		ledger.ResolutionAction = &action
+		ledger.ResolutionIdempotencyKey = &key
+		ledger.ResolvedAt = cloneInt64Pointer(&req.OccurredAt)
+		ledger.Version = req.ExpectedVersion + 1
+		ledger.UpdatedAt = req.OccurredAt
+		stored = ledger.toEntity()
+		changed = true
+		return nil
+	})
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
+		return nil, false, ErrSideEffectLedgerConflict
+	}
+	return stored, changed, err
+}
+
+func (r *threadRepository) CommitExecutionBoundary(
+	ctx context.Context,
+	req CommitExecutionBoundaryRequest,
+) (*CommitExecutionBoundaryResult, error) {
+	if req.JournalRunID <= 0 || strings.TrimSpace(req.AttemptID) == "" ||
+		req.LedgerID <= 0 || req.ExpectedVersion == 0 ||
+		req.ResultEvent == nil || req.AuditEvent == nil || req.CheckpointFactory == nil {
+		return nil, fmt.Errorf("execution boundary identity, events, and checkpoint factory are required")
+	}
+	if req.Status != entity.SideEffectLedgerStatusSucceeded &&
+		req.Status != entity.SideEffectLedgerStatusFailed &&
+		req.Status != entity.SideEffectLedgerStatusUnknown {
+		return nil, ErrSideEffectTransitionInvalid
+	}
+	if req.ExternalReferenceDigest != "" && !validSideEffectDigest(req.ExternalReferenceDigest) {
+		return nil, fmt.Errorf("external reference digest must be a SHA-256 digest")
+	}
+
+	var committed *CommitExecutionBoundaryResult
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		attempt, err := lockJournalAttemptByIdentity(tx, req.JournalRunID, req.AttemptID)
+		if err != nil {
+			return err
+		}
+		ledger, err := lockSideEffectLedger(tx, req.JournalRunID, req.AttemptID, req.LedgerID)
+		if err != nil {
+			return err
+		}
+		if entity.SideEffectLedgerStatus(ledger.Status).IsTerminal() {
+			replay, err := loadExecutionBoundaryReplay(tx, ledger, req)
+			if err != nil {
+				return err
+			}
+			committed = replay
+			return nil
+		}
+		if entity.SideEffectLedgerStatus(ledger.Status) != entity.SideEffectLedgerStatusExecuting ||
+			ledger.Version != req.ExpectedVersion {
+			return ErrSideEffectLedgerConflict
+		}
+		if !entity.RunAttemptStatus(attempt.Status).IsActive() {
+			return ErrJournalAttemptTerminal
+		}
+
+		resultEvent, err := normalizeJournalEvent(req.ResultEvent)
+		if err != nil {
+			return err
+		}
+		if resultEvent.Visibility != entity.JournalVisibilityUser {
+			return fmt.Errorf("execution boundary result event must be user visible")
+		}
+		if err := bindSideEffectEvent(resultEvent, attempt, ledger); err != nil {
+			return err
+		}
+		audit, err := normalizeSideEffectAuditEvent(req.AuditEvent, ledger.toEntity())
+		if err != nil {
+			return err
+		}
+
+		appended, err := appendJournalEventLocked(tx, attempt, resultEvent)
+		if err != nil {
+			return err
+		}
+		if appended.Sequence == 0 {
+			return ErrJournalSequenceAllocation
+		}
+		if _, err := appendSideEffectAuditLocked(tx, attempt, audit); err != nil {
+			return err
+		}
+
+		now := resultEvent.CreatedAt
+		if now <= 0 {
+			now = time.Now().UnixMilli()
+		}
+		checkpointLedgers, err := executionBoundaryLedgerSnapshot(
+			tx,
+			ledger,
+			req,
+			appended.ID,
+			now,
+		)
+		if err != nil {
+			return err
+		}
+		checkpoint, err := req.CheckpointFactory(appended.Sequence, checkpointLedgers)
+		if err != nil {
+			return err
+		}
+		if err := validateExecutionBoundaryCheckpoint(checkpoint, attempt, appended.Sequence); err != nil {
+			return err
+		}
+		checkpointPO, err := checkpointToPO(checkpoint)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(checkpointPO).Error; err != nil {
+			return err
+		}
+
+		ledgerUpdates := terminalSideEffectUpdates(req, appended.ID, checkpoint.ID, now)
+		ledgerUpdate := tx.Model(&sideEffectLedgerPO{}).
+			Where(
+				"id = ? AND version = ? AND status = ?",
+				ledger.ID, req.ExpectedVersion, entity.SideEffectLedgerStatusExecuting,
+			).
+			Updates(ledgerUpdates)
+		if ledgerUpdate.Error != nil {
+			return ledgerUpdate.Error
+		}
+		if ledgerUpdate.RowsAffected != 1 {
+			return ErrSideEffectLedgerConflict
+		}
+
+		attemptUpdate := tx.Model(&runAttemptPO{}).
+			Where(
+				"id = ? AND active_slot = ? AND next_sequence = ? AND last_committed_sequence <= ?",
+				attempt.ID, 1, appended.Sequence+1, appended.Sequence,
+			).
+			Updates(map[string]any{
+				"last_committed_sequence": appended.Sequence,
+				"updated_at":              now,
+			})
+		if attemptUpdate.Error != nil {
+			return attemptUpdate.Error
+		}
+		if attemptUpdate.RowsAffected != 1 {
+			return ErrJournalSequenceAllocation
+		}
+
+		applyTerminalSideEffect(ledger, req, appended.ID, checkpoint.ID, now)
+		committed = &CommitExecutionBoundaryResult{
+			Ledger: ledger.toEntity(), Event: appended, Checkpoint: checkpoint,
+			LastCommittedSequence: appended.Sequence,
+		}
+		return nil
+	})
+	return committed, err
+}
+
+func executionBoundaryLedgerSnapshot(
+	tx *gorm.DB,
+	current *sideEffectLedgerPO,
+	req CommitExecutionBoundaryRequest,
+	resultEventID int64,
+	occurredAt int64,
+) ([]*entity.SideEffectLedger, error) {
+	if tx == nil || current == nil {
+		return nil, fmt.Errorf("execution boundary ledger snapshot is required")
+	}
+	var rows []sideEffectLedgerPO
+	if err := tx.Where(
+		"journal_run_id = ? AND attempt_id = ?",
+		current.JournalRunID,
+		current.AttemptID,
+	).Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*entity.SideEffectLedger, 0, len(rows))
+	found := false
+	for index := range rows {
+		row := &rows[index]
+		if row.ID == current.ID {
+			predicted := *current
+			applyTerminalSideEffect(&predicted, req, resultEventID, 0, occurredAt)
+			result = append(result, predicted.toEntity())
+			found = true
+			continue
+		}
+		result = append(result, row.toEntity())
+	}
+	if !found {
+		return nil, ErrSideEffectLedgerNotFound
+	}
+	return result, nil
+}
+
+func (r *threadRepository) GetSideEffectLedger(
+	ctx context.Context,
+	journalRunID int64,
+	attemptID, idempotencyKey string,
+) (*entity.SideEffectLedger, error) {
+	ledger, found, err := findSideEffectLedgerByIdentity(
+		r.db.WithContext(ctx), journalRunID, strings.TrimSpace(attemptID),
+		strings.TrimSpace(idempotencyKey),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrSideEffectLedgerNotFound
+	}
+	return ledger, nil
+}
+
+func (r *threadRepository) ListSideEffectLedgers(
+	ctx context.Context,
+	journalRunID int64,
+	attemptID string,
+) ([]*entity.SideEffectLedger, error) {
+	if journalRunID <= 0 || strings.TrimSpace(attemptID) == "" {
+		return nil, fmt.Errorf("side effect ledger attempt identity is required")
+	}
+	var rows []sideEffectLedgerPO
+	if err := r.db.WithContext(ctx).Where(
+		"journal_run_id = ? AND attempt_id = ?", journalRunID, strings.TrimSpace(attemptID),
+	).Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*entity.SideEffectLedger, 0, len(rows))
+	for i := range rows {
+		result = append(result, rows[i].toEntity())
+	}
+	return result, nil
 }
 
 func isActiveJournalAttemptConstraintError(err error) bool {
@@ -1581,6 +2026,487 @@ func journalAttemptStatusForTerminalRun(
 	default:
 		return entity.RunAttemptStatusFailed
 	}
+}
+
+func normalizePreparedSideEffect(
+	ledger *entity.SideEffectLedger,
+) (*entity.SideEffectLedger, error) {
+	if ledger == nil || ledger.ID <= 0 || ledger.ThreadID <= 0 ||
+		ledger.JournalRunID <= 0 || strings.TrimSpace(ledger.AttemptID) == "" ||
+		strings.TrimSpace(ledger.IdempotencyKey) == "" ||
+		strings.TrimSpace(ledger.ActionKind) == "" {
+		return nil, fmt.Errorf("prepared side effect identity is required")
+	}
+	normalized := cloneSideEffectLedger(ledger)
+	normalized.AttemptID = strings.TrimSpace(normalized.AttemptID)
+	normalized.IdempotencyKey = strings.TrimSpace(normalized.IdempotencyKey)
+	normalized.ActionKind = strings.TrimSpace(normalized.ActionKind)
+	normalized.RequestHash = strings.ToLower(strings.TrimSpace(normalized.RequestHash))
+	normalized.RequestSummary = strings.TrimSpace(normalized.RequestSummary)
+	normalized.CompensationKind = strings.TrimSpace(normalized.CompensationKind)
+	if !normalized.ReplayPolicy.Valid() {
+		return nil, fmt.Errorf("side effect replay policy is invalid")
+	}
+	if normalized.Status != entity.SideEffectLedgerStatusPrepared {
+		return nil, ErrSideEffectTransitionInvalid
+	}
+	if !validSideEffectDigest(normalized.RequestHash) {
+		return nil, fmt.Errorf("side effect request hash must be a SHA-256 digest")
+	}
+	if normalized.RequestSummary == "" {
+		normalized.RequestSummary = `{}`
+	}
+	if len(normalized.RequestSummary) > 4096 || !json.Valid([]byte(normalized.RequestSummary)) {
+		return nil, fmt.Errorf("side effect request summary must be bounded JSON")
+	}
+	if normalized.ExternalReferenceDigest != "" || normalized.ResultSnapshotID != "" ||
+		normalized.ResultEventID != nil || normalized.CheckpointID != nil ||
+		normalized.ResolutionAction != "" || normalized.ResolutionIdempotencyKey != "" ||
+		normalized.ResolvedAt != nil ||
+		normalized.ExecutingAt != nil || normalized.SucceededAt != nil ||
+		normalized.FailedAt != nil || normalized.UnknownAt != nil || normalized.CompensatedAt != nil {
+		return nil, ErrSideEffectTransitionInvalid
+	}
+	if normalized.Version == 0 {
+		normalized.Version = 1
+	}
+	if normalized.Version != 1 {
+		return nil, fmt.Errorf("prepared side effect version must be one")
+	}
+	if normalized.PreparedAt <= 0 {
+		normalized.PreparedAt = time.Now().UnixMilli()
+	}
+	if normalized.CreatedAt <= 0 {
+		normalized.CreatedAt = normalized.PreparedAt
+	}
+	if normalized.UpdatedAt <= 0 {
+		normalized.UpdatedAt = normalized.PreparedAt
+	}
+	return normalized, nil
+}
+
+func validSideEffectDigest(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32
+}
+
+func normalizeSideEffectAuditEvent(
+	audit *entity.JournalEvent,
+	ledger *entity.SideEffectLedger,
+) (*entity.JournalEvent, error) {
+	if ledger == nil {
+		return nil, fmt.Errorf("side effect ledger is required")
+	}
+	if audit == nil {
+		return nil, fmt.Errorf("side effect transition audit is required")
+	}
+	candidate := *audit
+	if candidate.EventType == "side_effect.audit" {
+		candidate.ActionID = ""
+		candidate.Phase = ""
+		candidate.Operation = ""
+		candidate.Target = ""
+		candidate.Milestone = ""
+	}
+	normalized, err := normalizeJournalEvent(&candidate)
+	if err != nil {
+		return nil, err
+	}
+	if normalized.Visibility != entity.JournalVisibilityInternal {
+		return nil, fmt.Errorf("side effect transition audit must be internal")
+	}
+	if normalized.ThreadID != ledger.ThreadID ||
+		(normalized.JournalRunID != 0 && normalized.JournalRunID != ledger.JournalRunID) ||
+		(normalized.AttemptID != "" && normalized.AttemptID != ledger.AttemptID) {
+		return nil, ErrJournalParentMismatch
+	}
+	normalized.JournalRunID = ledger.JournalRunID
+	normalized.AttemptID = ledger.AttemptID
+	return normalized, nil
+}
+
+func appendSideEffectAuditLocked(
+	tx *gorm.DB,
+	attempt *runAttemptPO,
+	audit *entity.JournalEvent,
+) (*entity.JournalEvent, error) {
+	if tx == nil || attempt == nil || audit == nil {
+		return nil, fmt.Errorf("side effect transition audit boundary is required")
+	}
+	if audit.ThreadID != attempt.ThreadID || audit.RunID != attempt.ExecutionRunID ||
+		audit.JournalRunID != attempt.JournalRunID || audit.AttemptID != attempt.AttemptID {
+		return nil, ErrJournalParentMismatch
+	}
+	var replay runEventPO
+	err := tx.Where(
+		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
+		attempt.JournalRunID, attempt.AttemptID, audit.IdempotencyKey,
+	).First(&replay).Error
+	if err == nil {
+		return journalEventFromPO(&replay), nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	po, err := journalEventToPO(audit, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Create(po).Error; err != nil {
+		return nil, err
+	}
+	return journalEventFromPO(po), nil
+}
+
+func lockJournalAttemptByIdentity(
+	tx *gorm.DB,
+	journalRunID int64,
+	attemptID string,
+) (*runAttemptPO, error) {
+	query := tx.Where(
+		"journal_run_id = ? AND attempt_id = ?", journalRunID, strings.TrimSpace(attemptID),
+	)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var attempt runAttemptPO
+	err := query.First(&attempt).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrJournalNotEnrolled
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &attempt, nil
+}
+
+func findSideEffectLedgerByIdentity(
+	db *gorm.DB,
+	journalRunID int64,
+	attemptID, idempotencyKey string,
+) (*entity.SideEffectLedger, bool, error) {
+	if journalRunID <= 0 || strings.TrimSpace(attemptID) == "" ||
+		strings.TrimSpace(idempotencyKey) == "" {
+		return nil, false, nil
+	}
+	var po sideEffectLedgerPO
+	err := db.Where(
+		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
+		journalRunID, strings.TrimSpace(attemptID), strings.TrimSpace(idempotencyKey),
+	).First(&po).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return po.toEntity(), true, nil
+}
+
+func lockSideEffectLedger(
+	tx *gorm.DB,
+	journalRunID int64,
+	attemptID string,
+	ledgerID int64,
+) (*sideEffectLedgerPO, error) {
+	query := tx.Where(
+		"id = ? AND journal_run_id = ? AND attempt_id = ?",
+		ledgerID, journalRunID, strings.TrimSpace(attemptID),
+	)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var ledger sideEffectLedgerPO
+	err := query.First(&ledger).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrSideEffectLedgerNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ledger, nil
+}
+
+func validateSideEffectReplay(
+	stored, requested *entity.SideEffectLedger,
+) error {
+	if stored == nil || requested == nil ||
+		stored.ID != requested.ID || stored.ThreadID != requested.ThreadID ||
+		stored.JournalRunID != requested.JournalRunID || stored.AttemptID != requested.AttemptID ||
+		stored.IdempotencyKey != requested.IdempotencyKey ||
+		stored.ActionKind != requested.ActionKind || stored.ReplayPolicy != requested.ReplayPolicy ||
+		stored.RequestHash != requested.RequestHash ||
+		stored.RequestSummary != requested.RequestSummary ||
+		stored.CompensationKind != requested.CompensationKind {
+		return ErrSideEffectLedgerConflict
+	}
+	return nil
+}
+
+func validStandaloneSideEffectTransition(req TransitionSideEffectRequest) bool {
+	switch {
+	case req.FromStatus == entity.SideEffectLedgerStatusPrepared &&
+		req.ToStatus == entity.SideEffectLedgerStatusExecuting:
+		return true
+	case req.FromStatus == entity.SideEffectLedgerStatusExecuting &&
+		req.ToStatus == entity.SideEffectLedgerStatusUnknown:
+		return true
+	case (req.FromStatus == entity.SideEffectLedgerStatusSucceeded ||
+		req.FromStatus == entity.SideEffectLedgerStatusUnknown) &&
+		req.ToStatus == entity.SideEffectLedgerStatusCompensated:
+		return req.CompensationRegistered && req.CompensationSucceeded
+	default:
+		return false
+	}
+}
+
+func sideEffectTransitionUpdates(req TransitionSideEffectRequest) map[string]any {
+	updates := map[string]any{"status": string(req.ToStatus)}
+	switch req.ToStatus {
+	case entity.SideEffectLedgerStatusExecuting:
+		updates["executing_at"] = req.OccurredAt
+	case entity.SideEffectLedgerStatusUnknown:
+		updates["unknown_at"] = req.OccurredAt
+	case entity.SideEffectLedgerStatusCompensated:
+		updates["compensated_at"] = req.OccurredAt
+	}
+	if req.ExternalReferenceDigest != "" {
+		updates["external_reference_digest"] = strings.ToLower(strings.TrimSpace(req.ExternalReferenceDigest))
+	}
+	if strings.TrimSpace(req.ResultSnapshotID) != "" {
+		updates["result_snapshot_id"] = strings.TrimSpace(req.ResultSnapshotID)
+	}
+	return updates
+}
+
+func applySideEffectTransition(ledger *sideEffectLedgerPO, req TransitionSideEffectRequest) {
+	ledger.Status = string(req.ToStatus)
+	ledger.Version = req.ExpectedVersion + 1
+	ledger.UpdatedAt = req.OccurredAt
+	switch req.ToStatus {
+	case entity.SideEffectLedgerStatusExecuting:
+		ledger.ExecutingAt = cloneInt64Pointer(&req.OccurredAt)
+	case entity.SideEffectLedgerStatusUnknown:
+		ledger.UnknownAt = cloneInt64Pointer(&req.OccurredAt)
+	case entity.SideEffectLedgerStatusCompensated:
+		ledger.CompensatedAt = cloneInt64Pointer(&req.OccurredAt)
+	}
+	if req.ExternalReferenceDigest != "" {
+		value := strings.ToLower(strings.TrimSpace(req.ExternalReferenceDigest))
+		ledger.ExternalReferenceDigest = &value
+	}
+	if value := strings.TrimSpace(req.ResultSnapshotID); value != "" {
+		ledger.ResultSnapshotID = &value
+	}
+}
+
+func bindSideEffectEvent(
+	event *entity.JournalEvent,
+	attempt *runAttemptPO,
+	ledger *sideEffectLedgerPO,
+) error {
+	if event.ThreadID != attempt.ThreadID || event.RunID != attempt.ExecutionRunID ||
+		(event.JournalRunID != 0 && event.JournalRunID != attempt.JournalRunID) ||
+		(event.AttemptID != "" && event.AttemptID != attempt.AttemptID) {
+		return ErrJournalParentMismatch
+	}
+	event.JournalRunID = attempt.JournalRunID
+	event.AttemptID = attempt.AttemptID
+	if event.ActionID == "" {
+		event.ActionID = ledger.IdempotencyKey
+	}
+	if event.Operation == "" {
+		event.Operation = ledger.ActionKind
+	}
+	return nil
+}
+
+func validateExecutionBoundaryCheckpoint(
+	checkpoint *entity.Checkpoint,
+	attempt *runAttemptPO,
+	lastCommittedSequence uint64,
+) error {
+	if checkpoint == nil || checkpoint.ID <= 0 || checkpoint.ThreadID != attempt.ThreadID ||
+		checkpoint.RunID != attempt.ExecutionRunID {
+		return fmt.Errorf("execution boundary checkpoint does not belong to the active attempt")
+	}
+	var envelope struct {
+		SchemaVersion         string `json:"schema_version"`
+		AttemptID             string `json:"attempt_id"`
+		LastCommittedSequence uint64 `json:"last_committed_sequence"`
+		RuntimeState          any    `json:"runtime_state"`
+		SideEffectLedger      any    `json:"side_effect_ledger"`
+	}
+	if err := json.Unmarshal([]byte(checkpoint.ChannelValues), &envelope); err != nil {
+		return fmt.Errorf("decode execution boundary checkpoint envelope: %w", err)
+	}
+	if strings.TrimSpace(envelope.SchemaVersion) == "" ||
+		envelope.AttemptID != attempt.AttemptID ||
+		envelope.LastCommittedSequence != lastCommittedSequence ||
+		envelope.RuntimeState == nil || envelope.SideEffectLedger == nil {
+		return fmt.Errorf("execution boundary checkpoint envelope is incomplete")
+	}
+	return nil
+}
+
+func terminalSideEffectUpdates(
+	req CommitExecutionBoundaryRequest,
+	resultEventID, checkpointID, occurredAt int64,
+) map[string]any {
+	updates := map[string]any{
+		"status":          string(req.Status),
+		"version":         req.ExpectedVersion + 1,
+		"result_event_id": resultEventID,
+		"checkpoint_id":   checkpointID,
+		"updated_at":      occurredAt,
+	}
+	switch req.Status {
+	case entity.SideEffectLedgerStatusSucceeded:
+		updates["succeeded_at"] = occurredAt
+	case entity.SideEffectLedgerStatusFailed:
+		updates["failed_at"] = occurredAt
+	case entity.SideEffectLedgerStatusUnknown:
+		updates["unknown_at"] = occurredAt
+	}
+	if value := strings.ToLower(strings.TrimSpace(req.ExternalReferenceDigest)); value != "" {
+		updates["external_reference_digest"] = value
+	}
+	if value := strings.TrimSpace(req.ResultSnapshotID); value != "" {
+		updates["result_snapshot_id"] = value
+	}
+	return updates
+}
+
+func applyTerminalSideEffect(
+	ledger *sideEffectLedgerPO,
+	req CommitExecutionBoundaryRequest,
+	resultEventID, checkpointID, occurredAt int64,
+) {
+	ledger.Status = string(req.Status)
+	ledger.Version = req.ExpectedVersion + 1
+	ledger.ResultEventID = cloneInt64Pointer(&resultEventID)
+	ledger.CheckpointID = cloneInt64Pointer(&checkpointID)
+	ledger.UpdatedAt = occurredAt
+	switch req.Status {
+	case entity.SideEffectLedgerStatusSucceeded:
+		ledger.SucceededAt = cloneInt64Pointer(&occurredAt)
+	case entity.SideEffectLedgerStatusFailed:
+		ledger.FailedAt = cloneInt64Pointer(&occurredAt)
+	case entity.SideEffectLedgerStatusUnknown:
+		ledger.UnknownAt = cloneInt64Pointer(&occurredAt)
+	}
+	if value := strings.ToLower(strings.TrimSpace(req.ExternalReferenceDigest)); value != "" {
+		ledger.ExternalReferenceDigest = &value
+	}
+	if value := strings.TrimSpace(req.ResultSnapshotID); value != "" {
+		ledger.ResultSnapshotID = &value
+	}
+}
+
+func loadExecutionBoundaryReplay(
+	tx *gorm.DB,
+	ledger *sideEffectLedgerPO,
+	req CommitExecutionBoundaryRequest,
+) (*CommitExecutionBoundaryResult, error) {
+	if entity.SideEffectLedgerStatus(ledger.Status) != req.Status ||
+		ledger.Version != req.ExpectedVersion+1 || ledger.ResultEventID == nil || ledger.CheckpointID == nil ||
+		stringFromPtr(ledger.ExternalReferenceDigest) != strings.TrimSpace(req.ExternalReferenceDigest) ||
+		stringFromPtr(ledger.ResultSnapshotID) != strings.TrimSpace(req.ResultSnapshotID) {
+		return nil, ErrSideEffectLedgerConflict
+	}
+	var event runEventPO
+	if err := tx.Where("id = ?", *ledger.ResultEventID).First(&event).Error; err != nil {
+		return nil, err
+	}
+	var checkpoint checkpointPO
+	if err := tx.Where("id = ?", *ledger.CheckpointID).First(&checkpoint).Error; err != nil {
+		return nil, err
+	}
+	projected := journalEventFromPO(&event)
+	return &CommitExecutionBoundaryResult{
+		Ledger: ledger.toEntity(), Event: projected, Checkpoint: checkpoint.toEntity(),
+		LastCommittedSequence: projected.Sequence, Replayed: true,
+	}, nil
+}
+
+func sideEffectLedgerToPO(ledger *entity.SideEffectLedger) *sideEffectLedgerPO {
+	if ledger == nil {
+		return nil
+	}
+	return &sideEffectLedgerPO{
+		ID: ledger.ID, ThreadID: ledger.ThreadID, JournalRunID: ledger.JournalRunID,
+		AttemptID: ledger.AttemptID, IdempotencyKey: ledger.IdempotencyKey,
+		ActionKind: ledger.ActionKind, ReplayPolicy: string(ledger.ReplayPolicy),
+		Status: string(ledger.Status), RequestHash: ledger.RequestHash,
+		RequestSummary:           []byte(ledger.RequestSummary),
+		ExternalReferenceDigest:  sideEffectOptionalString(ledger.ExternalReferenceDigest),
+		ResultSnapshotID:         sideEffectOptionalString(ledger.ResultSnapshotID),
+		ResultEventID:            cloneInt64Pointer(ledger.ResultEventID),
+		CheckpointID:             cloneInt64Pointer(ledger.CheckpointID),
+		CompensationKind:         sideEffectOptionalString(ledger.CompensationKind),
+		ResolutionAction:         sideEffectOptionalString(string(ledger.ResolutionAction)),
+		ResolutionIdempotencyKey: sideEffectOptionalString(ledger.ResolutionIdempotencyKey),
+		ResolvedAt:               cloneInt64Pointer(ledger.ResolvedAt),
+		Version:                  ledger.Version, PreparedAt: ledger.PreparedAt,
+		ExecutingAt: cloneInt64Pointer(ledger.ExecutingAt),
+		SucceededAt: cloneInt64Pointer(ledger.SucceededAt), FailedAt: cloneInt64Pointer(ledger.FailedAt),
+		UnknownAt: cloneInt64Pointer(ledger.UnknownAt), CompensatedAt: cloneInt64Pointer(ledger.CompensatedAt),
+		CreatedAt: ledger.CreatedAt, UpdatedAt: ledger.UpdatedAt,
+	}
+}
+
+func (po *sideEffectLedgerPO) toEntity() *entity.SideEffectLedger {
+	if po == nil {
+		return nil
+	}
+	return &entity.SideEffectLedger{
+		ID: po.ID, ThreadID: po.ThreadID, JournalRunID: po.JournalRunID,
+		AttemptID: po.AttemptID, IdempotencyKey: po.IdempotencyKey,
+		ActionKind: po.ActionKind, ReplayPolicy: entity.SideEffectReplayPolicy(po.ReplayPolicy),
+		Status: entity.SideEffectLedgerStatus(po.Status), RequestHash: po.RequestHash,
+		RequestSummary:           jsonToString(po.RequestSummary),
+		ExternalReferenceDigest:  stringFromPtr(po.ExternalReferenceDigest),
+		ResultSnapshotID:         stringFromPtr(po.ResultSnapshotID),
+		ResultEventID:            cloneInt64Pointer(po.ResultEventID),
+		CheckpointID:             cloneInt64Pointer(po.CheckpointID),
+		CompensationKind:         stringFromPtr(po.CompensationKind),
+		ResolutionAction:         entity.SideEffectResolutionAction(stringFromPtr(po.ResolutionAction)),
+		ResolutionIdempotencyKey: stringFromPtr(po.ResolutionIdempotencyKey),
+		ResolvedAt:               cloneInt64Pointer(po.ResolvedAt),
+		Version:                  po.Version, PreparedAt: po.PreparedAt,
+		ExecutingAt: cloneInt64Pointer(po.ExecutingAt),
+		SucceededAt: cloneInt64Pointer(po.SucceededAt), FailedAt: cloneInt64Pointer(po.FailedAt),
+		UnknownAt: cloneInt64Pointer(po.UnknownAt), CompensatedAt: cloneInt64Pointer(po.CompensatedAt),
+		CreatedAt: po.CreatedAt, UpdatedAt: po.UpdatedAt,
+	}
+}
+
+func cloneSideEffectLedger(ledger *entity.SideEffectLedger) *entity.SideEffectLedger {
+	if ledger == nil {
+		return nil
+	}
+	clone := *ledger
+	clone.ResultEventID = cloneInt64Pointer(ledger.ResultEventID)
+	clone.CheckpointID = cloneInt64Pointer(ledger.CheckpointID)
+	clone.ExecutingAt = cloneInt64Pointer(ledger.ExecutingAt)
+	clone.SucceededAt = cloneInt64Pointer(ledger.SucceededAt)
+	clone.FailedAt = cloneInt64Pointer(ledger.FailedAt)
+	clone.UnknownAt = cloneInt64Pointer(ledger.UnknownAt)
+	clone.CompensatedAt = cloneInt64Pointer(ledger.CompensatedAt)
+	clone.ResolvedAt = cloneInt64Pointer(ledger.ResolvedAt)
+	return &clone
+}
+
+func sideEffectOptionalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func isJournalRootRun(run *runPO) bool {

@@ -114,6 +114,9 @@ type ApplicationService struct {
 	JournalSettingsNow                      func() int64
 	JournalAdmissionLimiter                 JournalAdmissionLimiter
 	JournalAdmissionRequired                bool
+	JournalRecoveryRepository               JournalRecoveryRepository
+	JournalRecoveryIDGenerator              idgen.IDGenerator
+	JournalSideEffectRepository             ADKSideEffectRepository
 }
 
 type ArtifactObjectStorage interface {

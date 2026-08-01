@@ -275,6 +275,14 @@ func (e *ADKExecutor) buildRuntime(
 	if store == nil {
 		return nil, nil, nil, 0, ctx, fmt.Errorf("eino adk checkpoint store is required")
 	}
+	if provider, ok := store.(interface {
+		SideEffectBoundaryCoordinator() *ADKSideEffectBoundaryCoordinator
+	}); ok {
+		ctx = withADKSideEffectBoundaryCoordinator(
+			ctx,
+			provider.SideEffectBoundaryCoordinator(),
+		)
+	}
 
 	var parityTracker *ADKParityStateTracker
 	parityParentID := parentCheckpointID

@@ -34,6 +34,10 @@ const (
 	runRecoveredErrorMessage     = "execution recovered from a durable checkpoint"
 	runAbandonedErrorCode        = "run_abandoned"
 	runAbandonedErrorMessage     = "execution lease expired without a recoverable checkpoint"
+	runRecoveryConfirmErrorCode  = "recovery_confirm_required"
+	runRecoveryConfirmErrorText  = "execution recovery requires user confirmation"
+	runRecoveryUnsafeErrorCode   = "recovery_checkpoint_unsafe"
+	runRecoveryUnsafeErrorText   = "execution checkpoint cannot be recovered safely"
 	runRecoveryMetadataSchema    = "coze.run_recovery.v1"
 )
 
@@ -137,6 +141,12 @@ func (p *RunLeaseRecoveryProcessor) recoverExpiredRun(
 		return runLeaseRecoverySkipped, fmt.Errorf("expired run lease fence is incomplete")
 	}
 
+	if attempt, enrolled, err := p.activeJournalRecoveryAttempt(ctx, run); err != nil {
+		return runLeaseRecoverySkipped, err
+	} else if enrolled {
+		return p.recoverExpiredJournalRun(ctx, run, attempt, now)
+	}
+
 	checkpoint, err := p.latestRecoverableCheckpoint(ctx, run)
 	if err != nil {
 		return runLeaseRecoverySkipped, err
@@ -169,6 +179,90 @@ func (p *RunLeaseRecoveryProcessor) recoverExpiredRun(
 		ErrorMessage:        runRecoveredErrorMessage,
 	})
 	return runLeaseRecoveryRecovered, err
+}
+
+func (p *RunLeaseRecoveryProcessor) activeJournalRecoveryAttempt(
+	ctx context.Context,
+	run *RunSummary,
+) (*entity.RunAttempt, bool, error) {
+	if p == nil || p.app == nil || p.app.JournalRecoveryRepository == nil {
+		return nil, false, nil
+	}
+	attempt, err := p.app.JournalRecoveryRepository.GetActiveJournalAttempt(ctx, run.RunID)
+	if errors.Is(err, repository.ErrJournalNotEnrolled) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	if attempt == nil || attempt.ExecutionRunID != run.RunID ||
+		attempt.ThreadID != run.ThreadID || !attempt.Status.IsActive() {
+		return nil, true, fmt.Errorf("expired run journal attempt does not belong to execution")
+	}
+	return attempt, true, nil
+}
+
+func (p *RunLeaseRecoveryProcessor) recoverExpiredJournalRun(
+	ctx context.Context,
+	run *RunSummary,
+	attempt *entity.RunAttempt,
+	now int64,
+) (runLeaseRecoveryOutcome, error) {
+	if attempt == nil {
+		return runLeaseRecoverySkipped, fmt.Errorf("expired run journal attempt is required")
+	}
+	idempotencyKey := fmt.Sprintf(
+		"run-recovery:%d:%d:%d",
+		attempt.JournalRunID,
+		run.RunID,
+		run.ExecutionGeneration,
+	)
+	result, err := p.app.RecoverJournal(ctx, RecoverJournalRequest{
+		ViewerID: run.CreatorID, SpaceID: run.SpaceID, ThreadID: run.ThreadID,
+		RunID: attempt.JournalRunID, SourceAttemptID: attempt.AttemptID,
+		Action: JournalRecoveryActionResume, IdempotencyKey: idempotencyKey,
+		TraceID: idempotencyKey,
+		expiredLease: &journalRecoveryExpiredLease{
+			RunID: run.RunID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+			ExecutionGeneration: run.ExecutionGeneration, Now: now,
+			ErrorCode: runRecoveredErrorCode, ErrorMessage: runRecoveredErrorMessage,
+		},
+	})
+	if err == nil {
+		if result == nil || !result.Accepted || result.Run == nil || result.Attempt == nil {
+			return runLeaseRecoverySkipped, fmt.Errorf("journal lease recovery returned an incomplete bundle")
+		}
+		return runLeaseRecoveryRecovered, nil
+	}
+
+	switch {
+	case errors.Is(err, ErrJournalRecoveryConfirmRequired):
+		return p.abandonExpiredJournalRun(
+			ctx, run, now, runRecoveryConfirmErrorCode, runRecoveryConfirmErrorText,
+		)
+	case errors.Is(err, ErrJournalRecoveryCheckpointInvalid),
+		errors.Is(err, ErrJournalRecoveryCheckpointUnsafe):
+		return p.abandonExpiredJournalRun(
+			ctx, run, now, runRecoveryUnsafeErrorCode, runRecoveryUnsafeErrorText,
+		)
+	default:
+		return runLeaseRecoverySkipped, err
+	}
+}
+
+func (p *RunLeaseRecoveryProcessor) abandonExpiredJournalRun(
+	ctx context.Context,
+	run *RunSummary,
+	now int64,
+	errorCode, errorMessage string,
+) (runLeaseRecoveryOutcome, error) {
+	_, err := p.app.ReconcileExpiredRunLease(ctx, &ReconcileExpiredRunLeaseRequest{
+		RunID: run.RunID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ToStatus:            RunStatusFailed, Now: now,
+		ErrorCode: errorCode, ErrorMessage: errorMessage,
+	})
+	return runLeaseRecoveryAbandoned, err
 }
 
 func (p *RunLeaseRecoveryProcessor) latestRecoverableCheckpoint(

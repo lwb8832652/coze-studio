@@ -720,7 +720,8 @@ func RecoverCanonicalRunJournal(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalJournalError(ctx, c, public.status, *public)
 		return
 	}
-	if strings.TrimSpace(body.Action) == "" {
+	action := appagentthread.JournalRecoveryAction(strings.TrimSpace(body.Action))
+	if !action.Valid() {
 		writeCanonicalJournalError(ctx, c, consts.StatusUnprocessableEntity, *newCanonicalError(
 			consts.StatusUnprocessableEntity,
 			"invalid_request",
@@ -741,15 +742,34 @@ func RecoverCanonicalRunJournal(ctx context.Context, c *app.RequestContext) {
 	}
 	defer releaseCanonicalJournalAdmission(ctx, lease)
 
-	// Task 7 installs the checkpoint/ledger-backed recovery service. Until then,
-	// fail closed after full authentication and request validation.
-	writeCanonicalJournalError(ctx, c, consts.StatusServiceUnavailable, *newCanonicalError(
-		consts.StatusServiceUnavailable,
-		"dependency_unavailable",
-		"Required service is unavailable",
-		"journal_recovery_unavailable",
-		true,
-	))
+	result, err := appagentthread.SVC.RecoverJournal(
+		ctx,
+		appagentthread.RecoverJournalRequest{
+			ViewerID: workbenchViewerIDFromCtx(ctx), SpaceID: canonicalSpaceIDFromContext(ctx),
+			ThreadID: threadID, RunID: runID,
+			SourceAttemptID: strings.TrimSpace(body.SourceAttemptID),
+			Action:          action, Confirmed: body.Confirmed,
+			IdempotencyKey: idempotencyKey, TraceID: canonicalTraceID(ctx),
+		},
+	)
+	if err != nil {
+		writeCanonicalJournalApplicationError(ctx, c, err)
+		return
+	}
+	if result == nil || result.Attempt == nil || !result.Accepted {
+		writeCanonicalJournalApplicationError(
+			ctx, c, appagentthread.ErrJournalRecoveryDependencyMissing,
+		)
+		return
+	}
+	latest := uint64(0)
+	if result.Attempt.NextSequence > 0 {
+		latest = result.Attempt.NextSequence - 1
+	}
+	c.JSON(consts.StatusOK, &journalcontract.RecoverCanonicalRunJournalResponse{
+		Attempt:  projectCanonicalJournalAttempt(result.Attempt, latest),
+		Accepted: result.Accepted,
+	})
 }
 
 func GetCanonicalJournalSettings(ctx context.Context, c *app.RequestContext) {
@@ -952,6 +972,31 @@ func writeCanonicalJournalApplicationError(
 			"Snapshot action conflicts with an existing request",
 			"journal_snapshot_action_conflict",
 			false,
+		)
+		writeCanonicalJournalError(ctx, c, public.status, *public)
+	case errors.Is(err, appagentthread.ErrJournalRecoveryConflict):
+		writeCanonicalJournalCode(ctx, c, "RECOVERY_CONFLICT")
+	case errors.Is(err, appagentthread.ErrJournalRecoveryConfirmRequired):
+		writeCanonicalJournalCode(ctx, c, "RECOVERY_CONFIRM_REQUIRED")
+	case errors.Is(err, appagentthread.ErrJournalRecoveryCheckpointInvalid),
+		errors.Is(err, appagentthread.ErrJournalRecoveryCheckpointUnsafe):
+		writeCanonicalJournalCode(ctx, c, "SCHEMA_INCOMPATIBLE")
+	case errors.Is(err, appagentthread.ErrJournalRecoveryInvalid):
+		public := newCanonicalError(
+			consts.StatusUnprocessableEntity,
+			"invalid_request",
+			"Recovery request is invalid",
+			"journal_recovery_invalid",
+			false,
+		)
+		writeCanonicalJournalError(ctx, c, public.status, *public)
+	case errors.Is(err, appagentthread.ErrJournalRecoveryDependencyMissing):
+		public := newCanonicalError(
+			consts.StatusServiceUnavailable,
+			"dependency_unavailable",
+			"Required service is unavailable",
+			"journal_recovery_unavailable",
+			true,
 		)
 		writeCanonicalJournalError(ctx, c, public.status, *public)
 	case errors.Is(err, domainrepo.ErrJournalNotEnrolled),

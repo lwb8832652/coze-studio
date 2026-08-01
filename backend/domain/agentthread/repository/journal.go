@@ -30,6 +30,9 @@ var (
 	ErrJournalSnapshotReservationExpired = errors.New("journal snapshot reservation expired")
 	ErrJournalCursorExpired              = errors.New("journal cursor expired")
 	ErrJournalEventGap                   = errors.New("journal event gap")
+	ErrSideEffectLedgerNotFound          = errors.New("side effect ledger not found")
+	ErrSideEffectLedgerConflict          = errors.New("side effect ledger conflict")
+	ErrSideEffectTransitionInvalid       = errors.New("invalid side effect ledger transition")
 )
 
 type JournalRepository interface {
@@ -85,6 +88,39 @@ type JournalSnapshotRepository interface {
 	) (bool, error)
 }
 
+// JournalExecutionRepository owns the durable write-ahead log and the one
+// transaction that commits a tool result, its public event, and its runtime
+// checkpoint. Keeping this separate from JournalRepository preserves the
+// compatibility contract for repositories that only project Journal events.
+type JournalExecutionRepository interface {
+	PrepareSideEffect(
+		ctx context.Context,
+		req PrepareSideEffectRequest,
+	) (*entity.SideEffectLedger, bool, error)
+	TransitionSideEffect(
+		ctx context.Context,
+		req TransitionSideEffectRequest,
+	) (*entity.SideEffectLedger, bool, error)
+	ResolveUnknownSideEffect(
+		ctx context.Context,
+		req ResolveUnknownSideEffectRequest,
+	) (*entity.SideEffectLedger, bool, error)
+	CommitExecutionBoundary(
+		ctx context.Context,
+		req CommitExecutionBoundaryRequest,
+	) (*CommitExecutionBoundaryResult, error)
+	GetSideEffectLedger(
+		ctx context.Context,
+		journalRunID int64,
+		attemptID, idempotencyKey string,
+	) (*entity.SideEffectLedger, error)
+	ListSideEffectLedgers(
+		ctx context.Context,
+		journalRunID int64,
+		attemptID string,
+	) ([]*entity.SideEffectLedger, error)
+}
+
 // RunEventProjectionRepository atomically preserves the existing RunEvent view
 // and, when the run is enrolled, enriches the same row with a public Journal
 // projection.
@@ -104,6 +140,62 @@ type CreateRunEventWithJournalProjectionRequest struct {
 type Repository interface {
 	ThreadRepository
 	JournalRepository
+	JournalExecutionRepository
+}
+
+type PrepareSideEffectRequest struct {
+	Ledger     *entity.SideEffectLedger
+	AuditEvent *entity.JournalEvent
+}
+
+type TransitionSideEffectRequest struct {
+	JournalRunID            int64
+	AttemptID               string
+	LedgerID                int64
+	ExpectedVersion         uint64
+	FromStatus              entity.SideEffectLedgerStatus
+	ToStatus                entity.SideEffectLedgerStatus
+	OccurredAt              int64
+	ExternalReferenceDigest string
+	ResultSnapshotID        string
+	CompensationRegistered  bool
+	CompensationSucceeded   bool
+	AuditEvent              *entity.JournalEvent
+}
+
+type ResolveUnknownSideEffectRequest struct {
+	JournalRunID    int64
+	AttemptID       string
+	LedgerID        int64
+	ExpectedVersion uint64
+	Action          entity.SideEffectResolutionAction
+	IdempotencyKey  string
+	OccurredAt      int64
+	AuditEvent      *entity.JournalEvent
+}
+
+type CommitExecutionBoundaryRequest struct {
+	JournalRunID            int64
+	AttemptID               string
+	LedgerID                int64
+	ExpectedVersion         uint64
+	Status                  entity.SideEffectLedgerStatus
+	ExternalReferenceDigest string
+	ResultSnapshotID        string
+	ResultEvent             *entity.JournalEvent
+	AuditEvent              *entity.JournalEvent
+	CheckpointFactory       func(
+		lastCommittedSequence uint64,
+		ledgers []*entity.SideEffectLedger,
+	) (*entity.Checkpoint, error)
+}
+
+type CommitExecutionBoundaryResult struct {
+	Ledger                *entity.SideEffectLedger
+	Event                 *entity.JournalEvent
+	Checkpoint            *entity.Checkpoint
+	LastCommittedSequence uint64
+	Replayed              bool
 }
 
 type FinalizeJournalAttemptRequest struct {
