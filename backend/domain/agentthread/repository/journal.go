@@ -28,6 +28,8 @@ var (
 	ErrJournalSnapshotConflict           = errors.New("journal snapshot identity conflict")
 	ErrJournalProjectionInactive         = errors.New("journal projection is not active")
 	ErrJournalSnapshotReservationExpired = errors.New("journal snapshot reservation expired")
+	ErrJournalCursorExpired              = errors.New("journal cursor expired")
+	ErrJournalEventGap                   = errors.New("journal event gap")
 )
 
 type JournalRepository interface {
@@ -41,6 +43,10 @@ type JournalRepository interface {
 	) (*entity.JournalEvent, bool, error)
 	GetJournalEvent(ctx context.Context, eventID int64) (*entity.JournalEvent, error)
 	ListJournalEvents(ctx context.Context, req ListJournalEventsRequest) (*ListJournalEventsResult, error)
+	GetJournalBootstrap(
+		ctx context.Context,
+		req GetJournalBootstrapRequest,
+	) (*GetJournalBootstrapResult, error)
 	JournalSnapshotRepository
 }
 
@@ -119,6 +125,24 @@ type ListJournalEventsResult struct {
 	Events  []*entity.JournalEvent
 	HasMore bool
 	Legacy  bool
+}
+
+type GetJournalBootstrapRequest struct {
+	RunID            int64
+	AttemptID        string
+	AfterSequence    uint64
+	AfterSequenceSet bool
+	AfterEventID     int64
+	Limit            int
+}
+
+type GetJournalBootstrapResult struct {
+	Attempts              []*entity.RunAttempt
+	SelectedAttempt       *entity.RunAttempt
+	Events                []*entity.JournalEvent
+	LatestSequence        uint64
+	ResolvedAfterSequence uint64
+	HasMore               bool
 }
 
 type CreateJournalSnapshotRequest struct {

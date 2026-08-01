@@ -1756,6 +1756,105 @@ func TestJournalListAttemptsAndPublicEventsUseFrozenOrdering(t *testing.T) {
 	require.Equal(t, uint64(2), page.Events[0].Sequence)
 }
 
+func TestJournalBootstrapFreezesLatestSequenceAndValidatesDualCursor(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusActive, 1)
+
+	first := appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "bootstrap-first",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	second := appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1001, ThreadID: 1, RunID: 10, IdempotencyKey: "bootstrap-second",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1002, ThreadID: 1, RunID: 10, IdempotencyKey: "bootstrap-third",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+
+	bootstrap, err := repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), bootstrap.LatestSequence)
+	require.Zero(t, bootstrap.ResolvedAfterSequence)
+	require.True(t, bootstrap.HasMore)
+	require.Equal(t, []uint64{1, 2}, []uint64{
+		bootstrap.Events[0].Sequence, bootstrap.Events[1].Sequence,
+	})
+
+	resumed, err := repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", AfterEventID: second.ID,
+		AfterSequence: second.Sequence, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), resumed.LatestSequence)
+	require.Equal(t, second.Sequence, resumed.ResolvedAfterSequence)
+	require.Len(t, resumed.Events, 1)
+	require.Equal(t, uint64(3), resumed.Events[0].Sequence)
+
+	_, err = repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", AfterEventID: first.ID,
+		AfterSequence: second.Sequence, Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalEventGap)
+
+	_, err = repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", AfterEventID: first.ID,
+		AfterSequence: 0, AfterSequenceSet: true, Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalEventGap)
+
+	_, err = repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", AfterEventID: 999999, Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalCursorExpired)
+
+	_, err = repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "missing-attempt", AfterSequence: 1, Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalCursorExpired)
+
+	seedJournalRecoveryRun(t, db, 20, 1, entity.RunStatusRunning)
+	seedJournalAttempt(t, db, 200, 20, entity.RunAttemptStatusActive, 1)
+	foreign := appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 2000, ThreadID: 1, RunID: 20, IdempotencyKey: "bootstrap-foreign",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	_, err = repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", AfterEventID: foreign.ID, Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalCursorExpired)
+}
+
+func TestJournalBootstrapRejectsPersistedPublicSequenceGap(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusActive, 1)
+	appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1000, ThreadID: 1, RunID: 10, IdempotencyKey: "gap-first",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1001, ThreadID: 1, RunID: 10, IdempotencyKey: "gap-second",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	appendJournalEventForTest(t, repo, &entity.JournalEvent{
+		ID: 1002, ThreadID: 1, RunID: 10, IdempotencyKey: "gap-third",
+		EventType: "message.delta", Payload: journalTestPayload,
+	})
+	require.NoError(t, db.Delete(&runEventPO{}, 1001).Error)
+
+	_, err := repo.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		RunID: 10, AttemptID: "att_100", Limit: 10,
+	})
+	require.ErrorIs(t, err, ErrJournalEventGap)
+}
+
 func TestJournalLegacyListUsesEventIDAndSkipsUnsafeEvents(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	repo := NewThreadRepository(db)

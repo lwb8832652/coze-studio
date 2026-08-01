@@ -116,24 +116,32 @@ func TestCanonicalEntrypointsAreAlwaysActive(t *testing.T) {
 	}
 }
 
-func TestCanonicalJournalEntrypointsFailClosed(t *testing.T) {
+func TestCanonicalJournalEntrypointsHaveLeftTemporaryNotImplementedState(t *testing.T) {
 	ctx := context.WithValue(context.Background(), projectconsts.CtxLogIDKey, "trace-journal")
-	for _, entrypoint := range canonicalEntrypoints[47:] {
+	for _, entrypoint := range canonicalEntrypoints[47:53] {
 		entrypoint := entrypoint
 		t.Run(entrypoint.name, func(t *testing.T) {
 			var c app.RequestContext
 			entrypoint.handler(ctx, &c)
 
-			require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
+			require.NotEqual(t, consts.StatusNotImplemented, c.Response.StatusCode())
 			var response canonicalError
 			require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
-			require.Equal(t, "journal_not_implemented", response.ErrorCode)
 			require.Equal(t, response.ErrorCode, response.Code)
 			require.Equal(t, "trace-journal", response.TraceID)
-			require.False(t, response.Retryable)
+			require.NotEqual(t, "journal_not_implemented", response.ErrorCode)
 			require.NotContains(t, string(c.Response.Body()), "internal_reason")
 		})
 	}
+
+	var c app.RequestContext
+	CopyCanonicalThreadArtifactLink(ctx, &c)
+	require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
+	var response canonicalError
+	require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
+	require.Equal(t, "journal_not_implemented", response.ErrorCode)
+	require.Equal(t, response.ErrorCode, response.Code)
+	require.Equal(t, "trace-journal", response.TraceID)
 }
 
 func TestCanonicalCoreEntrypointsRequireAuthorizedSpaceHeader(t *testing.T) {

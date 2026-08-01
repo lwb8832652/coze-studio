@@ -630,6 +630,129 @@ func (r *threadRepository) ListJournalEvents(
 	return &ListJournalEventsResult{Events: events, HasMore: hasMore}, nil
 }
 
+func (r *threadRepository) GetJournalBootstrap(
+	ctx context.Context,
+	req GetJournalBootstrapRequest,
+) (*GetJournalBootstrapResult, error) {
+	if req.RunID <= 0 {
+		return nil, fmt.Errorf("journal run id is required")
+	}
+	limit, err := normalizeJournalListLimit(req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var bootstrap *GetJournalBootstrapResult
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, journalRunID, err := resolveJournalRunIdentity(tx, req.RunID)
+		if err != nil {
+			return err
+		}
+
+		var attemptPOs []runAttemptPO
+		if err := tx.Where("journal_run_id = ?", journalRunID).
+			Order("ordinal ASC").Find(&attemptPOs).Error; err != nil {
+			return err
+		}
+		if len(attemptPOs) == 0 {
+			return ErrJournalNotEnrolled
+		}
+
+		attemptID := strings.TrimSpace(req.AttemptID)
+		afterSequence := req.AfterSequence
+		afterSequenceSet := req.AfterSequenceSet || req.AfterSequence > 0
+		if req.AfterEventID > 0 {
+			var cursor runEventPO
+			if err := tx.Where(
+				"id = ? AND journal_run_id = ?",
+				req.AfterEventID,
+				journalRunID,
+			).First(&cursor).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrJournalCursorExpired
+				}
+				return err
+			}
+			if cursor.JournalRunID == nil || cursor.AttemptID == nil ||
+				cursor.Sequence == nil || cursor.Visibility == nil ||
+				*cursor.Visibility != string(entity.JournalVisibilityUser) {
+				return ErrJournalCursorExpired
+			}
+			if (attemptID != "" && attemptID != *cursor.AttemptID) ||
+				(afterSequenceSet && req.AfterSequence != *cursor.Sequence) {
+				return ErrJournalEventGap
+			}
+			attemptID = *cursor.AttemptID
+			afterSequence = *cursor.Sequence
+		}
+		if attemptID == "" {
+			attemptID = attemptPOs[len(attemptPOs)-1].AttemptID
+		}
+
+		var selectedPO *runAttemptPO
+		for index := range attemptPOs {
+			if attemptPOs[index].AttemptID == attemptID {
+				selectedPO = &attemptPOs[index]
+				break
+			}
+		}
+		if selectedPO == nil {
+			if req.AfterEventID > 0 || afterSequenceSet {
+				return ErrJournalCursorExpired
+			}
+			return ErrJournalNotEnrolled
+		}
+		latestSequence := selectedPO.NextSequence - 1
+		if afterSequence > latestSequence {
+			return ErrJournalEventGap
+		}
+
+		var rows []runEventPO
+		if err := tx.Where(
+			"journal_run_id = ? AND attempt_id = ? AND visibility = ? AND sequence IS NOT NULL AND sequence > ? AND sequence <= ?",
+			journalRunID,
+			attemptID,
+			entity.JournalVisibilityUser,
+			afterSequence,
+			latestSequence,
+		).Order("sequence ASC").Limit(limit).Find(&rows).Error; err != nil {
+			return err
+		}
+		expectedSequence := afterSequence + 1
+		events := make([]*entity.JournalEvent, 0, len(rows))
+		for index := range rows {
+			if rows[index].Sequence == nil || *rows[index].Sequence != expectedSequence {
+				return ErrJournalEventGap
+			}
+			events = append(events, journalEventFromPO(&rows[index]))
+			expectedSequence++
+		}
+		if len(rows) == 0 && afterSequence < latestSequence {
+			return ErrJournalEventGap
+		}
+
+		attempts := make([]*entity.RunAttempt, 0, len(attemptPOs))
+		for index := range attemptPOs {
+			attempts = append(attempts, attemptPOs[index].toEntity())
+		}
+		selected := selectedPO.toEntity()
+		nextSequence := afterSequence
+		if len(events) > 0 {
+			nextSequence = events[len(events)-1].Sequence
+		}
+		bootstrap = &GetJournalBootstrapResult{
+			Attempts: attempts, SelectedAttempt: selected, Events: events,
+			LatestSequence: latestSequence, ResolvedAfterSequence: afterSequence,
+			HasMore: nextSequence < latestSequence,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return bootstrap, nil
+}
+
 func listLegacyJournalEvents(
 	db *gorm.DB,
 	root *runPO,

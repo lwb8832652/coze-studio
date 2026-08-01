@@ -86,6 +86,7 @@ type ApplicationService struct {
 	ArtifactCleanupNowFunc                  func() int64
 	MemoryExtractor                         MemoryExtractor
 	JournalSnapshotRepository               domainrepo.JournalSnapshotRepository
+	JournalQueryRepository                  JournalQueryRepository
 	JournalSnapshotAttemptReader            JournalSnapshotAttemptReader
 	JournalSnapshotObjectStorage            JournalSnapshotObjectStorage
 	JournalSnapshotAuthorizer               JournalSnapshotAuthorizer
@@ -95,6 +96,10 @@ type ApplicationService struct {
 	JournalBrowserRedactionVerifier         JournalBrowserRedactionVerifier
 	JournalSnapshotIDGenerator              idgen.IDGenerator
 	JournalSnapshotNow                      func() int64
+	JournalUserSettingsStore                JournalUserSettingsStore
+	JournalSettingsNow                      func() int64
+	JournalAdmissionLimiter                 JournalAdmissionLimiter
+	JournalAdmissionRequired                bool
 }
 
 type ArtifactObjectStorage interface {

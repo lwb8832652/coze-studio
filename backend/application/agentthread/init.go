@@ -23,6 +23,7 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
 type ServiceComponents struct {
@@ -79,6 +80,7 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.ArtifactObjectStorage = c.ObjectStorage
 	SVC.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(SVC.ThreadSVC)
 	SVC.JournalSnapshotRepository = repo
+	SVC.JournalQueryRepository = repo
 	SVC.JournalSnapshotAttemptReader = repo
 	SVC.JournalSnapshotObjectStorage = newJournalSnapshotStorageAdapter(c.ObjectStorage)
 	SVC.JournalSnapshotAuthorizer = NewThreadOwnerJournalSnapshotAuthorizer(
@@ -89,6 +91,7 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.JournalSnapshotArtifactReader = artifactRepo
 	SVC.JournalSnapshotArtifactCapabilityIssuer = SVC
 	SVC.JournalSnapshotIDGenerator = c.IDGen
+	SVC.JournalUserSettingsStore = kvstore.New[JournalUserSettingsRecord](c.DB)
 	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
 	SVC.GuardrailAuditRepository = guardrailAuditRepo
 	SVC.GuardrailAuditAuthorizer = NewThreadOwnerGuardrailAuditAuthorizer(SVC.ThreadSVC)

@@ -19,10 +19,12 @@ package coze
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +35,7 @@ import (
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
@@ -698,9 +701,458 @@ func TestCanonicalRunStreamProjectsErrorsWithoutInternalDetails(t *testing.T) {
 	}
 }
 
+func TestReconnectCanonicalRunStreamJournalV11UsesAttemptSequenceFrames(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal reconnect", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-stream", domainentity.RunAttemptStatusCompleted)
+	repository := &canonicalJournalStreamRepository{result: &domainrepo.GetJournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		Events: []*domainentity.JournalEvent{{
+			ID: 501, ThreadID: run.ThreadID, RunID: run.RunID, JournalRunID: run.RunID,
+			AttemptID: attempt.AttemptID, Sequence: 1, EventType: "milestone.started",
+			Payload:        `{"type":"milestone","data":{"milestone_id":"m1","title":"规划"}}`,
+			SchemaVersion:  domainentity.JournalSchemaVersion,
+			PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility:     domainentity.JournalVisibilityUser, CreatedAt: run.CreatedAt,
+		}},
+		LatestSequence: 1,
+	}}
+	appagentthread.SVC.JournalQueryRepository = repository
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalRunStreamTestServer(50 * time.Millisecond)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/api/workbench/threads/1/runs/"+strconv.FormatInt(run.RunID, 10)+
+			"/stream?journal_protocol_version=1.1&attempt_id=attempt-stream",
+		"",
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	body := writers.writer(t, 0).String()
+	metadataPayloads := canonicalRunStreamPayloads(t, body, canonicalRunStreamEventMetadata)
+	require.Len(t, metadataPayloads, 1)
+	metadata := metadataPayloads[0].(map[string]any)
+	require.Equal(t, "attempt-stream", metadata["attempt_id"])
+	require.Equal(t, float64(1), metadata["latest_sequence"])
+	require.Equal(t, float64(1), metadata["attempt"])
+	require.Equal(t, true, metadata["journal_enabled"])
+	require.Equal(t, true, metadata["snapshots_enabled"])
+	require.Equal(t, "1.1", metadata["journal_protocol_version"])
+	require.NotEmpty(t, metadata["submit_at"])
+	require.NotEmpty(t, metadata["server_time"])
+
+	eventPayloads := canonicalRunStreamPayloads(t, body, canonicalRunStreamEventEvents)
+	require.Len(t, eventPayloads, 1)
+	frame := eventPayloads[0].(map[string]any)
+	require.Equal(t, "event", frame["kind"])
+	event := frame["event"].(map[string]any)
+	require.Equal(t, "501", event["event_id"])
+	require.Equal(t, float64(1), event["sequence"])
+	require.IsType(t, map[string]any{}, event["payload"])
+	require.Equal(t, []int64{501}, canonicalRunStreamEventIDs(t, body))
+	require.Equal(t, 1, strings.Count(body, "event: end\n"))
+	require.NotContains(t, body, "internal_reason")
+	require.NotEmpty(t, repository.requests)
+	require.Equal(t, "attempt-stream", repository.requests[0].AttemptID)
+}
+
+func TestCanonicalJournalStreamAcceptsRecoveryExecutionRunEvents(t *testing.T) {
+	run := &appagentthread.RunSummary{ThreadID: 1, RunID: 10, CreatedAt: 1_000}
+	attempt := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 20,
+		AttemptID: "attempt-recovery", Ordinal: 2,
+		Status: domainentity.RunAttemptStatusCompleted, NextSequence: 2,
+		SnapshotsEnabled: true,
+		ProjectionState:  domainentity.JournalProjectionStateHealthy,
+		CreatedAt:        1_000, StartedAt: pointerToInt64(1_000),
+	}
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		Events: []*domainentity.JournalEvent{{
+			ID: 501, ThreadID: 1, RunID: 20, JournalRunID: 10,
+			AttemptID: attempt.AttemptID, Sequence: 1, EventType: "action.completed",
+			Payload:        `{"type":"generic","data":{}}`,
+			SchemaVersion:  domainentity.JournalSchemaVersion,
+			PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility:     domainentity.JournalVisibilityUser, CreatedAt: 1_000,
+		}},
+		LatestSequence: 1, JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID})
+
+	body := writer.String()
+	require.Contains(t, body, "event: events\n")
+	require.Contains(t, body, `"run_id":"10"`)
+	require.Equal(t, 1, strings.Count(body, "event: end\n"))
+	require.NotContains(t, body, "JOURNAL_EVENT_GAP")
+}
+
+func TestCanonicalJournalStreamResumesFromResolvedEventIDSequence(t *testing.T) {
+	run := &appagentthread.RunSummary{ThreadID: 1, RunID: 10, CreatedAt: 1_000}
+	attempt := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 10,
+		AttemptID: "attempt-event-cursor", Ordinal: 1,
+		Status: domainentity.RunAttemptStatusCompleted, NextSequence: 3,
+		ProjectionState: domainentity.JournalProjectionStateHealthy, CreatedAt: 1_000,
+	}
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		Events: []*domainentity.JournalEvent{{
+			ID: 502, ThreadID: 1, RunID: 10, JournalRunID: 10,
+			AttemptID: attempt.AttemptID, Sequence: 2, EventType: "action.completed",
+			Payload:        `{"type":"generic","data":{}}`,
+			SchemaVersion:  domainentity.JournalSchemaVersion,
+			PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility:     domainentity.JournalVisibilityUser, CreatedAt: 1_000,
+		}},
+		LatestSequence: 2, ResolvedAfterSequence: 1,
+		JournalEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID, AfterEventID: 501,
+	})
+
+	body := writer.String()
+	require.Contains(t, body, "id: 502\n")
+	require.Equal(t, 1, strings.Count(body, "event: end\n"))
+	require.NotContains(t, body, "JOURNAL_EVENT_GAP")
+}
+
+func TestStreamCanonicalRunIgnoresJournalProtocolQuery(t *testing.T) {
+	installAgentThreadTestService(t)
+	repository := &canonicalJournalStreamRepository{err: errors.New("must not be called")}
+	appagentthread.SVC.JournalQueryRepository = repository
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream?journal_protocol_version=1.1",
+		canonicalRunStreamRequestBody,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	metadataPayloads := canonicalRunStreamPayloads(
+		t, writers.writer(t, 0).String(), canonicalRunStreamEventMetadata,
+	)
+	require.Len(t, metadataPayloads, 1)
+	metadata := metadataPayloads[0].(map[string]any)
+	require.Equal(t, float64(1), metadata["attempt"])
+	require.NotContains(t, metadata, "attempt_id")
+	require.NotContains(t, metadata, "journal_enabled")
+	require.Empty(t, repository.requests)
+}
+
+func TestCanonicalJournalStreamHeartbeatRenewsAdmissionLease(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal heartbeat", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-heartbeat", domainentity.RunAttemptStatusRunning)
+	repository := &canonicalJournalStreamRepository{result: &domainrepo.GetJournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+	}}
+	appagentthread.SVC.JournalQueryRepository = repository
+	lease := &recordingCanonicalJournalAdmissionLease{}
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	initial, err := appagentthread.SVC.GetJournalBootstrap(
+		canonicalThreadAccessContext(context.Background(), run.ThreadID, run.RunID),
+		appagentthread.GetJournalBootstrapRequest{
+			ViewerID: 2, SpaceID: 1, ThreadID: run.ThreadID, RunID: run.RunID,
+			AttemptID: attempt.AttemptID, Limit: 200,
+		},
+	)
+	require.NoError(t, err)
+
+	streamCanonicalJournalEvents(context.Background(), writer, run, initial, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID,
+		PollInterval: 50 * time.Millisecond, HeartbeatInterval: time.Millisecond,
+		Timeout: 6 * time.Millisecond, AdmissionLease: lease,
+	})
+
+	body := writer.String()
+	require.GreaterOrEqual(t, strings.Count(body, "event: heartbeat\n"), 2)
+	require.GreaterOrEqual(t, lease.renewCalls, 2)
+	require.GreaterOrEqual(t, len(repository.requests), 3)
+}
+
+func TestCanonicalJournalStreamStopsWithoutFurtherFramesAfterAccessRevocation(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal revoked", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-revoked", domainentity.RunAttemptStatusRunning)
+	repository := &canonicalJournalStreamRepository{result: &domainrepo.GetJournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		Events: []*domainentity.JournalEvent{{
+			ID: 701, ThreadID: run.ThreadID, RunID: run.RunID, JournalRunID: run.RunID,
+			AttemptID: attempt.AttemptID, Sequence: 1, EventType: "action.completed",
+			Payload:        `{"type":"generic","data":{"action_id":"a1","operation":"read","target":"PRD","display_verb_running":"正在读取 PRD","display_verb_completed":"已读取 PRD"}}`,
+			SchemaVersion:  domainentity.JournalSchemaVersion,
+			PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility:     domainentity.JournalVisibilityUser, CreatedAt: run.CreatedAt,
+		}},
+		LatestSequence: 1,
+	}}
+	appagentthread.SVC.JournalQueryRepository = repository
+	authorizer := &revokedCanonicalJournalThreadAuthorizer{}
+	appagentthread.SVC.ThreadAuthorizer = authorizer
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID,
+		PollInterval: time.Millisecond, HeartbeatInterval: 50 * time.Millisecond,
+		Timeout: 10 * time.Millisecond,
+	})
+
+	body := writer.String()
+	require.Equal(t, 1, strings.Count(body, "event: metadata\n"))
+	require.NotContains(t, body, "event: events\n")
+	require.NotContains(t, body, "event: control\n")
+	require.NotContains(t, body, "event: heartbeat\n")
+	require.GreaterOrEqual(t, authorizer.calls, 1)
+	require.Empty(t, repository.requests)
+}
+
+func TestCanonicalJournalStreamStopsAfterWorkspaceAccessRevocation(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal workspace revoked", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-workspace-revoked", domainentity.RunAttemptStatusRunning)
+	repository := &canonicalJournalStreamRepository{result: &domainrepo.GetJournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+	}}
+	appagentthread.SVC.JournalQueryRepository = repository
+	workspaceAuthorizer := &revokedCanonicalJournalWorkspaceAuthorizer{}
+	appagentthread.SVC.WorkspaceAuthorizer = workspaceAuthorizer
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID,
+		PollInterval: time.Millisecond, HeartbeatInterval: 50 * time.Millisecond,
+		Timeout: 10 * time.Millisecond,
+	})
+
+	body := writer.String()
+	require.Equal(t, 1, strings.Count(body, "event: metadata\n"))
+	require.NotContains(t, body, "event: events\n")
+	require.NotContains(t, body, "event: control\n")
+	require.NotContains(t, body, "event: heartbeat\n")
+	require.GreaterOrEqual(t, workspaceAuthorizer.calls, 1)
+	require.Empty(t, repository.requests)
+}
+
+func TestCanonicalJournalStreamStopsWithoutFurtherFramesAfterSourceRevocation(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal source revoked", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-source-revoked", domainentity.RunAttemptStatusRunning)
+	repository := &canonicalJournalStreamRepository{err: appagentthread.ErrJournalSnapshotNoPermission}
+	appagentthread.SVC.JournalQueryRepository = repository
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID,
+		PollInterval: time.Millisecond, HeartbeatInterval: 50 * time.Millisecond,
+		Timeout: 10 * time.Millisecond,
+	})
+
+	body := writer.String()
+	require.Equal(t, 1, strings.Count(body, "event: metadata\n"))
+	require.NotContains(t, body, "event: events\n")
+	require.NotContains(t, body, "event: control\n")
+	require.NotContains(t, body, "event: heartbeat\n")
+	require.NotEmpty(t, repository.requests)
+}
+
+func TestCanonicalJournalStreamStopsWithProjectionControl(t *testing.T) {
+	run := &appagentthread.RunSummary{ThreadID: 1, RunID: 2, CreatedAt: 1_000}
+	for _, test := range []struct {
+		name        string
+		state       domainentity.JournalProjectionState
+		controlType string
+	}{
+		{name: "disabled", state: domainentity.JournalProjectionStateDisabled, controlType: "journal_disabled"},
+		{name: "degraded", state: domainentity.JournalProjectionStateDegraded, controlType: "journal_degraded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			writer := &recordingTaskThreadRunEventStreamWriter{}
+			attempt := &domainentity.RunAttempt{
+				AttemptID: "attempt-control", ThreadID: 1, JournalRunID: 2,
+				Ordinal: 1, Status: domainentity.RunAttemptStatusRunning,
+				ProjectionState: test.state, CreatedAt: 1_000, NextSequence: 1,
+			}
+			streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+				Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+				JournalEnabled: test.state != domainentity.JournalProjectionStateDisabled,
+			}, canonicalJournalStreamConfig{ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID})
+			body := writer.String()
+			controls := canonicalRunStreamPayloads(t, body, "control")
+			require.Len(t, controls, 1)
+			control := controls[0].(map[string]any)["control"].(map[string]any)
+			require.Equal(t, test.controlType, control["type"])
+			require.NotContains(t, body, "internal_reason")
+			require.NotContains(t, body, "event: events\n")
+		})
+	}
+}
+
+func TestBoundedCanonicalJournalStreamWriterRejectsSlowConsumer(t *testing.T) {
+	underlying := &blockingCanonicalJournalStreamWriter{
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	writer := newBoundedCanonicalJournalStreamWriter(underlying, 1)
+	require.NoError(t, writer.WriteEvent("1", "events", []byte(`{"one":1}`)))
+	<-underlying.started
+	require.NoError(t, writer.WriteEvent("2", "events", []byte(`{"two":2}`)))
+	require.ErrorIs(
+		t,
+		writer.WriteEvent("3", "events", []byte(`{"three":3}`)),
+		errCanonicalJournalSlowConsumer,
+	)
+	close(underlying.release)
+	require.NoError(t, writer.Close())
+}
+
+func TestBoundedCanonicalJournalStreamDropsQueuedEventsAfterSourceRevocation(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "journal queued source revoked", "continue")
+	attempt := canonicalJournalStreamAttempt(run, "attempt-queued-revoked", domainentity.RunAttemptStatusRunning)
+	repository := &canonicalJournalStreamRepository{err: appagentthread.ErrJournalSnapshotNoPermission}
+	appagentthread.SVC.JournalQueryRepository = repository
+	underlying := &blockingCanonicalJournalStreamWriter{
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	writer := newBoundedCanonicalJournalStreamWriter(underlying, 4)
+
+	streamCanonicalJournalEvents(context.Background(), writer, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{attempt}, SelectedAttempt: attempt,
+		Events: []*domainentity.JournalEvent{{
+			ID: 701, ThreadID: run.ThreadID, RunID: run.RunID, JournalRunID: run.RunID,
+			AttemptID: attempt.AttemptID, Sequence: 1, EventType: "action.completed",
+			Payload:        `{"type":"generic","data":{}}`,
+			SchemaVersion:  domainentity.JournalSchemaVersion,
+			PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility:     domainentity.JournalVisibilityUser, CreatedAt: run.CreatedAt,
+		}},
+		LatestSequence: 1, JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: attempt.AttemptID,
+		PollInterval: time.Millisecond, HeartbeatInterval: 50 * time.Millisecond,
+		Timeout: 10 * time.Millisecond,
+	})
+
+	close(underlying.release)
+	require.NoError(t, writer.Close())
+	require.NotContains(t, underlying.EventTypes(), canonicalRunStreamEventEvents)
+	require.NotEmpty(t, repository.requests)
+}
+
 type callbackCanonicalRunStreamWriter struct {
 	recordingTaskThreadRunEventStreamWriter
 	onEvent func(id, eventType string, data []byte)
+}
+
+type canonicalJournalStreamRepository struct {
+	mu       sync.Mutex
+	result   *domainrepo.GetJournalBootstrapResult
+	err      error
+	requests []domainrepo.GetJournalBootstrapRequest
+}
+
+func (r *canonicalJournalStreamRepository) GetJournalBootstrap(
+	_ context.Context,
+	req domainrepo.GetJournalBootstrapRequest,
+) (*domainrepo.GetJournalBootstrapResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requests = append(r.requests, req)
+	return r.result, r.err
+}
+
+func canonicalJournalStreamAttempt(
+	run *appagentthread.RunSummary,
+	attemptID string,
+	status domainentity.RunAttemptStatus,
+) *domainentity.RunAttempt {
+	return &domainentity.RunAttempt{
+		ThreadID: run.ThreadID, JournalRunID: run.RunID, ExecutionRunID: run.RunID,
+		AttemptID: attemptID, Ordinal: 1, Status: status, NextSequence: 2,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+		CreatedAt: run.CreatedAt, StartedAt: pointerToInt64(run.CreatedAt),
+	}
+}
+
+type recordingCanonicalJournalAdmissionLease struct {
+	renewCalls   int
+	releaseCalls int
+}
+
+type revokedCanonicalJournalThreadAuthorizer struct {
+	calls int
+}
+
+type revokedCanonicalJournalWorkspaceAuthorizer struct {
+	calls int
+}
+
+func (a *revokedCanonicalJournalThreadAuthorizer) AuthorizeThreadAccess(
+	context.Context,
+	appagentthread.ThreadAccessRequest,
+) error {
+	a.calls++
+	return appagentthread.ErrThreadAccessDenied
+}
+
+func (a *revokedCanonicalJournalWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	a.calls++
+	return appagentthread.ErrThreadAccessDenied
+}
+
+func (l *recordingCanonicalJournalAdmissionLease) Renew(context.Context) error {
+	l.renewCalls++
+	return nil
+}
+
+func (l *recordingCanonicalJournalAdmissionLease) Release(context.Context) error {
+	l.releaseCalls++
+	return nil
+}
+
+type blockingCanonicalJournalStreamWriter struct {
+	once       sync.Once
+	started    chan struct{}
+	release    chan struct{}
+	mu         sync.Mutex
+	eventTypes []string
+}
+
+func (w *blockingCanonicalJournalStreamWriter) WriteEvent(_ string, eventType string, _ []byte) error {
+	w.once.Do(func() { close(w.started) })
+	<-w.release
+	w.mu.Lock()
+	w.eventTypes = append(w.eventTypes, eventType)
+	w.mu.Unlock()
+	return nil
+}
+
+func (w *blockingCanonicalJournalStreamWriter) WriteKeepAlive() error { return nil }
+
+func (w *blockingCanonicalJournalStreamWriter) EventTypes() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.eventTypes...)
 }
 
 type canonicalRunStreamWriterRecorder struct {
