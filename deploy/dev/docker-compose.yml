@@ -29,6 +29,10 @@ services:
       test:
         - CMD-SHELL
         - wget -q -O - http://127.0.0.1:4151/ping | grep -qx OK
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - coze-dev
     logging: *default-logging
