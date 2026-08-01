@@ -278,7 +278,6 @@ func projectJournalToolAction(
 		"target":                 target,
 		"display_verb_running":   runningVerb,
 		"display_verb_completed": completedVerb,
-		"content_type":           journalToolContentType(toolName, operation),
 	}
 	if milestoneID != "" {
 		data["milestone_id"] = milestoneID
@@ -293,7 +292,7 @@ func projectJournalToolAction(
 		event,
 		projectionType,
 		status,
-		journalToolContentType(toolName, operation),
+		"generic",
 		data,
 		"action",
 		correlationKey,
@@ -726,25 +725,6 @@ func journalToolTarget(toolName, operation string) string {
 		return "文件"
 	}
 	return "内容"
-}
-
-func journalToolContentType(toolName, operation string) string {
-	switch operation {
-	case "execute":
-		return "terminal"
-	case "use_skill":
-		return "skill"
-	case "search", "browse":
-		return "browser"
-	}
-	name := strings.ToLower(toolName)
-	if strings.Contains(name, "code") || strings.Contains(name, "patch") {
-		return "code"
-	}
-	if strings.Contains(name, "file") || strings.Contains(name, "document") || strings.Contains(name, "doc") {
-		return "document"
-	}
-	return "generic"
 }
 
 func journalActionVerbs(operation string) (string, string) {

@@ -67,6 +67,12 @@ func TestJournalProjectionKeepsActionIdentityAndServerOwnedVerbs(t *testing.T) {
 	require.NotContains(t, started.Payload, "sk-secret")
 	require.Equal(t, "正在读取", journalPayloadString(t, started.Payload, "display_verb_running"))
 	require.Equal(t, "已读取", journalPayloadString(t, started.Payload, "display_verb_completed"))
+	require.NotContains(t, started.Payload, "content_type")
+	var startedEnvelope struct {
+		Type string `json:"type"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(started.Payload), &startedEnvelope))
+	require.Equal(t, "generic", startedEnvelope.Type)
 
 	completed, err := ProjectRunEventToJournal(RunEvent{
 		ThreadID: 1, RunID: 2, EventType: "tool.completed",

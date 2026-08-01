@@ -66,6 +66,7 @@ func (s *ApplicationService) WriteOutputFile(
 	return s.writeOutputFileBytes(
 		ctx,
 		req.Run,
+		req.ToolCallID,
 		req.FilePath,
 		[]byte(req.Content),
 		req.ContentType,
@@ -75,6 +76,7 @@ func (s *ApplicationService) WriteOutputFile(
 func (s *ApplicationService) writeOutputFileBytes(
 	ctx context.Context,
 	run *RunSummary,
+	toolCallID string,
 	filePath string,
 	content []byte,
 	requestedContentType string,
@@ -140,6 +142,14 @@ func (s *ApplicationService) writeOutputFileBytes(
 	}
 
 	summary := outputFileSummary(file, virtualPath, contentType, int64(len(content)), digest)
+	s.publishJournalDocumentSnapshot(
+		ctx,
+		run,
+		toolCallID,
+		summary,
+		objectKey,
+		content,
+	)
 	notice := encodeRunEventPayload(ctx, map[string]any{
 		"schema":       outputFileWrittenSchema,
 		"file_id":      summary.FileID,
@@ -156,6 +166,120 @@ func (s *ApplicationService) writeOutputFileBytes(
 		Created: created,
 		Notice:  notice,
 	}, nil
+}
+
+func (s *ApplicationService) publishJournalDocumentSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	originalObjectKey string,
+	content []byte,
+) {
+	if s == nil || s.JournalSnapshotAttemptReader == nil ||
+		s.JournalSnapshotRepository == nil || run == nil || file == nil ||
+		len(content) == 0 {
+		return
+	}
+	format, ok := journalOutputDocumentFormat(file.ContentType)
+	if !ok {
+		return
+	}
+	document := &JournalDocumentContent{
+		Token:             "file-" + strconv.FormatInt(file.FileID, 10),
+		Title:             file.FileName,
+		Format:            format,
+		Content:           string(content),
+		Revision:          file.Digest,
+		SyncStatus:        "synced",
+		OriginalObjectKey: originalObjectKey,
+	}
+	if format == "markdown" {
+		document.Chapters = journalMarkdownChapters(document.Content)
+	}
+	operation := journalToolOperation("write_file")
+	target := journalToolTarget("write_file", operation)
+	runningVerb, completedVerb := journalActionVerbs(operation)
+	actionID := ""
+	if strings.TrimSpace(toolCallID) != "" {
+		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
+	}
+	_, _, err := s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
+		Run: run, Status: domainentity.JournalContentStatusReady,
+		ContentType: domainentity.JournalSnapshotContentTypeDocument,
+		Source: JournalSnapshotSource{
+			ResourceType: "runtime_file",
+			ResourceID:   strconv.FormatInt(file.FileID, 10),
+			Revision:     file.Digest,
+		},
+		Action: JournalContentAction{
+			ActionID:  actionID,
+			Operation: operation, Target: target,
+			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
+		},
+		Content: JournalTypedSnapshotContent{Document: document},
+	})
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal document snapshot unavailable: run_id=%d file_id=%d",
+			run.RunID,
+			file.FileID,
+		)
+	}
+}
+
+func journalOutputDocumentFormat(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return "", false
+	}
+	switch strings.ToLower(mediaType) {
+	case "text/markdown":
+		return "markdown", true
+	case "text/plain":
+		return "text", true
+	default:
+		return "", false
+	}
+}
+
+func journalMarkdownChapters(content string) []JournalDocumentChapter {
+	const maxChapters = 4096
+	lines := strings.Split(content, "\n")
+	chapters := make([]JournalDocumentChapter, 0)
+	inFence := false
+	for lineIndex, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !strings.HasPrefix(line, "#") {
+			continue
+		}
+		level := 0
+		for level < len(line) && level < 6 && line[level] == '#' {
+			level++
+		}
+		if level == 0 || level >= len(line) || line[level] != ' ' {
+			continue
+		}
+		title := strings.TrimSpace(line[level+1:])
+		if title == "" {
+			continue
+		}
+		identity := fmt.Sprintf("%d:%d:%s", lineIndex+1, level, title)
+		chapters = append(chapters, JournalDocumentChapter{
+			ChapterID: "heading-" + journalSnapshotHash([]byte(identity))[:16],
+			Title:     title,
+			Level:     int32(level),
+		})
+		if len(chapters) >= maxChapters {
+			break
+		}
+	}
+	return chapters
 }
 
 func (s *ApplicationService) CreateSkillPackage(
@@ -191,6 +315,7 @@ func (s *ApplicationService) CreateSkillPackage(
 	resp, err := s.writeOutputFileBytes(
 		ctx,
 		req.Run,
+		"",
 		outputPath,
 		archiveBytes,
 		skillPackageContentType,

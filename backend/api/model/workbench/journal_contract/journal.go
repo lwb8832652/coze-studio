@@ -97,6 +97,26 @@ const (
 
 	JournalSnapshotContentTypeBrowser = "browser"
 
+	JournalSnapshotFragmentKindDocumentBlock = "document_block"
+
+	JournalSnapshotFragmentKindDocumentChapters = "document_chapters"
+
+	JournalSnapshotFragmentKindTerminalStdout = "terminal_stdout"
+
+	JournalSnapshotFragmentKindTerminalStderr = "terminal_stderr"
+
+	JournalSnapshotFragmentKindCodeLines = "code_lines"
+
+	JournalSnapshotFragmentKindCodeHighlights = "code_highlights"
+
+	JournalSnapshotFragmentKindSkillItems = "skill_items"
+
+	JournalSnapshotFragmentKindBrowserThumbnail = "browser_thumbnail"
+
+	JournalSnapshotFragmentKindBrowserSnapshot = "browser_snapshot"
+
+	JournalSnapshotFragmentKindBrowserAnalysis = "browser_analysis"
+
 	JournalSnapshotActionCopyCommand = "copy_command"
 
 	JournalSnapshotActionCopyOutput = "copy_output"
@@ -159,6 +179,8 @@ type JournalVerificationPayloadType = string
 type JournalConfirmationPayloadType = string
 
 type JournalSnapshotContentType = string
+
+type JournalSnapshotFragmentKind = string
 
 type JournalSnapshotAction = string
 
@@ -4211,13 +4233,26 @@ func (p *JournalSkill) String() string {
 }
 
 type JournalSnapshotFragment struct {
-	FragmentID    string  `thrift:"fragment_id,1,required" form:"fragment_id,required" json:"fragment_id,required" query:"fragment_id,required"`
-	FragmentIndex int32   `thrift:"fragment_index,2,required" form:"fragment_index,required" json:"fragment_index,required" query:"fragment_index,required"`
-	Content       *string `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
-	ByteStart     *int64  `thrift:"byte_start,4,optional" form:"byte_start" json:"byte_start,omitempty" query:"byte_start"`
-	ByteEnd       *int64  `thrift:"byte_end,5,optional" form:"byte_end" json:"byte_end,omitempty" query:"byte_end"`
-	SizeBytes     *int64  `thrift:"size_bytes,6,optional" form:"size_bytes" json:"size_bytes,omitempty" query:"size_bytes"`
-	ContentHash   *string `thrift:"content_hash,7,optional" form:"content_hash" json:"content_hash,omitempty" query:"content_hash"`
+	FragmentID          string                       `thrift:"fragment_id,1,required" form:"fragment_id,required" json:"fragment_id,required" query:"fragment_id,required"`
+	FragmentIndex       int32                        `thrift:"fragment_index,2,required" form:"fragment_index,required" json:"fragment_index,required" query:"fragment_index,required"`
+	Content             *string                      `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
+	ByteStart           *int64                       `thrift:"byte_start,4,optional" form:"byte_start" json:"byte_start,omitempty" query:"byte_start"`
+	ByteEnd             *int64                       `thrift:"byte_end,5,optional" form:"byte_end" json:"byte_end,omitempty" query:"byte_end"`
+	SizeBytes           *int64                       `thrift:"size_bytes,6,optional" form:"size_bytes" json:"size_bytes,omitempty" query:"size_bytes"`
+	ContentHash         *string                      `thrift:"content_hash,7,optional" form:"content_hash" json:"content_hash,omitempty" query:"content_hash"`
+	Kind                *JournalSnapshotFragmentKind `thrift:"kind,8,optional" form:"kind" json:"kind,omitempty" query:"kind"`
+	BlockID             *string                      `thrift:"block_id,9,optional" form:"block_id" json:"block_id,omitempty" query:"block_id"`
+	Stream              *string                      `thrift:"stream,10,optional" form:"stream" json:"stream,omitempty" query:"stream"`
+	StartLine           *int32                       `thrift:"start_line,11,optional" form:"start_line" json:"start_line,omitempty" query:"start_line"`
+	EndLine             *int32                       `thrift:"end_line,12,optional" form:"end_line" json:"end_line,omitempty" query:"end_line"`
+	ItemStart           *int32                       `thrift:"item_start,13,optional" form:"item_start" json:"item_start,omitempty" query:"item_start"`
+	ItemEnd             *int32                       `thrift:"item_end,14,optional" form:"item_end" json:"item_end,omitempty" query:"item_end"`
+	BinaryContentBase64 *string                      `thrift:"binary_content_base64,15,optional" form:"binary_content_base64" json:"binary_content_base64,omitempty" query:"binary_content_base64"`
+	MimeType            *string                      `thrift:"mime_type,16,optional" form:"mime_type" json:"mime_type,omitempty" query:"mime_type"`
+	Chapters            []*JournalDocumentChapter    `thrift:"chapters,17,optional,list<JournalDocumentChapter>" form:"chapters" json:"chapters,omitempty" query:"chapters"`
+	Highlights          []*JournalCodeHighlight      `thrift:"highlights,18,optional,list<JournalCodeHighlight>" form:"highlights" json:"highlights,omitempty" query:"highlights"`
+	Skills              []*JournalSkill              `thrift:"skills,19,optional,list<JournalSkill>" form:"skills" json:"skills,omitempty" query:"skills"`
+	Analysis            []string                     `thrift:"analysis,20,optional,list<string>" form:"analysis" json:"analysis,omitempty" query:"analysis"`
 }
 
 func NewJournalSnapshotFragment() *JournalSnapshotFragment {
@@ -4280,14 +4315,144 @@ func (p *JournalSnapshotFragment) GetContentHash() (v string) {
 	return *p.ContentHash
 }
 
+var JournalSnapshotFragment_Kind_DEFAULT JournalSnapshotFragmentKind
+
+func (p *JournalSnapshotFragment) GetKind() (v JournalSnapshotFragmentKind) {
+	if !p.IsSetKind() {
+		return JournalSnapshotFragment_Kind_DEFAULT
+	}
+	return *p.Kind
+}
+
+var JournalSnapshotFragment_BlockID_DEFAULT string
+
+func (p *JournalSnapshotFragment) GetBlockID() (v string) {
+	if !p.IsSetBlockID() {
+		return JournalSnapshotFragment_BlockID_DEFAULT
+	}
+	return *p.BlockID
+}
+
+var JournalSnapshotFragment_Stream_DEFAULT string
+
+func (p *JournalSnapshotFragment) GetStream() (v string) {
+	if !p.IsSetStream() {
+		return JournalSnapshotFragment_Stream_DEFAULT
+	}
+	return *p.Stream
+}
+
+var JournalSnapshotFragment_StartLine_DEFAULT int32
+
+func (p *JournalSnapshotFragment) GetStartLine() (v int32) {
+	if !p.IsSetStartLine() {
+		return JournalSnapshotFragment_StartLine_DEFAULT
+	}
+	return *p.StartLine
+}
+
+var JournalSnapshotFragment_EndLine_DEFAULT int32
+
+func (p *JournalSnapshotFragment) GetEndLine() (v int32) {
+	if !p.IsSetEndLine() {
+		return JournalSnapshotFragment_EndLine_DEFAULT
+	}
+	return *p.EndLine
+}
+
+var JournalSnapshotFragment_ItemStart_DEFAULT int32
+
+func (p *JournalSnapshotFragment) GetItemStart() (v int32) {
+	if !p.IsSetItemStart() {
+		return JournalSnapshotFragment_ItemStart_DEFAULT
+	}
+	return *p.ItemStart
+}
+
+var JournalSnapshotFragment_ItemEnd_DEFAULT int32
+
+func (p *JournalSnapshotFragment) GetItemEnd() (v int32) {
+	if !p.IsSetItemEnd() {
+		return JournalSnapshotFragment_ItemEnd_DEFAULT
+	}
+	return *p.ItemEnd
+}
+
+var JournalSnapshotFragment_BinaryContentBase64_DEFAULT string
+
+func (p *JournalSnapshotFragment) GetBinaryContentBase64() (v string) {
+	if !p.IsSetBinaryContentBase64() {
+		return JournalSnapshotFragment_BinaryContentBase64_DEFAULT
+	}
+	return *p.BinaryContentBase64
+}
+
+var JournalSnapshotFragment_MimeType_DEFAULT string
+
+func (p *JournalSnapshotFragment) GetMimeType() (v string) {
+	if !p.IsSetMimeType() {
+		return JournalSnapshotFragment_MimeType_DEFAULT
+	}
+	return *p.MimeType
+}
+
+var JournalSnapshotFragment_Chapters_DEFAULT []*JournalDocumentChapter
+
+func (p *JournalSnapshotFragment) GetChapters() (v []*JournalDocumentChapter) {
+	if !p.IsSetChapters() {
+		return JournalSnapshotFragment_Chapters_DEFAULT
+	}
+	return p.Chapters
+}
+
+var JournalSnapshotFragment_Highlights_DEFAULT []*JournalCodeHighlight
+
+func (p *JournalSnapshotFragment) GetHighlights() (v []*JournalCodeHighlight) {
+	if !p.IsSetHighlights() {
+		return JournalSnapshotFragment_Highlights_DEFAULT
+	}
+	return p.Highlights
+}
+
+var JournalSnapshotFragment_Skills_DEFAULT []*JournalSkill
+
+func (p *JournalSnapshotFragment) GetSkills() (v []*JournalSkill) {
+	if !p.IsSetSkills() {
+		return JournalSnapshotFragment_Skills_DEFAULT
+	}
+	return p.Skills
+}
+
+var JournalSnapshotFragment_Analysis_DEFAULT []string
+
+func (p *JournalSnapshotFragment) GetAnalysis() (v []string) {
+	if !p.IsSetAnalysis() {
+		return JournalSnapshotFragment_Analysis_DEFAULT
+	}
+	return p.Analysis
+}
+
 var fieldIDToName_JournalSnapshotFragment = map[int16]string{
-	1: "fragment_id",
-	2: "fragment_index",
-	3: "content",
-	4: "byte_start",
-	5: "byte_end",
-	6: "size_bytes",
-	7: "content_hash",
+	1:  "fragment_id",
+	2:  "fragment_index",
+	3:  "content",
+	4:  "byte_start",
+	5:  "byte_end",
+	6:  "size_bytes",
+	7:  "content_hash",
+	8:  "kind",
+	9:  "block_id",
+	10: "stream",
+	11: "start_line",
+	12: "end_line",
+	13: "item_start",
+	14: "item_end",
+	15: "binary_content_base64",
+	16: "mime_type",
+	17: "chapters",
+	18: "highlights",
+	19: "skills",
+	20: "analysis",
 }
 
 func (p *JournalSnapshotFragment) IsSetContent() bool {
@@ -4308,6 +4473,58 @@ func (p *JournalSnapshotFragment) IsSetSizeBytes() bool {
 
 func (p *JournalSnapshotFragment) IsSetContentHash() bool {
 	return p.ContentHash != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetKind() bool {
+	return p.Kind != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetBlockID() bool {
+	return p.BlockID != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetStream() bool {
+	return p.Stream != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetStartLine() bool {
+	return p.StartLine != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetEndLine() bool {
+	return p.EndLine != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetItemStart() bool {
+	return p.ItemStart != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetItemEnd() bool {
+	return p.ItemEnd != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetBinaryContentBase64() bool {
+	return p.BinaryContentBase64 != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetMimeType() bool {
+	return p.MimeType != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetChapters() bool {
+	return p.Chapters != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetHighlights() bool {
+	return p.Highlights != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetSkills() bool {
+	return p.Skills != nil
+}
+
+func (p *JournalSnapshotFragment) IsSetAnalysis() bool {
+	return p.Analysis != nil
 }
 
 func (p *JournalSnapshotFragment) Read(iprot thrift.TProtocol) (err error) {
@@ -4384,6 +4601,110 @@ func (p *JournalSnapshotFragment) Read(iprot thrift.TProtocol) (err error) {
 		case 7:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 15:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField15(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 16:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField16(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 17:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField17(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 18:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField18(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 19:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField19(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 20:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField20(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -4506,6 +4827,197 @@ func (p *JournalSnapshotFragment) ReadField7(iprot thrift.TProtocol) error {
 	p.ContentHash = _field
 	return nil
 }
+func (p *JournalSnapshotFragment) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *JournalSnapshotFragmentKind
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Kind = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.BlockID = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField10(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Stream = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.StartLine = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.EndLine = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField13(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ItemStart = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField14(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ItemEnd = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField15(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.BinaryContentBase64 = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField16(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.MimeType = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField17(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*JournalDocumentChapter, 0, size)
+	values := make([]JournalDocumentChapter, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Chapters = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField18(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*JournalCodeHighlight, 0, size)
+	values := make([]JournalCodeHighlight, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Highlights = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField19(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*JournalSkill, 0, size)
+	values := make([]JournalSkill, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Skills = _field
+	return nil
+}
+func (p *JournalSnapshotFragment) ReadField20(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]string, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem string
+		if v, err := iprot.ReadString(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Analysis = _field
+	return nil
+}
 
 func (p *JournalSnapshotFragment) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -4539,6 +5051,58 @@ func (p *JournalSnapshotFragment) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField7(oprot); err != nil {
 			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
+			goto WriteFieldError
+		}
+		if err = p.writeField15(oprot); err != nil {
+			fieldId = 15
+			goto WriteFieldError
+		}
+		if err = p.writeField16(oprot); err != nil {
+			fieldId = 16
+			goto WriteFieldError
+		}
+		if err = p.writeField17(oprot); err != nil {
+			fieldId = 17
+			goto WriteFieldError
+		}
+		if err = p.writeField18(oprot); err != nil {
+			fieldId = 18
+			goto WriteFieldError
+		}
+		if err = p.writeField19(oprot); err != nil {
+			fieldId = 19
+			goto WriteFieldError
+		}
+		if err = p.writeField20(oprot); err != nil {
+			fieldId = 20
 			goto WriteFieldError
 		}
 	}
@@ -4688,6 +5252,285 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
 }
 
+func (p *JournalSnapshotFragment) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetKind() {
+		if err = oprot.WriteFieldBegin("kind", thrift.STRING, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Kind); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBlockID() {
+		if err = oprot.WriteFieldBegin("block_id", thrift.STRING, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.BlockID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField10(oprot thrift.TProtocol) (err error) {
+	if p.IsSetStream() {
+		if err = oprot.WriteFieldBegin("stream", thrift.STRING, 10); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Stream); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField11(oprot thrift.TProtocol) (err error) {
+	if p.IsSetStartLine() {
+		if err = oprot.WriteFieldBegin("start_line", thrift.I32, 11); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.StartLine); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField12(oprot thrift.TProtocol) (err error) {
+	if p.IsSetEndLine() {
+		if err = oprot.WriteFieldBegin("end_line", thrift.I32, 12); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.EndLine); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField13(oprot thrift.TProtocol) (err error) {
+	if p.IsSetItemStart() {
+		if err = oprot.WriteFieldBegin("item_start", thrift.I32, 13); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.ItemStart); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField14(oprot thrift.TProtocol) (err error) {
+	if p.IsSetItemEnd() {
+		if err = oprot.WriteFieldBegin("item_end", thrift.I32, 14); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.ItemEnd); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField15(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBinaryContentBase64() {
+		if err = oprot.WriteFieldBegin("binary_content_base64", thrift.STRING, 15); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.BinaryContentBase64); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField16(oprot thrift.TProtocol) (err error) {
+	if p.IsSetMimeType() {
+		if err = oprot.WriteFieldBegin("mime_type", thrift.STRING, 16); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.MimeType); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField17(oprot thrift.TProtocol) (err error) {
+	if p.IsSetChapters() {
+		if err = oprot.WriteFieldBegin("chapters", thrift.LIST, 17); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Chapters)); err != nil {
+			return err
+		}
+		for _, v := range p.Chapters {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField18(oprot thrift.TProtocol) (err error) {
+	if p.IsSetHighlights() {
+		if err = oprot.WriteFieldBegin("highlights", thrift.LIST, 18); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Highlights)); err != nil {
+			return err
+		}
+		for _, v := range p.Highlights {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 18 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 18 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField19(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSkills() {
+		if err = oprot.WriteFieldBegin("skills", thrift.LIST, 19); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Skills)); err != nil {
+			return err
+		}
+		for _, v := range p.Skills {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 19 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 19 end error: ", p), err)
+}
+
+func (p *JournalSnapshotFragment) writeField20(oprot thrift.TProtocol) (err error) {
+	if p.IsSetAnalysis() {
+		if err = oprot.WriteFieldBegin("analysis", thrift.LIST, 20); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRING, len(p.Analysis)); err != nil {
+			return err
+		}
+		for _, v := range p.Analysis {
+			if err := oprot.WriteString(v); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 end error: ", p), err)
+}
+
 func (p *JournalSnapshotFragment) String() string {
 	if p == nil {
 		return "<nil>"
@@ -4696,11 +5539,270 @@ func (p *JournalSnapshotFragment) String() string {
 
 }
 
+type JournalDocumentChapter struct {
+	ChapterID string `thrift:"chapter_id,1,required" form:"chapter_id,required" json:"chapter_id,required" query:"chapter_id,required"`
+	Title     string `thrift:"title,2,required" form:"title,required" json:"title,required" query:"title,required"`
+	Level     int32  `thrift:"level,3,required" form:"level,required" json:"level,required" query:"level,required"`
+}
+
+func NewJournalDocumentChapter() *JournalDocumentChapter {
+	return &JournalDocumentChapter{}
+}
+
+func (p *JournalDocumentChapter) InitDefault() {
+}
+
+func (p *JournalDocumentChapter) GetChapterID() (v string) {
+	return p.ChapterID
+}
+
+func (p *JournalDocumentChapter) GetTitle() (v string) {
+	return p.Title
+}
+
+func (p *JournalDocumentChapter) GetLevel() (v int32) {
+	return p.Level
+}
+
+var fieldIDToName_JournalDocumentChapter = map[int16]string{
+	1: "chapter_id",
+	2: "title",
+	3: "level",
+}
+
+func (p *JournalDocumentChapter) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetChapterID bool = false
+	var issetTitle bool = false
+	var issetLevel bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetChapterID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetTitle = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetLevel = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetChapterID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetTitle {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetLevel {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_JournalDocumentChapter[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_JournalDocumentChapter[fieldId]))
+}
+
+func (p *JournalDocumentChapter) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ChapterID = _field
+	return nil
+}
+func (p *JournalDocumentChapter) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Title = _field
+	return nil
+}
+func (p *JournalDocumentChapter) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Level = _field
+	return nil
+}
+
+func (p *JournalDocumentChapter) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("JournalDocumentChapter"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *JournalDocumentChapter) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("chapter_id", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.ChapterID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *JournalDocumentChapter) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("title", thrift.STRING, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Title); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *JournalDocumentChapter) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("level", thrift.I32, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.Level); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *JournalDocumentChapter) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("JournalDocumentChapter(%+v)", *p)
+
+}
+
 type JournalDocumentSnapshotContent struct {
-	Title            string  `thrift:"title,1,required" form:"title,required" json:"title,required" query:"title,required"`
-	Format           *string `thrift:"format,2,optional" form:"format" json:"format,omitempty" query:"format"`
-	Content          *string `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
-	SourceArtifactID *string `thrift:"source_artifact_id,4,optional" form:"source_artifact_id" json:"source_artifact_id,omitempty" query:"source_artifact_id"`
+	Title            string                    `thrift:"title,1,required" form:"title,required" json:"title,required" query:"title,required"`
+	Format           *string                   `thrift:"format,2,optional" form:"format" json:"format,omitempty" query:"format"`
+	Content          *string                   `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
+	SourceArtifactID *string                   `thrift:"source_artifact_id,4,optional" form:"source_artifact_id" json:"source_artifact_id,omitempty" query:"source_artifact_id"`
+	Token            *string                   `thrift:"token,5,optional" form:"token" json:"token,omitempty" query:"token"`
+	Chapters         []*JournalDocumentChapter `thrift:"chapters,6,optional,list<JournalDocumentChapter>" form:"chapters" json:"chapters,omitempty" query:"chapters"`
+	ActiveBlock      *string                   `thrift:"active_block,7,optional" form:"active_block" json:"active_block,omitempty" query:"active_block"`
+	Revision         *string                   `thrift:"revision,8,optional" form:"revision" json:"revision,omitempty" query:"revision"`
+	SyncStatus       *string                   `thrift:"sync_status,9,optional" form:"sync_status" json:"sync_status,omitempty" query:"sync_status"`
 }
 
 func NewJournalDocumentSnapshotContent() *JournalDocumentSnapshotContent {
@@ -4741,11 +5843,61 @@ func (p *JournalDocumentSnapshotContent) GetSourceArtifactID() (v string) {
 	return *p.SourceArtifactID
 }
 
+var JournalDocumentSnapshotContent_Token_DEFAULT string
+
+func (p *JournalDocumentSnapshotContent) GetToken() (v string) {
+	if !p.IsSetToken() {
+		return JournalDocumentSnapshotContent_Token_DEFAULT
+	}
+	return *p.Token
+}
+
+var JournalDocumentSnapshotContent_Chapters_DEFAULT []*JournalDocumentChapter
+
+func (p *JournalDocumentSnapshotContent) GetChapters() (v []*JournalDocumentChapter) {
+	if !p.IsSetChapters() {
+		return JournalDocumentSnapshotContent_Chapters_DEFAULT
+	}
+	return p.Chapters
+}
+
+var JournalDocumentSnapshotContent_ActiveBlock_DEFAULT string
+
+func (p *JournalDocumentSnapshotContent) GetActiveBlock() (v string) {
+	if !p.IsSetActiveBlock() {
+		return JournalDocumentSnapshotContent_ActiveBlock_DEFAULT
+	}
+	return *p.ActiveBlock
+}
+
+var JournalDocumentSnapshotContent_Revision_DEFAULT string
+
+func (p *JournalDocumentSnapshotContent) GetRevision() (v string) {
+	if !p.IsSetRevision() {
+		return JournalDocumentSnapshotContent_Revision_DEFAULT
+	}
+	return *p.Revision
+}
+
+var JournalDocumentSnapshotContent_SyncStatus_DEFAULT string
+
+func (p *JournalDocumentSnapshotContent) GetSyncStatus() (v string) {
+	if !p.IsSetSyncStatus() {
+		return JournalDocumentSnapshotContent_SyncStatus_DEFAULT
+	}
+	return *p.SyncStatus
+}
+
 var fieldIDToName_JournalDocumentSnapshotContent = map[int16]string{
 	1: "title",
 	2: "format",
 	3: "content",
 	4: "source_artifact_id",
+	5: "token",
+	6: "chapters",
+	7: "active_block",
+	8: "revision",
+	9: "sync_status",
 }
 
 func (p *JournalDocumentSnapshotContent) IsSetFormat() bool {
@@ -4758,6 +5910,26 @@ func (p *JournalDocumentSnapshotContent) IsSetContent() bool {
 
 func (p *JournalDocumentSnapshotContent) IsSetSourceArtifactID() bool {
 	return p.SourceArtifactID != nil
+}
+
+func (p *JournalDocumentSnapshotContent) IsSetToken() bool {
+	return p.Token != nil
+}
+
+func (p *JournalDocumentSnapshotContent) IsSetChapters() bool {
+	return p.Chapters != nil
+}
+
+func (p *JournalDocumentSnapshotContent) IsSetActiveBlock() bool {
+	return p.ActiveBlock != nil
+}
+
+func (p *JournalDocumentSnapshotContent) IsSetRevision() bool {
+	return p.Revision != nil
+}
+
+func (p *JournalDocumentSnapshotContent) IsSetSyncStatus() bool {
+	return p.SyncStatus != nil
 }
 
 func (p *JournalDocumentSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
@@ -4808,6 +5980,46 @@ func (p *JournalDocumentSnapshotContent) Read(iprot thrift.TProtocol) (err error
 		case 4:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField9(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -4892,6 +6104,73 @@ func (p *JournalDocumentSnapshotContent) ReadField4(iprot thrift.TProtocol) erro
 	p.SourceArtifactID = _field
 	return nil
 }
+func (p *JournalDocumentSnapshotContent) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Token = _field
+	return nil
+}
+func (p *JournalDocumentSnapshotContent) ReadField6(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*JournalDocumentChapter, 0, size)
+	values := make([]JournalDocumentChapter, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Chapters = _field
+	return nil
+}
+func (p *JournalDocumentSnapshotContent) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ActiveBlock = _field
+	return nil
+}
+func (p *JournalDocumentSnapshotContent) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Revision = _field
+	return nil
+}
+func (p *JournalDocumentSnapshotContent) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SyncStatus = _field
+	return nil
+}
 
 func (p *JournalDocumentSnapshotContent) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -4913,6 +6192,26 @@ func (p *JournalDocumentSnapshotContent) Write(oprot thrift.TProtocol) (err erro
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
 			goto WriteFieldError
 		}
 	}
@@ -5007,6 +6306,109 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *JournalDocumentSnapshotContent) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetToken() {
+		if err = oprot.WriteFieldBegin("token", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Token); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *JournalDocumentSnapshotContent) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetChapters() {
+		if err = oprot.WriteFieldBegin("chapters", thrift.LIST, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Chapters)); err != nil {
+			return err
+		}
+		for _, v := range p.Chapters {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalDocumentSnapshotContent) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetActiveBlock() {
+		if err = oprot.WriteFieldBegin("active_block", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.ActiveBlock); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalDocumentSnapshotContent) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetRevision() {
+		if err = oprot.WriteFieldBegin("revision", thrift.STRING, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Revision); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalDocumentSnapshotContent) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSyncStatus() {
+		if err = oprot.WriteFieldBegin("sync_status", thrift.STRING, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.SyncStatus); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
 func (p *JournalDocumentSnapshotContent) String() string {
 	if p == nil {
 		return "<nil>"
@@ -5020,6 +6422,12 @@ type JournalTerminalSnapshotContent struct {
 	Output           *string `thrift:"output,2,optional" form:"output" json:"output,omitempty" query:"output"`
 	ExitCode         *int32  `thrift:"exit_code,3,optional" form:"exit_code" json:"exit_code,omitempty" query:"exit_code"`
 	WorkingDirectory *string `thrift:"working_directory,4,optional" form:"working_directory" json:"working_directory,omitempty" query:"working_directory"`
+	SessionID        *string `thrift:"session_id,5,optional" form:"session_id" json:"session_id,omitempty" query:"session_id"`
+	StartedAt        *string `thrift:"started_at,6,optional" form:"started_at" json:"started_at,omitempty" query:"started_at"`
+	FinishedAt       *string `thrift:"finished_at,7,optional" form:"finished_at" json:"finished_at,omitempty" query:"finished_at"`
+	Stdout           *string `thrift:"stdout,8,optional" form:"stdout" json:"stdout,omitempty" query:"stdout"`
+	Stderr           *string `thrift:"stderr,9,optional" form:"stderr" json:"stderr,omitempty" query:"stderr"`
+	DurationMs       *int64  `thrift:"duration_ms,10,optional" form:"duration_ms" json:"duration_ms,omitempty" query:"duration_ms"`
 }
 
 func NewJournalTerminalSnapshotContent() *JournalTerminalSnapshotContent {
@@ -5060,11 +6468,71 @@ func (p *JournalTerminalSnapshotContent) GetWorkingDirectory() (v string) {
 	return *p.WorkingDirectory
 }
 
+var JournalTerminalSnapshotContent_SessionID_DEFAULT string
+
+func (p *JournalTerminalSnapshotContent) GetSessionID() (v string) {
+	if !p.IsSetSessionID() {
+		return JournalTerminalSnapshotContent_SessionID_DEFAULT
+	}
+	return *p.SessionID
+}
+
+var JournalTerminalSnapshotContent_StartedAt_DEFAULT string
+
+func (p *JournalTerminalSnapshotContent) GetStartedAt() (v string) {
+	if !p.IsSetStartedAt() {
+		return JournalTerminalSnapshotContent_StartedAt_DEFAULT
+	}
+	return *p.StartedAt
+}
+
+var JournalTerminalSnapshotContent_FinishedAt_DEFAULT string
+
+func (p *JournalTerminalSnapshotContent) GetFinishedAt() (v string) {
+	if !p.IsSetFinishedAt() {
+		return JournalTerminalSnapshotContent_FinishedAt_DEFAULT
+	}
+	return *p.FinishedAt
+}
+
+var JournalTerminalSnapshotContent_Stdout_DEFAULT string
+
+func (p *JournalTerminalSnapshotContent) GetStdout() (v string) {
+	if !p.IsSetStdout() {
+		return JournalTerminalSnapshotContent_Stdout_DEFAULT
+	}
+	return *p.Stdout
+}
+
+var JournalTerminalSnapshotContent_Stderr_DEFAULT string
+
+func (p *JournalTerminalSnapshotContent) GetStderr() (v string) {
+	if !p.IsSetStderr() {
+		return JournalTerminalSnapshotContent_Stderr_DEFAULT
+	}
+	return *p.Stderr
+}
+
+var JournalTerminalSnapshotContent_DurationMs_DEFAULT int64
+
+func (p *JournalTerminalSnapshotContent) GetDurationMs() (v int64) {
+	if !p.IsSetDurationMs() {
+		return JournalTerminalSnapshotContent_DurationMs_DEFAULT
+	}
+	return *p.DurationMs
+}
+
 var fieldIDToName_JournalTerminalSnapshotContent = map[int16]string{
-	1: "command",
-	2: "output",
-	3: "exit_code",
-	4: "working_directory",
+	1:  "command",
+	2:  "output",
+	3:  "exit_code",
+	4:  "working_directory",
+	5:  "session_id",
+	6:  "started_at",
+	7:  "finished_at",
+	8:  "stdout",
+	9:  "stderr",
+	10: "duration_ms",
 }
 
 func (p *JournalTerminalSnapshotContent) IsSetOutput() bool {
@@ -5077,6 +6545,30 @@ func (p *JournalTerminalSnapshotContent) IsSetExitCode() bool {
 
 func (p *JournalTerminalSnapshotContent) IsSetWorkingDirectory() bool {
 	return p.WorkingDirectory != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetSessionID() bool {
+	return p.SessionID != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetStartedAt() bool {
+	return p.StartedAt != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetFinishedAt() bool {
+	return p.FinishedAt != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetStdout() bool {
+	return p.Stdout != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetStderr() bool {
+	return p.Stderr != nil
+}
+
+func (p *JournalTerminalSnapshotContent) IsSetDurationMs() bool {
+	return p.DurationMs != nil
 }
 
 func (p *JournalTerminalSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
@@ -5127,6 +6619,54 @@ func (p *JournalTerminalSnapshotContent) Read(iprot thrift.TProtocol) (err error
 		case 4:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField10(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -5211,6 +6751,72 @@ func (p *JournalTerminalSnapshotContent) ReadField4(iprot thrift.TProtocol) erro
 	p.WorkingDirectory = _field
 	return nil
 }
+func (p *JournalTerminalSnapshotContent) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SessionID = _field
+	return nil
+}
+func (p *JournalTerminalSnapshotContent) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.StartedAt = _field
+	return nil
+}
+func (p *JournalTerminalSnapshotContent) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.FinishedAt = _field
+	return nil
+}
+func (p *JournalTerminalSnapshotContent) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Stdout = _field
+	return nil
+}
+func (p *JournalTerminalSnapshotContent) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Stderr = _field
+	return nil
+}
+func (p *JournalTerminalSnapshotContent) ReadField10(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.DurationMs = _field
+	return nil
+}
 
 func (p *JournalTerminalSnapshotContent) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -5232,6 +6838,30 @@ func (p *JournalTerminalSnapshotContent) Write(oprot thrift.TProtocol) (err erro
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
 			goto WriteFieldError
 		}
 	}
@@ -5326,6 +6956,120 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *JournalTerminalSnapshotContent) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSessionID() {
+		if err = oprot.WriteFieldBegin("session_id", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.SessionID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *JournalTerminalSnapshotContent) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetStartedAt() {
+		if err = oprot.WriteFieldBegin("started_at", thrift.STRING, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.StartedAt); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalTerminalSnapshotContent) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFinishedAt() {
+		if err = oprot.WriteFieldBegin("finished_at", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.FinishedAt); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalTerminalSnapshotContent) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetStdout() {
+		if err = oprot.WriteFieldBegin("stdout", thrift.STRING, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Stdout); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalTerminalSnapshotContent) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetStderr() {
+		if err = oprot.WriteFieldBegin("stderr", thrift.STRING, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Stderr); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *JournalTerminalSnapshotContent) writeField10(oprot thrift.TProtocol) (err error) {
+	if p.IsSetDurationMs() {
+		if err = oprot.WriteFieldBegin("duration_ms", thrift.I64, 10); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.DurationMs); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
 func (p *JournalTerminalSnapshotContent) String() string {
 	if p == nil {
 		return "<nil>"
@@ -5334,13 +7078,274 @@ func (p *JournalTerminalSnapshotContent) String() string {
 
 }
 
+type JournalCodeHighlight struct {
+	StartLine int32   `thrift:"start_line,1,required" form:"start_line,required" json:"start_line,required" query:"start_line,required"`
+	EndLine   int32   `thrift:"end_line,2,required" form:"end_line,required" json:"end_line,required" query:"end_line,required"`
+	Kind      *string `thrift:"kind,3,optional" form:"kind" json:"kind,omitempty" query:"kind"`
+}
+
+func NewJournalCodeHighlight() *JournalCodeHighlight {
+	return &JournalCodeHighlight{}
+}
+
+func (p *JournalCodeHighlight) InitDefault() {
+}
+
+func (p *JournalCodeHighlight) GetStartLine() (v int32) {
+	return p.StartLine
+}
+
+func (p *JournalCodeHighlight) GetEndLine() (v int32) {
+	return p.EndLine
+}
+
+var JournalCodeHighlight_Kind_DEFAULT string
+
+func (p *JournalCodeHighlight) GetKind() (v string) {
+	if !p.IsSetKind() {
+		return JournalCodeHighlight_Kind_DEFAULT
+	}
+	return *p.Kind
+}
+
+var fieldIDToName_JournalCodeHighlight = map[int16]string{
+	1: "start_line",
+	2: "end_line",
+	3: "kind",
+}
+
+func (p *JournalCodeHighlight) IsSetKind() bool {
+	return p.Kind != nil
+}
+
+func (p *JournalCodeHighlight) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetStartLine bool = false
+	var issetEndLine bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStartLine = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetEndLine = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetStartLine {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetEndLine {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_JournalCodeHighlight[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_JournalCodeHighlight[fieldId]))
+}
+
+func (p *JournalCodeHighlight) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.StartLine = _field
+	return nil
+}
+func (p *JournalCodeHighlight) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.EndLine = _field
+	return nil
+}
+func (p *JournalCodeHighlight) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Kind = _field
+	return nil
+}
+
+func (p *JournalCodeHighlight) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("JournalCodeHighlight"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *JournalCodeHighlight) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("start_line", thrift.I32, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.StartLine); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *JournalCodeHighlight) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("end_line", thrift.I32, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(p.EndLine); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *JournalCodeHighlight) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetKind() {
+		if err = oprot.WriteFieldBegin("kind", thrift.STRING, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Kind); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *JournalCodeHighlight) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("JournalCodeHighlight(%+v)", *p)
+
+}
+
 type JournalCodeSnapshotContent struct {
-	FilePath  string  `thrift:"file_path,1,required" form:"file_path,required" json:"file_path,required" query:"file_path,required"`
-	Language  *string `thrift:"language,2,optional" form:"language" json:"language,omitempty" query:"language"`
-	Content   *string `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
-	Diff      *string `thrift:"diff,4,optional" form:"diff" json:"diff,omitempty" query:"diff"`
-	StartLine *int32  `thrift:"start_line,5,optional" form:"start_line" json:"start_line,omitempty" query:"start_line"`
-	EndLine   *int32  `thrift:"end_line,6,optional" form:"end_line" json:"end_line,omitempty" query:"end_line"`
+	FilePath   string                  `thrift:"file_path,1,required" form:"file_path,required" json:"file_path,required" query:"file_path,required"`
+	Language   *string                 `thrift:"language,2,optional" form:"language" json:"language,omitempty" query:"language"`
+	Content    *string                 `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
+	Diff       *string                 `thrift:"diff,4,optional" form:"diff" json:"diff,omitempty" query:"diff"`
+	StartLine  *int32                  `thrift:"start_line,5,optional" form:"start_line" json:"start_line,omitempty" query:"start_line"`
+	EndLine    *int32                  `thrift:"end_line,6,optional" form:"end_line" json:"end_line,omitempty" query:"end_line"`
+	Repository string                  `thrift:"repository,7,required" form:"repository,required" json:"repository,required" query:"repository,required"`
+	Revision   string                  `thrift:"revision,8,required" form:"revision,required" json:"revision,required" query:"revision,required"`
+	Highlights []*JournalCodeHighlight `thrift:"highlights,9,optional,list<JournalCodeHighlight>" form:"highlights" json:"highlights,omitempty" query:"highlights"`
 }
 
 func NewJournalCodeSnapshotContent() *JournalCodeSnapshotContent {
@@ -5399,6 +7404,23 @@ func (p *JournalCodeSnapshotContent) GetEndLine() (v int32) {
 	return *p.EndLine
 }
 
+func (p *JournalCodeSnapshotContent) GetRepository() (v string) {
+	return p.Repository
+}
+
+func (p *JournalCodeSnapshotContent) GetRevision() (v string) {
+	return p.Revision
+}
+
+var JournalCodeSnapshotContent_Highlights_DEFAULT []*JournalCodeHighlight
+
+func (p *JournalCodeSnapshotContent) GetHighlights() (v []*JournalCodeHighlight) {
+	if !p.IsSetHighlights() {
+		return JournalCodeSnapshotContent_Highlights_DEFAULT
+	}
+	return p.Highlights
+}
+
 var fieldIDToName_JournalCodeSnapshotContent = map[int16]string{
 	1: "file_path",
 	2: "language",
@@ -5406,6 +7428,9 @@ var fieldIDToName_JournalCodeSnapshotContent = map[int16]string{
 	4: "diff",
 	5: "start_line",
 	6: "end_line",
+	7: "repository",
+	8: "revision",
+	9: "highlights",
 }
 
 func (p *JournalCodeSnapshotContent) IsSetLanguage() bool {
@@ -5428,11 +7453,17 @@ func (p *JournalCodeSnapshotContent) IsSetEndLine() bool {
 	return p.EndLine != nil
 }
 
+func (p *JournalCodeSnapshotContent) IsSetHighlights() bool {
+	return p.Highlights != nil
+}
+
 func (p *JournalCodeSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
 
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetFilePath bool = false
+	var issetRepository bool = false
+	var issetRevision bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -5497,6 +7528,32 @@ func (p *JournalCodeSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRepository = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRevision = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		default:
 			if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
@@ -5512,6 +7569,16 @@ func (p *JournalCodeSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetFilePath {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRepository {
+		fieldId = 7
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRevision {
+		fieldId = 8
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -5598,6 +7665,51 @@ func (p *JournalCodeSnapshotContent) ReadField6(iprot thrift.TProtocol) error {
 	p.EndLine = _field
 	return nil
 }
+func (p *JournalCodeSnapshotContent) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Repository = _field
+	return nil
+}
+func (p *JournalCodeSnapshotContent) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Revision = _field
+	return nil
+}
+func (p *JournalCodeSnapshotContent) ReadField9(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*JournalCodeHighlight, 0, size)
+	values := make([]JournalCodeHighlight, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Highlights = _field
+	return nil
+}
 
 func (p *JournalCodeSnapshotContent) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -5627,6 +7739,18 @@ func (p *JournalCodeSnapshotContent) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
 			goto WriteFieldError
 		}
 	}
@@ -5757,6 +7881,67 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalCodeSnapshotContent) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("repository", thrift.STRING, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Repository); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalCodeSnapshotContent) writeField8(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("revision", thrift.STRING, 8); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Revision); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalCodeSnapshotContent) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetHighlights() {
+		if err = oprot.WriteFieldBegin("highlights", thrift.LIST, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Highlights)); err != nil {
+			return err
+		}
+		for _, v := range p.Highlights {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
 }
 
 func (p *JournalCodeSnapshotContent) String() string {
@@ -5936,10 +8121,19 @@ func (p *JournalSkillSnapshotContent) String() string {
 }
 
 type JournalBrowserSnapshotContent struct {
-	URL                  *string `thrift:"url,1,optional" form:"url" json:"url,omitempty" query:"url"`
-	Title                *string `thrift:"title,2,optional" form:"title" json:"title,omitempty" query:"title"`
-	Content              *string `thrift:"content,3,optional" form:"content" json:"content,omitempty" query:"content"`
-	ScreenshotArtifactID *string `thrift:"screenshot_artifact_id,4,optional" form:"screenshot_artifact_id" json:"screenshot_artifact_id,omitempty" query:"screenshot_artifact_id"`
+	URL                    *string  `thrift:"url,1,optional" form:"url" json:"url,omitempty" query:"url"`
+	Title                  *string  `thrift:"title,2,optional" form:"title" json:"title,omitempty" query:"title"`
+	ScreenshotArtifactID   *string  `thrift:"screenshot_artifact_id,4,optional" form:"screenshot_artifact_id" json:"screenshot_artifact_id,omitempty" query:"screenshot_artifact_id"`
+	CaptureID              string   `thrift:"capture_id,5,required" form:"capture_id,required" json:"capture_id,required" query:"capture_id,required"`
+	ThumbnailBase64        *string  `thrift:"thumbnail_base64,6,optional" form:"thumbnail_base64" json:"thumbnail_base64,omitempty" query:"thumbnail_base64"`
+	StaticSnapshotBase64   string   `thrift:"static_snapshot_base64,7,required" form:"static_snapshot_base64,required" json:"static_snapshot_base64,required" query:"static_snapshot_base64,required"`
+	MimeType               string   `thrift:"mime_type,8,required" form:"mime_type,required" json:"mime_type,required" query:"mime_type,required"`
+	Analysis               []string `thrift:"analysis,9,optional,list<string>" form:"analysis" json:"analysis,omitempty" query:"analysis"`
+	Index                  *int32   `thrift:"index,10,optional" form:"index" json:"index,omitempty" query:"index"`
+	Total                  *int32   `thrift:"total,11,optional" form:"total" json:"total,omitempty" query:"total"`
+	Redacted               bool     `thrift:"redacted,12,required" form:"redacted,required" json:"redacted,required" query:"redacted,required"`
+	RedactionEvidenceID    string   `thrift:"redaction_evidence_id,13,required" form:"redaction_evidence_id,required" json:"redaction_evidence_id,required" query:"redaction_evidence_id,required"`
+	RedactionPolicyVersion string   `thrift:"redaction_policy_version,14,required" form:"redaction_policy_version,required" json:"redaction_policy_version,required" query:"redaction_policy_version,required"`
 }
 
 func NewJournalBrowserSnapshotContent() *JournalBrowserSnapshotContent {
@@ -5967,15 +8161,6 @@ func (p *JournalBrowserSnapshotContent) GetTitle() (v string) {
 	return *p.Title
 }
 
-var JournalBrowserSnapshotContent_Content_DEFAULT string
-
-func (p *JournalBrowserSnapshotContent) GetContent() (v string) {
-	if !p.IsSetContent() {
-		return JournalBrowserSnapshotContent_Content_DEFAULT
-	}
-	return *p.Content
-}
-
 var JournalBrowserSnapshotContent_ScreenshotArtifactID_DEFAULT string
 
 func (p *JournalBrowserSnapshotContent) GetScreenshotArtifactID() (v string) {
@@ -5985,11 +8170,80 @@ func (p *JournalBrowserSnapshotContent) GetScreenshotArtifactID() (v string) {
 	return *p.ScreenshotArtifactID
 }
 
+func (p *JournalBrowserSnapshotContent) GetCaptureID() (v string) {
+	return p.CaptureID
+}
+
+var JournalBrowserSnapshotContent_ThumbnailBase64_DEFAULT string
+
+func (p *JournalBrowserSnapshotContent) GetThumbnailBase64() (v string) {
+	if !p.IsSetThumbnailBase64() {
+		return JournalBrowserSnapshotContent_ThumbnailBase64_DEFAULT
+	}
+	return *p.ThumbnailBase64
+}
+
+func (p *JournalBrowserSnapshotContent) GetStaticSnapshotBase64() (v string) {
+	return p.StaticSnapshotBase64
+}
+
+func (p *JournalBrowserSnapshotContent) GetMimeType() (v string) {
+	return p.MimeType
+}
+
+var JournalBrowserSnapshotContent_Analysis_DEFAULT []string
+
+func (p *JournalBrowserSnapshotContent) GetAnalysis() (v []string) {
+	if !p.IsSetAnalysis() {
+		return JournalBrowserSnapshotContent_Analysis_DEFAULT
+	}
+	return p.Analysis
+}
+
+var JournalBrowserSnapshotContent_Index_DEFAULT int32
+
+func (p *JournalBrowserSnapshotContent) GetIndex() (v int32) {
+	if !p.IsSetIndex() {
+		return JournalBrowserSnapshotContent_Index_DEFAULT
+	}
+	return *p.Index
+}
+
+var JournalBrowserSnapshotContent_Total_DEFAULT int32
+
+func (p *JournalBrowserSnapshotContent) GetTotal() (v int32) {
+	if !p.IsSetTotal() {
+		return JournalBrowserSnapshotContent_Total_DEFAULT
+	}
+	return *p.Total
+}
+
+func (p *JournalBrowserSnapshotContent) GetRedacted() (v bool) {
+	return p.Redacted
+}
+
+func (p *JournalBrowserSnapshotContent) GetRedactionEvidenceID() (v string) {
+	return p.RedactionEvidenceID
+}
+
+func (p *JournalBrowserSnapshotContent) GetRedactionPolicyVersion() (v string) {
+	return p.RedactionPolicyVersion
+}
+
 var fieldIDToName_JournalBrowserSnapshotContent = map[int16]string{
-	1: "url",
-	2: "title",
-	3: "content",
-	4: "screenshot_artifact_id",
+	1:  "url",
+	2:  "title",
+	4:  "screenshot_artifact_id",
+	5:  "capture_id",
+	6:  "thumbnail_base64",
+	7:  "static_snapshot_base64",
+	8:  "mime_type",
+	9:  "analysis",
+	10: "index",
+	11: "total",
+	12: "redacted",
+	13: "redaction_evidence_id",
+	14: "redaction_policy_version",
 }
 
 func (p *JournalBrowserSnapshotContent) IsSetURL() bool {
@@ -6000,18 +8254,36 @@ func (p *JournalBrowserSnapshotContent) IsSetTitle() bool {
 	return p.Title != nil
 }
 
-func (p *JournalBrowserSnapshotContent) IsSetContent() bool {
-	return p.Content != nil
-}
-
 func (p *JournalBrowserSnapshotContent) IsSetScreenshotArtifactID() bool {
 	return p.ScreenshotArtifactID != nil
+}
+
+func (p *JournalBrowserSnapshotContent) IsSetThumbnailBase64() bool {
+	return p.ThumbnailBase64 != nil
+}
+
+func (p *JournalBrowserSnapshotContent) IsSetAnalysis() bool {
+	return p.Analysis != nil
+}
+
+func (p *JournalBrowserSnapshotContent) IsSetIndex() bool {
+	return p.Index != nil
+}
+
+func (p *JournalBrowserSnapshotContent) IsSetTotal() bool {
+	return p.Total != nil
 }
 
 func (p *JournalBrowserSnapshotContent) Read(iprot thrift.TProtocol) (err error) {
 
 	var fieldTypeId thrift.TType
 	var fieldId int16
+	var issetCaptureID bool = false
+	var issetStaticSnapshotBase64 bool = false
+	var issetMimeType bool = false
+	var issetRedacted bool = false
+	var issetRedactionEvidenceID bool = false
+	var issetRedactionPolicyVersion bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -6043,19 +8315,97 @@ func (p *JournalBrowserSnapshotContent) Read(iprot thrift.TProtocol) (err error)
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
-		case 3:
-			if fieldTypeId == thrift.STRING {
-				if err = p.ReadField3(iprot); err != nil {
-					goto ReadFieldError
-				}
-			} else if err = iprot.Skip(fieldTypeId); err != nil {
-				goto SkipFieldError
-			}
 		case 4:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField4(iprot); err != nil {
 					goto ReadFieldError
 				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCaptureID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStaticSnapshotBase64 = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMimeType = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRedacted = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRedactionEvidenceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRedactionPolicyVersion = true
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -6072,6 +8422,35 @@ func (p *JournalBrowserSnapshotContent) Read(iprot thrift.TProtocol) (err error)
 		goto ReadStructEndError
 	}
 
+	if !issetCaptureID {
+		fieldId = 5
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetStaticSnapshotBase64 {
+		fieldId = 7
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMimeType {
+		fieldId = 8
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRedacted {
+		fieldId = 12
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRedactionEvidenceID {
+		fieldId = 13
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRedactionPolicyVersion {
+		fieldId = 14
+		goto RequiredFieldNotSetError
+	}
 	return nil
 ReadStructBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
@@ -6086,6 +8465,8 @@ ReadFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
 ReadStructEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_JournalBrowserSnapshotContent[fieldId]))
 }
 
 func (p *JournalBrowserSnapshotContent) ReadField1(iprot thrift.TProtocol) error {
@@ -6110,17 +8491,6 @@ func (p *JournalBrowserSnapshotContent) ReadField2(iprot thrift.TProtocol) error
 	p.Title = _field
 	return nil
 }
-func (p *JournalBrowserSnapshotContent) ReadField3(iprot thrift.TProtocol) error {
-
-	var _field *string
-	if v, err := iprot.ReadString(); err != nil {
-		return err
-	} else {
-		_field = &v
-	}
-	p.Content = _field
-	return nil
-}
 func (p *JournalBrowserSnapshotContent) ReadField4(iprot thrift.TProtocol) error {
 
 	var _field *string
@@ -6130,6 +8500,128 @@ func (p *JournalBrowserSnapshotContent) ReadField4(iprot thrift.TProtocol) error
 		_field = &v
 	}
 	p.ScreenshotArtifactID = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CaptureID = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ThumbnailBase64 = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.StaticSnapshotBase64 = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.MimeType = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField9(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]string, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem string
+		if v, err := iprot.ReadString(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Analysis = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField10(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Index = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Total = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Redacted = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField13(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RedactionEvidenceID = _field
+	return nil
+}
+func (p *JournalBrowserSnapshotContent) ReadField14(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RedactionPolicyVersion = _field
 	return nil
 }
 
@@ -6147,12 +8639,48 @@ func (p *JournalBrowserSnapshotContent) Write(oprot thrift.TProtocol) (err error
 			fieldId = 2
 			goto WriteFieldError
 		}
-		if err = p.writeField3(oprot); err != nil {
-			fieldId = 3
-			goto WriteFieldError
-		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
 			goto WriteFieldError
 		}
 	}
@@ -6211,25 +8739,6 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
 }
 
-func (p *JournalBrowserSnapshotContent) writeField3(oprot thrift.TProtocol) (err error) {
-	if p.IsSetContent() {
-		if err = oprot.WriteFieldBegin("content", thrift.STRING, 3); err != nil {
-			goto WriteFieldBeginError
-		}
-		if err := oprot.WriteString(*p.Content); err != nil {
-			return err
-		}
-		if err = oprot.WriteFieldEnd(); err != nil {
-			goto WriteFieldEndError
-		}
-	}
-	return nil
-WriteFieldBeginError:
-	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
-WriteFieldEndError:
-	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
-}
-
 func (p *JournalBrowserSnapshotContent) writeField4(oprot thrift.TProtocol) (err error) {
 	if p.IsSetScreenshotArtifactID() {
 		if err = oprot.WriteFieldBegin("screenshot_artifact_id", thrift.STRING, 4); err != nil {
@@ -6247,6 +8756,192 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("capture_id", thrift.STRING, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.CaptureID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetThumbnailBase64() {
+		if err = oprot.WriteFieldBegin("thumbnail_base64", thrift.STRING, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.ThumbnailBase64); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("static_snapshot_base64", thrift.STRING, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.StaticSnapshotBase64); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField8(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("mime_type", thrift.STRING, 8); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.MimeType); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetAnalysis() {
+		if err = oprot.WriteFieldBegin("analysis", thrift.LIST, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRING, len(p.Analysis)); err != nil {
+			return err
+		}
+		for _, v := range p.Analysis {
+			if err := oprot.WriteString(v); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField10(oprot thrift.TProtocol) (err error) {
+	if p.IsSetIndex() {
+		if err = oprot.WriteFieldBegin("index", thrift.I32, 10); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.Index); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField11(oprot thrift.TProtocol) (err error) {
+	if p.IsSetTotal() {
+		if err = oprot.WriteFieldBegin("total", thrift.I32, 11); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.Total); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField12(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("redacted", thrift.BOOL, 12); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.Redacted); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField13(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("redaction_evidence_id", thrift.STRING, 13); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.RedactionEvidenceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
+}
+
+func (p *JournalBrowserSnapshotContent) writeField14(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("redaction_policy_version", thrift.STRING, 14); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.RedactionPolicyVersion); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 end error: ", p), err)
 }
 
 func (p *JournalBrowserSnapshotContent) String() string {
@@ -6270,7 +8965,7 @@ type JournalSnapshotEnvelope struct {
 	Fragments    []*JournalSnapshotFragment `thrift:"fragments,10,required,list<JournalSnapshotFragment>" form:"fragments,required" json:"fragments,required" query:"fragments,required"`
 	HasMore      bool                       `thrift:"has_more,11,required" form:"has_more,required" json:"has_more,required" query:"has_more,required"`
 	NextCursor   *string                    `thrift:"next_cursor,12,optional" form:"next_cursor" json:"next_cursor,omitempty" query:"next_cursor"`
-	Content      *JournalSnapshotContent    `thrift:"content,13,required" form:"content,required" json:"content,required" query:"content,required"`
+	Content      *JournalSnapshotContent    `thrift:"content,13,optional" form:"content" json:"content,omitempty" query:"content"`
 }
 
 func NewJournalSnapshotEnvelope() *JournalSnapshotEnvelope {
@@ -6389,7 +9084,6 @@ func (p *JournalSnapshotEnvelope) Read(iprot thrift.TProtocol) (err error) {
 	var issetVisibility bool = false
 	var issetFragments bool = false
 	var issetHasMore bool = false
-	var issetContent bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -6516,7 +9210,6 @@ func (p *JournalSnapshotEnvelope) Read(iprot thrift.TProtocol) (err error) {
 				if err = p.ReadField13(iprot); err != nil {
 					goto ReadFieldError
 				}
-				issetContent = true
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -6580,11 +9273,6 @@ func (p *JournalSnapshotEnvelope) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetHasMore {
 		fieldId = 11
-		goto RequiredFieldNotSetError
-	}
-
-	if !issetContent {
-		fieldId = 13
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -7051,14 +9739,16 @@ WriteFieldEndError:
 }
 
 func (p *JournalSnapshotEnvelope) writeField13(oprot thrift.TProtocol) (err error) {
-	if err = oprot.WriteFieldBegin("content", thrift.STRUCT, 13); err != nil {
-		goto WriteFieldBeginError
-	}
-	if err := p.Content.Write(oprot); err != nil {
-		return err
-	}
-	if err = oprot.WriteFieldEnd(); err != nil {
-		goto WriteFieldEndError
+	if p.IsSetContent() {
+		if err = oprot.WriteFieldBegin("content", thrift.STRUCT, 13); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Content.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
 	}
 	return nil
 WriteFieldBeginError:
@@ -12656,6 +15346,7 @@ type AuditCanonicalRunSnapshotActionRequest struct {
 	SpaceID        int64                 `thrift:"space_id,4,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Action         JournalSnapshotAction `thrift:"action,5,required" form:"action,required" json:"action,required"`
 	IdempotencyKey string                `thrift:"idempotency_key,6,required" header:"Idempotency-Key,required" json:"idempotency_key,required"`
+	FragmentID     *string               `thrift:"fragment_id,7,optional" form:"fragment_id" json:"fragment_id,omitempty"`
 	Base           *base.Base            `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -12690,6 +15381,15 @@ func (p *AuditCanonicalRunSnapshotActionRequest) GetIdempotencyKey() (v string) 
 	return p.IdempotencyKey
 }
 
+var AuditCanonicalRunSnapshotActionRequest_FragmentID_DEFAULT string
+
+func (p *AuditCanonicalRunSnapshotActionRequest) GetFragmentID() (v string) {
+	if !p.IsSetFragmentID() {
+		return AuditCanonicalRunSnapshotActionRequest_FragmentID_DEFAULT
+	}
+	return *p.FragmentID
+}
+
 var AuditCanonicalRunSnapshotActionRequest_Base_DEFAULT *base.Base
 
 func (p *AuditCanonicalRunSnapshotActionRequest) GetBase() (v *base.Base) {
@@ -12706,7 +15406,12 @@ var fieldIDToName_AuditCanonicalRunSnapshotActionRequest = map[int16]string{
 	4:   "space_id",
 	5:   "action",
 	6:   "idempotency_key",
+	7:   "fragment_id",
 	255: "Base",
+}
+
+func (p *AuditCanonicalRunSnapshotActionRequest) IsSetFragmentID() bool {
+	return p.FragmentID != nil
 }
 
 func (p *AuditCanonicalRunSnapshotActionRequest) IsSetBase() bool {
@@ -12789,6 +15494,14 @@ func (p *AuditCanonicalRunSnapshotActionRequest) Read(iprot thrift.TProtocol) (e
 					goto ReadFieldError
 				}
 				issetIdempotencyKey = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -12926,6 +15639,17 @@ func (p *AuditCanonicalRunSnapshotActionRequest) ReadField6(iprot thrift.TProtoc
 	p.IdempotencyKey = _field
 	return nil
 }
+func (p *AuditCanonicalRunSnapshotActionRequest) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.FragmentID = _field
+	return nil
+}
 func (p *AuditCanonicalRunSnapshotActionRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -12963,6 +15687,10 @@ func (p *AuditCanonicalRunSnapshotActionRequest) Write(oprot thrift.TProtocol) (
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -13089,6 +15817,25 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
+func (p *AuditCanonicalRunSnapshotActionRequest) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFragmentID() {
+		if err = oprot.WriteFieldBegin("fragment_id", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.FragmentID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
 func (p *AuditCanonicalRunSnapshotActionRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -13117,10 +15864,14 @@ func (p *AuditCanonicalRunSnapshotActionRequest) String() string {
 }
 
 type JournalSnapshotActionAuditResponse struct {
-	SnapshotID string                `thrift:"snapshot_id,1,required" form:"snapshot_id,required" json:"snapshot_id,required" query:"snapshot_id,required"`
-	Action     JournalSnapshotAction `thrift:"action,2,required" form:"action,required" json:"action,required" query:"action,required"`
-	Allowed    bool                  `thrift:"allowed,3,required" form:"allowed,required" json:"allowed,required" query:"allowed,required"`
-	AuditedAt  string                `thrift:"audited_at,4,required" form:"audited_at,required" json:"audited_at,required" query:"audited_at,required"`
+	SnapshotID            string                `thrift:"snapshot_id,1,required" form:"snapshot_id,required" json:"snapshot_id,required" query:"snapshot_id,required"`
+	Action                JournalSnapshotAction `thrift:"action,2,required" form:"action,required" json:"action,required" query:"action,required"`
+	Allowed               bool                  `thrift:"allowed,3,required" form:"allowed,required" json:"allowed,required" query:"allowed,required"`
+	AuditedAt             string                `thrift:"audited_at,4,required" form:"audited_at,required" json:"audited_at,required" query:"audited_at,required"`
+	CopyText              *string               `thrift:"copy_text,5,optional" form:"copy_text" json:"copy_text,omitempty" query:"copy_text"`
+	DownloadURL           *string               `thrift:"download_url,6,optional" form:"download_url" json:"download_url,omitempty" query:"download_url"`
+	DownloadContentBase64 *string               `thrift:"download_content_base64,7,optional" form:"download_content_base64" json:"download_content_base64,omitempty" query:"download_content_base64"`
+	DownloadMimeType      *string               `thrift:"download_mime_type,8,optional" form:"download_mime_type" json:"download_mime_type,omitempty" query:"download_mime_type"`
 }
 
 func NewJournalSnapshotActionAuditResponse() *JournalSnapshotActionAuditResponse {
@@ -13146,11 +15897,67 @@ func (p *JournalSnapshotActionAuditResponse) GetAuditedAt() (v string) {
 	return p.AuditedAt
 }
 
+var JournalSnapshotActionAuditResponse_CopyText_DEFAULT string
+
+func (p *JournalSnapshotActionAuditResponse) GetCopyText() (v string) {
+	if !p.IsSetCopyText() {
+		return JournalSnapshotActionAuditResponse_CopyText_DEFAULT
+	}
+	return *p.CopyText
+}
+
+var JournalSnapshotActionAuditResponse_DownloadURL_DEFAULT string
+
+func (p *JournalSnapshotActionAuditResponse) GetDownloadURL() (v string) {
+	if !p.IsSetDownloadURL() {
+		return JournalSnapshotActionAuditResponse_DownloadURL_DEFAULT
+	}
+	return *p.DownloadURL
+}
+
+var JournalSnapshotActionAuditResponse_DownloadContentBase64_DEFAULT string
+
+func (p *JournalSnapshotActionAuditResponse) GetDownloadContentBase64() (v string) {
+	if !p.IsSetDownloadContentBase64() {
+		return JournalSnapshotActionAuditResponse_DownloadContentBase64_DEFAULT
+	}
+	return *p.DownloadContentBase64
+}
+
+var JournalSnapshotActionAuditResponse_DownloadMimeType_DEFAULT string
+
+func (p *JournalSnapshotActionAuditResponse) GetDownloadMimeType() (v string) {
+	if !p.IsSetDownloadMimeType() {
+		return JournalSnapshotActionAuditResponse_DownloadMimeType_DEFAULT
+	}
+	return *p.DownloadMimeType
+}
+
 var fieldIDToName_JournalSnapshotActionAuditResponse = map[int16]string{
 	1: "snapshot_id",
 	2: "action",
 	3: "allowed",
 	4: "audited_at",
+	5: "copy_text",
+	6: "download_url",
+	7: "download_content_base64",
+	8: "download_mime_type",
+}
+
+func (p *JournalSnapshotActionAuditResponse) IsSetCopyText() bool {
+	return p.CopyText != nil
+}
+
+func (p *JournalSnapshotActionAuditResponse) IsSetDownloadURL() bool {
+	return p.DownloadURL != nil
+}
+
+func (p *JournalSnapshotActionAuditResponse) IsSetDownloadContentBase64() bool {
+	return p.DownloadContentBase64 != nil
+}
+
+func (p *JournalSnapshotActionAuditResponse) IsSetDownloadMimeType() bool {
+	return p.DownloadMimeType != nil
 }
 
 func (p *JournalSnapshotActionAuditResponse) Read(iprot thrift.TProtocol) (err error) {
@@ -13209,6 +16016,38 @@ func (p *JournalSnapshotActionAuditResponse) Read(iprot thrift.TProtocol) (err e
 					goto ReadFieldError
 				}
 				issetAuditedAt = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -13306,6 +16145,50 @@ func (p *JournalSnapshotActionAuditResponse) ReadField4(iprot thrift.TProtocol) 
 	p.AuditedAt = _field
 	return nil
 }
+func (p *JournalSnapshotActionAuditResponse) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CopyText = _field
+	return nil
+}
+func (p *JournalSnapshotActionAuditResponse) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.DownloadURL = _field
+	return nil
+}
+func (p *JournalSnapshotActionAuditResponse) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.DownloadContentBase64 = _field
+	return nil
+}
+func (p *JournalSnapshotActionAuditResponse) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.DownloadMimeType = _field
+	return nil
+}
 
 func (p *JournalSnapshotActionAuditResponse) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -13327,6 +16210,22 @@ func (p *JournalSnapshotActionAuditResponse) Write(oprot thrift.TProtocol) (err 
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
 			goto WriteFieldError
 		}
 	}
@@ -13413,6 +16312,82 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *JournalSnapshotActionAuditResponse) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCopyText() {
+		if err = oprot.WriteFieldBegin("copy_text", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.CopyText); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *JournalSnapshotActionAuditResponse) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetDownloadURL() {
+		if err = oprot.WriteFieldBegin("download_url", thrift.STRING, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.DownloadURL); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *JournalSnapshotActionAuditResponse) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetDownloadContentBase64() {
+		if err = oprot.WriteFieldBegin("download_content_base64", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.DownloadContentBase64); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *JournalSnapshotActionAuditResponse) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetDownloadMimeType() {
+		if err = oprot.WriteFieldBegin("download_mime_type", thrift.STRING, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.DownloadMimeType); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
 }
 
 func (p *JournalSnapshotActionAuditResponse) String() string {

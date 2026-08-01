@@ -110,15 +110,16 @@ type ADKMiddlewareBuilder func(
 ) (adk.ChatModelAgentMiddleware, error)
 
 type ADKMiddlewareAssemblerOptions struct {
-	Builders              map[ADKMiddlewareName]ADKMiddlewareBuilder
-	MemoryProvider        MemoryProvider
-	SkillProvider         SkillProvider
-	GuardrailEnforcer     ADKGuardrailEnforcer
-	TranscriptStore       ADKTranscriptStore
-	MemoryFlushQueue      ADKMemoryFlushQueue
-	EventSink             RunEventSink
-	OffloadBackendFactory ADKOffloadBackendFactory
-	PlanBackendFactory    ADKPlanBackendFactory
+	Builders               map[ADKMiddlewareName]ADKMiddlewareBuilder
+	MemoryProvider         MemoryProvider
+	SkillProvider          SkillProvider
+	GuardrailEnforcer      ADKGuardrailEnforcer
+	TranscriptStore        ADKTranscriptStore
+	MemoryFlushQueue       ADKMemoryFlushQueue
+	EventSink              RunEventSink
+	JournalContentProducer JournalContentProducer
+	OffloadBackendFactory  ADKOffloadBackendFactory
+	PlanBackendFactory     ADKPlanBackendFactory
 }
 
 type ADKMiddlewareAssembler struct {
@@ -520,6 +521,7 @@ func defaultADKMiddlewareBuilder(
 				options.EventSink,
 				input.Run,
 				skillContext,
+				options.JournalContentProducer,
 			)
 			return middleware, nil
 		}

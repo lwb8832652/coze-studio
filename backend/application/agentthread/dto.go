@@ -975,6 +975,7 @@ type OutputFileSummary struct {
 
 type WriteOutputFileRequest struct {
 	Run         *RunSummary
+	ToolCallID  string
 	FilePath    string
 	Content     string
 	ContentType string

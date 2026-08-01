@@ -37,6 +37,7 @@ import (
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
@@ -61,29 +62,39 @@ var ErrArtifactSignedURLNotSupported = errors.New(
 )
 
 type ApplicationService struct {
-	ThreadSVC                 domainservice.ThreadService
-	ThreadAuthorizer          ThreadAuthorizer
-	WorkspaceAuthorizer       WorkspaceAuthorizer
-	RuntimeFileSVC            domainservice.RuntimeFileService
-	UploadFileSVC             domainservice.UploadFileService
-	PlanSVC                   domainservice.PlanService
-	ArtifactSVC               domainservice.ArtifactService
-	ADKCancelRegistry         *ADKCancelRegistry
-	RuntimePolicy             *RuntimePolicy
-	ArtifactObjectStorage     ArtifactObjectStorage
-	ArtifactAuthorizer        ArtifactAuthorizer
-	MemoryAuthorizer          MemoryAuthorizer
-	GuardrailAuditRepository  domainrepo.GuardrailAuditRepository
-	GuardrailAuditAuthorizer  GuardrailAuditAuthorizer
-	MCPRuntimeAuditRepository domainrepo.MCPRuntimeAuditRepository
-	MCPRuntimeAuditAuthorizer MCPRuntimeAuditAuthorizer
-	GuardrailProviderStatus   GuardrailProviderEnvStatus
-	ArtifactScanner           ArtifactContentScanner
-	ArtifactScannerStatus     ArtifactScannerEnvStatus
-	ArtifactScanReadPolicy    ArtifactScanReadPolicyConfig
-	ArtifactReviewClock       func() int64
-	ArtifactCleanupNowFunc    func() int64
-	MemoryExtractor           MemoryExtractor
+	ThreadSVC                               domainservice.ThreadService
+	ThreadAuthorizer                        ThreadAuthorizer
+	WorkspaceAuthorizer                     WorkspaceAuthorizer
+	RuntimeFileSVC                          domainservice.RuntimeFileService
+	UploadFileSVC                           domainservice.UploadFileService
+	PlanSVC                                 domainservice.PlanService
+	ArtifactSVC                             domainservice.ArtifactService
+	ADKCancelRegistry                       *ADKCancelRegistry
+	RuntimePolicy                           *RuntimePolicy
+	ArtifactObjectStorage                   ArtifactObjectStorage
+	ArtifactAuthorizer                      ArtifactAuthorizer
+	MemoryAuthorizer                        MemoryAuthorizer
+	GuardrailAuditRepository                domainrepo.GuardrailAuditRepository
+	GuardrailAuditAuthorizer                GuardrailAuditAuthorizer
+	MCPRuntimeAuditRepository               domainrepo.MCPRuntimeAuditRepository
+	MCPRuntimeAuditAuthorizer               MCPRuntimeAuditAuthorizer
+	GuardrailProviderStatus                 GuardrailProviderEnvStatus
+	ArtifactScanner                         ArtifactContentScanner
+	ArtifactScannerStatus                   ArtifactScannerEnvStatus
+	ArtifactScanReadPolicy                  ArtifactScanReadPolicyConfig
+	ArtifactReviewClock                     func() int64
+	ArtifactCleanupNowFunc                  func() int64
+	MemoryExtractor                         MemoryExtractor
+	JournalSnapshotRepository               domainrepo.JournalSnapshotRepository
+	JournalSnapshotAttemptReader            JournalSnapshotAttemptReader
+	JournalSnapshotObjectStorage            JournalSnapshotObjectStorage
+	JournalSnapshotAuthorizer               JournalSnapshotAuthorizer
+	JournalSnapshotRuntimeFileReader        JournalSnapshotRuntimeFileReader
+	JournalSnapshotArtifactReader           JournalSnapshotArtifactReader
+	JournalSnapshotArtifactCapabilityIssuer JournalSnapshotArtifactCapabilityIssuer
+	JournalBrowserRedactionVerifier         JournalBrowserRedactionVerifier
+	JournalSnapshotIDGenerator              idgen.IDGenerator
+	JournalSnapshotNow                      func() int64
 }
 
 type ArtifactObjectStorage interface {
@@ -2982,7 +2993,10 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 	}
 
 	expiresIn := normalizeArtifactSignedURLTTL(req.TTLSeconds)
-	signOpts := []storage.GetOptFn{storage.WithExpire(expiresIn)}
+	signOpts := []storage.GetOptFn{
+		storage.WithExpire(expiresIn),
+		storage.WithResponseCacheControl(JournalSnapshotCacheControl),
+	}
 	if mode == ArtifactContentModeDownload {
 		signOpts = append(
 			signOpts,

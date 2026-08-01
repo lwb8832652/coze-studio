@@ -25,6 +25,7 @@ import {
   type JournalCodeSnapshotContent,
   type JournalConfirmationEventPayload,
   type JournalConfirmationPayloadType,
+  type JournalContentStatus,
   type JournalControlStreamFrame as GeneratedJournalControlStreamFrame,
   type JournalDocumentSnapshotContent,
   type JournalEvent as GeneratedJournalEvent,
@@ -151,14 +152,37 @@ export type JournalSnapshotContent = {
 
 type JournalSnapshotEnvelopeBranch<
   TKey extends keyof JournalSnapshotContentMap,
-> = Omit<GeneratedJournalSnapshotEnvelope, 'content_type' | 'content'> & {
+> = Omit<
+  GeneratedJournalSnapshotEnvelope,
+  'content_type' | 'content' | 'status'
+> & {
   content_type: TKey;
   content: JournalSnapshotContentBranch<TKey>;
+  status:
+    | JournalContentStatus.Loading
+    | JournalContentStatus.Ready
+    | JournalContentStatus.Streaming;
 };
 
-export type JournalSnapshotEnvelope = {
+type JournalSnapshotEnvelopeWithContent = {
   [TKey in keyof JournalSnapshotContentMap]: JournalSnapshotEnvelopeBranch<TKey>;
 }[keyof JournalSnapshotContentMap];
+
+type JournalSnapshotEnvelopeWithoutContent = Omit<
+  GeneratedJournalSnapshotEnvelope,
+  'content' | 'status'
+> & {
+  content?: never;
+  status:
+    | JournalContentStatus.Empty
+    | JournalContentStatus.Loading
+    | JournalContentStatus.Error
+    | JournalContentStatus.NoPermission;
+};
+
+export type JournalSnapshotEnvelope =
+  | JournalSnapshotEnvelopeWithContent
+  | JournalSnapshotEnvelopeWithoutContent;
 
 export type JournalEventStreamFrame = Omit<
   GeneratedJournalEventStreamFrame,

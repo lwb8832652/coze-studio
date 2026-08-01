@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,6 +76,79 @@ func TestApplicationWriteOutputFileStoresObjectAndRegistersOutputFile(
 	)
 	require.NotContains(t, resp.Notice, "agent-runtime")
 	require.Contains(t, resp.Notice, "/mnt/user-data/outputs/reports/report.md")
+}
+
+func TestApplicationWriteOutputFilePublishesTypedDocumentSnapshot(t *testing.T) {
+	app, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &domainentity.RunAttempt{
+		ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "att-document", Status: domainentity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+	}
+	app.JournalSnapshotAttemptReader = repo
+	app.RuntimeFileSVC = &recordingRuntimeFileService{}
+	objectStorage := &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	app.ArtifactObjectStorage = objectStorage
+	run := &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40}
+
+	resp, err := app.WriteOutputFile(context.Background(), &WriteOutputFileRequest{
+		Run: run, ToolCallID: "tool-call-document",
+		FilePath: "/mnt/user-data/outputs/reports/report.md",
+		Content:  "# Report\n\nSafe findings.\n", ContentType: "text/markdown; charset=utf-8",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Len(t, repo.snapshots, 1)
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: run.ThreadID, RunID: run.RunID, EventType: "tool.completed",
+		Payload: `{"tool_name":"write_file","tool_call_id":"tool-call-document"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, projection)
+	for _, snapshot := range repo.snapshots {
+		require.Equal(t, projection.ActionID, snapshot.ActionID)
+		snapshotEvent := repo.events[snapshot.EventID]
+		require.NotNil(t, snapshotEvent)
+		require.Equal(t, projection.ActionID, snapshotEvent.ActionID)
+		require.Equal(t, projection.Operation, snapshotEvent.Operation)
+		require.Equal(t, projection.Target, snapshotEvent.Target)
+		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
+		require.Equal(t, "99", snapshot.SourceResourceID)
+		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)
+		require.Equal(t, objectStorage.key, snapshot.OriginalObjectKey)
+		var content JournalTypedSnapshotContent
+		require.NoError(t, json.Unmarshal([]byte(snapshot.ContentJSON), &content))
+		require.NotNil(t, content.Document)
+		require.Equal(t, "report.md", content.Document.Title)
+		require.Equal(t, "# Report\n\nSafe findings.", content.Document.Content)
+		require.Equal(t, "synced", content.Document.SyncStatus)
+		require.Len(t, content.Document.Chapters, 1)
+	}
+}
+
+func TestApplicationWriteOutputFileKeepsToolSuccessWhenJournalProjectionFails(t *testing.T) {
+	app, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &domainentity.RunAttempt{
+		ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "att-document", Status: domainentity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+	}
+	repo.reserveErr = errors.New("journal unavailable")
+	app.JournalSnapshotAttemptReader = repo
+	app.RuntimeFileSVC = &recordingRuntimeFileService{}
+	app.ArtifactObjectStorage = &recordingArtifactObjectReader{objects: map[string][]byte{}}
+
+	resp, err := app.WriteOutputFile(context.Background(), &WriteOutputFileRequest{
+		Run:        &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40},
+		ToolCallID: "tool-call-document",
+		FilePath:   "/mnt/user-data/outputs/report.md",
+		Content:    "# Report\n", ContentType: "text/markdown",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Empty(t, repo.snapshots)
 }
 
 func TestApplicationCreateSkillPackageWritesInstallableSkillArchive(

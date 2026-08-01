@@ -18,8 +18,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+)
+
+var (
+	ErrJournalSnapshotNotFound           = errors.New("journal snapshot not found")
+	ErrJournalSnapshotConflict           = errors.New("journal snapshot identity conflict")
+	ErrJournalProjectionInactive         = errors.New("journal projection is not active")
+	ErrJournalSnapshotReservationExpired = errors.New("journal snapshot reservation expired")
 )
 
 type JournalRepository interface {
@@ -33,6 +41,42 @@ type JournalRepository interface {
 	) (*entity.JournalEvent, bool, error)
 	GetJournalEvent(ctx context.Context, eventID int64) (*entity.JournalEvent, error)
 	ListJournalEvents(ctx context.Context, req ListJournalEventsRequest) (*ListJournalEventsResult, error)
+	JournalSnapshotRepository
+}
+
+type JournalSnapshotRepository interface {
+	ReserveJournalSnapshot(
+		ctx context.Context,
+		req ReserveJournalSnapshotRequest,
+	) (*ReserveJournalSnapshotResult, error)
+	DeleteExpiredJournalSnapshotReservations(
+		ctx context.Context,
+		spaceID int64,
+		now int64,
+		limit int,
+	) (int64, error)
+	CreateJournalSnapshot(
+		ctx context.Context,
+		req CreateJournalSnapshotRequest,
+	) (*entity.JournalContentSnapshot, *entity.JournalEvent, bool, error)
+	GetJournalSnapshot(
+		ctx context.Context,
+		req GetJournalSnapshotRequest,
+	) (*entity.JournalContentSnapshot, error)
+	ListJournalSnapshotFragments(
+		ctx context.Context,
+		req ListJournalSnapshotFragmentsRequest,
+	) (*ListJournalSnapshotFragmentsResult, error)
+	RecordJournalSnapshotAccess(
+		ctx context.Context,
+		audit *entity.JournalSnapshotAccessAudit,
+	) (*entity.JournalSnapshotAccessAudit, bool, error)
+	IsJournalSnapshotObjectProtected(
+		ctx context.Context,
+		spaceID int64,
+		objectKey string,
+		now int64,
+	) (bool, error)
 }
 
 // RunEventProjectionRepository atomically preserves the existing RunEvent view
@@ -75,4 +119,43 @@ type ListJournalEventsResult struct {
 	Events  []*entity.JournalEvent
 	HasMore bool
 	Legacy  bool
+}
+
+type CreateJournalSnapshotRequest struct {
+	Snapshot         *entity.JournalContentSnapshot
+	Fragments        []*entity.JournalSnapshotFragment
+	Event            *entity.JournalEvent
+	ReservationToken string
+}
+
+type ReserveJournalSnapshotRequest struct {
+	Reservation *entity.JournalSnapshotReservation
+	Now         int64
+}
+
+type ReserveJournalSnapshotResult struct {
+	Reservation *entity.JournalSnapshotReservation
+	Snapshot    *entity.JournalContentSnapshot
+	Event       *entity.JournalEvent
+	Replayed    bool
+}
+
+type GetJournalSnapshotRequest struct {
+	SpaceID    int64
+	ThreadID   int64
+	RunID      int64
+	SnapshotID string
+}
+
+type ListJournalSnapshotFragmentsRequest struct {
+	SpaceID    int64
+	SnapshotID string
+	AfterIndex int32
+	Limit      int
+}
+
+type ListJournalSnapshotFragmentsResult struct {
+	Fragments []*entity.JournalSnapshotFragment
+	HasMore   bool
+	NextIndex int32
 }

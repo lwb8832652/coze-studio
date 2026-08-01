@@ -318,6 +318,9 @@ func (t *s3Client) GetObjectUrl(ctx context.Context, objectKey string, opts ...s
 	if opt.ResponseContentType != "" {
 		input.ResponseContentType = aws.String(opt.ResponseContentType)
 	}
+	if opt.ResponseCacheControl != "" {
+		input.ResponseCacheControl = aws.String(opt.ResponseCacheControl)
+	}
 
 	req, err := presignClient.PresignGetObject(ctx, input, func(options *s3.PresignOptions) {
 		options.Expires = time.Duration(expire) * time.Second

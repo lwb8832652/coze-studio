@@ -72,6 +72,18 @@ export enum JournalSnapshotContentType {
   Skill = "skill",
   Browser = "browser",
 }
+export enum JournalSnapshotFragmentKind {
+  DocumentBlock = "document_block",
+  DocumentChapters = "document_chapters",
+  TerminalStdout = "terminal_stdout",
+  TerminalStderr = "terminal_stderr",
+  CodeLines = "code_lines",
+  CodeHighlights = "code_highlights",
+  SkillItems = "skill_items",
+  BrowserThumbnail = "browser_thumbnail",
+  BrowserSnapshot = "browser_snapshot",
+  BrowserAnalysis = "browser_analysis",
+}
 export enum JournalSnapshotAction {
   CopyCommand = "copy_command",
   CopyOutput = "copy_output",
@@ -185,18 +197,52 @@ export interface JournalSnapshotFragment {
   byte_end?: number,
   size_bytes?: number,
   content_hash?: string,
+  kind?: JournalSnapshotFragmentKind,
+  block_id?: string,
+  stream?: string,
+  start_line?: number,
+  end_line?: number,
+  item_start?: number,
+  item_end?: number,
+  binary_content_base64?: string,
+  mime_type?: string,
+  chapters?: JournalDocumentChapter[],
+  highlights?: JournalCodeHighlight[],
+  skills?: JournalSkill[],
+  analysis?: string[],
+}
+export interface JournalDocumentChapter {
+  chapter_id: string,
+  title: string,
+  level: number,
 }
 export interface JournalDocumentSnapshotContent {
   title: string,
   format?: string,
   content?: string,
   source_artifact_id?: string,
+  token?: string,
+  chapters?: JournalDocumentChapter[],
+  active_block?: string,
+  revision?: string,
+  sync_status?: string,
 }
 export interface JournalTerminalSnapshotContent {
   command: string,
   output?: string,
   exit_code?: number,
   working_directory?: string,
+  session_id?: string,
+  started_at?: string,
+  finished_at?: string,
+  stdout?: string,
+  stderr?: string,
+  duration_ms?: number,
+}
+export interface JournalCodeHighlight {
+  start_line: number,
+  end_line: number,
+  kind?: string,
 }
 export interface JournalCodeSnapshotContent {
   file_path: string,
@@ -205,6 +251,9 @@ export interface JournalCodeSnapshotContent {
   diff?: string,
   start_line?: number,
   end_line?: number,
+  repository: string,
+  revision: string,
+  highlights?: JournalCodeHighlight[],
 }
 export interface JournalSkillSnapshotContent {
   skills: JournalSkill[]
@@ -212,8 +261,17 @@ export interface JournalSkillSnapshotContent {
 export interface JournalBrowserSnapshotContent {
   url?: string,
   title?: string,
-  content?: string,
   screenshot_artifact_id?: string,
+  capture_id: string,
+  thumbnail_base64?: string,
+  static_snapshot_base64: string,
+  mime_type: string,
+  analysis?: string[],
+  index?: number,
+  total?: number,
+  redacted: boolean,
+  redaction_evidence_id: string,
+  redaction_policy_version: string,
 }
 export interface JournalSnapshotContent {
   document?: JournalDocumentSnapshotContent,
@@ -235,7 +293,7 @@ export interface JournalSnapshotEnvelope {
   fragments: JournalSnapshotFragment[],
   has_more: boolean,
   next_cursor?: string,
-  content: JournalSnapshotContent,
+  content?: JournalSnapshotContent,
 }
 export interface JournalRecoveryCapability {
   allowed: boolean,
@@ -346,12 +404,17 @@ export interface AuditCanonicalRunSnapshotActionRequest {
   "X-Coze-Space-ID": string,
   action: JournalSnapshotAction,
   "Idempotency-Key": string,
+  fragment_id?: string,
 }
 export interface JournalSnapshotActionAuditResponse {
   snapshot_id: string,
   action: JournalSnapshotAction,
   allowed: boolean,
   audited_at: string,
+  copy_text?: string,
+  download_url?: string,
+  download_content_base64?: string,
+  download_mime_type?: string,
 }
 export interface RecoverCanonicalRunJournalRequest {
   thread_id: string,

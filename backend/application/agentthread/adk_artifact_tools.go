@@ -189,6 +189,7 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 		}
 		resp, err := i.app.WriteOutputFile(ctx, &WriteOutputFileRequest{
 			Run:         call.Run,
+			ToolCallID:  call.CallID,
 			FilePath:    input.FilePath,
 			Content:     string(content),
 			ContentType: input.ContentType,

@@ -58,6 +58,32 @@ const rejectedMismatchedSnapshot: journalContract.JournalSnapshotEnvelope =
   mismatchedSnapshotEnvelope;
 void rejectedMismatchedSnapshot;
 
+const loadingSnapshotWithoutContent: journalContract.JournalSnapshotEnvelope = {
+  content_type: journal.JournalSnapshotContentType.Document,
+  snapshot_id: 'snapshot-loading',
+  event_id: 'event-loading',
+  attempt_id: 'attempt-1',
+  is_fragmented: false,
+  status: journal.JournalContentStatus.Loading,
+  created_at: '2026-07-30T14:32:10.123456789Z',
+  visibility: journal.JournalVisibility.User,
+  fragments: [],
+  has_more: false,
+};
+void loadingSnapshotWithoutContent;
+
+const readySnapshotWithoutContent = {
+  ...loadingSnapshotWithoutContent,
+  snapshot_id: 'snapshot-ready',
+  event_id: 'event-ready',
+  status: journal.JournalContentStatus.Ready,
+};
+
+// @ts-expect-error ready snapshots require their matching typed content branch
+const rejectedReadySnapshotWithoutContent: journalContract.JournalSnapshotEnvelope =
+  readySnapshotWithoutContent;
+void rejectedReadySnapshotWithoutContent;
+
 const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
   'utf8',
@@ -72,6 +98,10 @@ const generatedJournalSource = readFileSync(
 );
 const journalContractSource = readFileSync(
   new URL('../workbench-journal.ts', import.meta.url),
+  'utf8',
+);
+const packageIndexSource = readFileSync(
+  new URL('../index.ts', import.meta.url),
   'utf8',
 );
 const adminConfigThriftSource = readFileSync(
@@ -841,7 +871,7 @@ const journalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id', 'snapshot_id'],
       header: ['X-Coze-Space-ID', 'Idempotency-Key'],
-      body: ['action'],
+      body: ['action', 'fragment_id'],
     },
   },
   {
@@ -1406,9 +1436,126 @@ describe('canonical Workbench thread generated contract', () => {
       expect(snapshot, field).toContain(field);
     }
     expect(snapshot).not.toMatch(/\bdata\??:\s*any[,;]/);
-    expect(snapshot).toMatch(/content:\s*JournalSnapshotContent[,;]/);
+    expect(snapshot).toMatch(/content\?:\s*JournalSnapshotContent[,;]/);
     expect(snapshot).not.toMatch(
       /\n\s*(document|terminal|code|skill|browser)\??:/,
+    );
+
+    const snapshotStructs = {
+      JournalSnapshotFragment: [
+        'fragment_id',
+        'fragment_index',
+        'content',
+        'byte_start',
+        'byte_end',
+        'size_bytes',
+        'content_hash',
+        'kind',
+        'block_id',
+        'stream',
+        'start_line',
+        'end_line',
+        'item_start',
+        'item_end',
+        'binary_content_base64',
+        'mime_type',
+        'chapters',
+        'highlights',
+        'skills',
+        'analysis',
+      ],
+      JournalDocumentChapter: ['chapter_id', 'title', 'level'],
+      JournalDocumentSnapshotContent: [
+        'title',
+        'format',
+        'content',
+        'source_artifact_id',
+        'token',
+        'chapters',
+        'active_block',
+        'revision',
+        'sync_status',
+      ],
+      JournalTerminalSnapshotContent: [
+        'command',
+        'output',
+        'exit_code',
+        'working_directory',
+        'session_id',
+        'started_at',
+        'finished_at',
+        'stdout',
+        'stderr',
+        'duration_ms',
+      ],
+      JournalCodeHighlight: ['start_line', 'end_line', 'kind'],
+      JournalCodeSnapshotContent: [
+        'file_path',
+        'language',
+        'content',
+        'diff',
+        'start_line',
+        'end_line',
+        'repository',
+        'revision',
+        'highlights',
+      ],
+      JournalBrowserSnapshotContent: [
+        'url',
+        'title',
+        'screenshot_artifact_id',
+        'capture_id',
+        'thumbnail_base64',
+        'static_snapshot_base64',
+        'mime_type',
+        'analysis',
+        'index',
+        'total',
+        'redacted',
+        'redaction_evidence_id',
+        'redaction_policy_version',
+      ],
+      AuditCanonicalRunSnapshotActionRequest: ['fragment_id'],
+      JournalSnapshotActionAuditResponse: [
+        'copy_text',
+        'download_url',
+        'download_content_base64',
+        'download_mime_type',
+      ],
+    };
+    for (const [name, fields] of Object.entries(snapshotStructs)) {
+      const declaration = declarationSourceFrom(
+        journalSourceFile,
+        generatedJournalSource,
+        name,
+      );
+      for (const field of fields) {
+        expect(declaration, `${name}.${field}`).toContain(field);
+      }
+    }
+    expect(generatedJournalSource).not.toContain('original_object_key');
+    expect(generatedJournalSource).not.toContain('original_url');
+    expect(generatedJournalSource).not.toContain('Blob');
+    const browserSnapshot = declarationSourceFrom(
+      journalSourceFile,
+      generatedJournalSource,
+      'JournalBrowserSnapshotContent',
+    );
+    expect(browserSnapshot).not.toMatch(/\bcontent\??:/);
+    expect(Object.values(journal.JournalSnapshotFragmentKind)).toEqual([
+      'document_block',
+      'document_chapters',
+      'terminal_stdout',
+      'terminal_stderr',
+      'code_lines',
+      'code_highlights',
+      'skill_items',
+      'browser_thumbnail',
+      'browser_snapshot',
+      'browser_analysis',
+    ]);
+    expect(packageIndexSource).toContain(
+      "export * as workbenchJournal from './workbench-journal';",
     );
 
     const snapshotContent = declarationSourceFrom(

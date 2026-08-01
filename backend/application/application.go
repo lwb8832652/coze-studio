@@ -362,11 +362,12 @@ func Init(ctx context.Context) (err error) {
 					primaryServices.agentThreadSVC,
 					32,
 				),
-				GuardrailEnforcer: guardrailEnforcer,
-				SkillProvider:     runtimeSkillProvider,
-				TranscriptStore:   adkContextStore,
-				MemoryFlushQueue:  adkContextStore,
-				EventSink:         adkEventSink,
+				GuardrailEnforcer:      guardrailEnforcer,
+				SkillProvider:          runtimeSkillProvider,
+				TranscriptStore:        adkContextStore,
+				MemoryFlushQueue:       adkContextStore,
+				EventSink:              adkEventSink,
+				JournalContentProducer: primaryServices.agentThreadSVC,
 				PlanBackendFactory: agentthread.ADKPlanBackendFactoryFunc(
 					func(
 						_ context.Context,

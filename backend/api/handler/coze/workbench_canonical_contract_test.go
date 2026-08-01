@@ -409,6 +409,72 @@ func TestCanonicalJournalContractTypedPayloadsAndSnapshots(t *testing.T) {
 		_, ok := snapshotContentType.FieldByName(field)
 		require.True(t, ok, field)
 	}
+	fragmentType := reflect.TypeOf(journalcontract.JournalSnapshotFragment{})
+	for _, field := range []string{
+		"FragmentID", "FragmentIndex", "Content", "ByteStart", "ByteEnd", "SizeBytes",
+		"ContentHash", "Kind", "BlockID", "Stream", "StartLine", "EndLine", "ItemStart",
+		"ItemEnd", "BinaryContentBase64", "MimeType", "Chapters", "Highlights", "Skills", "Analysis",
+	} {
+		_, ok := fragmentType.FieldByName(field)
+		require.True(t, ok, "JournalSnapshotFragment.%s", field)
+	}
+
+	snapshotStructs := []struct {
+		value  any
+		fields []string
+	}{
+		{journalcontract.JournalDocumentChapter{}, []string{
+			"ChapterID", "Title", "Level",
+		}},
+		{journalcontract.JournalDocumentSnapshotContent{}, []string{
+			"Title", "Format", "Content", "SourceArtifactID", "Token", "Chapters",
+			"ActiveBlock", "Revision", "SyncStatus",
+		}},
+		{journalcontract.JournalTerminalSnapshotContent{}, []string{
+			"Command", "Output", "ExitCode", "WorkingDirectory", "SessionID", "StartedAt",
+			"FinishedAt", "Stdout", "Stderr", "DurationMs",
+		}},
+		{journalcontract.JournalCodeHighlight{}, []string{
+			"StartLine", "EndLine", "Kind",
+		}},
+		{journalcontract.JournalCodeSnapshotContent{}, []string{
+			"FilePath", "Language", "Content", "Diff", "StartLine", "EndLine",
+			"Repository", "Revision", "Highlights",
+		}},
+		{journalcontract.JournalBrowserSnapshotContent{}, []string{
+			"URL", "Title", "ScreenshotArtifactID", "CaptureID", "ThumbnailBase64",
+			"StaticSnapshotBase64", "MimeType", "Analysis", "Index", "Total", "Redacted",
+			"RedactionEvidenceID", "RedactionPolicyVersion",
+		}},
+		{journalcontract.AuditCanonicalRunSnapshotActionRequest{}, []string{
+			"ThreadID", "RunID", "SnapshotID", "SpaceID", "Action", "IdempotencyKey", "FragmentID",
+		}},
+		{journalcontract.JournalSnapshotActionAuditResponse{}, []string{
+			"SnapshotID", "Action", "Allowed", "AuditedAt", "CopyText", "DownloadURL",
+			"DownloadContentBase64", "DownloadMimeType",
+		}},
+	}
+	for _, contract := range snapshotStructs {
+		contractType := reflect.TypeOf(contract.value)
+		for _, field := range contract.fields {
+			_, ok := contractType.FieldByName(field)
+			require.True(t, ok, "%s.%s", contractType.Name(), field)
+		}
+	}
+	_, exposesObjectKey := reflect.TypeOf(journalcontract.JournalDocumentSnapshotContent{}).
+		FieldByName("OriginalObjectKey")
+	require.False(t, exposesObjectKey)
+	_, exposesOriginalURL := reflect.TypeOf(journalcontract.JournalDocumentSnapshotContent{}).
+		FieldByName("OriginalURL")
+	require.False(t, exposesOriginalURL)
+	_, exposesBrowserContent := reflect.TypeOf(journalcontract.JournalBrowserSnapshotContent{}).
+		FieldByName("Content")
+	require.False(t, exposesBrowserContent)
+
+	contentField, ok := snapshotType.FieldByName("Content")
+	require.True(t, ok)
+	require.Contains(t, contentField.Tag.Get("thrift"), "optional")
+	require.Contains(t, contentField.Tag.Get("json"), "omitempty")
 
 	validContent := &journalcontract.JournalSnapshotContent{
 		Terminal: &journalcontract.JournalTerminalSnapshotContent{Command: "pwd"},
@@ -432,6 +498,22 @@ func TestCanonicalJournalContractTypedPayloadsAndSnapshots(t *testing.T) {
 	require.Equal(t, "copy_code", journalcontract.JournalSnapshotActionCopyCode)
 	require.Equal(t, "open_original", journalcontract.JournalSnapshotActionOpenOriginal)
 	require.Equal(t, "download_fragment", journalcontract.JournalSnapshotActionDownloadFragment)
+	require.Equal(t, []journalcontract.JournalSnapshotFragmentKind{
+		"document_block", "document_chapters", "terminal_stdout", "terminal_stderr",
+		"code_lines", "code_highlights", "skill_items", "browser_thumbnail",
+		"browser_snapshot", "browser_analysis",
+	}, []journalcontract.JournalSnapshotFragmentKind{
+		journalcontract.JournalSnapshotFragmentKindDocumentBlock,
+		journalcontract.JournalSnapshotFragmentKindDocumentChapters,
+		journalcontract.JournalSnapshotFragmentKindTerminalStdout,
+		journalcontract.JournalSnapshotFragmentKindTerminalStderr,
+		journalcontract.JournalSnapshotFragmentKindCodeLines,
+		journalcontract.JournalSnapshotFragmentKindCodeHighlights,
+		journalcontract.JournalSnapshotFragmentKindSkillItems,
+		journalcontract.JournalSnapshotFragmentKindBrowserThumbnail,
+		journalcontract.JournalSnapshotFragmentKindBrowserSnapshot,
+		journalcontract.JournalSnapshotFragmentKindBrowserAnalysis,
+	})
 }
 
 func TestCanonicalJournalContractControlFramesAndErrorCodes(t *testing.T) {

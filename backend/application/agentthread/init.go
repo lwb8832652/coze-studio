@@ -38,6 +38,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	}
 
 	repo := repository.NewThreadRepository(c.DB)
+	runtimeFileRepo := repository.NewRuntimeFileRepository(c.DB)
+	artifactRepo := repository.NewArtifactRepository(c.DB)
 	guardrailAuditRepo := repository.NewGuardrailAuditRepository(c.DB)
 	mcpRuntimeAuditRepo := repository.NewMCPRuntimeAuditRepository(c.DB)
 	SVC.ThreadSVC = domainservice.NewService(&domainservice.Components{
@@ -49,7 +51,7 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.RuntimeFileSVC = domainservice.NewRuntimeFileService(
 		&domainservice.RuntimeFileComponents{
 			RunReader: repo,
-			FileRepo:  repository.NewRuntimeFileRepository(c.DB),
+			FileRepo:  runtimeFileRepo,
 			IDGen:     c.IDGen,
 		},
 	)
@@ -69,13 +71,24 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	)
 	SVC.ArtifactSVC = domainservice.NewArtifactService(
 		&domainservice.ArtifactComponents{
-			FileReader:   repository.NewRuntimeFileRepository(c.DB),
-			ArtifactRepo: repository.NewArtifactRepository(c.DB),
+			FileReader:   runtimeFileRepo,
+			ArtifactRepo: artifactRepo,
 			IDGen:        c.IDGen,
 		},
 	)
 	SVC.ArtifactObjectStorage = c.ObjectStorage
 	SVC.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(SVC.ThreadSVC)
+	SVC.JournalSnapshotRepository = repo
+	SVC.JournalSnapshotAttemptReader = repo
+	SVC.JournalSnapshotObjectStorage = newJournalSnapshotStorageAdapter(c.ObjectStorage)
+	SVC.JournalSnapshotAuthorizer = NewThreadOwnerJournalSnapshotAuthorizer(
+		SVC.ThreadAuthorizer,
+		SVC.WorkspaceAuthorizer,
+	)
+	SVC.JournalSnapshotRuntimeFileReader = runtimeFileRepo
+	SVC.JournalSnapshotArtifactReader = artifactRepo
+	SVC.JournalSnapshotArtifactCapabilityIssuer = SVC
+	SVC.JournalSnapshotIDGenerator = c.IDGen
 	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
 	SVC.GuardrailAuditRepository = guardrailAuditRepo
 	SVC.GuardrailAuditAuthorizer = NewThreadOwnerGuardrailAuditAuthorizer(SVC.ThreadSVC)

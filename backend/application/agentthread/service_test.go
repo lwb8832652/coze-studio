@@ -3016,6 +3016,7 @@ func TestApplicationCreateArtifactSignedURLCreatesAttachmentURLForDownloadConten
 		storage.signContentDisposition,
 	)
 	require.Equal(t, "text/html; charset=utf-8", storage.signContentType)
+	require.Equal(t, JournalSnapshotCacheControl, storage.signCacheControl)
 }
 
 func TestApplicationReadArtifactContentDeniesUnauthorizedViewerBeforeStorage(t *testing.T) {
@@ -5409,6 +5410,7 @@ type recordingArtifactObjectReader struct {
 	signExpire             int64
 	signContentDisposition string
 	signContentType        string
+	signCacheControl       string
 	deletedKeys            []string
 	deleteErr              error
 }
@@ -5450,6 +5452,7 @@ func (r *recordingArtifactObjectReader) GetObjectUrl(
 	r.signExpire = option.Expire
 	r.signContentDisposition = option.ResponseContentDisposition
 	r.signContentType = option.ResponseContentType
+	r.signCacheControl = option.ResponseCacheControl
 	return r.signedURL, nil
 }
 

@@ -132,3 +132,242 @@ type JournalEvent struct {
 	Payload            string
 	CreatedAt          int64
 }
+
+type JournalSnapshotContentType string
+
+const (
+	JournalSnapshotContentTypeDocument JournalSnapshotContentType = "document"
+	JournalSnapshotContentTypeTerminal JournalSnapshotContentType = "terminal"
+	JournalSnapshotContentTypeCode     JournalSnapshotContentType = "code"
+	JournalSnapshotContentTypeSkill    JournalSnapshotContentType = "skill"
+	JournalSnapshotContentTypeBrowser  JournalSnapshotContentType = "browser"
+)
+
+func (t JournalSnapshotContentType) Valid() bool {
+	switch t {
+	case JournalSnapshotContentTypeDocument, JournalSnapshotContentTypeTerminal,
+		JournalSnapshotContentTypeCode, JournalSnapshotContentTypeSkill,
+		JournalSnapshotContentTypeBrowser:
+		return true
+	default:
+		return false
+	}
+}
+
+type JournalContentStatus string
+
+const (
+	JournalContentStatusEmpty        JournalContentStatus = "empty"
+	JournalContentStatusLoading      JournalContentStatus = "loading"
+	JournalContentStatusStreaming    JournalContentStatus = "streaming"
+	JournalContentStatusReady        JournalContentStatus = "ready"
+	JournalContentStatusError        JournalContentStatus = "error"
+	JournalContentStatusNoPermission JournalContentStatus = "no_permission"
+)
+
+func (s JournalContentStatus) Valid() bool {
+	switch s {
+	case JournalContentStatusEmpty, JournalContentStatusLoading,
+		JournalContentStatusStreaming, JournalContentStatusReady,
+		JournalContentStatusError, JournalContentStatusNoPermission:
+		return true
+	default:
+		return false
+	}
+}
+
+type JournalSnapshotCompression string
+
+const (
+	JournalSnapshotCompressionIdentity JournalSnapshotCompression = "identity"
+)
+
+func (c JournalSnapshotCompression) Valid() bool {
+	return c == JournalSnapshotCompressionIdentity
+}
+
+type JournalSnapshotCleanupState string
+
+const (
+	JournalSnapshotCleanupStateActive   JournalSnapshotCleanupState = "active"
+	JournalSnapshotCleanupStatePending  JournalSnapshotCleanupState = "pending"
+	JournalSnapshotCleanupStateDeleting JournalSnapshotCleanupState = "deleting"
+	JournalSnapshotCleanupStateFailed   JournalSnapshotCleanupState = "failed"
+)
+
+func (s JournalSnapshotCleanupState) Valid() bool {
+	switch s {
+	case JournalSnapshotCleanupStateActive, JournalSnapshotCleanupStatePending,
+		JournalSnapshotCleanupStateDeleting, JournalSnapshotCleanupStateFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+type JournalContentSnapshot struct {
+	SnapshotID         string
+	SpaceID            int64
+	ThreadID           int64
+	RunID              int64
+	JournalRunID       int64
+	AttemptID          string
+	EventID            int64
+	ActionID           string
+	Revision           uint32
+	ContentType        JournalSnapshotContentType
+	Status             JournalContentStatus
+	IsFragmented       bool
+	FragmentCount      uint32
+	Visibility         JournalVisibility
+	ErrorCode          string
+	MIMEType           string
+	Encoding           string
+	Compression        JournalSnapshotCompression
+	ContentJSON        string
+	ObjectKey          string
+	SummaryJSON        string
+	SummaryHash        string
+	ContentLength      int64
+	ContentHash        string
+	ACLDomain          string
+	SourceResourceType string
+	SourceResourceID   string
+	SourceRevision     string
+	OriginalObjectKey  string
+	ExpiresAt          int64
+	CleanupState       JournalSnapshotCleanupState
+	DeletedAt          int64
+	CreatedAt          int64
+	Fragments          []*JournalSnapshotFragment
+}
+
+const JournalSnapshotRetentionMillis int64 = 30 * 24 * 60 * 60 * 1000
+
+type JournalSnapshotReservation struct {
+	SnapshotID       string
+	ReservationToken string
+	SpaceID          int64
+	ThreadID         int64
+	RunID            int64
+	JournalRunID     int64
+	AttemptID        string
+	ActionID         string
+	Revision         uint32
+	EventID          int64
+	IdempotencyKey   string
+	ContentHash      string
+	ACLDomain        string
+	StagingPrefix    string
+	ExpiresAt        int64
+	CreatedAt        int64
+}
+
+type JournalSnapshotFragment struct {
+	FragmentID    string
+	SnapshotID    string
+	FragmentIndex int32
+	Kind          JournalSnapshotFragmentKind
+	MetadataJSON  string
+	MIMEType      string
+	InlineContent string
+	ObjectKey     string
+	ByteStart     int64
+	ByteEnd       int64
+	SizeBytes     int64
+	ContentHash   string
+	CreatedAt     int64
+}
+
+type JournalSnapshotFragmentKind string
+
+const (
+	JournalSnapshotFragmentKindDocumentBlock    JournalSnapshotFragmentKind = "document_block"
+	JournalSnapshotFragmentKindDocumentChapters JournalSnapshotFragmentKind = "document_chapters"
+	JournalSnapshotFragmentKindTerminalStdout   JournalSnapshotFragmentKind = "terminal_stdout"
+	JournalSnapshotFragmentKindTerminalStderr   JournalSnapshotFragmentKind = "terminal_stderr"
+	JournalSnapshotFragmentKindCodeLines        JournalSnapshotFragmentKind = "code_lines"
+	JournalSnapshotFragmentKindCodeHighlights   JournalSnapshotFragmentKind = "code_highlights"
+	JournalSnapshotFragmentKindSkillItems       JournalSnapshotFragmentKind = "skill_items"
+	JournalSnapshotFragmentKindBrowserThumbnail JournalSnapshotFragmentKind = "browser_thumbnail"
+	JournalSnapshotFragmentKindBrowserSnapshot  JournalSnapshotFragmentKind = "browser_snapshot"
+	JournalSnapshotFragmentKindBrowserAnalysis  JournalSnapshotFragmentKind = "browser_analysis"
+)
+
+func (k JournalSnapshotFragmentKind) Valid() bool {
+	switch k {
+	case JournalSnapshotFragmentKindDocumentBlock,
+		JournalSnapshotFragmentKindDocumentChapters,
+		JournalSnapshotFragmentKindTerminalStdout,
+		JournalSnapshotFragmentKindTerminalStderr,
+		JournalSnapshotFragmentKindCodeLines,
+		JournalSnapshotFragmentKindCodeHighlights,
+		JournalSnapshotFragmentKindSkillItems,
+		JournalSnapshotFragmentKindBrowserThumbnail,
+		JournalSnapshotFragmentKindBrowserSnapshot,
+		JournalSnapshotFragmentKindBrowserAnalysis:
+		return true
+	default:
+		return false
+	}
+}
+
+type JournalSnapshotAction string
+
+const (
+	JournalSnapshotActionReadMetadata     JournalSnapshotAction = "read_metadata"
+	JournalSnapshotActionReadContent      JournalSnapshotAction = "read_content"
+	JournalSnapshotActionCopyCommand      JournalSnapshotAction = "copy_command"
+	JournalSnapshotActionCopyOutput       JournalSnapshotAction = "copy_output"
+	JournalSnapshotActionCopyCode         JournalSnapshotAction = "copy_code"
+	JournalSnapshotActionOpenOriginal     JournalSnapshotAction = "open_original"
+	JournalSnapshotActionDownloadFragment JournalSnapshotAction = "download_fragment"
+)
+
+func (a JournalSnapshotAction) Valid() bool {
+	switch a {
+	case JournalSnapshotActionReadMetadata, JournalSnapshotActionReadContent,
+		JournalSnapshotActionCopyCommand, JournalSnapshotActionCopyOutput,
+		JournalSnapshotActionCopyCode, JournalSnapshotActionOpenOriginal,
+		JournalSnapshotActionDownloadFragment:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a JournalSnapshotAction) UserAction() bool {
+	switch a {
+	case JournalSnapshotActionCopyCommand, JournalSnapshotActionCopyOutput,
+		JournalSnapshotActionCopyCode, JournalSnapshotActionOpenOriginal,
+		JournalSnapshotActionDownloadFragment:
+		return true
+	default:
+		return false
+	}
+}
+
+type JournalSnapshotPermissionResult string
+
+const (
+	JournalSnapshotPermissionAllowed JournalSnapshotPermissionResult = "allowed"
+	JournalSnapshotPermissionDenied  JournalSnapshotPermissionResult = "denied"
+	JournalSnapshotPermissionExpired JournalSnapshotPermissionResult = "expired"
+)
+
+type JournalSnapshotAccessAudit struct {
+	ID               int64
+	SpaceID          int64
+	ThreadID         int64
+	RunID            int64
+	AttemptID        string
+	SnapshotID       string
+	ContentType      JournalSnapshotContentType
+	Action           JournalSnapshotAction
+	ActorID          int64
+	PermissionResult JournalSnapshotPermissionResult
+	IdempotencyKey   string
+	TargetHash       string
+	TraceID          string
+	CreatedAt        int64
+}

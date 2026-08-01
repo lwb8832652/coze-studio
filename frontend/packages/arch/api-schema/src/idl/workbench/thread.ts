@@ -978,7 +978,7 @@ export const AuditCanonicalRunSnapshotAction = /*#__PURE__*/createAPI<journal.Au
   "reqMapping": {
     "path": ["thread_id", "run_id", "snapshot_id"],
     "header": ["X-Coze-Space-ID", "Idempotency-Key"],
-    "body": ["action"]
+    "body": ["action", "fragment_id"]
   },
   "resType": "journal.JournalSnapshotActionAuditResponse",
   "schemaRoot": "api://schemas/idl_workbench_thread",

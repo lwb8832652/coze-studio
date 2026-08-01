@@ -749,6 +749,10 @@ func appendJournalEventLockedWithBase(
 	if !entity.RunAttemptStatus(attempt.Status).IsActive() {
 		return nil, ErrJournalAttemptTerminal
 	}
+	if entity.JournalProjectionState(attempt.ProjectionState) !=
+		entity.JournalProjectionStateHealthy {
+		return nil, ErrJournalProjectionInactive
+	}
 	if err := ensureJournalAttemptRunning(tx, attempt, event.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -757,6 +761,23 @@ func appendJournalEventLockedWithBase(
 		return nil, err
 	}
 	event.ParentEventID = parentID
+	if event.SnapshotID != "" {
+		var snapshotCount int64
+		if err := tx.Model(&journalSnapshotPO{}).Where(
+			"snapshot_id = ? AND event_id = ? AND thread_id = ? AND run_id = ? AND journal_run_id = ? AND attempt_id = ?",
+			event.SnapshotID,
+			event.ID,
+			event.ThreadID,
+			event.RunID,
+			attempt.JournalRunID,
+			attempt.AttemptID,
+		).Count(&snapshotCount).Error; err != nil {
+			return nil, err
+		}
+		if snapshotCount != 1 {
+			return nil, ErrJournalSnapshotNotFound
+		}
+	}
 
 	sequence := uint64(0)
 	if event.Visibility == entity.JournalVisibilityUser {

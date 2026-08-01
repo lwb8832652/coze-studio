@@ -19,6 +19,7 @@ package minio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -37,12 +38,17 @@ import (
 type minioClient struct {
 	client          *minio.Client
 	streamOpener    minioObjectStreamOpener
+	listObjects     minioObjectLister
 	readinessCheck  func(context.Context, string) (bool, error)
 	accessKeyID     string
 	secretAccessKey string
 	bucketName      string
 	endpoint        string
 }
+
+const maxMinIOListPageSize = 1000
+
+type minioObjectLister func(context.Context, string, minio.ListObjectsOptions) <-chan minio.ObjectInfo
 
 type minioObjectStreamOpener interface {
 	OpenObjectStream(context.Context, string, string) (io.ReadCloser, error)
@@ -92,6 +98,7 @@ func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey,
 	m := &minioClient{
 		client:          client,
 		streamOpener:    &minioSDKObjectStreamOpener{client: client},
+		listObjects:     client.ListObjects,
 		readinessCheck:  client.BucketExists,
 		accessKeyID:     accessKeyID,
 		secretAccessKey: secretAccessKey,
@@ -311,6 +318,9 @@ func (m *minioClient) GetObjectUrl(ctx context.Context, objectKey string, opts .
 	if option.ResponseContentType != "" {
 		reqParams.Set("response-content-type", option.ResponseContentType)
 	}
+	if option.ResponseCacheControl != "" {
+		reqParams.Set("response-cache-control", option.ResponseCacheControl)
+	}
 	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucketName, objectKey, time.Duration(option.Expire)*time.Second, reqParams)
 	if err != nil {
 		return "", fmt.Errorf("GetObjectUrl failed: %v", err)
@@ -320,16 +330,14 @@ func (m *minioClient) GetObjectUrl(ctx context.Context, objectKey string, opts .
 }
 
 func (m *minioClient) ListObjectsPaginated(ctx context.Context, input *storage.ListObjectsPaginatedInput, opts ...storage.GetOptFn) (*storage.ListObjectsPaginatedOutput, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context cannot be nil")
+	}
 	if input == nil {
 		return nil, fmt.Errorf("input cannot be nil")
 	}
-	if input.PageSize <= 0 {
-		return nil, fmt.Errorf("page size must be positive")
-	}
-
-	files, err := m.ListAllObjects(ctx, input.Prefix, opts...)
-	if err != nil {
-		return nil, err
+	if input.PageSize <= 0 || input.PageSize > maxMinIOListPageSize {
+		return nil, fmt.Errorf("page size must be between 1 and %d", maxMinIOListPageSize)
 	}
 
 	option := storage.GetOption{}
@@ -337,18 +345,71 @@ func (m *minioClient) ListObjectsPaginated(ctx context.Context, input *storage.L
 		opt(&option)
 	}
 
+	if m == nil || m.listObjects == nil || strings.TrimSpace(m.bucketName) == "" {
+		return nil, fmt.Errorf("ListObjects client is unavailable")
+	}
+
+	requestMaxKeys := input.PageSize + 1
+	if requestMaxKeys > maxMinIOListPageSize {
+		requestMaxKeys = maxMinIOListPageSize
+	}
+	listCtx, cancel := context.WithCancel(ctx)
+	objectCh := m.listObjects(listCtx, m.bucketName, minio.ListObjectsOptions{
+		Prefix:       input.Prefix,
+		Recursive:    true,
+		WithMetadata: option.WithTagging,
+		StartAfter:   input.Cursor,
+		MaxKeys:      requestMaxKeys,
+	})
+	if objectCh == nil {
+		cancel()
+		return nil, fmt.Errorf("ListObjects returned an empty stream")
+	}
+	defer func() {
+		cancel()
+		for range objectCh {
+		}
+	}()
+
+	files := make([]*storage.FileInfo, 0, input.PageSize)
+	isTruncated := false
+	for object := range objectCh {
+		if object.Err != nil {
+			if errors.Is(object.Err, context.Canceled) && ctx.Err() == nil && isTruncated {
+				continue
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, object.Err
+		}
+		if len(files) == input.PageSize {
+			isTruncated = true
+			cancel()
+			continue
+		}
+		files = append(files, &storage.FileInfo{
+			Key:          object.Key,
+			LastModified: object.LastModified,
+			ETag:         object.ETag,
+			Size:         object.Size,
+			Tagging:      object.UserTags,
+		})
+	}
+
 	if option.WithURL {
+		var err error
 		files, err = fileutil.AssembleFileUrl(ctx, &option.Expire, files, m)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return &storage.ListObjectsPaginatedOutput{
-		Files:       files,
-		IsTruncated: false,
-		Cursor:      "",
-	}, nil
+	output := &storage.ListObjectsPaginatedOutput{Files: files, IsTruncated: isTruncated}
+	if isTruncated {
+		output.Cursor = files[len(files)-1].Key
+	}
+	return output, nil
 }
 
 func (m *minioClient) ListAllObjects(ctx context.Context, prefix string, opts ...storage.GetOptFn) ([]*storage.FileInfo, error) {

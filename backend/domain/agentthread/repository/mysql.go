@@ -192,6 +192,95 @@ type runAttemptPO struct {
 	EndedAt                *int64  `gorm:"column:ended_at"`
 }
 
+type journalSnapshotPO struct {
+	SnapshotID         string  `gorm:"column:snapshot_id;size:64;primaryKey"`
+	SpaceID            int64   `gorm:"column:space_id;index:idx_agent_journal_snapshots_scope,priority:1;index:idx_agent_journal_snapshots_hash_scope,priority:1"`
+	ThreadID           int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshots_scope,priority:2"`
+	RunID              int64   `gorm:"column:run_id;index:idx_agent_journal_snapshots_scope,priority:3"`
+	JournalRunID       int64   `gorm:"column:journal_run_id;index:idx_agent_journal_snapshots_attempt,priority:1;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:1"`
+	AttemptID          string  `gorm:"column:attempt_id;size:64;index:idx_agent_journal_snapshots_attempt,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:2"`
+	EventID            int64   `gorm:"column:event_id;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:1"`
+	ActionID           string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:3"`
+	Revision           uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:4"`
+	ContentType        string  `gorm:"column:content_type;size:32"`
+	Status             string  `gorm:"column:status;size:32"`
+	IsFragmented       bool    `gorm:"column:is_fragmented"`
+	FragmentCount      uint32  `gorm:"column:fragment_count"`
+	Visibility         string  `gorm:"column:visibility;size:16"`
+	ErrorCode          *string `gorm:"column:error_code;size:64"`
+	MIMEType           string  `gorm:"column:mime_type;size:191"`
+	Encoding           string  `gorm:"column:encoding;size:32"`
+	Compression        string  `gorm:"column:compression;size:32"`
+	ContentJSON        []byte  `gorm:"column:content_json;type:mediumblob"`
+	ObjectKey          *string `gorm:"column:object_key;size:1024"`
+	SummaryJSON        []byte  `gorm:"column:summary_json;type:mediumblob"`
+	SummaryHash        *string `gorm:"column:summary_hash;size:64"`
+	ContentLength      int64   `gorm:"column:content_length"`
+	ContentHash        string  `gorm:"column:content_hash;size:64;index:idx_agent_journal_snapshots_hash_scope,priority:3"`
+	ACLDomain          string  `gorm:"column:acl_domain;size:191;index:idx_agent_journal_snapshots_hash_scope,priority:2"`
+	SourceResourceType *string `gorm:"column:source_resource_type;size:64"`
+	SourceResourceID   *string `gorm:"column:source_resource_id;size:191"`
+	SourceRevision     *string `gorm:"column:source_revision;size:64"`
+	OriginalObjectKey  *string `gorm:"column:original_object_key;size:1024"`
+	ExpiresAt          int64   `gorm:"column:expires_at"`
+	CleanupState       string  `gorm:"column:cleanup_state;size:32;index:idx_agent_journal_snapshots_cleanup,priority:1"`
+	DeletedAt          *int64  `gorm:"column:deleted_at"`
+	CreatedAt          int64   `gorm:"column:created_at;index:idx_agent_journal_snapshots_attempt,priority:3"`
+}
+
+type journalSnapshotReservationPO struct {
+	SnapshotID       string `gorm:"column:snapshot_id;size:64;primaryKey"`
+	ReservationToken string `gorm:"column:reservation_token;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_token"`
+	SpaceID          int64  `gorm:"column:space_id;index:idx_agent_journal_snapshot_reservations_expiry,priority:1"`
+	ThreadID         int64  `gorm:"column:thread_id"`
+	RunID            int64  `gorm:"column:run_id"`
+	JournalRunID     int64  `gorm:"column:journal_run_id;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:1"`
+	AttemptID        string `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:2"`
+	ActionID         string `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:3"`
+	Revision         uint32 `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:4"`
+	EventID          int64  `gorm:"column:event_id"`
+	IdempotencyKey   string `gorm:"column:idempotency_key;size:191"`
+	ContentHash      string `gorm:"column:content_hash;size:64"`
+	ACLDomain        string `gorm:"column:acl_domain;size:191"`
+	StagingPrefix    string `gorm:"column:staging_prefix;size:1024"`
+	ExpiresAt        int64  `gorm:"column:expires_at;index:idx_agent_journal_snapshot_reservations_expiry,priority:2"`
+	CreatedAt        int64  `gorm:"column:created_at"`
+}
+
+type journalSnapshotFragmentPO struct {
+	FragmentID    string  `gorm:"column:fragment_id;size:64;primaryKey"`
+	SnapshotID    string  `gorm:"column:snapshot_id;size:64;uniqueIndex:uk_agent_journal_snapshot_fragment_index,priority:1"`
+	FragmentIndex int32   `gorm:"column:fragment_index;uniqueIndex:uk_agent_journal_snapshot_fragment_index,priority:2"`
+	Kind          string  `gorm:"column:kind;size:32"`
+	MetadataJSON  []byte  `gorm:"column:metadata_json;type:blob"`
+	MIMEType      *string `gorm:"column:mime_type;size:191"`
+	InlineContent []byte  `gorm:"column:inline_content;type:blob"`
+	ObjectKey     *string `gorm:"column:object_key;size:1024;index:idx_agent_journal_snapshot_fragments_object"`
+	ByteStart     int64   `gorm:"column:byte_start"`
+	ByteEnd       int64   `gorm:"column:byte_end"`
+	SizeBytes     int64   `gorm:"column:size_bytes"`
+	ContentHash   string  `gorm:"column:content_hash;size:64"`
+	CreatedAt     int64   `gorm:"column:created_at"`
+}
+
+type journalSnapshotAccessAuditPO struct {
+	ID               int64   `gorm:"column:id;primaryKey;autoIncrement"`
+	SpaceID          int64   `gorm:"column:space_id;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:1;index:idx_agent_journal_snapshot_audits_scope,priority:1"`
+	ThreadID         int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshot_audits_scope,priority:2"`
+	RunID            int64   `gorm:"column:run_id;index:idx_agent_journal_snapshot_audits_scope,priority:3"`
+	AttemptID        *string `gorm:"column:attempt_id;size:64"`
+	SnapshotID       string  `gorm:"column:snapshot_id;size:64;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:2"`
+	ContentType      *string `gorm:"column:content_type;size:32"`
+	Action           string  `gorm:"column:action;size:64;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:3"`
+	ActorID          int64   `gorm:"column:actor_id;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:4"`
+	PermissionResult string  `gorm:"column:permission_result;size:32"`
+	IdempotencyKey   string  `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:5"`
+	TargetHash       string  `gorm:"column:target_hash;size:64"`
+	TraceID          *string `gorm:"column:trace_id;size:128"`
+	CreatedAt        int64   `gorm:"column:created_at;index:idx_agent_journal_snapshot_audits_scope,priority:4"`
+	ObjectKey        string  `gorm:"-"`
+}
+
 type checkpointPO struct {
 	ID                 int64          `gorm:"column:id;primaryKey"`
 	ThreadID           int64          `gorm:"column:thread_id;index:idx_agent_checkpoints_thread_created;index:idx_agent_checkpoints_runtime_key,priority:1"`
@@ -396,6 +485,22 @@ func (runEventPO) TableName() string {
 
 func (runAttemptPO) TableName() string {
 	return "agent_run_attempts"
+}
+
+func (journalSnapshotPO) TableName() string {
+	return "agent_journal_snapshots"
+}
+
+func (journalSnapshotReservationPO) TableName() string {
+	return "agent_journal_snapshot_reservations"
+}
+
+func (journalSnapshotFragmentPO) TableName() string {
+	return "agent_journal_snapshot_fragments"
+}
+
+func (journalSnapshotAccessAuditPO) TableName() string {
+	return "agent_journal_snapshot_access_audits"
 }
 
 func (checkpointPO) TableName() string {

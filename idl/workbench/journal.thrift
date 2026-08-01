@@ -59,6 +59,18 @@ const JournalSnapshotContentType JournalSnapshotContentType_Code = "code"
 const JournalSnapshotContentType JournalSnapshotContentType_Skill = "skill"
 const JournalSnapshotContentType JournalSnapshotContentType_Browser = "browser"
 
+typedef string JournalSnapshotFragmentKind (ts.enum="true")
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_DocumentBlock = "document_block"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_DocumentChapters = "document_chapters"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_TerminalStdout = "terminal_stdout"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_TerminalStderr = "terminal_stderr"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_CodeLines = "code_lines"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_CodeHighlights = "code_highlights"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_SkillItems = "skill_items"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_BrowserThumbnail = "browser_thumbnail"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_BrowserSnapshot = "browser_snapshot"
+const JournalSnapshotFragmentKind JournalSnapshotFragmentKind_BrowserAnalysis = "browser_analysis"
+
 typedef string JournalSnapshotAction (ts.enum="true")
 const JournalSnapshotAction JournalSnapshotAction_CopyCommand = "copy_command"
 const JournalSnapshotAction JournalSnapshotAction_CopyOutput = "copy_output"
@@ -184,6 +196,25 @@ struct JournalSnapshotFragment {
     5: optional i64 byte_end
     6: optional i64 size_bytes
     7: optional string content_hash
+    8: optional JournalSnapshotFragmentKind kind
+    9: optional string block_id
+    10: optional string stream
+    11: optional i32 start_line
+    12: optional i32 end_line
+    13: optional i32 item_start
+    14: optional i32 item_end
+    15: optional string binary_content_base64
+    16: optional string mime_type
+    17: optional list<JournalDocumentChapter> chapters
+    18: optional list<JournalCodeHighlight> highlights
+    19: optional list<JournalSkill> skills
+    20: optional list<string> analysis
+}
+
+struct JournalDocumentChapter {
+    1: required string chapter_id
+    2: required string title
+    3: required i32 level
 }
 
 struct JournalDocumentSnapshotContent {
@@ -191,6 +222,11 @@ struct JournalDocumentSnapshotContent {
     2: optional string format
     3: optional string content
     4: optional string source_artifact_id
+    5: optional string token
+    6: optional list<JournalDocumentChapter> chapters
+    7: optional string active_block
+    8: optional string revision
+    9: optional string sync_status
 }
 
 struct JournalTerminalSnapshotContent {
@@ -198,6 +234,18 @@ struct JournalTerminalSnapshotContent {
     2: optional string output
     3: optional i32 exit_code
     4: optional string working_directory
+    5: optional string session_id
+    6: optional string started_at
+    7: optional string finished_at
+    8: optional string stdout
+    9: optional string stderr
+    10: optional i64 duration_ms
+}
+
+struct JournalCodeHighlight {
+    1: required i32 start_line
+    2: required i32 end_line
+    3: optional string kind
 }
 
 struct JournalCodeSnapshotContent {
@@ -207,6 +255,9 @@ struct JournalCodeSnapshotContent {
     4: optional string diff
     5: optional i32 start_line
     6: optional i32 end_line
+    7: required string repository
+    8: required string revision
+    9: optional list<JournalCodeHighlight> highlights
 }
 
 struct JournalSkillSnapshotContent {
@@ -216,8 +267,17 @@ struct JournalSkillSnapshotContent {
 struct JournalBrowserSnapshotContent {
     1: optional string url
     2: optional string title
-    3: optional string content
     4: optional string screenshot_artifact_id
+    5: required string capture_id
+    6: optional string thumbnail_base64
+    7: required string static_snapshot_base64
+    8: required string mime_type
+    9: optional list<string> analysis
+    10: optional i32 index
+    11: optional i32 total
+    12: required bool redacted
+    13: required string redaction_evidence_id
+    14: required string redaction_policy_version
 }
 
 union JournalSnapshotContent {
@@ -241,7 +301,7 @@ struct JournalSnapshotEnvelope {
     10: required list<JournalSnapshotFragment> fragments
     11: required bool has_more
     12: optional string next_cursor
-    13: required JournalSnapshotContent content
+    13: optional JournalSnapshotContent content
 }
 
 struct JournalRecoveryCapability {
@@ -368,6 +428,7 @@ struct AuditCanonicalRunSnapshotActionRequest {
     4: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     5: required JournalSnapshotAction action (api.body="action")
     6: required string idempotency_key (api.header="Idempotency-Key")
+    7: optional string fragment_id (api.body="fragment_id")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -376,6 +437,10 @@ struct JournalSnapshotActionAuditResponse {
     2: required JournalSnapshotAction action
     3: required bool allowed
     4: required string audited_at
+    5: optional string copy_text
+    6: optional string download_url
+    7: optional string download_content_base64
+    8: optional string download_mime_type
 }
 
 struct RecoverCanonicalRunJournalRequest {
