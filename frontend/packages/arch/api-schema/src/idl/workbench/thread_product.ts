@@ -84,10 +84,13 @@ export interface CanonicalArtifact {
   capabilities?: CanonicalArtifactCapability[],
   collection_id?: string,
   collection_order?: number,
+  is_primary?: boolean,
 }
 export interface CanonicalArtifactCollection {
   collection_id: string,
   artifact_ids: string[],
+  current_index?: number,
+  total_count?: number,
 }
 export interface CanonicalArtifactScanJob {
   job_id: string,

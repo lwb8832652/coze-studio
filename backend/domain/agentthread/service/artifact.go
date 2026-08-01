@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"mime"
@@ -34,21 +35,26 @@ type ArtifactFileReader interface {
 }
 
 type RegisterArtifactRequest struct {
-	SpaceID      int64
-	ThreadID     int64
-	RunID        int64
-	FileID       int64
-	Title        string
-	ArtifactType string
-	Metadata     string
+	SpaceID         int64
+	ThreadID        int64
+	RunID           int64
+	FileID          int64
+	Title           string
+	ArtifactType    string
+	Source          entity.AgentArtifactSource
+	IsPrimary       bool
+	CollectionID    string
+	CollectionOrder *int32
+	Metadata        string
 }
 
 type ListArtifactsRequest struct {
-	ThreadID    int64
-	RunID       *int64
-	DeletedOnly bool
-	Page        int32
-	PageSize    int32
+	ThreadID     int64
+	RunID        *int64
+	CollectionID *string
+	DeletedOnly  bool
+	Page         int32
+	PageSize     int32
 }
 
 type ListArtifactScanJobsRequest struct {
@@ -90,13 +96,16 @@ type MarkArtifactFileDeletedRequest struct {
 }
 
 type UpdateArtifactScanResultRequest struct {
-	ThreadID       int64
-	ArtifactID     int64
-	ScanStatus     string
-	Scanner        string
-	ScannerVersion string
-	Reason         string
-	ScannedAt      int64
+	ThreadID            int64
+	ArtifactID          int64
+	ScanStatus          string
+	Scanner             string
+	ScannerVersion      string
+	Reason              string
+	DetectedContentType string
+	ScannedSizeBytes    int64
+	ContentHash         string
+	ScannedAt           int64
 }
 
 type ClaimArtifactScanJobsRequest struct {
@@ -111,13 +120,16 @@ type AggregateArtifactScanBacklogRequest struct {
 }
 
 type CompleteArtifactScanJobRequest struct {
-	JobID          int64
-	WorkerID       string
-	ScanStatus     string
-	ScannerVersion string
-	Reason         string
-	ScannedAt      int64
-	EndedAt        int64
+	JobID               int64
+	WorkerID            string
+	ScanStatus          string
+	ScannerVersion      string
+	Reason              string
+	DetectedContentType string
+	ScannedSizeBytes    int64
+	ContentHash         string
+	ScannedAt           int64
+	EndedAt             int64
 }
 
 type RetryArtifactScanJobRequest struct {
@@ -252,6 +264,10 @@ func DetermineArtifactPreviewMode(contentType string) entity.AgentArtifactPrevie
 		return entity.AgentArtifactPreviewModeImage
 	case "application/pdf":
 		return entity.AgentArtifactPreviewModePDF
+	case "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm":
+		return entity.AgentArtifactPreviewModeAudio
+	case "video/mp4", "video/webm", "video/ogg":
+		return entity.AgentArtifactPreviewModeVideo
 	default:
 		return entity.AgentArtifactPreviewModeDownload
 	}
@@ -329,31 +345,55 @@ func (s *artifactService) RegisterArtifact(
 		return nil, false, err
 	}
 	now := time.Now().UnixMilli()
+	scanRevision := artifactScanRevision(file)
 	metadata, err = mergeArtifactPendingScanMetadata(
 		metadata,
 		defaultArtifactScanScanner,
+		scanRevision,
 		now,
 	)
 	if err != nil {
 		return nil, false, err
 	}
+	source := req.Source
+	if source == "" {
+		source = entity.AgentArtifactSourceAgentGenerated
+	}
+	if !validArtifactSource(source) {
+		return nil, false, InvalidArgumentErrorf("artifact source is invalid")
+	}
+	collectionID := strings.TrimSpace(req.CollectionID)
+	if collectionID == "" {
+		if req.CollectionOrder != nil {
+			return nil, false, InvalidArgumentErrorf("artifact collection id is required")
+		}
+	} else if !validArtifactCollectionID(collectionID) || req.CollectionOrder == nil ||
+		*req.CollectionOrder < 0 || *req.CollectionOrder >= 100 {
+		return nil, false, InvalidArgumentErrorf("artifact collection is invalid")
+	}
 	artifact, created, err := s.artifactRepo.UpsertArtifact(ctx, &entity.AgentArtifact{
-		ID:           id,
-		SpaceID:      file.SpaceID,
-		UserID:       file.UserID,
-		ThreadID:     file.ThreadID,
-		RunID:        file.RunID,
-		FileID:       file.ID,
-		Title:        title,
-		ArtifactType: artifactType,
-		VirtualPath:  strings.TrimSpace(file.VirtualPath),
-		ObjectURI:    strings.TrimSpace(file.ObjectURI),
-		ContentType:  strings.TrimSpace(file.ContentType),
-		SizeBytes:    file.SizeBytes,
-		PreviewMode:  DetermineArtifactPreviewMode(file.ContentType),
-		Metadata:     metadata,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:               id,
+		SpaceID:          file.SpaceID,
+		UserID:           file.UserID,
+		ThreadID:         file.ThreadID,
+		RunID:            file.RunID,
+		JournalRunID:     file.RunID,
+		FileID:           file.ID,
+		Title:            title,
+		ArtifactType:     artifactType,
+		VirtualPath:      strings.TrimSpace(file.VirtualPath),
+		ObjectURI:        strings.TrimSpace(file.ObjectURI),
+		ContentType:      strings.TrimSpace(file.ContentType),
+		SizeBytes:        file.SizeBytes,
+		PreviewMode:      DetermineArtifactPreviewMode(file.ContentType),
+		Source:           source,
+		GenerationStatus: entity.AgentArtifactGenerationStatusProcessing,
+		IsPrimary:        req.IsPrimary,
+		CollectionID:     collectionID,
+		CollectionOrder:  req.CollectionOrder,
+		Metadata:         metadata,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	})
 	if err != nil {
 		return nil, false, err
@@ -363,11 +403,39 @@ func (s *artifactService) RegisterArtifact(
 		ctx,
 		artifact,
 		defaultArtifactScanScanner,
+		scanRevision,
 		now,
 	); err != nil {
 		return nil, false, err
 	}
 	return artifact, created, nil
+}
+
+func validArtifactSource(source entity.AgentArtifactSource) bool {
+	switch source {
+	case entity.AgentArtifactSourceAgentGenerated,
+		entity.AgentArtifactSourceUserUpload,
+		entity.AgentArtifactSourceToolOutput,
+		entity.AgentArtifactSourceExternalReference:
+		return true
+	default:
+		return false
+	}
+}
+
+func validArtifactCollectionID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '_' && character != '-' && character != '.' && character != ':' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *artifactService) GetArtifact(
@@ -577,14 +645,86 @@ func (s *artifactService) UpdateArtifactScanResult(
 	if err != nil {
 		return nil, false, err
 	}
+	detectedContentType := strings.TrimSpace(req.DetectedContentType)
+	scannedSizeBytes := req.ScannedSizeBytes
+	contentHash := strings.ToLower(strings.TrimSpace(req.ContentHash))
+	hasTrustedScanResult := detectedContentType != "" || scannedSizeBytes != 0 || contentHash != ""
+	if !hasTrustedScanResult && artifact.ScannedSizeBytes != nil &&
+		strings.TrimSpace(artifact.DetectedContentType) != "" && strings.TrimSpace(artifact.ContentHash) != "" {
+		detectedContentType = strings.TrimSpace(artifact.DetectedContentType)
+		scannedSizeBytes = *artifact.ScannedSizeBytes
+		contentHash = strings.ToLower(strings.TrimSpace(artifact.ContentHash))
+		hasTrustedScanResult = true
+	}
+	if hasTrustedScanResult {
+		if detectedContentType == "" || scannedSizeBytes <= 0 || !validArtifactContentHash(contentHash) {
+			return nil, false, InvalidArgumentErrorf("trusted artifact scan metadata is incomplete")
+		}
+		mediaType, _, parseErr := mime.ParseMediaType(detectedContentType)
+		if parseErr != nil || strings.TrimSpace(mediaType) == "" {
+			return nil, false, InvalidArgumentErrorf("detected artifact content type is invalid")
+		}
+		detectedContentType = strings.ToLower(strings.TrimSpace(mediaType))
+		return s.artifactRepo.UpdateArtifactTrustedScanResult(
+			ctx,
+			req.ThreadID,
+			req.ArtifactID,
+			metadata,
+			detectedContentType,
+			scannedSizeBytes,
+			contentHash,
+			DetermineArtifactPreviewMode(detectedContentType),
+			artifactGenerationStatusForScan(scanStatus),
+			scannedAt,
+		)
+	}
 
 	return s.artifactRepo.UpdateArtifactScanMetadata(
 		ctx,
 		req.ThreadID,
 		req.ArtifactID,
 		metadata,
+		artifactGenerationStatusWithoutTrustedScan(scanStatus),
 		scannedAt,
 	)
+}
+
+func artifactGenerationStatusWithoutTrustedScan(
+	scanStatus string,
+) entity.AgentArtifactGenerationStatus {
+	switch scanStatus {
+	case "failed":
+		return entity.AgentArtifactGenerationStatusFailed
+	case "blocked", "infected", "quarantined":
+		return entity.AgentArtifactGenerationStatusBlocked
+	default:
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
+}
+
+func validArtifactContentHash(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func artifactGenerationStatusForScan(scanStatus string) entity.AgentArtifactGenerationStatus {
+	switch scanStatus {
+	case "clean":
+		return entity.AgentArtifactGenerationStatusReady
+	case "blocked", "infected", "quarantined":
+		return entity.AgentArtifactGenerationStatusBlocked
+	case "failed":
+		return entity.AgentArtifactGenerationStatusFailed
+	default:
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
 }
 
 func (s *artifactService) ClaimArtifactScanJobs(
@@ -699,13 +839,16 @@ func (s *artifactService) CompleteArtifactScanJob(
 	if _, updated, err := s.UpdateArtifactScanResult(
 		ctx,
 		&UpdateArtifactScanResultRequest{
-			ThreadID:       job.ThreadID,
-			ArtifactID:     job.ArtifactID,
-			ScanStatus:     scanStatus,
-			Scanner:        job.Scanner,
-			ScannerVersion: req.ScannerVersion,
-			Reason:         req.Reason,
-			ScannedAt:      scannedAt,
+			ThreadID:            job.ThreadID,
+			ArtifactID:          job.ArtifactID,
+			ScanStatus:          scanStatus,
+			Scanner:             job.Scanner,
+			ScannerVersion:      req.ScannerVersion,
+			Reason:              req.Reason,
+			DetectedContentType: req.DetectedContentType,
+			ScannedSizeBytes:    req.ScannedSizeBytes,
+			ContentHash:         req.ContentHash,
+			ScannedAt:           scannedAt,
 		},
 	); err != nil {
 		return nil, false, err
@@ -746,6 +889,25 @@ func (s *artifactService) FailArtifactScanJob(
 	now := req.EndedAt
 	if now <= 0 {
 		now = time.Now().UnixMilli()
+	}
+	job, err := s.artifactRepo.GetArtifactScanJob(ctx, req.JobID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !artifactScanJobCanFinish(job, workerID, now) {
+		return nil, false, nil
+	}
+	if _, updated, err := s.UpdateArtifactScanResult(ctx, &UpdateArtifactScanResultRequest{
+		ThreadID:   job.ThreadID,
+		ArtifactID: job.ArtifactID,
+		ScanStatus: "failed",
+		Scanner:    job.Scanner,
+		Reason:     req.ErrorText,
+		ScannedAt:  now,
+	}); err != nil {
+		return nil, false, err
+	} else if !updated {
+		return nil, false, nil
 	}
 	return s.artifactRepo.FailArtifactScanJob(
 		ctx,
@@ -926,11 +1088,12 @@ func (s *artifactService) ListArtifacts(
 		)
 	}
 	return s.artifactRepo.ListArtifacts(ctx, repository.ListArtifactsRequest{
-		ThreadID:    req.ThreadID,
-		RunID:       req.RunID,
-		DeletedOnly: req.DeletedOnly,
-		Page:        int64(req.Page),
-		PageSize:    int64(req.PageSize),
+		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		CollectionID: req.CollectionID,
+		DeletedOnly:  req.DeletedOnly,
+		Page:         int64(req.Page),
+		PageSize:     int64(req.PageSize),
 	})
 }
 
@@ -1012,6 +1175,7 @@ func boundedArtifactScanField(value string, maxRunes int) string {
 func mergeArtifactPendingScanMetadata(
 	existing string,
 	scanner string,
+	revision string,
 	requestedAt int64,
 ) (string, error) {
 	metadata := make(map[string]any)
@@ -1023,6 +1187,7 @@ func mergeArtifactPendingScanMetadata(
 	}
 	metadata["scan_status"] = "pending"
 	metadata["scan_scanner"] = boundedArtifactScanField(scanner, 128)
+	metadata["scan_revision"] = boundedArtifactScanField(revision, 64)
 	metadata["scan_requested_at"] = requestedAt
 	delete(metadata, "scan_scanner_version")
 	delete(metadata, "scan_reason")
@@ -1038,6 +1203,7 @@ func (s *artifactService) enqueueArtifactScanJob(
 	ctx context.Context,
 	artifact *entity.AgentArtifact,
 	scanner string,
+	revision string,
 	availableAt int64,
 ) (*entity.ArtifactScanJob, bool, error) {
 	if artifact == nil || artifact.ID <= 0 {
@@ -1054,6 +1220,10 @@ func (s *artifactService) enqueueArtifactScanJob(
 	if scanner == "" {
 		scanner = defaultArtifactScanScanner
 	}
+	revision = boundedArtifactScanField(revision, 64)
+	if revision == "" {
+		revision = artifactScanRevision(nil)
+	}
 	return s.artifactRepo.CreateOrGetArtifactScanJob(ctx, &entity.ArtifactScanJob{
 		ID:             jobID,
 		ThreadID:       artifact.ThreadID,
@@ -1063,10 +1233,27 @@ func (s *artifactService) enqueueArtifactScanJob(
 		ArtifactID:     artifact.ID,
 		FileID:         artifact.FileID,
 		Scanner:        scanner,
-		IdempotencyKey: fmt.Sprintf("artifact_scan:%d:%s", artifact.ID, scanner),
+		IdempotencyKey: fmt.Sprintf("artifact_scan:%d:%s:%s", artifact.ID, scanner, revision),
 		Status:         entity.ArtifactScanJobStatusPending,
 		AvailableAt:    availableAt,
 		CreatedAt:      availableAt,
 		UpdatedAt:      availableAt,
 	})
+}
+
+func artifactScanRevision(file *entity.AgentFile) string {
+	value := "missing"
+	if file != nil {
+		value = strings.TrimSpace(file.Digest)
+		if value == "" {
+			value = fmt.Sprintf(
+				"%s:%d:%s",
+				strings.TrimSpace(file.ObjectURI),
+				file.SizeBytes,
+				strings.TrimSpace(file.ContentType),
+			)
+		}
+	}
+	digest := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", digest[:8])
 }

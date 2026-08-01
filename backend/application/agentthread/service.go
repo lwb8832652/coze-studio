@@ -17,10 +17,16 @@
 package agentthread
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -59,6 +65,14 @@ var ErrArtifactScanReviewDecisionInvalid = errors.New(
 
 var ErrArtifactSignedURLNotSupported = errors.New(
 	"artifact signed url is not supported",
+)
+
+var ErrArtifactContentRangeInvalid = errors.New(
+	"artifact content range is invalid",
+)
+
+var ErrArtifactTrustedMetadataUnavailable = errors.New(
+	"artifact trusted scan metadata is unavailable",
 )
 
 type ApplicationService struct {
@@ -106,6 +120,10 @@ type ArtifactObjectStorage interface {
 	GetObject(ctx context.Context, objectKey string) ([]byte, error)
 }
 
+type ArtifactObjectStreamStorage interface {
+	OpenObjectStream(ctx context.Context, objectKey string) (io.ReadCloser, error)
+}
+
 type ArtifactObjectURLSigner interface {
 	GetObjectUrl(ctx context.Context, objectKey string, opts ...storage.GetOptFn) (string, error)
 }
@@ -118,17 +136,22 @@ type ArtifactContentScanner interface {
 	ScanArtifact(ctx context.Context, req ArtifactScanRequest) (*ArtifactScanResult, error)
 }
 
+type ArtifactContentScannerLimits interface {
+	MaxArtifactBytes() int64
+}
+
 type ArtifactScanRequest struct {
-	SpaceID     int64
-	ThreadID    int64
-	RunID       int64
-	UserID      int64
-	ArtifactID  int64
-	FileID      int64
-	Scanner     string
-	ContentType string
-	SizeBytes   int64
-	Content     []byte
+	SpaceID       int64
+	ThreadID      int64
+	RunID         int64
+	UserID        int64
+	ArtifactID    int64
+	FileID        int64
+	Scanner       string
+	ContentType   string
+	SizeBytes     int64
+	Content       []byte
+	ContentReader io.Reader
 }
 
 type ArtifactScanResult struct {
@@ -2376,25 +2399,117 @@ func (s *ApplicationService) ListArtifacts(
 	}); err != nil {
 		return nil, err
 	}
+	collectionQuery := req.CollectionID != nil
+	var collectionSummary *ArtifactCollectionSummary
+	if collectionQuery {
+		collectionID := strings.TrimSpace(*req.CollectionID)
+		if collectionID == "" {
+			return nil, fmt.Errorf("artifact collection id is required")
+		}
+		if req.RunID == nil || *req.RunID <= 0 {
+			return nil, fmt.Errorf("artifact collection run id is required")
+		}
+	}
+	domainPage := req.Page
+	domainPageSize := req.PageSize
+	if collectionQuery {
+		domainPage = 1
+		domainPageSize = 100
+	}
 	artifacts, total, err := s.ArtifactSVC.ListArtifacts(
 		ctx,
 		&domainservice.ListArtifactsRequest{
-			ThreadID:    req.ThreadID,
-			RunID:       req.RunID,
-			DeletedOnly: req.DeletedOnly,
-			Page:        req.Page,
-			PageSize:    req.PageSize,
+			ThreadID:     req.ThreadID,
+			RunID:        req.RunID,
+			CollectionID: req.CollectionID,
+			DeletedOnly:  req.DeletedOnly,
+			Page:         domainPage,
+			PageSize:     domainPageSize,
 		},
 	)
 	if err != nil {
 		return nil, err
+	}
+	if collectionQuery {
+		if total > 100 {
+			return nil, fmt.Errorf("artifact collection exceeds maximum size")
+		}
+		visible := make([]*domainentity.AgentArtifact, 0, len(artifacts))
+		for _, artifact := range artifacts {
+			if artifact == nil || artifact.ThreadID != req.ThreadID ||
+				artifact.JournalRunID != *req.RunID || artifact.CollectionID != strings.TrimSpace(*req.CollectionID) {
+				continue
+			}
+			authorizeErr := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+				ThreadID:   req.ThreadID,
+				ArtifactID: artifact.ID,
+				SpaceID:    req.SpaceID,
+				ViewerID:   req.ViewerID,
+				Operation:  ArtifactAccessOperationRead,
+			})
+			if errors.Is(authorizeErr, ErrArtifactAccessDenied) {
+				continue
+			}
+			if authorizeErr != nil {
+				return nil, authorizeErr
+			}
+			visible = append(visible, artifact)
+		}
+		total = int64(len(visible))
+		collectionSummary = &ArtifactCollectionSummary{
+			CollectionID: strings.TrimSpace(*req.CollectionID),
+			ArtifactIDs:  make([]int64, 0, len(visible)),
+			TotalCount:   int32(len(visible)),
+		}
+		for _, artifact := range visible {
+			collectionSummary.ArtifactIDs = append(collectionSummary.ArtifactIDs, artifact.ID)
+		}
+		page := req.Page
+		if page <= 0 {
+			page = 1
+		}
+		pageSize := req.PageSize
+		if pageSize <= 0 || pageSize > 100 {
+			pageSize = 20
+		}
+		start := int64(page-1) * int64(pageSize)
+		end := start + int64(pageSize)
+		if start > total {
+			start = total
+		}
+		if end > total {
+			end = total
+		}
+		if start < total {
+			current := int32(start)
+			collectionSummary.CurrentIndex = &current
+		}
+		artifacts = visible[start:end]
 	}
 	resp := &ListArtifactsResponse{
 		Artifacts: make([]*ArtifactSummary, 0, len(artifacts)),
 		Total:     total,
 	}
 	for _, artifact := range artifacts {
-		resp.Artifacts = append(resp.Artifacts, DomainArtifactToSummary(artifact))
+		summary := DomainArtifactToSummary(artifact)
+		if !collectionQuery && summary != nil && artifact != nil {
+			authorizeErr := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+				ThreadID:   req.ThreadID,
+				ArtifactID: artifact.ID,
+				SpaceID:    req.SpaceID,
+				ViewerID:   req.ViewerID,
+				Operation:  ArtifactAccessOperationRead,
+			})
+			if errors.Is(authorizeErr, ErrArtifactAccessDenied) {
+				summary.Capabilities = nil
+			} else if authorizeErr != nil {
+				return nil, authorizeErr
+			}
+		}
+		resp.Artifacts = append(resp.Artifacts, summary)
+	}
+	if collectionSummary != nil {
+		resp.Collections = []*ArtifactCollectionSummary{collectionSummary}
 	}
 	return resp, nil
 }
@@ -2694,13 +2809,16 @@ func (s *ApplicationService) RecordArtifactScanResult(
 	artifact, updated, err := s.ArtifactSVC.UpdateArtifactScanResult(
 		ctx,
 		&domainservice.UpdateArtifactScanResultRequest{
-			ThreadID:       req.ThreadID,
-			ArtifactID:     req.ArtifactID,
-			ScanStatus:     req.ScanStatus,
-			Scanner:        req.Scanner,
-			ScannerVersion: req.ScannerVersion,
-			Reason:         req.Reason,
-			ScannedAt:      req.ScannedAt,
+			ThreadID:            req.ThreadID,
+			ArtifactID:          req.ArtifactID,
+			ScanStatus:          req.ScanStatus,
+			Scanner:             req.Scanner,
+			ScannerVersion:      req.ScannerVersion,
+			Reason:              req.Reason,
+			DetectedContentType: req.DetectedContentType,
+			ScannedSizeBytes:    req.ScannedSizeBytes,
+			ContentHash:         req.ContentHash,
+			ScannedAt:           req.ScannedAt,
 		},
 	)
 	if err != nil {
@@ -2793,8 +2911,15 @@ func (s *ApplicationService) ProcessArtifactScanJobs(
 	if s.ArtifactObjectStorage == nil {
 		return nil, fmt.Errorf("artifact object storage is not configured")
 	}
+	if _, ok := s.ArtifactObjectStorage.(ArtifactObjectStreamStorage); !ok {
+		return nil, fmt.Errorf("artifact object storage streaming is not configured")
+	}
 	if s.ArtifactScanner == nil {
 		return nil, fmt.Errorf("artifact content scanner is not configured")
+	}
+	limits, ok := s.ArtifactScanner.(ArtifactContentScannerLimits)
+	if !ok || limits.MaxArtifactBytes() <= 0 {
+		return nil, fmt.Errorf("artifact content scanner limits are not configured")
 	}
 	if req == nil {
 		return nil, fmt.Errorf("process artifact scan jobs request is required")
@@ -2874,6 +2999,7 @@ func (s *ApplicationService) ReadArtifactContent(
 	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
 		return nil, fmt.Errorf("artifact scope is required")
 	}
+	action := artifactAccessAction(req.Mode)
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
@@ -2901,7 +3027,7 @@ func (s *ApplicationService) ReadArtifactContent(
 	scanStatus := normalizeArtifactScanStatus(artifact.Metadata)
 	readPolicy := artifactScanReadPolicy(scanStatus, artifact, s.ArtifactScanReadPolicy)
 	if !readPolicy.Allowed {
-		if err := s.auditArtifactContentBlocked(ctx, req, artifact, readPolicy); err != nil {
+		if err := s.auditArtifactContentBlocked(ctx, req, artifact, action, "denied"); err != nil {
 			return nil, err
 		}
 		return nil, &ArtifactContentBlockedByScanError{
@@ -2909,28 +3035,105 @@ func (s *ApplicationService) ReadArtifactContent(
 			Reason:     readPolicy.Reason,
 		}
 	}
-	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	contentType, contentSize, trustedErr := trustedArtifactContent(artifact)
+	legacyDownload := false
+	if trustedErr != nil {
+		if normalizeArtifactContentMode(req.Mode) == ArtifactContentModeDownload &&
+			canUseLegacyArtifactDownload(artifact) {
+			if req.HasRange {
+				if err := s.auditArtifactContentBlocked(ctx, req, artifact, action, "denied"); err != nil {
+					return nil, err
+				}
+				return nil, ErrArtifactContentRangeInvalid
+			}
+			contentType = legacyArtifactDownloadContentType
+			contentSize = 0
+			legacyDownload = true
+		} else {
+			if err := s.auditArtifactContentBlocked(ctx, req, artifact, action, "denied"); err != nil {
+				return nil, err
+			}
+			return nil, trustedErr
+		}
+	}
+	streamStorage, ok := s.ArtifactObjectStorage.(ArtifactObjectStreamStorage)
+	if !ok {
+		if err := s.auditArtifactContentBlocked(ctx, req, artifact, action, "failed"); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("artifact object storage streaming is not configured")
+	}
+	stream, err := streamStorage.OpenObjectStream(ctx, objectURI)
 	if err != nil {
+		if auditErr := s.auditArtifactContentBlocked(ctx, req, artifact, action, "failed"); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
+	closeStream := true
+	defer func() {
+		if closeStream {
+			_ = stream.Close()
+		}
+	}()
 
-	contentType := effectiveArtifactContentType(artifact.ContentType, content)
-	resp := &ReadArtifactContentResponse{
-		Artifact:    DomainArtifactToSummary(artifact),
-		Content:     content,
-		ContentType: contentType,
-		FileName:    artifactContentFileName(artifact),
-		Attachment:  shouldAttachArtifactContent(req.Mode, artifact, contentType),
+	var start, end int64
+	contentLength := int64(-1)
+	if !legacyDownload {
+		start, end, err = normalizeArtifactContentRange(req, contentSize)
+		if err != nil {
+			if auditErr := s.auditArtifactContentBlocked(ctx, req, artifact, action, "denied"); auditErr != nil {
+				return nil, auditErr
+			}
+			return nil, err
+		}
+		contentLength = end - start + 1
 	}
-	if err := s.auditArtifactContentAccess(ctx, req, artifact, resp, scanStatus, readPolicy); err != nil {
+	if start > 0 {
+		if _, err := io.CopyN(io.Discard, stream, start); err != nil {
+			if auditErr := s.auditArtifactContentBlocked(ctx, req, artifact, action, "failed"); auditErr != nil {
+				return nil, auditErr
+			}
+			return nil, fmt.Errorf("artifact object range is unavailable: %w", err)
+		}
+	}
+	responseStream := io.ReadCloser(stream)
+	if req.HasRange {
+		responseStream = &artifactLimitedReadCloser{
+			Reader: io.LimitReader(stream, contentLength),
+			Closer: stream,
+		}
+	}
+	resp := &ReadArtifactContentResponse{
+		Artifact:      DomainArtifactToSummary(artifact),
+		Stream:        responseStream,
+		ContentType:   contentType,
+		FileName:      artifactContentFileName(artifact),
+		Attachment:    shouldAttachArtifactContent(req.Mode, artifact, contentType),
+		Partial:       req.HasRange,
+		RangeStart:    start,
+		RangeEnd:      end,
+		TotalSize:     contentSize,
+		ContentLength: contentLength,
+	}
+	if err := s.auditArtifactContentAccess(ctx, req, artifact); err != nil {
 		return nil, err
 	}
+	closeStream = false
 	return resp, nil
 }
 
 func (s *ApplicationService) CreateArtifactSignedURL(
 	ctx context.Context,
 	req *CreateArtifactSignedURLRequest,
+) (*CreateArtifactSignedURLResponse, error) {
+	return s.createArtifactSignedURL(ctx, req, "")
+}
+
+func (s *ApplicationService) createArtifactSignedURL(
+	ctx context.Context,
+	req *CreateArtifactSignedURLRequest,
+	action string,
 ) (*CreateArtifactSignedURLResponse, error) {
 	if err := s.requireArtifactSVC(); err != nil {
 		return nil, err
@@ -2946,6 +3149,9 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 		return nil, fmt.Errorf("artifact scope is required")
 	}
 	mode := normalizeArtifactContentMode(req.Mode)
+	if action == "" {
+		action = artifactAccessAction(mode)
+	}
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
@@ -2970,15 +3176,18 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 	if objectURI == "" {
 		return nil, fmt.Errorf("artifact object is not registered")
 	}
+	auditReq := &ReadArtifactContentRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		Mode:       mode,
+		SpaceID:    req.SpaceID,
+		ViewerID:   req.ViewerID,
+		TraceID:    req.TraceID,
+	}
 	scanStatus := normalizeArtifactScanStatus(artifact.Metadata)
 	readPolicy := artifactScanReadPolicy(scanStatus, artifact, s.ArtifactScanReadPolicy)
 	if !readPolicy.Allowed {
-		if err := s.auditArtifactContentBlocked(ctx, &ReadArtifactContentRequest{
-			ThreadID:   req.ThreadID,
-			ArtifactID: req.ArtifactID,
-			Mode:       mode,
-			ViewerID:   req.ViewerID,
-		}, artifact, readPolicy); err != nil {
+		if err := s.auditArtifactContentBlocked(ctx, auditReq, artifact, action, "denied"); err != nil {
 			return nil, err
 		}
 		return nil, &ArtifactContentBlockedByScanError{
@@ -2987,13 +3196,24 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 		}
 	}
 
-	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	contentType, _, err := trustedArtifactContent(artifact)
+	legacyDownload := false
 	if err != nil {
-		return nil, err
+		if mode == ArtifactContentModeDownload && action != "copy" && canUseLegacyArtifactDownload(artifact) {
+			contentType = legacyArtifactDownloadContentType
+			legacyDownload = true
+		} else {
+			if auditErr := s.auditArtifactContentBlocked(ctx, auditReq, artifact, action, "denied"); auditErr != nil {
+				return nil, auditErr
+			}
+			return nil, err
+		}
 	}
-	contentType := effectiveArtifactContentType(artifact.ContentType, content)
 	if mode == ArtifactContentModePreview &&
 		!canCreateArtifactSignedPreviewURL(artifact, contentType) {
+		if err := s.auditArtifactContentBlocked(ctx, auditReq, artifact, action, "denied"); err != nil {
+			return nil, err
+		}
 		return nil, ErrArtifactSignedURLNotSupported
 	}
 
@@ -3001,30 +3221,67 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 	signOpts := []storage.GetOptFn{
 		storage.WithExpire(expiresIn),
 		storage.WithResponseCacheControl(JournalSnapshotCacheControl),
-	}
-	if mode == ArtifactContentModeDownload {
-		signOpts = append(
-			signOpts,
-			storage.WithResponseContentDisposition(
-				artifactContentDisposition(artifactContentFileName(artifact), true),
+		storage.WithResponseContentDisposition(
+			artifactContentDisposition(
+				artifactContentFileName(artifact),
+				mode == ArtifactContentModeDownload,
 			),
-			storage.WithResponseContentType(contentType),
-		)
+		),
+		storage.WithResponseContentType(contentType),
 	}
 	signedURL, err := signer.GetObjectUrl(ctx, objectURI, signOpts...)
 	if err != nil {
+		if auditErr := s.auditArtifactContentBlocked(ctx, auditReq, artifact, action, "failed"); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 	if strings.TrimSpace(signedURL) == "" {
+		if err := s.auditArtifactContentBlocked(ctx, auditReq, artifact, action, "failed"); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("artifact signed url is empty")
 	}
 
-	return &CreateArtifactSignedURLResponse{
+	response := &CreateArtifactSignedURLResponse{
 		Artifact:         DomainArtifactToSummary(artifact),
 		URL:              signedURL,
 		ExpiresInSeconds: expiresIn,
 		ContentType:      contentType,
 		PreviewMode:      ArtifactPreviewMode(artifact.PreviewMode),
+	}
+	if legacyDownload {
+		response.PreviewMode = ArtifactPreviewModeDownload
+	}
+	if err := s.auditArtifactCapabilityIssued(ctx, auditReq, artifact, action); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func (s *ApplicationService) CopyArtifactLink(
+	ctx context.Context,
+	req *CopyArtifactLinkRequest,
+) (*CopyArtifactLinkResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("copy artifact link request is required")
+	}
+	response, err := s.createArtifactSignedURL(ctx, &CreateArtifactSignedURLRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		Mode:       ArtifactContentModeDownload,
+		SpaceID:    req.SpaceID,
+		ViewerID:   req.ViewerID,
+		TraceID:    req.TraceID,
+		TTLSeconds: 60,
+	}, "copy")
+	if err != nil {
+		return nil, err
+	}
+	return &CopyArtifactLinkResponse{
+		ArtifactID: response.Artifact.ArtifactID,
+		CopyURL:    response.URL,
+		ExpiresAt:  time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second).UnixMilli(),
 	}, nil
 }
 
@@ -3036,6 +3293,75 @@ const (
 	artifactScanJobProcessRetried
 	artifactScanJobProcessFailed
 )
+
+var errArtifactScanContentTooLarge = errors.New("artifact scan content exceeds max bytes")
+
+type artifactScanDigestReader struct {
+	reader   io.Reader
+	hasher   hash.Hash
+	maxBytes int64
+	size     int64
+}
+
+func newArtifactScanDigestReader(
+	reader io.Reader,
+	maxBytes int64,
+) (string, *artifactScanDigestReader, error) {
+	if reader == nil || maxBytes <= 0 {
+		return "", nil, fmt.Errorf("artifact scan stream is not configured")
+	}
+	buffered := bufio.NewReaderSize(reader, 512)
+	sniff, err := buffered.Peek(512)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+		return "", nil, err
+	}
+	if len(sniff) == 0 {
+		return "", nil, fmt.Errorf("artifact scan content is empty")
+	}
+	return http.DetectContentType(sniff), &artifactScanDigestReader{
+		reader:   buffered,
+		hasher:   sha256.New(),
+		maxBytes: maxBytes,
+	}, nil
+}
+
+func (r *artifactScanDigestReader) Read(buffer []byte) (int, error) {
+	if r == nil || r.reader == nil || r.hasher == nil || r.maxBytes <= 0 {
+		return 0, fmt.Errorf("artifact scan digest reader is not configured")
+	}
+	remaining := r.maxBytes - r.size
+	if remaining <= 0 {
+		var probe [1]byte
+		n, err := r.reader.Read(probe[:])
+		if n > 0 {
+			return 0, errArtifactScanContentTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(buffer)) > remaining {
+		buffer = buffer[:remaining]
+	}
+	n, err := r.reader.Read(buffer)
+	if n > 0 {
+		_, _ = r.hasher.Write(buffer[:n])
+		r.size += int64(n)
+	}
+	return n, err
+}
+
+func (r *artifactScanDigestReader) SizeBytes() int64 {
+	if r == nil {
+		return 0
+	}
+	return r.size
+}
+
+func (r *artifactScanDigestReader) ContentHash() string {
+	if r == nil || r.hasher == nil {
+		return ""
+	}
+	return hex.EncodeToString(r.hasher.Sum(nil))
+}
 
 func (s *ApplicationService) processArtifactScanJob(
 	ctx context.Context,
@@ -3082,13 +3408,53 @@ func (s *ApplicationService) processArtifactScanJob(
 			contentFamily,
 		)
 	}
-	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	streamStorage, ok := s.ArtifactObjectStorage.(ArtifactObjectStreamStorage)
+	if !ok {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan streaming storage unavailable",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	stream, err := streamStorage.OpenObjectStream(ctx, objectURI)
 	if err != nil {
 		return s.failClaimedArtifactScanJob(
 			ctx,
 			job,
 			workerID,
 			"artifact scan storage read failed",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	defer stream.Close()
+	limits, ok := s.ArtifactScanner.(ArtifactContentScannerLimits)
+	if !ok || limits.MaxArtifactBytes() <= 0 {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan limits unavailable",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	detectedContentType, digestReader, err := newArtifactScanDigestReader(
+		stream,
+		limits.MaxArtifactBytes(),
+	)
+	if err != nil {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan content inspection failed",
 			maxAttempts,
 			retryBackoffMillis,
 			contentFamily,
@@ -3101,16 +3467,16 @@ func (s *ApplicationService) processArtifactScanJob(
 	result, err := s.ArtifactScanner.ScanArtifact(
 		ctx,
 		ArtifactScanRequest{
-			SpaceID:     artifact.SpaceID,
-			ThreadID:    artifact.ThreadID,
-			RunID:       artifact.RunID,
-			UserID:      artifact.UserID,
-			ArtifactID:  artifact.ID,
-			FileID:      artifact.FileID,
-			Scanner:     scannerName,
-			ContentType: artifact.ContentType,
-			SizeBytes:   artifact.SizeBytes,
-			Content:     content,
+			SpaceID:       artifact.SpaceID,
+			ThreadID:      artifact.ThreadID,
+			RunID:         artifact.RunID,
+			UserID:        artifact.UserID,
+			ArtifactID:    artifact.ID,
+			FileID:        artifact.FileID,
+			Scanner:       scannerName,
+			ContentType:   detectedContentType,
+			SizeBytes:     artifact.SizeBytes,
+			ContentReader: digestReader,
 		},
 	)
 	if err != nil {
@@ -3119,6 +3485,40 @@ func (s *ApplicationService) processArtifactScanJob(
 			job,
 			workerID,
 			"artifact scan failed",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	drainedBytes, err := io.Copy(io.Discard, digestReader)
+	if err != nil {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan content verification failed",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	if drainedBytes > 0 {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scanner did not consume complete content",
+			maxAttempts,
+			retryBackoffMillis,
+			contentFamily,
+		)
+	}
+	if digestReader.SizeBytes() <= 0 {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan content is empty",
 			maxAttempts,
 			retryBackoffMillis,
 			contentFamily,
@@ -3140,12 +3540,15 @@ func (s *ApplicationService) processArtifactScanJob(
 	completed, ok, err := s.ArtifactSVC.CompleteArtifactScanJob(
 		ctx,
 		&domainservice.CompleteArtifactScanJobRequest{
-			JobID:          job.ID,
-			WorkerID:       workerID,
-			ScanStatus:     result.ScanStatus,
-			ScannerVersion: result.ScannerVersion,
-			Reason:         result.Reason,
-			ScannedAt:      scannedAt,
+			JobID:               job.ID,
+			WorkerID:            workerID,
+			ScanStatus:          result.ScanStatus,
+			ScannerVersion:      result.ScannerVersion,
+			Reason:              result.Reason,
+			DetectedContentType: detectedContentType,
+			ScannedSizeBytes:    digestReader.SizeBytes(),
+			ContentHash:         digestReader.ContentHash(),
+			ScannedAt:           scannedAt,
 		},
 	)
 	if err != nil {
@@ -3744,106 +4147,115 @@ func (s *ApplicationService) auditArtifactContentAccess(
 	ctx context.Context,
 	req *ReadArtifactContentRequest,
 	artifact *domainentity.AgentArtifact,
-	resp *ReadArtifactContentResponse,
-	scanStatus artifactScanStatus,
-	policy artifactScanReadPolicyDecision,
 ) error {
-	if s == nil || s.ThreadSVC == nil || req == nil || artifact == nil || resp == nil || artifact.RunID <= 0 {
+	return s.appendArtifactAccessAudit(
+		ctx,
+		req,
+		artifact,
+		artifactContentAccessedEvent,
+		"coze.artifact_access.v1",
+		artifactAccessAction(req.Mode),
+		"allowed",
+	)
+}
+
+func (s *ApplicationService) auditArtifactCapabilityIssued(
+	ctx context.Context,
+	req *ReadArtifactContentRequest,
+	artifact *domainentity.AgentArtifact,
+	action string,
+) error {
+	return s.appendArtifactAccessAudit(
+		ctx,
+		req,
+		artifact,
+		artifactContentAccessedEvent,
+		"coze.artifact_access.v1",
+		action,
+		"allowed",
+	)
+}
+
+func (s *ApplicationService) appendArtifactAccessAudit(
+	ctx context.Context,
+	req *ReadArtifactContentRequest,
+	artifact *domainentity.AgentArtifact,
+	eventType string,
+	schema string,
+	action string,
+	permissionResult string,
+) error {
+	if s == nil || s.ThreadSVC == nil || req == nil || artifact == nil || artifact.RunID <= 0 {
 		return nil
 	}
 	payload, err := json.Marshal(struct {
-		Schema             string `json:"schema"`
-		ThreadID           int64  `json:"thread_id"`
-		RunID              int64  `json:"run_id"`
-		ArtifactID         int64  `json:"artifact_id"`
-		FileID             int64  `json:"file_id"`
-		Mode               string `json:"mode"`
-		PreviewMode        string `json:"preview_mode"`
-		ArtifactType       string `json:"artifact_type"`
-		ContentType        string `json:"content_type"`
-		SizeBytes          int64  `json:"size_bytes"`
-		Attachment         bool   `json:"attachment"`
-		ScanStatus         string `json:"scan_status"`
-		ScanPolicyMode     string `json:"scan_policy_mode,omitempty"`
-		ScanPolicyReason   string `json:"scan_policy_reason,omitempty"`
-		ScanPolicyOverride bool   `json:"scan_policy_override,omitempty"`
+		Schema           string `json:"schema"`
+		SpaceID          int64  `json:"space_id"`
+		ActorID          int64  `json:"actor_id"`
+		ThreadID         int64  `json:"thread_id"`
+		RunID            int64  `json:"run_id"`
+		ArtifactID       int64  `json:"artifact_id"`
+		Action           string `json:"action"`
+		PermissionResult string `json:"permission_result"`
+		TraceID          string `json:"trace_id"`
+		OccurredAt       int64  `json:"occurred_at"`
 	}{
-		Schema:             "coze.artifact_access.v1",
-		ThreadID:           req.ThreadID,
-		RunID:              artifact.RunID,
-		ArtifactID:         artifact.ID,
-		FileID:             artifact.FileID,
-		Mode:               string(normalizeArtifactContentMode(req.Mode)),
-		PreviewMode:        string(artifact.PreviewMode),
-		ArtifactType:       artifact.ArtifactType,
-		ContentType:        resp.ContentType,
-		SizeBytes:          artifact.SizeBytes,
-		Attachment:         resp.Attachment,
-		ScanStatus:         string(scanStatus),
-		ScanPolicyMode:     policy.FailMode,
-		ScanPolicyReason:   policy.Reason,
-		ScanPolicyOverride: policy.Override,
+		Schema:           publicIdentifier(schema, 64),
+		SpaceID:          artifactAuditSpaceID(artifact, req.SpaceID),
+		ActorID:          req.ViewerID,
+		ThreadID:         artifact.ThreadID,
+		RunID:            artifact.RunID,
+		ArtifactID:       artifact.ID,
+		Action:           publicIdentifier(action, 32),
+		PermissionResult: publicIdentifier(permissionResult, 32),
+		TraceID:          publicIdentifier(req.TraceID, 128),
+		OccurredAt:       time.Now().UnixMilli(),
 	})
 	if err != nil {
 		return err
 	}
 	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
+		ThreadID:  artifact.ThreadID,
 		RunID:     artifact.RunID,
-		EventType: artifactContentAccessedEvent,
+		EventType: eventType,
 		Payload:   string(payload),
 	})
 	if err != nil {
-		return fmt.Errorf("audit artifact content access: %w", err)
+		return fmt.Errorf("audit artifact access: %w", err)
 	}
 	return nil
+}
+
+func artifactAccessAction(mode ArtifactContentMode) string {
+	if normalizeArtifactContentMode(mode) == ArtifactContentModeDownload {
+		return "download"
+	}
+	return "open"
+}
+
+func artifactAuditSpaceID(artifact *domainentity.AgentArtifact, fallback int64) int64 {
+	if artifact != nil && artifact.SpaceID > 0 {
+		return artifact.SpaceID
+	}
+	return fallback
 }
 
 func (s *ApplicationService) auditArtifactContentBlocked(
 	ctx context.Context,
 	req *ReadArtifactContentRequest,
 	artifact *domainentity.AgentArtifact,
-	policy artifactScanReadPolicyDecision,
+	action string,
+	permissionResult string,
 ) error {
-	if s == nil || s.ThreadSVC == nil || req == nil || artifact == nil || artifact.RunID <= 0 {
-		return nil
-	}
-	payload, err := json.Marshal(struct {
-		Schema       string `json:"schema"`
-		ThreadID     int64  `json:"thread_id"`
-		RunID        int64  `json:"run_id"`
-		ArtifactID   int64  `json:"artifact_id"`
-		FileID       int64  `json:"file_id"`
-		Mode         string `json:"mode"`
-		PreviewMode  string `json:"preview_mode"`
-		ArtifactType string `json:"artifact_type"`
-		ScanStatus   string `json:"scan_status"`
-		Reason       string `json:"reason"`
-	}{
-		Schema:       "coze.artifact_access_blocked.v1",
-		ThreadID:     req.ThreadID,
-		RunID:        artifact.RunID,
-		ArtifactID:   artifact.ID,
-		FileID:       artifact.FileID,
-		Mode:         string(normalizeArtifactContentMode(req.Mode)),
-		PreviewMode:  string(artifact.PreviewMode),
-		ArtifactType: artifact.ArtifactType,
-		ScanStatus:   string(normalizeArtifactScanStatus(artifact.Metadata)),
-		Reason:       policy.Reason,
-	})
-	if err != nil {
-		return err
-	}
-	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     artifact.RunID,
-		EventType: artifactContentBlockedEvent,
-		Payload:   string(payload),
-	})
-	if err != nil {
-		return fmt.Errorf("audit artifact content blocked: %w", err)
-	}
-	return nil
+	return s.appendArtifactAccessAudit(
+		ctx,
+		req,
+		artifact,
+		artifactContentBlockedEvent,
+		"coze.artifact_access_blocked.v1",
+		action,
+		permissionResult,
+	)
 }
 
 func normalizeArtifactContentMode(mode ArtifactContentMode) ArtifactContentMode {
@@ -3863,11 +4275,6 @@ func shouldAttachArtifactContent(
 	}
 	if artifact.PreviewMode == domainentity.AgentArtifactPreviewModeDownload ||
 		artifact.PreviewMode == domainentity.AgentArtifactPreviewModeUnsupported {
-		return true
-	}
-	if domainservice.DetermineArtifactPreviewMode(
-		artifact.ContentType,
-	) == domainentity.AgentArtifactPreviewModeDownload {
 		return true
 	}
 	return domainservice.DetermineArtifactPreviewMode(
@@ -3900,12 +4307,115 @@ func canCreateArtifactSignedPreviewURL(
 	if artifact == nil {
 		return false
 	}
-	storedMode := domainservice.DetermineArtifactPreviewMode(artifact.ContentType)
 	effectiveMode := domainservice.DetermineArtifactPreviewMode(effectiveContentType)
-	if storedMode != effectiveMode || storedMode == domainentity.AgentArtifactPreviewModeDownload {
+	if effectiveMode == domainentity.AgentArtifactPreviewModeDownload ||
+		effectiveMode == domainentity.AgentArtifactPreviewModeUnsupported {
 		return false
 	}
-	return artifact.PreviewMode == storedMode
+	return artifact.PreviewMode == effectiveMode
+}
+
+type artifactLimitedReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func normalizeArtifactContentRange(
+	req *ReadArtifactContentRequest,
+	totalSize int64,
+) (int64, int64, error) {
+	if req == nil || totalSize <= 0 {
+		return 0, 0, ErrArtifactContentRangeInvalid
+	}
+	if !req.HasRange {
+		return 0, totalSize - 1, nil
+	}
+	start := req.RangeStart
+	if start < 0 || start >= totalSize {
+		return 0, 0, ErrArtifactContentRangeInvalid
+	}
+	end := totalSize - 1
+	if req.RangeEnd != nil {
+		end = *req.RangeEnd
+		if end < start {
+			return 0, 0, ErrArtifactContentRangeInvalid
+		}
+		if end >= totalSize {
+			end = totalSize - 1
+		}
+	}
+	return start, end, nil
+}
+
+func trustedArtifactContent(
+	artifact *domainentity.AgentArtifact,
+) (string, int64, error) {
+	if artifact == nil ||
+		artifact.GenerationStatus != domainentity.AgentArtifactGenerationStatusReady ||
+		normalizeArtifactScanStatus(artifact.Metadata) != artifactScanStatusClean {
+		return "", 0, ErrArtifactTrustedMetadataUnavailable
+	}
+	return validatedArtifactScanMetadata(artifact)
+}
+
+func validatedArtifactScanMetadata(
+	artifact *domainentity.AgentArtifact,
+) (string, int64, error) {
+	if artifact == nil || artifact.ScannedSizeBytes == nil ||
+		*artifact.ScannedSizeBytes <= 0 ||
+		!validApplicationArtifactHash(artifact.ContentHash) {
+		return "", 0, ErrArtifactTrustedMetadataUnavailable
+	}
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(artifact.DetectedContentType))
+	if err != nil || strings.TrimSpace(mediaType) == "" {
+		return "", 0, ErrArtifactTrustedMetadataUnavailable
+	}
+	return strings.ToLower(strings.TrimSpace(mediaType)), *artifact.ScannedSizeBytes, nil
+}
+
+const legacyArtifactDownloadContentType = "application/octet-stream"
+
+func canUseLegacyArtifactDownload(artifact *domainentity.AgentArtifact) bool {
+	return artifact != nil && artifact.DeletedAt == 0 &&
+		artifact.GenerationStatus == domainentity.AgentArtifactGenerationStatusReady &&
+		normalizeArtifactScanStatus(artifact.Metadata) == artifactScanStatusClean &&
+		strings.TrimSpace(artifact.ObjectURI) != "" &&
+		strings.TrimSpace(artifact.DetectedContentType) == "" &&
+		artifact.ScannedSizeBytes == nil &&
+		strings.TrimSpace(artifact.ContentHash) == ""
+}
+
+func validApplicationArtifactHash(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func artifactPublicCapabilities(artifact *domainentity.AgentArtifact) []string {
+	contentType, _, err := trustedArtifactContent(artifact)
+	if err != nil {
+		if canUseLegacyArtifactDownload(artifact) {
+			return []string{string(domainentity.AgentArtifactCapabilityDownload)}
+		}
+		return nil
+	}
+	if strings.TrimSpace(artifact.ObjectURI) == "" || artifact.DeletedAt > 0 {
+		return nil
+	}
+	result := []string{
+		string(domainentity.AgentArtifactCapabilityDownload),
+		string(domainentity.AgentArtifactCapabilityCopy),
+	}
+	if canCreateArtifactSignedPreviewURL(artifact, contentType) {
+		result = append([]string{
+			string(domainentity.AgentArtifactCapabilityOpen),
+			string(domainentity.AgentArtifactCapabilityPreview),
+		}, result...)
+	}
+	return result
 }
 
 func artifactContentDisposition(fileName string, attachment bool) string {

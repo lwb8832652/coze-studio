@@ -116,7 +116,7 @@ func TestCanonicalEntrypointsAreAlwaysActive(t *testing.T) {
 	}
 }
 
-func TestCanonicalJournalEntrypointsHaveLeftTemporaryNotImplementedState(t *testing.T) {
+func TestCanonicalJournalAndArtifactCopyEntrypointsHaveLeftTemporaryNotImplementedState(t *testing.T) {
 	ctx := context.WithValue(context.Background(), projectconsts.CtxLogIDKey, "trace-journal")
 	for _, entrypoint := range canonicalEntrypoints[47:53] {
 		entrypoint := entrypoint
@@ -136,11 +136,11 @@ func TestCanonicalJournalEntrypointsHaveLeftTemporaryNotImplementedState(t *test
 
 	var c app.RequestContext
 	CopyCanonicalThreadArtifactLink(ctx, &c)
-	require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
+	require.NotEqual(t, consts.StatusNotImplemented, c.Response.StatusCode())
 	var response canonicalError
 	require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
-	require.Equal(t, "journal_not_implemented", response.ErrorCode)
-	require.Equal(t, response.ErrorCode, response.Code)
+	require.NotEqual(t, "journal_not_implemented", response.Code)
+	require.Empty(t, response.ErrorCode)
 	require.Equal(t, "trace-journal", response.TraceID)
 }
 

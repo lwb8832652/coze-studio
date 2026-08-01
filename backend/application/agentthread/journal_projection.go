@@ -416,6 +416,8 @@ func projectJournalArtifact(
 	collectionID := journalSourceID(payload["collection_id"])
 	if items, ok := payload["artifacts"].([]any); ok && len(items) > 0 {
 		collectionArtifactIDs := make([]string, 0, len(items))
+		itemCollectionID := ""
+		itemCollectionConsistent := true
 		for _, item := range items {
 			artifact, ok := item.(map[string]any)
 			if !ok {
@@ -424,12 +426,21 @@ func projectJournalArtifact(
 			if id := journalSourceID(artifact["artifact_id"]); id != "" {
 				collectionArtifactIDs = append(collectionArtifactIDs, id)
 			}
+			if id := journalSourceID(artifact["collection_id"]); id != "" {
+				if itemCollectionID != "" && itemCollectionID != id {
+					itemCollectionConsistent = false
+				}
+				itemCollectionID = id
+			}
 		}
 		if first, ok := items[0].(map[string]any); ok {
 			artifactID = journalSourceID(first["artifact_id"])
 			title = journalFirstLabel(first, "title")
 		}
-		if len(collectionArtifactIDs) > 1 {
+		if collectionID == "" && itemCollectionConsistent {
+			collectionID = itemCollectionID
+		}
+		if collectionID == "" && len(collectionArtifactIDs) > 1 {
 			collectionID = journalStableProjectionID(
 				event.RunID,
 				"artifact-collection",

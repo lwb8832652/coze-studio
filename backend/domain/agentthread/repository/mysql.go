@@ -397,23 +397,32 @@ type agentFilePO struct {
 }
 
 type agentArtifactPO struct {
-	ID           int64          `gorm:"column:id;primaryKey"`
-	SpaceID      int64          `gorm:"column:space_id"`
-	UserID       int64          `gorm:"column:user_id"`
-	ThreadID     int64          `gorm:"column:thread_id;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_thread_active_created,priority:1"`
-	RunID        int64          `gorm:"column:run_id;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_run_active_created,priority:1"`
-	FileID       int64          `gorm:"column:file_id;uniqueIndex:uk_agent_artifacts_file"`
-	Title        string         `gorm:"column:title"`
-	ArtifactType string         `gorm:"column:artifact_type"`
-	VirtualPath  string         `gorm:"column:virtual_path"`
-	ObjectURI    string         `gorm:"column:object_uri"`
-	ContentType  string         `gorm:"column:content_type"`
-	SizeBytes    int64          `gorm:"column:size_bytes"`
-	PreviewMode  string         `gorm:"column:preview_mode"`
-	Metadata     datatypes.JSON `gorm:"column:metadata;type:json"`
-	CreatedAt    int64          `gorm:"column:created_at;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_thread_active_created,priority:3;index:idx_agent_artifacts_run_active_created,priority:3"`
-	UpdatedAt    int64          `gorm:"column:updated_at"`
-	DeletedAt    int64          `gorm:"column:deleted_at;index:idx_agent_artifacts_thread_active_created,priority:2;index:idx_agent_artifacts_run_active_created,priority:2"`
+	ID                  int64          `gorm:"column:id;primaryKey"`
+	SpaceID             int64          `gorm:"column:space_id"`
+	UserID              int64          `gorm:"column:user_id"`
+	ThreadID            int64          `gorm:"column:thread_id;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_thread_active_created,priority:1;index:idx_agent_artifacts_collection,priority:1"`
+	RunID               int64          `gorm:"column:run_id;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_run_active_created,priority:1"`
+	JournalRunID        *int64         `gorm:"column:journal_run_id;index:idx_agent_artifacts_journal_run_created,priority:1;uniqueIndex:uk_agent_artifacts_primary,priority:1;uniqueIndex:uk_agent_artifacts_collection_order,priority:1;index:idx_agent_artifacts_collection,priority:2"`
+	FileID              int64          `gorm:"column:file_id;uniqueIndex:uk_agent_artifacts_file"`
+	Title               string         `gorm:"column:title"`
+	ArtifactType        string         `gorm:"column:artifact_type"`
+	VirtualPath         string         `gorm:"column:virtual_path"`
+	ObjectURI           string         `gorm:"column:object_uri"`
+	ContentType         string         `gorm:"column:content_type"`
+	SizeBytes           int64          `gorm:"column:size_bytes"`
+	PreviewMode         string         `gorm:"column:preview_mode"`
+	Source              *string        `gorm:"column:source"`
+	GenerationStatus    *string        `gorm:"column:generation_status"`
+	PrimarySlot         *uint8         `gorm:"column:primary_slot;uniqueIndex:uk_agent_artifacts_primary,priority:2"`
+	CollectionID        *string        `gorm:"column:collection_id;uniqueIndex:uk_agent_artifacts_collection_order,priority:2;index:idx_agent_artifacts_collection,priority:3"`
+	CollectionOrder     *int32         `gorm:"column:collection_order;uniqueIndex:uk_agent_artifacts_collection_order,priority:3;index:idx_agent_artifacts_collection,priority:4"`
+	DetectedContentType *string        `gorm:"column:detected_content_type"`
+	ScannedSizeBytes    *int64         `gorm:"column:scanned_size_bytes"`
+	ContentHash         *string        `gorm:"column:content_hash"`
+	Metadata            datatypes.JSON `gorm:"column:metadata;type:json"`
+	CreatedAt           int64          `gorm:"column:created_at;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_thread_active_created,priority:3;index:idx_agent_artifacts_run_active_created,priority:3;index:idx_agent_artifacts_journal_run_created,priority:2"`
+	UpdatedAt           int64          `gorm:"column:updated_at"`
+	DeletedAt           int64          `gorm:"column:deleted_at;index:idx_agent_artifacts_thread_active_created,priority:2;index:idx_agent_artifacts_run_active_created,priority:2"`
 }
 
 type agentArtifactScanJobPO struct {
@@ -2825,50 +2834,111 @@ func (r *threadRepository) UpsertArtifact(
 	if err != nil {
 		return nil, false, err
 	}
-
-	result := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(po)
-	if result.Error != nil {
-		return nil, false, result.Error
+	journalRunID := po.RunID
+	if po.JournalRunID != nil && *po.JournalRunID > 0 {
+		journalRunID = *po.JournalRunID
 	}
-	created := result.RowsAffected > 0
-	if !created {
-		updates := map[string]any{
-			"space_id":      po.SpaceID,
-			"user_id":       po.UserID,
-			"thread_id":     po.ThreadID,
-			"run_id":        po.RunID,
-			"title":         po.Title,
-			"artifact_type": po.ArtifactType,
-			"virtual_path":  po.VirtualPath,
-			"object_uri":    po.ObjectURI,
-			"content_type":  po.ContentType,
-			"size_bytes":    po.SizeBytes,
-			"preview_mode":  po.PreviewMode,
-			"metadata":      po.Metadata,
-			"updated_at":    po.UpdatedAt,
-			"deleted_at":    po.DeletedAt,
-		}
-		updateResult := r.db.WithContext(ctx).
-			Model(&agentArtifactPO{}).
-			Where("file_id = ?", po.FileID).
-			Updates(updates)
-		if updateResult.Error != nil {
-			return nil, false, updateResult.Error
-		}
-		if updateResult.RowsAffected == 0 {
-			return nil, false, fmt.Errorf(
-				"artifact upsert lost row for file %d",
-				po.FileID,
-			)
-		}
-	}
+	po.JournalRunID = optionalArtifactInt64(journalRunID)
 
-	stored := &agentArtifactPO{}
-	if err := r.db.WithContext(ctx).
-		Where("file_id = ?", po.FileID).
-		First(stored).Error; err != nil {
+	var stored *agentArtifactPO
+	var created bool
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var attempt runAttemptPO
+		attemptErr := tx.Select("journal_run_id").
+			Where("thread_id = ? AND execution_run_id = ?", po.ThreadID, po.RunID).
+			First(&attempt).Error
+		switch {
+		case attemptErr == nil:
+			journalRunID = attempt.JournalRunID
+			po.JournalRunID = optionalArtifactInt64(journalRunID)
+		case errors.Is(attemptErr, gorm.ErrRecordNotFound):
+		default:
+			return attemptErr
+		}
+
+		if po.PrimarySlot != nil {
+			var lockedArtifacts []agentArtifactPO
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("id").
+				Where("journal_run_id = ?", journalRunID).
+				Order("id ASC").
+				Find(&lockedArtifacts).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&agentArtifactPO{}).
+				Where("journal_run_id = ? AND primary_slot = ? AND file_id <> ?", journalRunID, 1, po.FileID).
+				Updates(map[string]any{
+					"primary_slot": nil,
+					"updated_at":   po.UpdatedAt,
+				}).Error; err != nil {
+				return err
+			}
+		}
+
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(po)
+		if result.Error != nil {
+			return result.Error
+		}
+		created = result.RowsAffected > 0
+		if !created {
+			existing := &agentArtifactPO{}
+			if err := tx.Where("file_id = ?", po.FileID).First(existing).Error; err != nil {
+				return err
+			}
+			updates := map[string]any{
+				"space_id":              po.SpaceID,
+				"user_id":               po.UserID,
+				"thread_id":             po.ThreadID,
+				"run_id":                po.RunID,
+				"journal_run_id":        po.JournalRunID,
+				"title":                 po.Title,
+				"artifact_type":         po.ArtifactType,
+				"virtual_path":          po.VirtualPath,
+				"object_uri":            po.ObjectURI,
+				"content_type":          po.ContentType,
+				"size_bytes":            po.SizeBytes,
+				"preview_mode":          po.PreviewMode,
+				"source":                po.Source,
+				"generation_status":     po.GenerationStatus,
+				"primary_slot":          po.PrimarySlot,
+				"collection_id":         po.CollectionID,
+				"collection_order":      po.CollectionOrder,
+				"detected_content_type": po.DetectedContentType,
+				"scanned_size_bytes":    po.ScannedSizeBytes,
+				"content_hash":          po.ContentHash,
+				"metadata":              po.Metadata,
+				"updated_at":            po.UpdatedAt,
+				"deleted_at":            po.DeletedAt,
+			}
+			if existing.ObjectURI == po.ObjectURI && existing.SizeBytes == po.SizeBytes &&
+				agentArtifactPOHasScanState(existing) &&
+				agentArtifactPOScanRevision(existing) != "" &&
+				agentArtifactPOScanRevision(existing) == agentArtifactPOScanRevision(po) {
+				updates["preview_mode"] = existing.PreviewMode
+				updates["generation_status"] = existing.GenerationStatus
+				updates["detected_content_type"] = existing.DetectedContentType
+				updates["scanned_size_bytes"] = existing.ScannedSizeBytes
+				updates["content_hash"] = existing.ContentHash
+				updates["metadata"] = existing.Metadata
+			}
+			updateResult := tx.Model(&agentArtifactPO{}).
+				Where("file_id = ?", po.FileID).
+				Updates(updates)
+			if updateResult.Error != nil {
+				return updateResult.Error
+			}
+			if updateResult.RowsAffected == 0 {
+				return fmt.Errorf(
+					"artifact upsert lost row for file %d",
+					po.FileID,
+				)
+			}
+		}
+
+		stored = &agentArtifactPO{}
+		return tx.Where("file_id = ?", po.FileID).First(stored).Error
+	})
+	if err != nil {
 		return nil, false, err
 	}
 	return stored.toEntity(), created, nil
@@ -2913,8 +2983,9 @@ func (r *threadRepository) DeleteArtifact(
 		Model(&agentArtifactPO{}).
 		Where("id = ? AND deleted_at = 0", po.ID).
 		Updates(map[string]any{
-			"deleted_at": deletedAt,
-			"updated_at": deletedAt,
+			"deleted_at":   deletedAt,
+			"primary_slot": nil,
+			"updated_at":   deletedAt,
 		})
 	if updateResult.Error != nil {
 		return nil, false, updateResult.Error
@@ -2924,6 +2995,7 @@ func (r *threadRepository) DeleteArtifact(
 	}
 
 	po.DeletedAt = deletedAt
+	po.PrimarySlot = nil
 	po.UpdatedAt = deletedAt
 	return po.toEntity(), true, nil
 }
@@ -3029,19 +3101,24 @@ func (r *threadRepository) UpdateArtifactScanMetadata(
 	threadID int64,
 	artifactID int64,
 	metadata string,
+	generationStatus entity.AgentArtifactGenerationStatus,
 	updatedAt int64,
 ) (*entity.AgentArtifact, bool, error) {
 	metadataJSON, err := requiredJSON("metadata", metadata)
 	if err != nil {
 		return nil, false, err
 	}
+	updates := map[string]any{
+		"metadata":   metadataJSON,
+		"updated_at": updatedAt,
+	}
+	if generationStatus != "" {
+		updates["generation_status"] = generationStatus
+	}
 	updateResult := r.db.WithContext(ctx).
 		Model(&agentArtifactPO{}).
 		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
-		Updates(map[string]any{
-			"metadata":   metadataJSON,
-			"updated_at": updatedAt,
-		})
+		Updates(updates)
 	if updateResult.Error != nil {
 		return nil, false, updateResult.Error
 	}
@@ -3056,6 +3133,51 @@ func (r *threadRepository) UpdateArtifactScanMetadata(
 		return nil, false, err
 	}
 	return po.toEntity(), true, nil
+}
+
+func (r *threadRepository) UpdateArtifactTrustedScanResult(
+	ctx context.Context,
+	threadID int64,
+	artifactID int64,
+	metadata string,
+	detectedContentType string,
+	scannedSizeBytes int64,
+	contentHash string,
+	previewMode entity.AgentArtifactPreviewMode,
+	generationStatus entity.AgentArtifactGenerationStatus,
+	updatedAt int64,
+) (*entity.AgentArtifact, bool, error) {
+	metadataJSON, err := requiredJSON("metadata", metadata)
+	if err != nil {
+		return nil, false, err
+	}
+	detectedContentType = strings.TrimSpace(detectedContentType)
+	contentHash = strings.ToLower(strings.TrimSpace(contentHash))
+	updateResult := r.db.WithContext(ctx).
+		Model(&agentArtifactPO{}).
+		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
+		Updates(map[string]any{
+			"metadata":              metadataJSON,
+			"detected_content_type": optionalArtifactString(detectedContentType),
+			"scanned_size_bytes":    scannedSizeBytes,
+			"content_hash":          optionalArtifactString(contentHash),
+			"preview_mode":          string(previewMode),
+			"generation_status":     string(generationStatus),
+			"updated_at":            updatedAt,
+		})
+	if updateResult.Error != nil {
+		return nil, false, updateResult.Error
+	}
+
+	var po agentArtifactPO
+	if err := r.db.WithContext(ctx).
+		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
+		First(&po).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	return po.toEntity(), updateResult.RowsAffected > 0, nil
 }
 
 func (r *threadRepository) CreateOrGetArtifactScanJob(
@@ -3512,7 +3634,22 @@ func (r *threadRepository) ListArtifacts(
 		query = query.Where("deleted_at = 0")
 	}
 	if req.RunID != nil {
-		query = query.Where("run_id = ?", *req.RunID)
+		if req.CollectionID != nil {
+			query = query.Where("journal_run_id = ?", *req.RunID)
+		} else {
+			query = query.Where(
+				"(journal_run_id = ? OR (journal_run_id IS NULL AND run_id = ?))",
+				*req.RunID,
+				*req.RunID,
+			)
+		}
+	}
+	if req.CollectionID != nil {
+		collectionID := strings.TrimSpace(*req.CollectionID)
+		if collectionID == "" {
+			return []*entity.AgentArtifact{}, 0, nil
+		}
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var total int64
@@ -3521,8 +3658,12 @@ func (r *threadRepository) ListArtifacts(
 	}
 
 	pos := make([]*agentArtifactPO, 0)
+	orderBy := "created_at DESC, id DESC"
+	if req.CollectionID != nil {
+		orderBy = "collection_order ASC, id ASC"
+	}
 	if err := query.
-		Order("created_at DESC, id DESC").
+		Order(orderBy).
 		Limit(int(pageSize)).
 		Offset(int((page - 1) * pageSize)).
 		Find(&pos).Error; err != nil {
@@ -5370,47 +5511,177 @@ func agentArtifactToPO(artifact *entity.AgentArtifact) (*agentArtifactPO, error)
 	if err != nil {
 		return nil, err
 	}
+	var primarySlot *uint8
+	if artifact.IsPrimary {
+		value := uint8(1)
+		primarySlot = &value
+	}
+	collectionID := optionalArtifactString(artifact.CollectionID)
+	var collectionOrder *int32
+	if collectionID != nil && artifact.CollectionOrder != nil {
+		value := *artifact.CollectionOrder
+		collectionOrder = &value
+	}
 	return &agentArtifactPO{
-		ID:           artifact.ID,
-		SpaceID:      artifact.SpaceID,
-		UserID:       artifact.UserID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        artifact.Title,
-		ArtifactType: artifact.ArtifactType,
-		VirtualPath:  artifact.VirtualPath,
-		ObjectURI:    artifact.ObjectURI,
-		ContentType:  artifact.ContentType,
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  string(artifact.PreviewMode),
-		Metadata:     metadata,
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ID:                  artifact.ID,
+		SpaceID:             artifact.SpaceID,
+		UserID:              artifact.UserID,
+		ThreadID:            artifact.ThreadID,
+		RunID:               artifact.RunID,
+		JournalRunID:        optionalArtifactInt64(artifact.JournalRunID),
+		FileID:              artifact.FileID,
+		Title:               artifact.Title,
+		ArtifactType:        artifact.ArtifactType,
+		VirtualPath:         artifact.VirtualPath,
+		ObjectURI:           artifact.ObjectURI,
+		ContentType:         artifact.ContentType,
+		SizeBytes:           artifact.SizeBytes,
+		PreviewMode:         string(artifact.PreviewMode),
+		Source:              optionalArtifactString(string(artifact.Source)),
+		GenerationStatus:    optionalArtifactString(string(artifact.GenerationStatus)),
+		PrimarySlot:         primarySlot,
+		CollectionID:        collectionID,
+		CollectionOrder:     collectionOrder,
+		DetectedContentType: optionalArtifactString(artifact.DetectedContentType),
+		ScannedSizeBytes:    cloneArtifactInt64(artifact.ScannedSizeBytes),
+		ContentHash:         optionalArtifactString(artifact.ContentHash),
+		Metadata:            metadata,
+		CreatedAt:           artifact.CreatedAt,
+		UpdatedAt:           artifact.UpdatedAt,
+		DeletedAt:           artifact.DeletedAt,
 	}, nil
 }
 
 func (po *agentArtifactPO) toEntity() *entity.AgentArtifact {
-	return &entity.AgentArtifact{
-		ID:           po.ID,
-		SpaceID:      po.SpaceID,
-		UserID:       po.UserID,
-		ThreadID:     po.ThreadID,
-		RunID:        po.RunID,
-		FileID:       po.FileID,
-		Title:        po.Title,
-		ArtifactType: po.ArtifactType,
-		VirtualPath:  po.VirtualPath,
-		ObjectURI:    po.ObjectURI,
-		ContentType:  po.ContentType,
-		SizeBytes:    po.SizeBytes,
-		PreviewMode:  entity.AgentArtifactPreviewMode(po.PreviewMode),
-		Metadata:     jsonToString(po.Metadata),
-		CreatedAt:    po.CreatedAt,
-		UpdatedAt:    po.UpdatedAt,
-		DeletedAt:    po.DeletedAt,
+	journalRunID := po.RunID
+	if po.JournalRunID != nil && *po.JournalRunID > 0 {
+		journalRunID = *po.JournalRunID
 	}
+	source := entity.AgentArtifactSource(artifactStringValue(po.Source))
+	if source == "" {
+		source = entity.AgentArtifactSourceAgentGenerated
+	}
+	return &entity.AgentArtifact{
+		ID:                  po.ID,
+		SpaceID:             po.SpaceID,
+		UserID:              po.UserID,
+		ThreadID:            po.ThreadID,
+		RunID:               po.RunID,
+		JournalRunID:        journalRunID,
+		FileID:              po.FileID,
+		Title:               po.Title,
+		ArtifactType:        po.ArtifactType,
+		VirtualPath:         po.VirtualPath,
+		ObjectURI:           po.ObjectURI,
+		ContentType:         po.ContentType,
+		SizeBytes:           po.SizeBytes,
+		PreviewMode:         entity.AgentArtifactPreviewMode(po.PreviewMode),
+		Source:              source,
+		GenerationStatus:    agentArtifactGenerationStatusValue(po.GenerationStatus, po.Metadata),
+		IsPrimary:           po.PrimarySlot != nil && *po.PrimarySlot == 1,
+		CollectionID:        artifactStringValue(po.CollectionID),
+		CollectionOrder:     cloneArtifactInt32(po.CollectionOrder),
+		DetectedContentType: artifactStringValue(po.DetectedContentType),
+		ScannedSizeBytes:    cloneArtifactInt64(po.ScannedSizeBytes),
+		ContentHash:         artifactStringValue(po.ContentHash),
+		Metadata:            jsonToString(po.Metadata),
+		CreatedAt:           po.CreatedAt,
+		UpdatedAt:           po.UpdatedAt,
+		DeletedAt:           po.DeletedAt,
+	}
+}
+
+func agentArtifactPOHasScanState(po *agentArtifactPO) bool {
+	if po == nil {
+		return false
+	}
+	if strings.TrimSpace(artifactStringValue(po.GenerationStatus)) != "" ||
+		po.DetectedContentType != nil || po.ScannedSizeBytes != nil || po.ContentHash != nil {
+		return true
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(po.Metadata, &metadata); err != nil {
+		return false
+	}
+	_, exists := metadata["scan_status"]
+	return exists
+}
+
+func agentArtifactPOScanRevision(po *agentArtifactPO) string {
+	if po == nil {
+		return ""
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(po.Metadata, &metadata); err != nil {
+		return ""
+	}
+	revision, _ := metadata["scan_revision"].(string)
+	return strings.TrimSpace(revision)
+}
+
+func agentArtifactGenerationStatusValue(
+	value *string,
+	metadata datatypes.JSON,
+) entity.AgentArtifactGenerationStatus {
+	if status := strings.TrimSpace(artifactStringValue(value)); status != "" {
+		return entity.AgentArtifactGenerationStatus(status)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(metadata, &payload); err != nil {
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
+	scanStatus, _ := payload["scan_status"].(string)
+	if strings.TrimSpace(scanStatus) == "" {
+		scanStatus, _ = payload["scanStatus"].(string)
+	}
+	switch strings.ToLower(strings.TrimSpace(scanStatus)) {
+	case "clean":
+		return entity.AgentArtifactGenerationStatusReady
+	case "blocked", "infected", "quarantined":
+		return entity.AgentArtifactGenerationStatusBlocked
+	case "failed":
+		return entity.AgentArtifactGenerationStatusFailed
+	default:
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
+}
+
+func optionalArtifactString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func optionalArtifactInt64(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func artifactStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func cloneArtifactInt32(value *int32) *int32 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneArtifactInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func artifactScanJobToPO(job *entity.ArtifactScanJob) *agentArtifactScanJobPO {

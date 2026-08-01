@@ -19,6 +19,7 @@ package coze
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"os"
@@ -82,6 +83,28 @@ func TestCanonicalThreadArtifactListReturnsProjectedArtifactsAndPagination(t *te
 	require.NotContains(t, output.String(), second.ObjectURI)
 }
 
+func TestCanonicalArtifactCollectionProjectionKeepsVisibleOrderAndPosition(t *testing.T) {
+	currentIndex := int32(1)
+	collections, err := canonicalProductArtifactCollectionsToAPI(
+		[]*appagentthread.ArtifactCollectionSummary{
+			{
+				CollectionID: "collection-safe",
+				ArtifactIDs:  []int64{101, 103},
+				CurrentIndex: &currentIndex,
+				TotalCount:   2,
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, collections, 1)
+	require.Equal(t, "collection-safe", collections[0].CollectionID)
+	require.Equal(t, []string{"101", "103"}, collections[0].ArtifactIDs)
+	require.NotNil(t, collections[0].CurrentIndex)
+	require.Equal(t, int32(1), *collections[0].CurrentIndex)
+	require.Equal(t, int32(2), collections[0].TotalCount)
+}
+
 func TestCanonicalThreadArtifactContentAndSignedURLAreSafe(t *testing.T) {
 	installAgentThreadTestService(t)
 	storage := &recordingWorkbenchArtifactStorage{
@@ -137,6 +160,192 @@ func TestCanonicalThreadArtifactContentAndSignedURLAreSafe(t *testing.T) {
 	require.Contains(t, storage.signContentType, "text/plain")
 	require.NotContains(t, output.String(), "signed-url-secret")
 	require.NotContains(t, output.String(), fixture.ObjectURI)
+}
+
+func TestCanonicalArtifactContentSupportsBoundedRangeWithoutBuffering(t *testing.T) {
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{objects: map[string][]byte{}}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	thread := createCanonicalTestThread(t, 1001, "artifact range", `{}`)
+	fixture := createCanonicalArtifactFixture(
+		t,
+		thread.ThreadID,
+		"range.txt",
+		"text/plain; charset=utf-8",
+		[]byte("0123456789"),
+		"clean",
+	)
+	storage.objects[fixture.ObjectURI] = fixture.Content
+	h := canonicalArtifactTestServer()
+
+	response := performCanonicalArtifactRequest(
+		t,
+		h,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/%d/artifacts/%d/content?mode=preview", thread.ThreadID, fixture.Artifact.ID),
+		nil,
+		ut.Header{Key: "Range", Value: "bytes=2-5"},
+	)
+	result := response.Result()
+
+	require.Equal(t, http.StatusPartialContent, result.StatusCode())
+	require.Equal(t, []byte("2345"), result.Body())
+	require.Equal(t, "bytes 2-5/10", string(result.Header.Peek("Content-Range")))
+	require.Equal(t, "bytes", string(result.Header.Peek("Accept-Ranges")))
+	require.Equal(t, "private, no-store", string(result.Header.Peek("Cache-Control")))
+	require.Zero(t, storage.getCalls, "range delivery must not buffer through GetObject")
+	require.Equal(t, 1, storage.openCalls)
+}
+
+func TestCanonicalLegacyArtifactDownloadStreamsAsAttachmentWithoutRange(t *testing.T) {
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{objects: map[string][]byte{}}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	thread := createCanonicalTestThread(t, 1001, "legacy artifact", `{}`)
+	run := createCanonicalRunFixture(t, thread.ThreadID, "legacy artifact")
+	objectURI := fmt.Sprintf("agent-runtime/1001/%d/runs/%d/outputs/legacy.html", thread.ThreadID, run.RunID)
+	content := []byte("<script>unsafe()</script>")
+	storage.objects[objectURI] = content
+	legacyArtifact := &domainentity.AgentArtifact{
+		ID:               909,
+		SpaceID:          1001,
+		UserID:           2,
+		ThreadID:         thread.ThreadID,
+		RunID:            run.RunID,
+		JournalRunID:     run.RunID,
+		FileID:           808,
+		Title:            "legacy.html",
+		ArtifactType:     "document",
+		ObjectURI:        objectURI,
+		ContentType:      "text/html",
+		SizeBytes:        int64(len(content)),
+		PreviewMode:      domainentity.AgentArtifactPreviewModeText,
+		GenerationStatus: domainentity.AgentArtifactGenerationStatusReady,
+		Metadata:         `{"scan_status":"clean"}`,
+	}
+	appagentthread.SVC.ArtifactSVC = &canonicalLegacyArtifactService{
+		ArtifactService: appagentthread.SVC.ArtifactSVC,
+		artifact:        legacyArtifact,
+	}
+	h := canonicalArtifactTestServer()
+
+	response := performCanonicalArtifactRequest(
+		t,
+		h,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/%d/artifacts/%d/content?mode=download", thread.ThreadID, legacyArtifact.ID),
+		nil,
+	)
+	result := response.Result()
+
+	require.Equal(t, http.StatusOK, result.StatusCode())
+	require.Equal(t, content, result.Body())
+	require.Equal(t, "application/octet-stream", string(result.Header.Peek("Content-Type")))
+	require.Contains(t, string(result.Header.Peek("Content-Disposition")), "attachment")
+	require.Empty(t, result.Header.Peek("Accept-Ranges"))
+	require.Zero(t, storage.getCalls)
+	require.Equal(t, 1, storage.openCalls)
+
+	ranged := performCanonicalArtifactRequest(
+		t,
+		h,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/%d/artifacts/%d/content?mode=download", thread.ThreadID, legacyArtifact.ID),
+		nil,
+		ut.Header{Key: "Range", Value: "bytes=0-3"},
+	)
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, ranged.Code)
+	require.NotContains(t, string(ranged.Result().Body()), "unsafe")
+	require.Equal(t, 1, storage.openCalls)
+}
+
+func TestCanonicalArtifactSignedPreviewDoesNotReadWholeObject(t *testing.T) {
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects:   map[string][]byte{},
+		signedURL: "https://storage.example.test/signed/report.txt?token=preview-secret",
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	thread := createCanonicalTestThread(t, 1001, "artifact signed preview", `{}`)
+	fixture := createCanonicalArtifactFixture(
+		t,
+		thread.ThreadID,
+		"report.txt",
+		"text/plain; charset=utf-8",
+		[]byte("artifact body"),
+		"clean",
+	)
+	storage.objects[fixture.ObjectURI] = fixture.Content
+	h := canonicalArtifactTestServer()
+
+	response := performCanonicalArtifactRequest(
+		t,
+		h,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/%d/artifacts/%d/signed_url?mode=preview", thread.ThreadID, fixture.Artifact.ID),
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	require.Zero(t, storage.getCalls, "signed preview must use trusted scan metadata")
+	require.Equal(t, "inline; filename*=UTF-8''report.txt", storage.signContentDisposition)
+	require.Contains(t, storage.signContentType, "text/plain")
+	require.Equal(t, "private, no-store", string(response.Result().Header.Peek("Cache-Control")))
+}
+
+func TestCanonicalArtifactCopyLinkIsShortLivedAndAudited(t *testing.T) {
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects:   map[string][]byte{},
+		signedURL: "https://storage.example.test/signed/report.txt?token=copy-secret",
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	thread := createCanonicalTestThread(t, 1001, "artifact copy", `{}`)
+	fixture := createCanonicalArtifactFixture(
+		t,
+		thread.ThreadID,
+		"report.txt",
+		"text/plain; charset=utf-8",
+		[]byte("artifact body"),
+		"clean",
+	)
+	storage.objects[fixture.ObjectURI] = fixture.Content
+	h := canonicalArtifactTestServer()
+
+	response := performCanonicalArtifactRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/artifacts/%d/copy_link", thread.ThreadID, fixture.Artifact.ID),
+		nil,
+	)
+	body := string(response.Result().Body())
+
+	require.Equal(t, http.StatusOK, response.Code, body)
+	require.Contains(t, body, `"artifact_id":"`+strconv.FormatInt(fixture.Artifact.ID, 10)+`"`)
+	require.Contains(t, body, `"copy_url":"https://storage.example.test/signed/report.txt?token=copy-secret"`)
+	require.Contains(t, body, `"expires_at":"`)
+	require.Equal(t, "private, no-store", string(response.Result().Header.Peek("Cache-Control")))
+	require.Zero(t, storage.getCalls, "copy link issuance must not read artifact bytes")
+
+	events, err := appagentthread.SVC.ListRunEvents(context.Background(), &appagentthread.ListRunEventsRequest{
+		ThreadID: fixture.ThreadID,
+		RunID:    fixture.Run.RunID,
+		Page:     1,
+		PageSize: 100,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, events)
+	foundCopyAudit := false
+	for _, event := range events.Events {
+		if event != nil && event.EventType == "artifact.content.accessed" && strings.Contains(event.Payload, `"action":"copy"`) {
+			foundCopyAudit = true
+			require.Contains(t, event.Payload, `"permission_result":"allowed"`)
+			require.NotContains(t, event.Payload, "copy-secret")
+			require.NotContains(t, event.Payload, fixture.ObjectURI)
+		}
+	}
+	require.True(t, foundCopyAudit, "copy must write a content-free access audit")
 }
 
 func TestCanonicalThreadArtifactScanReviewAndRetry(t *testing.T) {
@@ -420,9 +629,9 @@ func TestCanonicalThreadArtifactErrors(t *testing.T) {
 		fixture := createCanonicalArtifactFixture(
 			t,
 			thread.ThreadID,
-			"mismatch.txt",
+			"unsupported.bin",
 			"text/plain; charset=utf-8",
-			[]byte("\x89PNG\r\n\x1a\n"),
+			[]byte("\x00\x01\x02\x03\x04\x05\x06\x07"),
 			"clean",
 		)
 		storage.objects[fixture.ObjectURI] = fixture.Content
@@ -482,6 +691,23 @@ type canonicalArtifactObjectReader struct {
 	objects map[string][]byte
 }
 
+type canonicalLegacyArtifactService struct {
+	domainservice.ArtifactService
+	artifact *domainentity.AgentArtifact
+}
+
+func (s *canonicalLegacyArtifactService) GetArtifact(
+	_ context.Context,
+	req *domainservice.GetArtifactRequest,
+) (*domainentity.AgentArtifact, error) {
+	if s == nil || s.artifact == nil || req == nil ||
+		req.ThreadID != s.artifact.ThreadID || req.ArtifactID != s.artifact.ID {
+		return nil, nil
+	}
+	cloned := *s.artifact
+	return &cloned, nil
+}
+
 func (s *canonicalArtifactObjectReader) GetObject(
 	_ context.Context,
 	objectKey string,
@@ -497,6 +723,7 @@ func canonicalArtifactTestServer() *server.Hertz {
 
 func registerCanonicalArtifactRoutes(h *server.Hertz) {
 	h.GET("/api/workbench/threads/:thread_id/artifacts", ListCanonicalThreadArtifacts)
+	h.POST("/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link", CopyCanonicalThreadArtifactLink)
 	h.GET("/api/workbench/threads/:thread_id/artifacts/:artifact_id/content", GetCanonicalThreadArtifactContent)
 	h.GET("/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url", GetCanonicalThreadArtifactSignedURL)
 	h.DELETE("/api/workbench/threads/:thread_id/artifacts/:artifact_id", DeleteCanonicalThreadArtifact)
@@ -598,15 +825,19 @@ func createCanonicalArtifactFixtureForRun(
 	)
 	require.NoError(t, err)
 	if strings.TrimSpace(scanStatus) != "" {
+		digest := fmt.Sprintf("%x", sha256.Sum256(content))
 		_, err = appagentthread.SVC.RecordArtifactScanResult(
 			context.Background(),
 			&appagentthread.RecordArtifactScanResultRequest{
-				ThreadID:   threadID,
-				ArtifactID: artifact.ID,
-				ScanStatus: scanStatus,
-				Scanner:    "test",
-				Reason:     "signature",
-				ScannedAt:  1,
+				ThreadID:            threadID,
+				ArtifactID:          artifact.ID,
+				ScanStatus:          scanStatus,
+				Scanner:             "test",
+				Reason:              "signature",
+				DetectedContentType: http.DetectContentType(content),
+				ScannedSizeBytes:    int64(len(content)),
+				ContentHash:         digest,
+				ScannedAt:           1,
 			},
 		)
 		require.NoError(t, err)

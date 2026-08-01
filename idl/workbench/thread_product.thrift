@@ -77,11 +77,14 @@ struct CanonicalArtifact {
     17: optional list<CanonicalArtifactCapability> capabilities
     18: optional string collection_id
     19: optional i32 collection_order
+    20: optional bool is_primary
 }
 
 struct CanonicalArtifactCollection {
     1: required string collection_id
     2: required list<string> artifact_ids
+    3: optional i32 current_index
+    4: optional i32 total_count
 }
 
 struct CanonicalArtifactScanJob {

@@ -29,21 +29,35 @@ import (
 )
 
 func TestCanonicalProductProjectionUsesStringIDsAndRFC3339Times(t *testing.T) {
+	collectionOrder := int32(2)
 	artifact, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{
-		ArtifactID: 9001,
-		ThreadID:   8001,
-		RunID:      7001,
-		FileID:     6001,
-		Title:      "public report",
-		Metadata:   `{"visible":"yes"}`,
-		CreatedAt:  1710000000123,
-		UpdatedAt:  1710000001123,
+		ArtifactID:       9001,
+		ThreadID:         8001,
+		RunID:            7001,
+		FileID:           6001,
+		Title:            "public report",
+		Source:           "tool_output",
+		GenerationStatus: "ready",
+		Capabilities:     []string{"open", "preview", "download", "copy"},
+		IsPrimary:        true,
+		CollectionID:     "collection-safe",
+		CollectionOrder:  &collectionOrder,
+		Metadata:         `{"visible":"yes"}`,
+		CreatedAt:        1710000000123,
+		UpdatedAt:        1710000001123,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "9001", artifact.ArtifactID)
 	require.Equal(t, "8001", artifact.ThreadID)
 	require.Equal(t, "7001", artifact.RunID)
 	require.Equal(t, "6001", artifact.FileID)
+	require.Equal(t, "tool_output", artifact.Source)
+	require.Equal(t, "ready", artifact.GenerationStatus)
+	require.Equal(t, []string{"open", "preview", "download", "copy"}, artifact.Capabilities)
+	require.True(t, artifact.IsPrimary)
+	require.Equal(t, "collection-safe", artifact.CollectionID)
+	require.NotNil(t, artifact.CollectionOrder)
+	require.Equal(t, int32(2), *artifact.CollectionOrder)
 	for _, value := range []string{artifact.CreatedAt, artifact.UpdatedAt} {
 		_, err := time.Parse(time.RFC3339Nano, value)
 		require.NoError(t, err)

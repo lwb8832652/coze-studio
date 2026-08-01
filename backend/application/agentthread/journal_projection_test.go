@@ -234,6 +234,17 @@ func TestJournalProjectionUsesWholeArtifactCollectionIdentity(t *testing.T) {
 	require.NotEqual(t, first.IdempotencyKey, second.IdempotencyKey)
 }
 
+func TestJournalProjectionPreservesAuthoritativeArtifactCollectionIdentity(t *testing.T) {
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "artifact.presented",
+		Payload: `{"collection_id":"collection_authoritative","artifacts":[{"artifact_id":99,"title":"报告.md"},{"artifact_id":100,"title":"数据.csv"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, projection)
+	require.Equal(t, "collection_authoritative", journalPayloadString(t, projection.Payload, "collection_id"))
+}
+
 func TestJournalProjectionRejectsSensitivePublicLabels(t *testing.T) {
 	for _, value := range []string{
 		"/Users/alice/private/report.md",

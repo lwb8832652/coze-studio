@@ -204,8 +204,9 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 			return "", fmt.Errorf("present_files arguments are invalid: %w", err)
 		}
 		resp, err := i.app.PresentOutputFiles(ctx, &PresentOutputFilesRequest{
-			Run:       call.Run,
-			FilePaths: input.FilePaths,
+			Run:        call.Run,
+			ToolCallID: call.CallID,
+			FilePaths:  input.FilePaths,
 		})
 		if err != nil {
 			return "", err

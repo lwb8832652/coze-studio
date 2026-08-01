@@ -1216,6 +1216,7 @@ type CanonicalArtifact struct {
 	Capabilities     []CanonicalArtifactCapability      `thrift:"capabilities,17,optional,list<string>" form:"capabilities" json:"capabilities,omitempty" query:"capabilities"`
 	CollectionID     *string                            `thrift:"collection_id,18,optional" form:"collection_id" json:"collection_id,omitempty" query:"collection_id"`
 	CollectionOrder  *int32                             `thrift:"collection_order,19,optional" form:"collection_order" json:"collection_order,omitempty" query:"collection_order"`
+	IsPrimary        *bool                              `thrift:"is_primary,20,optional" form:"is_primary" json:"is_primary,omitempty" query:"is_primary"`
 }
 
 func NewCanonicalArtifact() *CanonicalArtifact {
@@ -1331,6 +1332,15 @@ func (p *CanonicalArtifact) GetCollectionOrder() (v int32) {
 	return *p.CollectionOrder
 }
 
+var CanonicalArtifact_IsPrimary_DEFAULT bool
+
+func (p *CanonicalArtifact) GetIsPrimary() (v bool) {
+	if !p.IsSetIsPrimary() {
+		return CanonicalArtifact_IsPrimary_DEFAULT
+	}
+	return *p.IsPrimary
+}
+
 var fieldIDToName_CanonicalArtifact = map[int16]string{
 	1:  "artifact_id",
 	2:  "thread_id",
@@ -1351,6 +1361,7 @@ var fieldIDToName_CanonicalArtifact = map[int16]string{
 	17: "capabilities",
 	18: "collection_id",
 	19: "collection_order",
+	20: "is_primary",
 }
 
 func (p *CanonicalArtifact) IsSetDeletedAt() bool {
@@ -1375,6 +1386,10 @@ func (p *CanonicalArtifact) IsSetCollectionID() bool {
 
 func (p *CanonicalArtifact) IsSetCollectionOrder() bool {
 	return p.CollectionOrder != nil
+}
+
+func (p *CanonicalArtifact) IsSetIsPrimary() bool {
+	return p.IsPrimary != nil
 }
 
 func (p *CanonicalArtifact) Read(iprot thrift.TProtocol) (err error) {
@@ -1569,6 +1584,14 @@ func (p *CanonicalArtifact) Read(iprot thrift.TProtocol) (err error) {
 		case 19:
 			if fieldTypeId == thrift.I32 {
 				if err = p.ReadField19(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 20:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField20(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -1890,6 +1913,17 @@ func (p *CanonicalArtifact) ReadField19(iprot thrift.TProtocol) error {
 	p.CollectionOrder = _field
 	return nil
 }
+func (p *CanonicalArtifact) ReadField20(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.IsPrimary = _field
+	return nil
+}
 
 func (p *CanonicalArtifact) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -1971,6 +2005,10 @@ func (p *CanonicalArtifact) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField19(oprot); err != nil {
 			fieldId = 19
+			goto WriteFieldError
+		}
+		if err = p.writeField20(oprot); err != nil {
+			fieldId = 20
 			goto WriteFieldError
 		}
 	}
@@ -2334,6 +2372,25 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 19 end error: ", p), err)
 }
 
+func (p *CanonicalArtifact) writeField20(oprot thrift.TProtocol) (err error) {
+	if p.IsSetIsPrimary() {
+		if err = oprot.WriteFieldBegin("is_primary", thrift.BOOL, 20); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.IsPrimary); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 end error: ", p), err)
+}
+
 func (p *CanonicalArtifact) String() string {
 	if p == nil {
 		return "<nil>"
@@ -2345,6 +2402,8 @@ func (p *CanonicalArtifact) String() string {
 type CanonicalArtifactCollection struct {
 	CollectionID string   `thrift:"collection_id,1,required" form:"collection_id,required" json:"collection_id,required" query:"collection_id,required"`
 	ArtifactIds  []string `thrift:"artifact_ids,2,required,list<string>" form:"artifact_ids,required" json:"artifact_ids,required" query:"artifact_ids,required"`
+	CurrentIndex *int32   `thrift:"current_index,3,optional" form:"current_index" json:"current_index,omitempty" query:"current_index"`
+	TotalCount   *int32   `thrift:"total_count,4,optional" form:"total_count" json:"total_count,omitempty" query:"total_count"`
 }
 
 func NewCanonicalArtifactCollection() *CanonicalArtifactCollection {
@@ -2362,9 +2421,37 @@ func (p *CanonicalArtifactCollection) GetArtifactIds() (v []string) {
 	return p.ArtifactIds
 }
 
+var CanonicalArtifactCollection_CurrentIndex_DEFAULT int32
+
+func (p *CanonicalArtifactCollection) GetCurrentIndex() (v int32) {
+	if !p.IsSetCurrentIndex() {
+		return CanonicalArtifactCollection_CurrentIndex_DEFAULT
+	}
+	return *p.CurrentIndex
+}
+
+var CanonicalArtifactCollection_TotalCount_DEFAULT int32
+
+func (p *CanonicalArtifactCollection) GetTotalCount() (v int32) {
+	if !p.IsSetTotalCount() {
+		return CanonicalArtifactCollection_TotalCount_DEFAULT
+	}
+	return *p.TotalCount
+}
+
 var fieldIDToName_CanonicalArtifactCollection = map[int16]string{
 	1: "collection_id",
 	2: "artifact_ids",
+	3: "current_index",
+	4: "total_count",
+}
+
+func (p *CanonicalArtifactCollection) IsSetCurrentIndex() bool {
+	return p.CurrentIndex != nil
+}
+
+func (p *CanonicalArtifactCollection) IsSetTotalCount() bool {
+	return p.TotalCount != nil
 }
 
 func (p *CanonicalArtifactCollection) Read(iprot thrift.TProtocol) (err error) {
@@ -2403,6 +2490,22 @@ func (p *CanonicalArtifactCollection) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetArtifactIds = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -2480,6 +2583,28 @@ func (p *CanonicalArtifactCollection) ReadField2(iprot thrift.TProtocol) error {
 	p.ArtifactIds = _field
 	return nil
 }
+func (p *CanonicalArtifactCollection) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CurrentIndex = _field
+	return nil
+}
+func (p *CanonicalArtifactCollection) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.TotalCount = _field
+	return nil
+}
 
 func (p *CanonicalArtifactCollection) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -2493,6 +2618,14 @@ func (p *CanonicalArtifactCollection) Write(oprot thrift.TProtocol) (err error) 
 		}
 		if err = p.writeField2(oprot); err != nil {
 			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
 			goto WriteFieldError
 		}
 	}
@@ -2553,6 +2686,44 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCurrentIndex() {
+		if err = oprot.WriteFieldBegin("current_index", thrift.I32, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.CurrentIndex); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetTotalCount() {
+		if err = oprot.WriteFieldBegin("total_count", thrift.I32, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.TotalCount); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
 func (p *CanonicalArtifactCollection) String() string {

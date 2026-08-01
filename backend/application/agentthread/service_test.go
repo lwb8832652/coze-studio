@@ -17,9 +17,13 @@
 package agentthread
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -2258,24 +2262,29 @@ func TestApplicationListRunsMapsDomainRuns(t *testing.T) {
 
 func TestApplicationListArtifactsMapsDomainArtifacts(t *testing.T) {
 	runID := int64(20)
+	scannedSize := int64(128)
 	artifactSVC := &recordingArtifactService{
 		artifacts: []*entity.AgentArtifact{
 			{
-				ID:           100,
-				SpaceID:      30,
-				UserID:       40,
-				ThreadID:     10,
-				RunID:        20,
-				FileID:       90,
-				Title:        "Report",
-				ArtifactType: "report",
-				VirtualPath:  "/mnt/user-data/outputs/report.txt",
-				ContentType:  "text/plain; charset=utf-8",
-				SizeBytes:    128,
-				PreviewMode:  entity.AgentArtifactPreviewModeText,
-				Metadata:     `{"source":"present_files"}`,
-				CreatedAt:    1000,
-				UpdatedAt:    1100,
+				ID:                  100,
+				SpaceID:             30,
+				UserID:              40,
+				ThreadID:            10,
+				RunID:               20,
+				FileID:              90,
+				Title:               "Report",
+				ArtifactType:        "report",
+				VirtualPath:         "/mnt/user-data/outputs/report.txt",
+				ContentType:         "text/plain; charset=utf-8",
+				SizeBytes:           128,
+				PreviewMode:         entity.AgentArtifactPreviewModeText,
+				GenerationStatus:    entity.AgentArtifactGenerationStatusReady,
+				DetectedContentType: "text/plain",
+				ScannedSizeBytes:    &scannedSize,
+				ContentHash:         strings.Repeat("a", 64),
+				Metadata:            `{"source":"present_files","scan_status":"clean"}`,
+				CreatedAt:           1000,
+				UpdatedAt:           1100,
 			},
 		},
 		total: 1,
@@ -2841,7 +2850,7 @@ func TestApplicationProcessDeletedArtifactCleanupKeepsFileActiveOnDeleteFailure(
 
 func TestApplicationReadArtifactContentUsesServerSideObjectURI(t *testing.T) {
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:           100,
 			SpaceID:      30,
 			ThreadID:     10,
@@ -2855,7 +2864,7 @@ func TestApplicationReadArtifactContentUsesServerSideObjectURI(t *testing.T) {
 			SizeBytes:    14,
 			PreviewMode:  entity.AgentArtifactPreviewModeText,
 			Metadata:     `{"scan_status":"clean"}`,
-		},
+		}, []byte("artifact body")),
 	}
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
@@ -2878,16 +2887,271 @@ func TestApplicationReadArtifactContentUsesServerSideObjectURI(t *testing.T) {
 	require.Equal(t, int64(10), artifactSVC.getReq.ThreadID)
 	require.Equal(t, int64(100), artifactSVC.getReq.ArtifactID)
 	require.Equal(t, "agent-runtime/30/10/runs/20/outputs/report.txt", storage.key)
-	require.Equal(t, []byte("artifact body"), resp.Content)
-	require.Equal(t, "text/plain; charset=utf-8", resp.ContentType)
+	require.Equal(t, []byte("artifact body"), readArtifactResponseContent(t, resp))
+	require.Equal(t, "text/plain", resp.ContentType)
 	require.Equal(t, "report.txt", resp.FileName)
 	require.False(t, resp.Attachment)
 	require.Equal(t, int64(100), resp.Artifact.ArtifactID)
 }
 
-func TestApplicationCreateArtifactSignedURLUsesServerSideObjectURI(t *testing.T) {
+func TestApplicationLegacyCleanArtifactAllowsOnlyControlledDownload(t *testing.T) {
+	artifact := &entity.AgentArtifact{
+		ID:               111,
+		SpaceID:          30,
+		ThreadID:         10,
+		RunID:            20,
+		FileID:           94,
+		Title:            "legacy.html",
+		ArtifactType:     "document",
+		ObjectURI:        "agent-runtime/30/10/runs/20/outputs/legacy.html",
+		ContentType:      "text/html",
+		SizeBytes:        19,
+		PreviewMode:      entity.AgentArtifactPreviewModeText,
+		GenerationStatus: entity.AgentArtifactGenerationStatusReady,
+		Metadata:         `{"scan_status":"clean"}`,
+	}
+	artifactSVC := &recordingArtifactService{got: artifact}
+	storage := &recordingArtifactObjectReader{
+		objects: map[string][]byte{
+			artifact.ObjectURI: []byte("<script>x()</script>"),
+		},
+		signedURL: "https://storage.example.test/signed/legacy?token=legacy-download",
+	}
+	app := &ApplicationService{
+		ArtifactSVC:           artifactSVC,
+		ArtifactObjectStorage: storage,
+	}
+
+	summary := DomainArtifactToSummary(artifact)
+	require.Equal(t, "application/octet-stream", summary.ContentType)
+	require.Zero(t, summary.SizeBytes)
+	require.Equal(t, ArtifactPreviewModeDownload, summary.PreviewMode)
+	require.Equal(t, []string{"download"}, summary.Capabilities)
+
+	download, err := app.ReadArtifactContent(context.Background(), &ReadArtifactContentRequest{
+		ThreadID:   10,
+		ArtifactID: 111,
+		Mode:       ArtifactContentModeDownload,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "application/octet-stream", download.ContentType)
+	require.True(t, download.Attachment)
+	require.False(t, download.Partial)
+	require.Equal(t, int64(-1), download.ContentLength)
+	require.Zero(t, download.TotalSize)
+	require.Equal(t, []byte("<script>x()</script>"), readArtifactResponseContent(t, download))
+
+	storage.key = ""
+	preview, err := app.ReadArtifactContent(context.Background(), &ReadArtifactContentRequest{
+		ThreadID:   10,
+		ArtifactID: 111,
+		Mode:       ArtifactContentModePreview,
+	})
+	require.ErrorIs(t, err, ErrArtifactTrustedMetadataUnavailable)
+	require.Nil(t, preview)
+	require.Empty(t, storage.key)
+
+	signed, err := app.CreateArtifactSignedURL(context.Background(), &CreateArtifactSignedURLRequest{
+		ThreadID:   10,
+		ArtifactID: 111,
+		Mode:       ArtifactContentModeDownload,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "application/octet-stream", signed.ContentType)
+	require.Equal(t, ArtifactPreviewModeDownload, signed.PreviewMode)
+	require.Equal(t, "attachment; filename*=UTF-8''legacy.html", storage.signContentDisposition)
+	require.Equal(t, "application/octet-stream", storage.signContentType)
+
+	copyResponse, err := app.CopyArtifactLink(context.Background(), &CopyArtifactLinkRequest{
+		ThreadID:   10,
+		ArtifactID: 111,
+	})
+	require.ErrorIs(t, err, ErrArtifactTrustedMetadataUnavailable)
+	require.Nil(t, copyResponse)
+}
+
+func TestDomainArtifactToSummaryNeverPublishesUntrustedDeclaredMetadata(t *testing.T) {
+	processing := &entity.AgentArtifact{
+		ID:               112,
+		ThreadID:         10,
+		RunID:            20,
+		ObjectURI:        "agent-runtime/untrusted.txt",
+		ContentType:      "text/plain",
+		SizeBytes:        1024,
+		PreviewMode:      entity.AgentArtifactPreviewModeText,
+		GenerationStatus: entity.AgentArtifactGenerationStatusProcessing,
+		Metadata:         `{"scan_status":"pending"}`,
+	}
+
+	processingSummary := DomainArtifactToSummary(processing)
+	require.Equal(t, legacyArtifactDownloadContentType, processingSummary.ContentType)
+	require.Zero(t, processingSummary.SizeBytes)
+	require.Equal(t, ArtifactPreviewModeDownload, processingSummary.PreviewMode)
+	require.Empty(t, processingSummary.Capabilities)
+
+	scannedSize := int64(8)
+	blocked := &entity.AgentArtifact{
+		ID:                  113,
+		ThreadID:            10,
+		RunID:               20,
+		ObjectURI:           "agent-runtime/blocked.bin",
+		ContentType:         "application/octet-stream",
+		SizeBytes:           4096,
+		PreviewMode:         entity.AgentArtifactPreviewModeImage,
+		GenerationStatus:    entity.AgentArtifactGenerationStatusBlocked,
+		DetectedContentType: "image/png",
+		ScannedSizeBytes:    &scannedSize,
+		ContentHash:         strings.Repeat("d", 64),
+		Metadata:            `{"scan_status":"infected"}`,
+	}
+
+	blockedSummary := DomainArtifactToSummary(blocked)
+	require.Equal(t, "image/png", blockedSummary.ContentType)
+	require.Equal(t, scannedSize, blockedSummary.SizeBytes)
+	require.Equal(t, ArtifactPreviewModeImage, blockedSummary.PreviewMode)
+	require.Empty(t, blockedSummary.Capabilities)
+}
+
+func TestApplicationLegacyCleanArtifactRejectsRangeDownload(t *testing.T) {
 	artifactSVC := &recordingArtifactService{
 		got: &entity.AgentArtifact{
+			ID:               112,
+			ThreadID:         10,
+			RunID:            20,
+			FileID:           95,
+			ObjectURI:        "agent-runtime/30/10/runs/20/outputs/legacy.bin",
+			ContentType:      "application/octet-stream",
+			SizeBytes:        8,
+			PreviewMode:      entity.AgentArtifactPreviewModeDownload,
+			GenerationStatus: entity.AgentArtifactGenerationStatusReady,
+			Metadata:         `{"scan_status":"clean"}`,
+		},
+	}
+	storage := &recordingArtifactObjectReader{
+		objects: map[string][]byte{
+			"agent-runtime/30/10/runs/20/outputs/legacy.bin": []byte("legacy!!"),
+		},
+	}
+	app := &ApplicationService{
+		ArtifactSVC:           artifactSVC,
+		ArtifactObjectStorage: storage,
+	}
+
+	resp, err := app.ReadArtifactContent(context.Background(), &ReadArtifactContentRequest{
+		ThreadID:   10,
+		ArtifactID: 112,
+		Mode:       ArtifactContentModeDownload,
+		HasRange:   true,
+		RangeStart: 0,
+	})
+
+	require.ErrorIs(t, err, ErrArtifactContentRangeInvalid)
+	require.Nil(t, resp)
+	require.Empty(t, storage.key)
+}
+
+func TestApplicationListArtifactCollectionFiltersUnauthorizedMembers(t *testing.T) {
+	collectionID := "collection-safe"
+	runID := int64(20)
+	artifactSVC := &recordingArtifactService{
+		artifacts: []*entity.AgentArtifact{
+			{ID: 101, ThreadID: 10, RunID: 20, JournalRunID: 20, CollectionID: collectionID},
+			{ID: 102, ThreadID: 10, RunID: 20, JournalRunID: 20, CollectionID: collectionID},
+			{ID: 103, ThreadID: 10, RunID: 20, JournalRunID: 20, CollectionID: collectionID},
+		},
+		total: 3,
+	}
+	app := &ApplicationService{
+		ArtifactSVC: artifactSVC,
+		ArtifactAuthorizer: &selectiveArtifactAuthorizer{
+			deniedArtifactIDs: map[int64]bool{102: true},
+		},
+	}
+
+	resp, err := app.ListArtifacts(context.Background(), &ListArtifactsRequest{
+		ThreadID:     10,
+		RunID:        &runID,
+		CollectionID: &collectionID,
+		Page:         1,
+		PageSize:     20,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), resp.Total)
+	require.Len(t, resp.Artifacts, 2)
+	require.Equal(t, []int64{101, 103}, []int64{
+		resp.Artifacts[0].ArtifactID,
+		resp.Artifacts[1].ArtifactID,
+	})
+	require.Len(t, resp.Collections, 1)
+	require.Equal(t, collectionID, resp.Collections[0].CollectionID)
+	require.Equal(t, []int64{101, 103}, resp.Collections[0].ArtifactIDs)
+	require.Equal(t, int32(2), resp.Collections[0].TotalCount)
+	require.NotNil(t, resp.Collections[0].CurrentIndex)
+	require.Equal(t, int32(0), *resp.Collections[0].CurrentIndex)
+	require.NotNil(t, artifactSVC.listReq.CollectionID)
+	require.Equal(t, collectionID, *artifactSVC.listReq.CollectionID)
+	require.Equal(t, int32(1), artifactSVC.listReq.Page)
+	require.Equal(t, int32(100), artifactSVC.listReq.PageSize)
+}
+
+func TestApplicationListArtifactCollectionRequiresLogicalRun(t *testing.T) {
+	collectionID := "collection-safe"
+	app := &ApplicationService{ArtifactSVC: &recordingArtifactService{}}
+
+	resp, err := app.ListArtifacts(context.Background(), &ListArtifactsRequest{
+		ThreadID:     10,
+		CollectionID: &collectionID,
+	})
+
+	require.ErrorContains(t, err, "collection run id is required")
+	require.Nil(t, resp)
+}
+
+func TestApplicationListArtifactsDerivesCapabilitiesPerMemberACL(t *testing.T) {
+	allowed := trustedArtifactForTest(&entity.AgentArtifact{
+		ID:               121,
+		ThreadID:         10,
+		RunID:            20,
+		ObjectURI:        "agent-runtime/allowed.txt",
+		PreviewMode:      entity.AgentArtifactPreviewModeText,
+		GenerationStatus: entity.AgentArtifactGenerationStatusReady,
+		Metadata:         `{"scan_status":"clean"}`,
+	}, []byte("allowed"))
+	denied := trustedArtifactForTest(&entity.AgentArtifact{
+		ID:               122,
+		ThreadID:         10,
+		RunID:            20,
+		ObjectURI:        "agent-runtime/denied.txt",
+		PreviewMode:      entity.AgentArtifactPreviewModeText,
+		GenerationStatus: entity.AgentArtifactGenerationStatusReady,
+		Metadata:         `{"scan_status":"clean"}`,
+	}, []byte("denied"))
+	app := &ApplicationService{
+		ArtifactSVC: &recordingArtifactService{
+			artifacts: []*entity.AgentArtifact{allowed, denied},
+			total:     2,
+		},
+		ArtifactAuthorizer: &selectiveArtifactAuthorizer{
+			deniedArtifactIDs: map[int64]bool{122: true},
+		},
+	}
+
+	resp, err := app.ListArtifacts(context.Background(), &ListArtifactsRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 20,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Artifacts, 2)
+	require.Contains(t, resp.Artifacts[0].Capabilities, "download")
+	require.Empty(t, resp.Artifacts[1].Capabilities)
+}
+
+func TestApplicationCreateArtifactSignedURLUsesServerSideObjectURI(t *testing.T) {
+	artifactSVC := &recordingArtifactService{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:           100,
 			SpaceID:      30,
 			ThreadID:     10,
@@ -2901,7 +3165,7 @@ func TestApplicationCreateArtifactSignedURLUsesServerSideObjectURI(t *testing.T)
 			SizeBytes:    14,
 			PreviewMode:  entity.AgentArtifactPreviewModeText,
 			Metadata:     `{"scan_status":"clean"}`,
-		},
+		}, []byte("artifact body")),
 	}
 	storage := &recordingArtifactObjectReader{
 		signedURL: "https://storage.example.test/signed/report.txt?token=abc",
@@ -2929,7 +3193,7 @@ func TestApplicationCreateArtifactSignedURLUsesServerSideObjectURI(t *testing.T)
 	require.Equal(t, int64(3600), storage.signExpire)
 	require.Equal(t, "https://storage.example.test/signed/report.txt?token=abc", resp.URL)
 	require.Equal(t, int64(3600), resp.ExpiresInSeconds)
-	require.Equal(t, "text/plain; charset=utf-8", resp.ContentType)
+	require.Equal(t, "text/plain", resp.ContentType)
 	require.Equal(t, ArtifactPreviewModeText, resp.PreviewMode)
 	require.Equal(t, int64(100), resp.Artifact.ArtifactID)
 	require.Equal(t, ArtifactAccessOperationRead, authorizer.req.Operation)
@@ -2939,22 +3203,28 @@ func TestApplicationCreateArtifactSignedURLUsesServerSideObjectURI(t *testing.T)
 }
 
 func TestApplicationCreateArtifactSignedURLRejectsDownloadOnlyContent(t *testing.T) {
+	threadSVC := &recordingThreadService{}
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
-			ID:          101,
-			ThreadID:    10,
-			Title:       "page.html",
-			ObjectURI:   "agent-runtime/30/10/runs/20/outputs/page.html",
-			ContentType: "text/html; charset=utf-8",
-			SizeBytes:   20,
-			PreviewMode: entity.AgentArtifactPreviewModeDownload,
-			Metadata:    `{"scan_status":"clean"}`,
-		},
+		got: trustedArtifactForTest(&entity.AgentArtifact{
+			ID:           101,
+			SpaceID:      30,
+			ThreadID:     10,
+			RunID:        20,
+			FileID:       91,
+			ArtifactType: "document",
+			Title:        "page.html",
+			ObjectURI:    "agent-runtime/30/10/runs/20/outputs/page.html",
+			ContentType:  "text/html; charset=utf-8",
+			SizeBytes:    20,
+			PreviewMode:  entity.AgentArtifactPreviewModeDownload,
+			Metadata:     `{"scan_status":"clean"}`,
+		}, []byte("<!doctype html><html></html>")),
 	}
 	storage := &recordingArtifactObjectReader{
 		signedURL: "https://storage.example.test/signed/page.html?token=abc",
 	}
 	app := &ApplicationService{
+		ThreadSVC:             threadSVC,
 		ArtifactSVC:           artifactSVC,
 		ArtifactObjectStorage: storage,
 	}
@@ -2963,17 +3233,82 @@ func TestApplicationCreateArtifactSignedURLRejectsDownloadOnlyContent(t *testing
 		ThreadID:   10,
 		ArtifactID: 101,
 		Mode:       ArtifactContentModePreview,
+		SpaceID:    30,
+		ViewerID:   99,
+		TraceID:    "trace-preview-denied",
 		TTLSeconds: 300,
 	})
 
 	require.ErrorIs(t, err, ErrArtifactSignedURLNotSupported)
 	require.Nil(t, resp)
 	require.Empty(t, storage.signKey)
+	require.NotNil(t, threadSVC.appendRunEventReq)
+	require.Equal(t, artifactContentBlockedEvent, threadSVC.appendRunEventReq.EventType)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
+	requireArtifactAccessAuditShape(t, payload)
+	require.Equal(t, "open", payload["action"])
+	require.Equal(t, "denied", payload["permission_result"])
+	require.Equal(t, float64(30), payload["space_id"])
+	require.Equal(t, float64(99), payload["actor_id"])
+	require.Equal(t, "trace-preview-denied", payload["trace_id"])
+	require.NotZero(t, payload["occurred_at"])
+}
+
+func TestApplicationCreateArtifactSignedURLFailsClosedWithoutTrustedMetadataAndAudits(t *testing.T) {
+	threadSVC := &recordingThreadService{}
+	artifactSVC := &recordingArtifactService{
+		got: &entity.AgentArtifact{
+			ID:               110,
+			SpaceID:          30,
+			ThreadID:         10,
+			RunID:            20,
+			FileID:           92,
+			ArtifactType:     "document",
+			ObjectURI:        "agent-runtime/30/10/runs/20/outputs/untrusted.txt",
+			ContentType:      "text/plain",
+			SizeBytes:        20,
+			PreviewMode:      entity.AgentArtifactPreviewModeText,
+			GenerationStatus: entity.AgentArtifactGenerationStatusReady,
+			Metadata:         `{"scan_status":"clean"}`,
+		},
+	}
+	storage := &recordingArtifactObjectReader{
+		signedURL: "https://storage.example.test/signed/untrusted.txt?token=must-not-issue",
+	}
+	app := &ApplicationService{
+		ThreadSVC:             threadSVC,
+		ArtifactSVC:           artifactSVC,
+		ArtifactObjectStorage: storage,
+	}
+
+	resp, err := app.CreateArtifactSignedURL(context.Background(), &CreateArtifactSignedURLRequest{
+		ThreadID:   10,
+		ArtifactID: 110,
+		Mode:       ArtifactContentModePreview,
+		SpaceID:    30,
+		ViewerID:   99,
+		TraceID:    "trace-untrusted-denied",
+	})
+
+	require.ErrorIs(t, err, ErrArtifactTrustedMetadataUnavailable)
+	require.Nil(t, resp)
+	require.Empty(t, storage.signKey)
+	require.NotNil(t, threadSVC.appendRunEventReq)
+	require.Equal(t, artifactContentBlockedEvent, threadSVC.appendRunEventReq.EventType)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
+	requireArtifactAccessAuditShape(t, payload)
+	require.Equal(t, "open", payload["action"])
+	require.Equal(t, "denied", payload["permission_result"])
+	require.Equal(t, "trace-untrusted-denied", payload["trace_id"])
+	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
+	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "must-not-issue")
 }
 
 func TestApplicationCreateArtifactSignedURLCreatesAttachmentURLForDownloadContent(t *testing.T) {
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:          102,
 			ThreadID:    10,
 			Title:       "page.html",
@@ -2982,7 +3317,7 @@ func TestApplicationCreateArtifactSignedURLCreatesAttachmentURLForDownloadConten
 			SizeBytes:   20,
 			PreviewMode: entity.AgentArtifactPreviewModeDownload,
 			Metadata:    `{"scan_status":"clean"}`,
-		},
+		}, []byte("<!doctype html><html></html>")),
 	}
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
@@ -3007,7 +3342,7 @@ func TestApplicationCreateArtifactSignedURLCreatesAttachmentURLForDownloadConten
 	require.Equal(t, "https://storage.example.test/signed/page.html?token=abc", resp.URL)
 	require.Equal(t, int64(60), resp.ExpiresInSeconds)
 	require.Equal(t, ArtifactPreviewModeDownload, resp.PreviewMode)
-	require.Equal(t, "text/html; charset=utf-8", resp.ContentType)
+	require.Equal(t, "text/html", resp.ContentType)
 	require.Equal(t, "agent-runtime/30/10/runs/20/outputs/page.html", storage.signKey)
 	require.Equal(t, int64(60), storage.signExpire)
 	require.Equal(
@@ -3015,7 +3350,7 @@ func TestApplicationCreateArtifactSignedURLCreatesAttachmentURLForDownloadConten
 		"attachment; filename*=UTF-8''page.html",
 		storage.signContentDisposition,
 	)
-	require.Equal(t, "text/html; charset=utf-8", storage.signContentType)
+	require.Equal(t, "text/html", storage.signContentType)
 	require.Equal(t, JournalSnapshotCacheControl, storage.signCacheControl)
 }
 
@@ -3054,7 +3389,7 @@ func TestApplicationReadArtifactContentDeniesUnauthorizedViewerBeforeStorage(t *
 
 func TestApplicationReadArtifactContentForcesAttachmentForActiveContent(t *testing.T) {
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:          101,
 			ThreadID:    10,
 			Title:       "page.html",
@@ -3063,7 +3398,7 @@ func TestApplicationReadArtifactContentForcesAttachmentForActiveContent(t *testi
 			SizeBytes:   20,
 			PreviewMode: entity.AgentArtifactPreviewModeDownload,
 			Metadata:    `{"scan_status":"clean"}`,
-		},
+		}, []byte("<html>unsafe</html>")),
 	}
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
@@ -3083,12 +3418,13 @@ func TestApplicationReadArtifactContentForcesAttachmentForActiveContent(t *testi
 
 	require.NoError(t, err)
 	require.True(t, resp.Attachment)
-	require.Equal(t, []byte("<html>unsafe</html>"), resp.Content)
+	require.Equal(t, []byte("<html>unsafe</html>"), readArtifactResponseContent(t, resp))
 }
 
 func TestApplicationReadArtifactContentSniffsHTMLAndForcesAttachment(t *testing.T) {
+	content := []byte("<!doctype html><html><body>unsafe</body></html>")
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:          102,
 			ThreadID:    10,
 			Title:       "report.txt",
@@ -3097,9 +3433,8 @@ func TestApplicationReadArtifactContentSniffsHTMLAndForcesAttachment(t *testing.
 			SizeBytes:   43,
 			PreviewMode: entity.AgentArtifactPreviewModeText,
 			Metadata:    `{"scan_status":"clean"}`,
-		},
+		}, content),
 	}
-	content := []byte("<!doctype html><html><body>unsafe</body></html>")
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
 			"agent-runtime/30/10/runs/20/outputs/report.txt": content,
@@ -3117,14 +3452,15 @@ func TestApplicationReadArtifactContentSniffsHTMLAndForcesAttachment(t *testing.
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, content, resp.Content)
+	require.Equal(t, content, readArtifactResponseContent(t, resp))
 	require.Contains(t, resp.ContentType, "text/html")
 	require.True(t, resp.Attachment)
 }
 
 func TestApplicationReadArtifactContentKeepsAttachmentWhenMetadataIsUnsafe(t *testing.T) {
+	content := []byte("plain note")
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:          103,
 			ThreadID:    10,
 			Title:       "icon.svg",
@@ -3133,9 +3469,8 @@ func TestApplicationReadArtifactContentKeepsAttachmentWhenMetadataIsUnsafe(t *te
 			SizeBytes:   11,
 			PreviewMode: entity.AgentArtifactPreviewModeDownload,
 			Metadata:    `{"scan_status":"clean"}`,
-		},
+		}, content),
 	}
-	content := []byte("plain note")
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
 			"agent-runtime/30/10/runs/20/outputs/icon.svg": content,
@@ -3153,7 +3488,7 @@ func TestApplicationReadArtifactContentKeepsAttachmentWhenMetadataIsUnsafe(t *te
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, content, resp.Content)
+	require.Equal(t, content, readArtifactResponseContent(t, resp))
 	require.Contains(t, resp.ContentType, "text/plain")
 	require.True(t, resp.Attachment)
 }
@@ -3161,8 +3496,9 @@ func TestApplicationReadArtifactContentKeepsAttachmentWhenMetadataIsUnsafe(t *te
 func TestApplicationReadArtifactContentEmitsContentFreeAuditEvent(t *testing.T) {
 	threadSVC := &recordingThreadService{}
 	artifactSVC := &recordingArtifactService{
-		got: &entity.AgentArtifact{
+		got: trustedArtifactForTest(&entity.AgentArtifact{
 			ID:           104,
+			SpaceID:      30,
 			ThreadID:     10,
 			RunID:        20,
 			FileID:       90,
@@ -3174,7 +3510,7 @@ func TestApplicationReadArtifactContentEmitsContentFreeAuditEvent(t *testing.T) 
 			SizeBytes:    14,
 			PreviewMode:  entity.AgentArtifactPreviewModeText,
 			Metadata:     `{"scan_status":"clean"}`,
-		},
+		}, []byte("artifact body")),
 	}
 	storage := &recordingArtifactObjectReader{
 		objects: map[string][]byte{
@@ -3191,6 +3527,9 @@ func TestApplicationReadArtifactContentEmitsContentFreeAuditEvent(t *testing.T) 
 		ThreadID:   10,
 		ArtifactID: 104,
 		Mode:       ArtifactContentModePreview,
+		SpaceID:    30,
+		ViewerID:   99,
+		TraceID:    "trace-open",
 	})
 
 	require.NoError(t, err)
@@ -3206,18 +3545,17 @@ func TestApplicationReadArtifactContentEmitsContentFreeAuditEvent(t *testing.T) 
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
+	requireArtifactAccessAuditShape(t, payload)
 	require.Equal(t, "coze.artifact_access.v1", payload["schema"])
 	require.Equal(t, float64(10), payload["thread_id"])
 	require.Equal(t, float64(20), payload["run_id"])
 	require.Equal(t, float64(104), payload["artifact_id"])
-	require.Equal(t, float64(90), payload["file_id"])
-	require.Equal(t, "preview", payload["mode"])
-	require.Equal(t, "text", payload["preview_mode"])
-	require.Equal(t, "report", payload["artifact_type"])
-	require.Equal(t, "text/plain; charset=utf-8", payload["content_type"])
-	require.Equal(t, float64(14), payload["size_bytes"])
-	require.Equal(t, false, payload["attachment"])
-	require.Equal(t, "clean", payload["scan_status"])
+	require.Equal(t, "open", payload["action"])
+	require.Equal(t, "allowed", payload["permission_result"])
+	require.Equal(t, float64(30), payload["space_id"])
+	require.Equal(t, float64(99), payload["actor_id"])
+	require.Equal(t, "trace-open", payload["trace_id"])
+	require.NotZero(t, payload["occurred_at"])
 }
 
 func TestApplicationReadArtifactContentBlocksUnsafeScanStatusBeforeStorage(t *testing.T) {
@@ -3301,10 +3639,10 @@ func TestArtifactScanReadPolicyOpenNonExecutableAllowsOnlyOutageForTextAndImage(
 		{
 			name:   "failed text allowed by explicit outage override",
 			status: artifactScanStatusFailed,
-			artifact: &entity.AgentArtifact{
-				PreviewMode: entity.AgentArtifactPreviewModeText,
-				ContentType: "text/plain; charset=utf-8",
-			},
+			artifact: trustedArtifactScanPolicyFixture(
+				entity.AgentArtifactPreviewModeText,
+				"text/plain; charset=utf-8",
+			),
 			allow:    true,
 			reason:   "scan_failed",
 			override: true,
@@ -3312,13 +3650,22 @@ func TestArtifactScanReadPolicyOpenNonExecutableAllowsOnlyOutageForTextAndImage(
 		{
 			name:   "unknown image allowed by explicit outage override",
 			status: artifactScanStatusUnknown,
-			artifact: &entity.AgentArtifact{
-				PreviewMode: entity.AgentArtifactPreviewModeImage,
-				ContentType: "image/png",
-			},
+			artifact: trustedArtifactScanPolicyFixture(
+				entity.AgentArtifactPreviewModeImage,
+				"image/png",
+			),
 			allow:    true,
 			reason:   "scan_unknown",
 			override: true,
+		},
+		{
+			name:   "declared text without trusted scan metadata stays blocked",
+			status: artifactScanStatusFailed,
+			artifact: &entity.AgentArtifact{
+				PreviewMode: entity.AgentArtifactPreviewModeText,
+				ContentType: "text/plain; charset=utf-8",
+			},
+			reason: "scan_failed",
 		},
 		{
 			name:   "infected text still blocked",
@@ -3363,6 +3710,20 @@ func TestArtifactScanReadPolicyOpenNonExecutableAllowsOnlyOutageForTextAndImage(
 	}
 }
 
+func trustedArtifactScanPolicyFixture(
+	previewMode entity.AgentArtifactPreviewMode,
+	detectedContentType string,
+) *entity.AgentArtifact {
+	size := int64(10)
+	return &entity.AgentArtifact{
+		PreviewMode:         previewMode,
+		ContentType:         "application/octet-stream",
+		DetectedContentType: detectedContentType,
+		ScannedSizeBytes:    &size,
+		ContentHash:         strings.Repeat("a", 64),
+	}
+}
+
 func TestArtifactScanReadPolicyConfigFromEnv(t *testing.T) {
 	t.Setenv(agentArtifactScanOutageFailModeEnv, "open_non_executable")
 
@@ -3379,7 +3740,7 @@ func TestArtifactScanReadPolicyConfigFromEnvDefaultsClosedForUnknownValue(t *tes
 	require.Equal(t, ArtifactScanOutageFailModeClosed, config.OutageFailMode)
 }
 
-func TestApplicationReadArtifactContentAllowsUnscannedTextWithExplicitOutageFailOpen(t *testing.T) {
+func TestApplicationReadArtifactContentFailsClosedWithoutTrustedMetadata(t *testing.T) {
 	threadSVC := &recordingThreadService{}
 	artifactSVC := &recordingArtifactService{
 		got: &entity.AgentArtifact{
@@ -3417,19 +3778,21 @@ func TestApplicationReadArtifactContentAllowsUnscannedTextWithExplicitOutageFail
 		Mode:       ArtifactContentModePreview,
 	})
 
-	require.NoError(t, err)
-	require.Equal(t, []byte("report body"), resp.Content)
+	var blockedErr *ArtifactContentBlockedByScanError
+	require.ErrorAs(t, err, &blockedErr)
+	require.Equal(t, "scan_failed", blockedErr.Reason)
+	require.Nil(t, resp)
+	require.Empty(t, storage.key)
 	require.NotNil(t, threadSVC.appendRunEventReq)
-	require.Equal(t, "artifact.content.accessed", threadSVC.appendRunEventReq.EventType)
+	require.Equal(t, "artifact.content.blocked", threadSVC.appendRunEventReq.EventType)
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "report.txt")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "report body")
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
-	require.Equal(t, "failed", payload["scan_status"])
-	require.Equal(t, "scan_failed", payload["scan_policy_reason"])
-	require.Equal(t, true, payload["scan_policy_override"])
-	require.Equal(t, "open_non_executable", payload["scan_policy_mode"])
+	requireArtifactAccessAuditShape(t, payload)
+	require.Equal(t, "open", payload["action"])
+	require.Equal(t, "denied", payload["permission_result"])
 }
 
 func TestApplicationReadArtifactContentBlocksUnknownScanStatusAndAudits(t *testing.T) {
@@ -3473,9 +3836,10 @@ func TestApplicationReadArtifactContentBlocksUnknownScanStatusAndAudits(t *testi
 	require.Equal(t, "artifact.content.blocked", threadSVC.appendRunEventReq.EventType)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReq.Payload), &payload))
+	requireArtifactAccessAuditShape(t, payload)
 	require.Equal(t, "coze.artifact_access_blocked.v1", payload["schema"])
-	require.Equal(t, "unknown", payload["scan_status"])
-	require.Equal(t, "scan_unknown", payload["reason"])
+	require.Equal(t, "open", payload["action"])
+	require.Equal(t, "denied", payload["permission_result"])
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "agent-runtime")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "note.txt")
 	require.NotContains(t, threadSVC.appendRunEventReq.Payload, "note body")
@@ -3728,12 +4092,20 @@ func TestApplicationProcessArtifactScanJobsCompletesCleanScan(t *testing.T) {
 	require.Equal(t, "clamav", scanner.req.Scanner)
 	require.Equal(t, "text/plain; charset=utf-8", scanner.req.ContentType)
 	require.Equal(t, int64(13), scanner.req.SizeBytes)
-	require.Equal(t, []byte("artifact body"), scanner.req.Content)
+	require.Nil(t, scanner.req.Content)
+	require.Equal(t, []byte("artifact body"), scanner.scannedContent)
 	require.Equal(t, int64(700), artifactSVC.completeScanJobReq.JobID)
 	require.Equal(t, "scan-worker-a", artifactSVC.completeScanJobReq.WorkerID)
 	require.Equal(t, "clean", artifactSVC.completeScanJobReq.ScanStatus)
 	require.Equal(t, "1.4.0", artifactSVC.completeScanJobReq.ScannerVersion)
 	require.Equal(t, "no threats found", artifactSVC.completeScanJobReq.Reason)
+	require.Equal(t, "text/plain; charset=utf-8", artifactSVC.completeScanJobReq.DetectedContentType)
+	require.Equal(t, int64(13), artifactSVC.completeScanJobReq.ScannedSizeBytes)
+	require.Equal(
+		t,
+		fmt.Sprintf("%x", sha256.Sum256([]byte("artifact body"))),
+		artifactSVC.completeScanJobReq.ContentHash,
+	)
 	require.NotZero(t, artifactSVC.completeScanJobReq.ScannedAt)
 	require.Nil(t, artifactSVC.failScanJobReq)
 	require.NotNil(t, threadSVC.appendRunEventReq)
@@ -3761,6 +4133,65 @@ func TestApplicationProcessArtifactScanJobsCompletesCleanScan(t *testing.T) {
 	require.Equal(t, "clamav", payload["scanner"])
 	require.Equal(t, "1.4.0", payload["scanner_version"])
 	require.NotZero(t, payload["scanned_at"])
+}
+
+func TestApplicationProcessArtifactScanJobsRejectsPartialScannerConsumption(t *testing.T) {
+	artifactSVC := &recordingArtifactService{
+		claimedScanJobs: []*entity.ArtifactScanJob{
+			{
+				ID:         709,
+				ThreadID:   10,
+				RunID:      20,
+				SpaceID:    30,
+				UserID:     40,
+				ArtifactID: 109,
+				FileID:     99,
+				Scanner:    "partial",
+				Status:     entity.ArtifactScanJobStatusProcessing,
+				WorkerID:   "scan-worker-a",
+			},
+		},
+		got: &entity.AgentArtifact{
+			ID:           109,
+			SpaceID:      30,
+			ThreadID:     10,
+			RunID:        20,
+			FileID:       99,
+			ArtifactType: "report",
+			ObjectURI:    "agent-runtime/30/10/runs/20/outputs/partial.bin",
+			SizeBytes:    12,
+			Metadata:     `{"scan_status":"pending"}`,
+		},
+		failScanJob:   &entity.ArtifactScanJob{ID: 709, Status: entity.ArtifactScanJobStatusFailed},
+		failScanJobOK: true,
+	}
+	storage := &recordingArtifactObjectReader{
+		objects: map[string][]byte{
+			"agent-runtime/30/10/runs/20/outputs/partial.bin": []byte("unsafe suffix"),
+		},
+	}
+	app := &ApplicationService{
+		ArtifactSVC:           artifactSVC,
+		ArtifactObjectStorage: storage,
+		ArtifactScanner:       &partialArtifactContentScanner{},
+	}
+
+	resp, err := app.ProcessArtifactScanJobs(
+		context.Background(),
+		&ProcessArtifactScanJobsRequest{
+			Scanner:     "partial",
+			WorkerID:    "scan-worker-a",
+			Limit:       1,
+			MaxAttempts: 1,
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int32(1), resp.Failed)
+	require.Nil(t, artifactSVC.completeScanJobReq)
+	require.NotNil(t, artifactSVC.failScanJobReq)
+	require.Equal(t, "artifact scanner did not consume complete content", artifactSVC.failScanJobReq.ErrorText)
 }
 
 func TestApplicationProcessArtifactScanJobsFailsJobOnScannerErrorWithoutContentLeak(t *testing.T) {
@@ -5230,6 +5661,7 @@ type recordingArtifactService struct {
 	markFileDeletedOK               bool
 	total                           int64
 	registerReq                     *domainservice.RegisterArtifactRequest
+	registerReqs                    []*domainservice.RegisterArtifactRequest
 	listReq                         *domainservice.ListArtifactsRequest
 	listScanJobsReq                 *domainservice.ListArtifactScanJobsRequest
 	cleanupReq                      *domainservice.ListDeletedArtifactCleanupCandidatesRequest
@@ -5251,10 +5683,21 @@ func (s *recordingArtifactService) RegisterArtifact(
 	req *domainservice.RegisterArtifactRequest,
 ) (*entity.AgentArtifact, bool, error) {
 	s.registerReq = req
+	clonedReq := *req
+	s.registerReqs = append(s.registerReqs, &clonedReq)
 	if s.registered == nil {
 		return nil, false, nil
 	}
 	cloned := *s.registered
+	cloned.Source = req.Source
+	cloned.IsPrimary = req.IsPrimary
+	cloned.CollectionID = req.CollectionID
+	if req.CollectionOrder == nil {
+		cloned.CollectionOrder = nil
+	} else {
+		collectionOrder := *req.CollectionOrder
+		cloned.CollectionOrder = &collectionOrder
+	}
 	return &cloned, true, nil
 }
 
@@ -5439,6 +5882,14 @@ func (r *recordingArtifactObjectReader) GetObject(
 	return cloned, nil
 }
 
+func (r *recordingArtifactObjectReader) OpenObjectStream(
+	_ context.Context,
+	objectKey string,
+) (io.ReadCloser, error) {
+	r.key = objectKey
+	return io.NopCloser(bytes.NewReader(r.objects[objectKey])), nil
+}
+
 func (r *recordingArtifactObjectReader) GetObjectUrl(
 	_ context.Context,
 	objectKey string,
@@ -5465,9 +5916,10 @@ func (r *recordingArtifactObjectReader) DeleteObject(
 }
 
 type recordingArtifactContentScanner struct {
-	req    ArtifactScanRequest
-	result *ArtifactScanResult
-	err    error
+	req            ArtifactScanRequest
+	scannedContent []byte
+	result         *ArtifactScanResult
+	err            error
 }
 
 func (s *recordingArtifactContentScanner) ScanArtifact(
@@ -5475,12 +5927,110 @@ func (s *recordingArtifactContentScanner) ScanArtifact(
 	req ArtifactScanRequest,
 ) (*ArtifactScanResult, error) {
 	s.req = req
+	if req.ContentReader != nil {
+		content, readErr := io.ReadAll(req.ContentReader)
+		if readErr != nil {
+			return nil, readErr
+		}
+		s.scannedContent = content
+	} else {
+		s.scannedContent = append([]byte(nil), req.Content...)
+	}
 	return s.result, s.err
+}
+
+func (s *recordingArtifactContentScanner) MaxArtifactBytes() int64 {
+	return 50 * 1024 * 1024
+}
+
+type partialArtifactContentScanner struct{}
+
+func (*partialArtifactContentScanner) ScanArtifact(
+	_ context.Context,
+	req ArtifactScanRequest,
+) (*ArtifactScanResult, error) {
+	if req.ContentReader == nil {
+		return nil, fmt.Errorf("artifact content reader is required")
+	}
+	var prefix [1]byte
+	if _, err := io.ReadFull(req.ContentReader, prefix[:]); err != nil {
+		return nil, err
+	}
+	return &ArtifactScanResult{ScanStatus: "clean"}, nil
+}
+
+func (*partialArtifactContentScanner) MaxArtifactBytes() int64 {
+	return 1024
+}
+
+func trustedArtifactForTest(
+	artifact *entity.AgentArtifact,
+	content []byte,
+) *entity.AgentArtifact {
+	if artifact == nil {
+		return nil
+	}
+	size := int64(len(content))
+	hash := sha256.Sum256(content)
+	artifact.GenerationStatus = entity.AgentArtifactGenerationStatusReady
+	artifact.DetectedContentType = http.DetectContentType(content)
+	artifact.ScannedSizeBytes = &size
+	artifact.ContentHash = fmt.Sprintf("%x", hash)
+	return artifact
+}
+
+func requireArtifactAccessAuditShape(t *testing.T, payload map[string]any) {
+	t.Helper()
+	requiredKeys := []string{
+		"schema",
+		"space_id",
+		"actor_id",
+		"thread_id",
+		"run_id",
+		"artifact_id",
+		"action",
+		"permission_result",
+		"trace_id",
+		"occurred_at",
+	}
+	require.Len(t, payload, len(requiredKeys))
+	for _, key := range requiredKeys {
+		require.Contains(t, payload, key)
+	}
+}
+
+func readArtifactResponseContent(
+	t *testing.T,
+	response *ReadArtifactContentResponse,
+) []byte {
+	t.Helper()
+	require.NotNil(t, response)
+	if response.Stream == nil {
+		return append([]byte(nil), response.Content...)
+	}
+	defer response.Stream.Close()
+	content, err := io.ReadAll(response.Stream)
+	require.NoError(t, err)
+	return content
 }
 
 type recordingArtifactAuthorizer struct {
 	req ArtifactAccessRequest
 	err error
+}
+
+type selectiveArtifactAuthorizer struct {
+	deniedArtifactIDs map[int64]bool
+}
+
+func (a *selectiveArtifactAuthorizer) AuthorizeArtifactAccess(
+	_ context.Context,
+	req ArtifactAccessRequest,
+) error {
+	if a != nil && a.deniedArtifactIDs[req.ArtifactID] {
+		return ErrArtifactAccessDenied
+	}
+	return nil
 }
 
 func (a *recordingArtifactAuthorizer) AuthorizeArtifactAccess(

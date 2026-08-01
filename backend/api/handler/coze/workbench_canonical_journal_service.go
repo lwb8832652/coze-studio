@@ -234,17 +234,6 @@ func parseCanonicalJournalEvent(raw []byte) (*journalcontract.JournalEvent, erro
 	}, nil
 }
 
-func writeCanonicalJournalNotImplemented(ctx context.Context, c *app.RequestContext) {
-	public := newCanonicalError(
-		consts.StatusNotImplemented,
-		"journal_not_implemented",
-		"Journal endpoint is not implemented",
-		"journal_not_implemented",
-		false,
-	)
-	writeCanonicalJournalError(ctx, c, public.status, *public)
-}
-
 func requireCanonicalJournalAgentThreadService(
 	ctx context.Context,
 	c *app.RequestContext,
@@ -816,10 +805,6 @@ func PatchCanonicalJournalSettings(ctx context.Context, c *app.RequestContext) {
 	}
 	c.Response.Header.Set("Cache-Control", "private, no-store")
 	c.JSON(consts.StatusOK, projectCanonicalJournalUserSettings(settings))
-}
-
-func CopyCanonicalThreadArtifactLink(ctx context.Context, c *app.RequestContext) {
-	writeCanonicalJournalNotImplemented(ctx, c)
 }
 
 func canonicalJournalSequenceCursor(

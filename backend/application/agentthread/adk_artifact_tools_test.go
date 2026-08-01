@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -274,6 +275,10 @@ func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent(
 	require.NotNil(t, artifacts.registerReq)
 	require.Equal(t, int64(90), artifacts.registerReq.FileID)
 	require.Equal(t, "document", artifacts.registerReq.ArtifactType)
+	require.Equal(t, domainentity.AgentArtifactSourceToolOutput, artifacts.registerReq.Source)
+	require.True(t, artifacts.registerReq.IsPrimary)
+	require.Empty(t, artifacts.registerReq.CollectionID)
+	require.Nil(t, artifacts.registerReq.CollectionOrder)
 	require.JSONEq(t, `{"source":"present_files"}`, artifacts.registerReq.Metadata)
 	require.NotNil(t, threadSVC.appendRunEventReq)
 	require.Len(t, threadSVC.appendRunEventReqs, 2)
@@ -291,6 +296,63 @@ func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent(
 	require.NotContains(t, threadSVC.appendRunEventReqs[0].Payload, "agent-runtime")
 	require.NotContains(t, resp.Notice, "agent-runtime")
 	require.Contains(t, resp.Notice, "/mnt/user-data/outputs/report.md")
+}
+
+func TestApplicationPresentOutputFilesCreatesStableOrderedCollection(t *testing.T) {
+	firstPath := "/mnt/user-data/outputs/first.png"
+	secondPath := "/mnt/user-data/outputs/second.mp4"
+	runtimeFiles := &recordingRuntimeFileService{
+		resolvedByPath: map[string]*domainentity.AgentFile{
+			firstPath: {
+				ID: 90, SpaceID: 30, ThreadID: 10, RunID: 20,
+				FileKind: domainentity.AgentFileKindOutput, VirtualPath: firstPath,
+				ObjectURI: "agent-runtime/first.png", ContentType: "image/png",
+				SizeBytes: 10, Status: domainentity.AgentFileStatusActive,
+			},
+			secondPath: {
+				ID: 91, SpaceID: 30, ThreadID: 10, RunID: 20,
+				FileKind: domainentity.AgentFileKindOutput, VirtualPath: secondPath,
+				ObjectURI: "agent-runtime/second.mp4", ContentType: "video/mp4",
+				SizeBytes: 20, Status: domainentity.AgentFileStatusActive,
+			},
+		},
+	}
+	artifacts := &recordingArtifactService{registered: &domainentity.AgentArtifact{
+		ID: 100, ThreadID: 10, RunID: 20, FileID: 90,
+		Title: "artifact", ArtifactType: "media",
+	}}
+	threadSVC := &recordingThreadService{appendedRunEvent: &domainentity.RunEvent{}}
+	app := &ApplicationService{
+		ThreadSVC:      threadSVC,
+		RuntimeFileSVC: runtimeFiles,
+		ArtifactSVC:    artifacts,
+	}
+
+	_, err := app.PresentOutputFiles(context.Background(), &PresentOutputFilesRequest{
+		Run:        &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+		ToolCallID: "call-present-1",
+		FilePaths:  []string{firstPath, secondPath},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, artifacts.registerReqs, 2)
+	first := artifacts.registerReqs[0]
+	second := artifacts.registerReqs[1]
+	require.True(t, first.IsPrimary)
+	require.False(t, second.IsPrimary)
+	require.NotEmpty(t, first.CollectionID)
+	require.Equal(t, first.CollectionID, second.CollectionID)
+	require.True(t, strings.HasPrefix(first.CollectionID, "collection_"))
+	require.NotNil(t, first.CollectionOrder)
+	require.NotNil(t, second.CollectionOrder)
+	require.Equal(t, int32(0), *first.CollectionOrder)
+	require.Equal(t, int32(1), *second.CollectionOrder)
+	require.Equal(t, domainentity.AgentArtifactSourceToolOutput, first.Source)
+	require.Equal(t, domainentity.AgentArtifactSourceToolOutput, second.Source)
+	require.NotEmpty(t, threadSVC.appendRunEventReqs)
+	payload := map[string]any{}
+	require.NoError(t, json.Unmarshal([]byte(threadSVC.appendRunEventReqs[0].Payload), &payload))
+	require.Equal(t, first.CollectionID, payload["collection_id"])
 }
 
 func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
@@ -391,8 +453,8 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 	require.Equal(t, []ADKParityArtifact{{
 		ArtifactID: 100, FileID: 99, RunID: 20, Title: "report.md",
 		ArtifactType: "document", VirtualPath: "/mnt/user-data/outputs/report.md",
-		ContentType: "text/markdown; charset=utf-8", SizeBytes: 9,
-		PreviewMode: "text",
+		ContentType: "application/octet-stream", SizeBytes: 0,
+		PreviewMode: "download",
 	}}, tracker.Snapshot().Artifacts)
 }
 

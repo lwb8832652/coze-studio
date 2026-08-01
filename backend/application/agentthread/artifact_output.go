@@ -454,7 +454,15 @@ func (s *ApplicationService) PresentOutputFiles(
 	resp := &PresentOutputFilesResponse{
 		Artifacts: make([]*ArtifactSummary, 0, len(paths)),
 	}
-	for _, virtualPath := range paths {
+	collectionID := ""
+	if len(paths) > 1 {
+		collectionID = artifactPresentationCollectionID(
+			req.Run.RunID,
+			req.ToolCallID,
+			paths,
+		)
+	}
+	for index, virtualPath := range paths {
 		file, err := s.RuntimeFileSVC.ResolveRuntimeFile(
 			ctx,
 			&domainservice.ResolveRuntimeFileRequest{
@@ -470,16 +478,25 @@ func (s *ApplicationService) PresentOutputFiles(
 		if err := validatePresentableOutputFile(req.Run, file, virtualPath); err != nil {
 			return nil, err
 		}
+		var collectionOrder *int32
+		if collectionID != "" {
+			order := int32(index)
+			collectionOrder = &order
+		}
 		artifact, _, err := s.ArtifactSVC.RegisterArtifact(
 			ctx,
 			&domainservice.RegisterArtifactRequest{
-				SpaceID:      req.Run.SpaceID,
-				ThreadID:     req.Run.ThreadID,
-				RunID:        req.Run.RunID,
-				FileID:       file.ID,
-				Title:        fileTitle(file),
-				ArtifactType: outputArtifactType(file),
-				Metadata:     `{"source":"present_files"}`,
+				SpaceID:         req.Run.SpaceID,
+				ThreadID:        req.Run.ThreadID,
+				RunID:           req.Run.RunID,
+				FileID:          file.ID,
+				Title:           fileTitle(file),
+				ArtifactType:    outputArtifactType(file),
+				Source:          domainentity.AgentArtifactSourceToolOutput,
+				IsPrimary:       index == 0,
+				CollectionID:    collectionID,
+				CollectionOrder: collectionOrder,
+				Metadata:        `{"source":"present_files"}`,
 			},
 		)
 		if err != nil {
@@ -505,6 +522,19 @@ func (s *ApplicationService) PresentOutputFiles(
 	resp.Notice = artifactPresentedNotice(ctx, resp.Artifacts)
 
 	return resp, nil
+}
+
+func artifactPresentationCollectionID(
+	runID int64,
+	toolCallID string,
+	paths []string,
+) string {
+	identity := strings.TrimSpace(toolCallID)
+	if identity == "" {
+		identity = strings.Join(paths, "\n")
+	}
+	digest := sha256.Sum256([]byte(strconv.FormatInt(runID, 10) + ":" + identity))
+	return "collection_" + hex.EncodeToString(digest[:16])
 }
 
 func normalizeOutputFilePaths(values []string) ([]string, error) {
@@ -676,6 +706,9 @@ func (s *ApplicationService) emitArtifactPresentedEvent(
 		"artifact_count": len(artifacts),
 		"artifacts":      safeArtifactEventItems(artifacts),
 	}
+	if collectionID := sharedArtifactCollectionID(artifacts); collectionID != "" {
+		payload["collection_id"] = collectionID
+	}
 	_, err := s.AppendRunEvent(
 		ctx,
 		&AppendRunEventRequest{
@@ -733,7 +766,7 @@ func safeArtifactEventItems(artifacts []*ArtifactSummary) []map[string]any {
 		if artifact == nil {
 			continue
 		}
-		result = append(result, map[string]any{
+		item := map[string]any{
 			"artifact_id":   artifact.ArtifactID,
 			"file_id":       artifact.FileID,
 			"title":         artifact.Title,
@@ -742,9 +775,40 @@ func safeArtifactEventItems(artifacts []*ArtifactSummary) []map[string]any {
 			"content_type":  artifact.ContentType,
 			"size_bytes":    artifact.SizeBytes,
 			"preview_mode":  artifact.PreviewMode,
-		})
+			"is_primary":    artifact.IsPrimary,
+		}
+		if collectionID := strings.TrimSpace(artifact.CollectionID); collectionID != "" {
+			item["collection_id"] = collectionID
+		}
+		if artifact.CollectionOrder != nil {
+			item["collection_order"] = *artifact.CollectionOrder
+		}
+		result = append(result, item)
 	}
 	return result
+}
+
+func sharedArtifactCollectionID(artifacts []*ArtifactSummary) string {
+	collectionID := ""
+	artifactCount := 0
+	for _, artifact := range artifacts {
+		if artifact == nil {
+			continue
+		}
+		candidate := strings.TrimSpace(artifact.CollectionID)
+		if candidate == "" {
+			return ""
+		}
+		if collectionID != "" && collectionID != candidate {
+			return ""
+		}
+		collectionID = candidate
+		artifactCount++
+	}
+	if artifactCount == 0 {
+		return ""
+	}
+	return collectionID
 }
 
 func artifactPresentedNotice(ctx context.Context, artifacts []*ArtifactSummary) string {

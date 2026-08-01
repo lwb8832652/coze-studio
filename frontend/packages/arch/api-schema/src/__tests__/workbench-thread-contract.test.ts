@@ -1654,12 +1654,28 @@ describe('canonical Workbench thread generated contract', () => {
     );
     expect(artifact).toMatch(/collection_id\?:\s*string[,;]/);
     expect(artifact).toMatch(/collection_order\?:\s*number[,;]/);
+    expect(artifact).toMatch(/is_primary\?:\s*boolean[,;]/);
     const collection = interfaceSourceFrom(
       generatedProductSource,
       'CanonicalArtifactCollection',
     );
     expect(collection).toMatch(/collection_id:\s*string[,;]/);
     expect(collection).toMatch(/artifact_ids:\s*string\[\][,;]/);
+    expect(collection).toMatch(/current_index\?:\s*number[,;]/);
+    expect(collection).toMatch(/total_count\?:\s*number[,;]/);
+
+    for (const mode of [
+      'text',
+      'image',
+      'pdf',
+      'audio',
+      'video',
+      'media_collection',
+      'download',
+      'unsupported',
+    ]) {
+      expect(generatedProductSource).toContain(`= "${mode}"`);
+    }
 
     const artifactList = interfaceSourceFrom(
       generatedProductSource,

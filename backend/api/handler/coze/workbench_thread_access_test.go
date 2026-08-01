@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 
@@ -237,6 +238,8 @@ func (a *recordingWorkbenchMCPRuntimeAuditAuthorizer) AuthorizeMCPRuntimeAuditAc
 type recordingWorkbenchArtifactStorage struct {
 	objects                map[string][]byte
 	signedURL              string
+	getCalls               int
+	openCalls              int
 	signKey                string
 	signExpire             int64
 	signContentDisposition string
@@ -247,8 +250,17 @@ func (s *recordingWorkbenchArtifactStorage) GetObject(
 	_ context.Context,
 	objectKey string,
 ) ([]byte, error) {
+	s.getCalls++
 	content := s.objects[objectKey]
 	return append([]byte(nil), content...), nil
+}
+
+func (s *recordingWorkbenchArtifactStorage) OpenObjectStream(
+	_ context.Context,
+	objectKey string,
+) (io.ReadCloser, error) {
+	s.openCalls++
+	return io.NopCloser(bytes.NewReader(s.objects[objectKey])), nil
 }
 
 func (s *recordingWorkbenchArtifactStorage) GetObjectUrl(
@@ -656,6 +668,7 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			user_id integer,
 			thread_id integer,
 			run_id integer,
+			journal_run_id integer,
 			file_id integer UNIQUE,
 			title text DEFAULT '',
 			artifact_type text,
@@ -664,10 +677,20 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			content_type text DEFAULT '',
 			size_bytes integer DEFAULT 0,
 			preview_mode text DEFAULT 'download',
+			source text DEFAULT 'agent_generated',
+			generation_status text DEFAULT 'processing',
+			primary_slot integer,
+			collection_id text,
+			collection_order integer,
+			detected_content_type text,
+			scanned_size_bytes integer,
+			content_hash text,
 			metadata json,
 			created_at integer,
 			updated_at integer,
-			deleted_at integer DEFAULT 0
+			deleted_at integer DEFAULT 0,
+			UNIQUE (journal_run_id, primary_slot),
+			UNIQUE (journal_run_id, collection_id, collection_order)
 		);
 		CREATE TABLE agent_artifact_scan_jobs (
 			id integer PRIMARY KEY,

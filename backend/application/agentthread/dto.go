@@ -16,6 +16,8 @@
 
 package agentthread
 
+import "io"
+
 type ThreadStatus string
 
 const (
@@ -66,6 +68,9 @@ const (
 	ArtifactPreviewModeText        ArtifactPreviewMode = "text"
 	ArtifactPreviewModeImage       ArtifactPreviewMode = "image"
 	ArtifactPreviewModePDF         ArtifactPreviewMode = "pdf"
+	ArtifactPreviewModeAudio       ArtifactPreviewMode = "audio"
+	ArtifactPreviewModeVideo       ArtifactPreviewMode = "video"
+	ArtifactPreviewModeCollection  ArtifactPreviewMode = "media_collection"
 	ArtifactPreviewModeDownload    ArtifactPreviewMode = "download"
 	ArtifactPreviewModeUnsupported ArtifactPreviewMode = "unsupported"
 )
@@ -378,21 +383,28 @@ type TokenUsageSummary struct {
 }
 
 type ArtifactSummary struct {
-	ArtifactID   int64
-	SpaceID      int64
-	ThreadID     int64
-	RunID        int64
-	FileID       int64
-	Title        string
-	ArtifactType string
-	VirtualPath  string
-	ContentType  string
-	SizeBytes    int64
-	PreviewMode  ArtifactPreviewMode
-	Metadata     string
-	CreatedAt    int64
-	UpdatedAt    int64
-	DeletedAt    int64
+	ArtifactID       int64
+	SpaceID          int64
+	ThreadID         int64
+	RunID            int64
+	JournalRunID     int64
+	FileID           int64
+	Title            string
+	ArtifactType     string
+	VirtualPath      string
+	ContentType      string
+	SizeBytes        int64
+	PreviewMode      ArtifactPreviewMode
+	Source           string
+	GenerationStatus string
+	Capabilities     []string
+	IsPrimary        bool
+	CollectionID     string
+	CollectionOrder  *int32
+	Metadata         string
+	CreatedAt        int64
+	UpdatedAt        int64
+	DeletedAt        int64
 }
 
 type ArtifactScanJobSummary struct {
@@ -950,18 +962,27 @@ type GetTokenUsageResponse struct {
 }
 
 type ListArtifactsRequest struct {
-	ThreadID    int64
-	RunID       *int64
-	DeletedOnly bool
-	SpaceID     int64
-	ViewerID    int64
-	Page        int32
-	PageSize    int32
+	ThreadID     int64
+	RunID        *int64
+	CollectionID *string
+	DeletedOnly  bool
+	SpaceID      int64
+	ViewerID     int64
+	Page         int32
+	PageSize     int32
 }
 
 type ListArtifactsResponse struct {
-	Artifacts []*ArtifactSummary
-	Total     int64
+	Artifacts   []*ArtifactSummary
+	Total       int64
+	Collections []*ArtifactCollectionSummary
+}
+
+type ArtifactCollectionSummary struct {
+	CollectionID string
+	ArtifactIDs  []int64
+	CurrentIndex *int32
+	TotalCount   int32
 }
 
 type OutputFileSummary struct {
@@ -1007,8 +1028,9 @@ type CreateSkillPackageResponse struct {
 }
 
 type PresentOutputFilesRequest struct {
-	Run       *RunSummary
-	FilePaths []string
+	Run        *RunSummary
+	ToolCallID string
+	FilePaths  []string
 }
 
 type PresentOutputFilesResponse struct {
@@ -1058,6 +1080,10 @@ type ReadArtifactContentRequest struct {
 	Mode       ArtifactContentMode
 	SpaceID    int64
 	ViewerID   int64
+	TraceID    string
+	HasRange   bool
+	RangeStart int64
+	RangeEnd   *int64
 }
 
 type CreateArtifactSignedURLRequest struct {
@@ -1066,6 +1092,7 @@ type CreateArtifactSignedURLRequest struct {
 	Mode       ArtifactContentMode
 	SpaceID    int64
 	ViewerID   int64
+	TraceID    string
 	TTLSeconds int64
 }
 
@@ -1075,6 +1102,20 @@ type CreateArtifactSignedURLResponse struct {
 	ExpiresInSeconds int64
 	ContentType      string
 	PreviewMode      ArtifactPreviewMode
+}
+
+type CopyArtifactLinkRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	SpaceID    int64
+	ViewerID   int64
+	TraceID    string
+}
+
+type CopyArtifactLinkResponse struct {
+	ArtifactID int64
+	CopyURL    string
+	ExpiresAt  int64
 }
 
 type DeleteArtifactRequest struct {
@@ -1117,13 +1158,16 @@ type ProcessDeletedArtifactCleanupResponse struct {
 }
 
 type RecordArtifactScanResultRequest struct {
-	ThreadID       int64
-	ArtifactID     int64
-	ScanStatus     string
-	Scanner        string
-	ScannerVersion string
-	Reason         string
-	ScannedAt      int64
+	ThreadID            int64
+	ArtifactID          int64
+	ScanStatus          string
+	Scanner             string
+	ScannerVersion      string
+	Reason              string
+	DetectedContentType string
+	ScannedSizeBytes    int64
+	ContentHash         string
+	ScannedAt           int64
 }
 
 type RecordArtifactScanResultResponse struct {
@@ -1210,11 +1254,17 @@ type MemoryFactMetricsSummary struct {
 }
 
 type ReadArtifactContentResponse struct {
-	Artifact    *ArtifactSummary
-	Content     []byte
-	ContentType string
-	FileName    string
-	Attachment  bool
+	Artifact      *ArtifactSummary
+	Content       []byte
+	Stream        io.ReadCloser
+	ContentType   string
+	FileName      string
+	Attachment    bool
+	Partial       bool
+	RangeStart    int64
+	RangeEnd      int64
+	TotalSize     int64
+	ContentLength int64
 }
 
 type ClaimPendingRunsRequest struct {

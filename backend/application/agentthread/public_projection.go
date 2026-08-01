@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 const (
@@ -148,21 +150,27 @@ type PublicTokenUsage struct {
 }
 
 type PublicArtifact struct {
-	ArtifactID   int64               `json:"artifact_id"`
-	SpaceID      int64               `json:"space_id"`
-	ThreadID     int64               `json:"thread_id"`
-	RunID        int64               `json:"run_id"`
-	FileID       int64               `json:"file_id"`
-	Title        string              `json:"title"`
-	ArtifactType string              `json:"artifact_type"`
-	VirtualPath  string              `json:"virtual_path,omitempty"`
-	ContentType  string              `json:"content_type,omitempty"`
-	SizeBytes    int64               `json:"size_bytes"`
-	PreviewMode  ArtifactPreviewMode `json:"preview_mode"`
-	Metadata     string              `json:"metadata"`
-	CreatedAt    int64               `json:"created_at"`
-	UpdatedAt    int64               `json:"updated_at"`
-	DeletedAt    int64               `json:"deleted_at,omitempty"`
+	ArtifactID       int64               `json:"artifact_id"`
+	SpaceID          int64               `json:"space_id"`
+	ThreadID         int64               `json:"thread_id"`
+	RunID            int64               `json:"run_id"`
+	FileID           int64               `json:"file_id"`
+	Title            string              `json:"title"`
+	ArtifactType     string              `json:"artifact_type"`
+	VirtualPath      string              `json:"virtual_path,omitempty"`
+	ContentType      string              `json:"content_type,omitempty"`
+	SizeBytes        int64               `json:"size_bytes"`
+	PreviewMode      ArtifactPreviewMode `json:"preview_mode"`
+	Source           string              `json:"source,omitempty"`
+	GenerationStatus string              `json:"generation_status,omitempty"`
+	Capabilities     []string            `json:"capabilities,omitempty"`
+	IsPrimary        bool                `json:"is_primary,omitempty"`
+	CollectionID     string              `json:"collection_id,omitempty"`
+	CollectionOrder  *int32              `json:"collection_order,omitempty"`
+	Metadata         string              `json:"metadata"`
+	CreatedAt        int64               `json:"created_at"`
+	UpdatedAt        int64               `json:"updated_at"`
+	DeletedAt        int64               `json:"deleted_at,omitempty"`
 }
 
 func ProjectPublicRun(run *RunSummary) *PublicRun {
@@ -755,21 +763,27 @@ func ProjectPublicArtifact(artifact *ArtifactSummary) *PublicArtifact {
 	}
 
 	return &PublicArtifact{
-		ArtifactID:   artifact.ArtifactID,
-		SpaceID:      artifact.SpaceID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        publicLabel(artifact.Title, maxPublicLabelRunes),
-		ArtifactType: publicIdentifier(artifact.ArtifactType, maxPublicIdentifierRunes),
-		VirtualPath:  publicArtifactVirtualPath(artifact.VirtualPath),
-		ContentType:  publicLabel(artifact.ContentType, maxPublicIdentifierRunes),
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  artifact.PreviewMode,
-		Metadata:     projectPublicArtifactMetadata(artifact.Metadata),
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ArtifactID:       artifact.ArtifactID,
+		SpaceID:          artifact.SpaceID,
+		ThreadID:         artifact.ThreadID,
+		RunID:            artifact.RunID,
+		FileID:           artifact.FileID,
+		Title:            publicLabel(artifact.Title, maxPublicLabelRunes),
+		ArtifactType:     publicIdentifier(artifact.ArtifactType, maxPublicIdentifierRunes),
+		VirtualPath:      publicArtifactVirtualPath(artifact.VirtualPath),
+		ContentType:      publicLabel(artifact.ContentType, maxPublicIdentifierRunes),
+		SizeBytes:        artifact.SizeBytes,
+		PreviewMode:      artifact.PreviewMode,
+		Source:           publicIdentifier(artifact.Source, maxPublicIdentifierRunes),
+		GenerationStatus: publicIdentifier(artifact.GenerationStatus, maxPublicIdentifierRunes),
+		Capabilities:     publicArtifactCapabilities(artifact.Capabilities),
+		IsPrimary:        artifact.IsPrimary,
+		CollectionID:     publicIdentifier(artifact.CollectionID, maxPublicIdentifierRunes),
+		CollectionOrder:  artifact.CollectionOrder,
+		Metadata:         projectPublicArtifactMetadata(artifact.Metadata),
+		CreatedAt:        artifact.CreatedAt,
+		UpdatedAt:        artifact.UpdatedAt,
+		DeletedAt:        artifact.DeletedAt,
 	}
 }
 
@@ -779,6 +793,28 @@ func ProjectPublicArtifacts(artifacts []*ArtifactSummary) []*PublicArtifact {
 		if projected := ProjectPublicArtifact(artifact); projected != nil {
 			result = append(result, projected)
 		}
+	}
+	return result
+}
+
+func publicArtifactCapabilities(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = publicIdentifier(value, maxPublicIdentifierRunes)
+		switch value {
+		case string(domainentity.AgentArtifactCapabilityOpen),
+			string(domainentity.AgentArtifactCapabilityPreview),
+			string(domainentity.AgentArtifactCapabilityDownload),
+			string(domainentity.AgentArtifactCapabilityCopy):
+		default:
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
 	}
 	return result
 }

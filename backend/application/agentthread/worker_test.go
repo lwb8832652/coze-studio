@@ -506,6 +506,42 @@ func TestArtifactScanWorkerFromEnvReportsScannerConfigError(t *testing.T) {
 	require.NotContains(t, status.ScannerStatus.Error, "agent-runtime")
 }
 
+func TestArtifactScanWorkerFromEnvRequiresStreamingStorage(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
+
+	worker, status := StartArtifactScanWorkerFromEnvWithStatus(
+		context.Background(),
+		&ApplicationService{
+			ArtifactSVC:           &recordingArtifactService{},
+			ArtifactObjectStorage: &nonStreamingArtifactObjectReader{},
+			ArtifactScanner:       &recordingArtifactContentScanner{},
+		},
+	)
+
+	require.Nil(t, worker)
+	require.True(t, status.Enabled)
+	require.False(t, status.Started)
+	require.Equal(t, "artifact object storage streaming is not configured", status.Reason)
+}
+
+func TestArtifactScanWorkerFromEnvRequiresBoundedScanner(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
+
+	worker, status := StartArtifactScanWorkerFromEnvWithStatus(
+		context.Background(),
+		&ApplicationService{
+			ArtifactSVC:           &recordingArtifactService{},
+			ArtifactObjectStorage: &recordingArtifactObjectReader{},
+			ArtifactScanner:       &unboundedArtifactContentScanner{},
+		},
+	)
+
+	require.Nil(t, worker)
+	require.True(t, status.Enabled)
+	require.False(t, status.Started)
+	require.Equal(t, "artifact scanner limits are not configured", status.Reason)
+}
+
 func TestArtifactScanWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
 	t.Setenv(agentArtifactScanWorkerIDEnv, "artifact-worker-env")
@@ -535,4 +571,19 @@ func TestArtifactScanWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	require.Equal(t, 120000*time.Millisecond, worker.leaseTTL)
 	require.Equal(t, int32(4), worker.maxAttempts)
 	require.Equal(t, 30000*time.Millisecond, worker.retryBackoff)
+}
+
+type nonStreamingArtifactObjectReader struct{}
+
+func (*nonStreamingArtifactObjectReader) GetObject(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+type unboundedArtifactContentScanner struct{}
+
+func (*unboundedArtifactContentScanner) ScanArtifact(
+	context.Context,
+	ArtifactScanRequest,
+) (*ArtifactScanResult, error) {
+	return &ArtifactScanResult{ScanStatus: "clean"}, nil
 }

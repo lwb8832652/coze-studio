@@ -2456,6 +2456,10 @@ type memoryRepo struct {
 	createRunBundleCalls               int
 }
 
+var _ repository.Repository = (*memoryRepo)(nil)
+
+var errMemoryJournalSnapshotUnsupported = errors.New("memory journal snapshot repository is not configured")
+
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
 		threads:             make(map[int64]*entity.Thread),
@@ -2895,6 +2899,66 @@ func (r *memoryRepo) ListJournalEvents(
 		events = events[:limit]
 	}
 	return &repository.ListJournalEventsResult{Events: events, HasMore: hasMore}, nil
+}
+
+func (r *memoryRepo) GetJournalBootstrap(
+	_ context.Context,
+	_ repository.GetJournalBootstrapRequest,
+) (*repository.GetJournalBootstrapResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) ReserveJournalSnapshot(
+	_ context.Context,
+	_ repository.ReserveJournalSnapshotRequest,
+) (*repository.ReserveJournalSnapshotResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) DeleteExpiredJournalSnapshotReservations(
+	_ context.Context,
+	_ int64,
+	_ int64,
+	_ int,
+) (int64, error) {
+	return 0, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) CreateJournalSnapshot(
+	_ context.Context,
+	_ repository.CreateJournalSnapshotRequest,
+) (*entity.JournalContentSnapshot, *entity.JournalEvent, bool, error) {
+	return nil, nil, false, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) GetJournalSnapshot(
+	_ context.Context,
+	_ repository.GetJournalSnapshotRequest,
+) (*entity.JournalContentSnapshot, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) ListJournalSnapshotFragments(
+	_ context.Context,
+	_ repository.ListJournalSnapshotFragmentsRequest,
+) (*repository.ListJournalSnapshotFragmentsResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) RecordJournalSnapshotAccess(
+	_ context.Context,
+	_ *entity.JournalSnapshotAccessAudit,
+) (*entity.JournalSnapshotAccessAudit, bool, error) {
+	return nil, false, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) IsJournalSnapshotObjectProtected(
+	_ context.Context,
+	_ int64,
+	_ string,
+	_ int64,
+) (bool, error) {
+	return false, errMemoryJournalSnapshotUnsupported
 }
 
 func cloneJournalEventForServiceTest(event *entity.JournalEvent) *entity.JournalEvent {

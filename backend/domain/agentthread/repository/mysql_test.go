@@ -585,7 +585,7 @@ func TestRuntimeFileRepositoryManagesThreadUploads(t *testing.T) {
 func TestArtifactRepositoryUpsertsByFileAndListsByThread(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&agentArtifactPO{}))
+	require.NoError(t, db.AutoMigrate(&agentArtifactPO{}, &runAttemptPO{}))
 
 	repo := NewArtifactRepository(db)
 	first := &entity.AgentArtifact{
@@ -930,7 +930,7 @@ func TestArtifactRepositoryListDeletedCleanupCandidates(t *testing.T) {
 func TestArtifactRepositoryUpdatesActiveArtifactScanMetadata(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&agentArtifactPO{}))
+	require.NoError(t, db.AutoMigrate(&agentArtifactPO{}, &runAttemptPO{}))
 
 	repo := NewArtifactRepository(db)
 	artifact := &entity.AgentArtifact{
@@ -960,6 +960,7 @@ func TestArtifactRepositoryUpdatesActiveArtifactScanMetadata(t *testing.T) {
 		10,
 		100,
 		`{"source":"present_files","scan_status":"clean","scan_scanned_at":2000}`,
+		entity.AgentArtifactGenerationStatusProcessing,
 		2000,
 	)
 	require.NoError(t, err)
@@ -983,6 +984,7 @@ func TestArtifactRepositoryUpdatesActiveArtifactScanMetadata(t *testing.T) {
 		10,
 		100,
 		`{"scan_status":"blocked","scan_scanned_at":2200}`,
+		entity.AgentArtifactGenerationStatusBlocked,
 		2200,
 	)
 	require.NoError(t, err)
