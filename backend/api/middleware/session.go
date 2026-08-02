@@ -62,6 +62,7 @@ var validateSession = func(ctx context.Context, sessionID string) (*entity.Sessi
 }
 
 var noNeedSessionCheckPath = map[string]bool{
+	"/healthz":                             true,
 	"/api/passport/web/email/login/":       true,
 	"/api/passport/web/email/register/v2/": true,
 	"/api/site/config":                     true,

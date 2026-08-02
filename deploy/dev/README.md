@@ -203,6 +203,10 @@ Compose 固定向后端注入 `COZE_MQ_TYPE=nsq` 和 `MQ_NAME_SERVER=nsqd:4150`�
 全文检索继续工作，语义向量检索关闭；显式配置 `milvus`、`vikingdb` 或
 `oceanbase` 后仍会严格校验并在依赖不可用时阻止启动。
 
+`ES_ADDR` 应使用与访问域名匹配、由系统信任 CA 签发的 HTTPS 证书。服务镜像
+直接使用系统 CA bundle，不在 Compose 中挂载自签名 CA，也不能通过 `curl -k`
+或其他方式跳过 TLS 校验。
+
 `app.env` 不要求 `USE_SSL` 或 `SERVER_HOST`。容器内后端保持 HTTP；公网 URL
 先在系统管理页面配置为公网 IP 与端口，宝塔域名启用后再改为最终 HTTPS 域名。
 
