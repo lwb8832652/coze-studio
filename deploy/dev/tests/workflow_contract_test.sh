@@ -342,7 +342,7 @@ end
 
 deploy = jobs.fetch('deploy')
 assert_contract(needs(deploy) == ['promote'], 'deploy must need promote only')
-assert_contract(deploy['timeout-minutes'] == 5, 'deploy timeout must be 5 minutes')
+assert_contract(deploy['timeout-minutes'] == 15, 'deploy timeout must be 15 minutes')
 deploy_text = job_text(deploy)
 %w[curl --fail-with-body BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN BAOTA_WEBHOOK_PINNED_PUBKEY
    needs.promote.outputs.target_sha --pinnedpubkey --insecure --connect-timeout --max-time].each do |token|
@@ -350,8 +350,8 @@ deploy_text = job_text(deploy)
 end
 assert_contract(deploy_text.match?(/--connect-timeout\s+10/),
                 'deploy webhook connect timeout must be 10 seconds')
-assert_contract(deploy_text.match?(/--max-time\s+120/),
-                'deploy webhook total timeout must be 120 seconds')
+assert_contract(deploy_text.match?(/--max-time\s+840/),
+                'deploy webhook total timeout must be 840 seconds')
 assert_contract(deploy_text.match?(/header|-H/i), 'optional webhook token must be sent in a header')
 
 raw = File.read(workflow_path)
@@ -404,6 +404,10 @@ git -C "$TEST_REPO" add application.txt
 git -C "$TEST_REPO" -c user.name=contract-test -c user.email=contract@example.invalid \
   commit -qm 'ordinary follow-up'
 TARGET_REVISION=$(git -C "$TEST_REPO" rev-parse HEAD)
+TARGET_TREE=$(git -C "$TEST_REPO" rev-parse "${TARGET_REVISION}^{tree}")
+UNRELATED_REVISION=$(git -C "$TEST_REPO" \
+  -c user.name=contract-test -c user.email=contract@example.invalid \
+  commit-tree "$TARGET_TREE" -p "$DEPLOYED_REVISION" -m 'unrelated deployed revision')
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -540,10 +544,12 @@ for mode in server-inspect-error web-inspect-error; do
     "$mode did not fail closed"
 done
 
+REAL_GIT=$(command -v git)
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
-  'if [ "${1:-}" = fetch ]; then' \
+  'if [ "${1:-}" = fetch ] && [ "${2:-}" = --no-tags ] &&' \
+  '  [ "${3:-}" = origin ] && [ "${4:-}" = dev ]; then' \
   '  exit 0' \
   'fi' \
   'if [ "${1:-}" = merge-base ] && [ "${2:-}" = --is-ancestor ] &&' \
@@ -551,7 +557,7 @@ printf '%s\n' \
   '  [ "${4:-}" = refs/remotes/origin/dev ]; then' \
   '  exit 0' \
   'fi' \
-  'exit 96' > "$TEST_BIN/git"
+  'exec "$REAL_GIT" "$@"' > "$TEST_BIN/git"
 chmod +x "$TEST_BIN/git"
 
 run_dispatch() {
@@ -568,6 +574,7 @@ run_dispatch() {
       DEPLOYED_REVISION="$deployed_revision" \
       ALTERNATE_REVISION="$BEFORE_REVISION" \
       DISPATCH_TARGET_SHA="$target_revision" \
+      REAL_GIT="$REAL_GIT" \
       GITHUB_EVENT_NAME=workflow_dispatch \
       GITHUB_SHA="$target_revision" \
       TARGET_SHA_INPUT="$target_revision" \
@@ -588,13 +595,37 @@ assert_output "$DISPATCH_OUTPUT" 'migration_changed=false' \
 assert_output "$DISPATCH_OUTPUT" 'deployment_blocked=false' \
   'dispatch was blocked even though both current images matched the target'
 
-DISPATCH_MISMATCH_OUTPUT=$SEMANTIC_ROOT/dispatch-mismatch-output
+DISPATCH_ROLLBACK_OUTPUT=$SEMANTIC_ROOT/dispatch-rollback-output
+run_dispatch deployed "$TARGET_REVISION" "$BEFORE_REVISION" \
+  "$DISPATCH_ROLLBACK_OUTPUT"
+assert_output "$DISPATCH_ROLLBACK_OUTPUT" 'migration_changed=false' \
+  'safe dispatch rollback invented a migration'
+assert_output "$DISPATCH_ROLLBACK_OUTPUT" 'deployment_blocked=false' \
+  'dispatch rollback to an ancestor was blocked'
+
+DISPATCH_FORWARD_OUTPUT=$SEMANTIC_ROOT/dispatch-forward-output
 run_dispatch deployed "$BEFORE_REVISION" "$TARGET_REVISION" \
-  "$DISPATCH_MISMATCH_OUTPUT"
-assert_output "$DISPATCH_MISMATCH_OUTPUT" 'migration_changed=false' \
-  'dispatch target mismatch invented a migration'
-assert_output "$DISPATCH_MISMATCH_OUTPUT" 'deployment_blocked=true' \
-  'dispatch target mismatch was not blocked'
+  "$DISPATCH_FORWARD_OUTPUT"
+assert_output "$DISPATCH_FORWARD_OUTPUT" 'migration_changed=false' \
+  'safe forward dispatch invented a migration'
+assert_output "$DISPATCH_FORWARD_OUTPUT" 'deployment_blocked=false' \
+  'forward dispatch without migrations was blocked'
+
+DISPATCH_MIGRATION_OUTPUT=$SEMANTIC_ROOT/dispatch-migration-output
+run_dispatch deployed "$DEPLOYED_REVISION" "$BEFORE_REVISION" \
+  "$DISPATCH_MIGRATION_OUTPUT"
+assert_output "$DISPATCH_MIGRATION_OUTPUT" 'migration_changed=false' \
+  'dispatch with forward migrations must never request automatic Atlas'
+assert_output "$DISPATCH_MIGRATION_OUTPUT" 'deployment_blocked=true' \
+  'forward dispatch containing migrations was not blocked'
+
+DISPATCH_UNRELATED_OUTPUT=$SEMANTIC_ROOT/dispatch-unrelated-output
+run_dispatch deployed "$UNRELATED_REVISION" "$TARGET_REVISION" \
+  "$DISPATCH_UNRELATED_OUTPUT"
+assert_output "$DISPATCH_UNRELATED_OUTPUT" 'migration_changed=false' \
+  'unrelated dispatch revisions invented a migration'
+assert_output "$DISPATCH_UNRELATED_OUTPUT" 'deployment_blocked=true' \
+  'dispatch with an unprovable revision relationship was not blocked'
 
 for mode in registry-error missing server-missing inconsistent \
   server-inspect-error web-inspect-error; do
@@ -770,8 +801,8 @@ assert_output "$CURL_ARGS_FILE" '10' \
   'webhook connection timeout is not 10 seconds'
 assert_output "$CURL_ARGS_FILE" '--max-time' \
   'webhook did not configure a total timeout'
-assert_output "$CURL_ARGS_FILE" '120' \
-  'webhook total timeout is not 120 seconds'
+assert_output "$CURL_ARGS_FILE" '840' \
+  'webhook total timeout is not 840 seconds'
 
 DUMMY_PIN='sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 run_deploy "$DUMMY_PIN"

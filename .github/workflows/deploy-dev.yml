@@ -115,10 +115,26 @@ jobs:
                   [ "$server_deployed_revision" = "$web_deployed_revision" ]; then
                   deployed_revision=$server_deployed_revision
                   if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-                    if [ "$deployed_revision" = "$target_sha" ]; then
+                    if ! git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null ||
+                      ! git cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+                      echo "dispatch revision objects are unavailable; blocking deployment" >&2
+                    elif [ "$deployed_revision" = "$target_sha" ]; then
                       deployment_blocked=false
+                    elif git merge-base --is-ancestor "$target_sha" "$deployed_revision"; then
+                      deployment_blocked=false
+                    elif git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
+                      if git diff --quiet "$deployed_revision" "$target_sha" -- docker/atlas/migrations; then
+                        deployment_blocked=false
+                      else
+                        diff_status=$?
+                        if [ "$diff_status" -eq 1 ]; then
+                          echo "forward dispatch contains migrations; blocking deployment" >&2
+                        else
+                          echo "forward dispatch migration diff failed; blocking deployment" >&2
+                        fi
+                      fi
                     else
-                      echo "dispatch target does not match the current dev image revision; blocking deployment" >&2
+                      echo "dispatch revision relationship is unavailable; blocking deployment" >&2
                     fi
                   elif git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
                     git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
@@ -397,7 +413,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     needs: promote
     if: ${{ needs.promote.result == 'success' }}
     env:
@@ -415,7 +431,7 @@ jobs:
             --silent
             --show-error
             --connect-timeout 10
-            --max-time 120
+            --max-time 840
             --request POST
             --header 'Content-Type: application/json'
           )
