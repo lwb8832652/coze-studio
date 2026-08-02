@@ -178,15 +178,21 @@ git rev-list --left-right --count origin/dev...dev
 仓库启用 dev 自动发布后，第二次报告还必须明确列出：
 
 - 目标远程分支 `origin/dev` 和待推送的完整目标 SHA；
-- 目标 SHA 的文件范围、验证结果以及是否包含数据库 migration；
+- 目标 SHA 的文件范围、验证结果，以及每个新增或修改的 migration 文件；没有
+  migration 时也要明确写出；
+- 每个 migration 对远程 dev 数据库的预期 forward apply 副作用；
+- `ATLAS_URL` Repository Secret 已配置、远程 Atlas revision 基线与现有 schema
+  一致、GitHub-hosted Runner 可连接 dev 数据库这三项前提；报告不得包含 Secret 值；
 - 推送将触发的 ACR 前后端镜像构建、不可变标签、`dev` 标签晋级条件；
 - 宝塔 webhook 对 dev/预发布服务器的自动更新副作用；
-- migration push 只构建不可变镜像并进入 hold，不会自动 apply、晋级或部署。
+- workflow 对该 SHA 的 job 顺序，以及 migration 存在时自动 validate/apply、失败时
+  不晋级、不部署的行为。
 
 报告后停止。用户第二次明确确认只授权报告中 exact SHA 的 `origin/dev` 推送，
-以及该次 workflow 按报告条件产生的 ACR 和宝塔预发布副作用。该确认不授权生产
-发布、Atlas 或其他数据库 apply、数据库备份、down migration、人工回滚及其他
-服务器操作。
+以及该 push 触发的 dev Atlas forward apply、ACR 双镜像晋级和宝塔预发布部署。
+授权范围只包含报告逐项列出的 migration 和数据库副作用，不延伸到其他 SHA。
+该确认不授权生产发布、down migration、手工数据库操作、备份策略或配置变更、
+人工回滚及其他服务器操作。
 
 若 `origin/dev` 在任一审计或等待确认期间变化，当前确认失效。回到需求分支吸收
 新基准，并从第一次审计重新执行，不能只补一次远程竞态检查后继续推送。
@@ -206,7 +212,14 @@ git rev-parse dev
 开始。
 
 推送成功后找到该目标 SHA 对应的 `Publish and deploy dev images` Actions run，
-记录 run URL 和最终状态。无 migration 的发布应核对两张不可变镜像、两个 `dev`
-标签、宝塔调用及服务 revision；migration hold 应核对两张不可变镜像已构建、
-`dev` 标签未晋级且 webhook 未调用。这个核验不授权重跑 workflow、手工 dispatch、
-数据库操作或服务器修复；出现失败时先报告，再取得对应操作的单独授权。
+记录 run URL 和最终状态，并按顺序核对 `preflight`、两项 build、`verify-images`、
+`migrate`、`promote` 和 `deploy`。有 migration 时确认 `migrate` 已 validate/apply；
+无 migration 时确认它以 no-op 成功。随后核对两张 `:dev` 标签、宝塔调用、服务
+revision，并确认日志未回显 `ATLAS_URL` 的 DSN 值。Preflight 阻断时应看到
+`deployment-blocked` 明确失败，数据库、晋级和部署 job 均未继续。
+
+任何失败都先报告，不自动 dispatch、手工改库或修服务器。`migrate` 失败或
+`promote` 部分晋级时，获得对应恢复授权后只能在同一个 Actions run 使用
+`Re-run failed jobs`；不得新建 `workflow_dispatch` 绕过。两张标签已经晋级而
+`deploy` 失败时，获得授权后可以 dispatch 同一 SHA 重试部署。初始确认不自动授权
+这些重试操作。

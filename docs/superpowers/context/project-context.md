@@ -67,9 +67,22 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
 revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
 
-Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
-不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
-完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。
+Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线；自动迁移启用
+前，远程 dev schema 和 Atlas revision 历史必须与 migration 目录一致。Preflight
+分开输出 `migration_changed` 与 `deployment_blocked`。可验证的 push 若确有
+migration，会在不可变镜像验证后自动执行 Atlas；基线、Git 关系或 diff 无法证明
+时 fail closed，`deployment-blocked` job 明确失败。
+
+`ATLAS_URL` 只允许配置为 GitHub Actions Repository Secret。当前 `migrate` job
+没有 GitHub Environment；`.github/atlas-dev.hcl` 通过 `getenv("ATLAS_URL")` 读取
+DSN，workflow 通过 `docker run --env ATLAS_URL` 传递变量名，不把 DSN 值放入宿主机
+命令参数。Atlas 成功后才允许晋级和部署。
+
+`workflow_dispatch` 不执行 Atlas 或 down migration，只允许重试当前 revision、
+回滚到其祖先，或前向重放不含 migration 的后代；前向含 migration、关系不可证明
+或双 revision 异常时阻断。Migration 或部分晋级失败时在同一个 Actions run 使用
+`Re-run failed jobs`；双标签已晋级而部署失败时可 dispatch 同一 SHA。Forward
+migration 必须兼容暂时继续运行的旧应用。
 
 该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
 Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚

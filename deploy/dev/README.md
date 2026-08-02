@@ -31,12 +31,28 @@
 | Variable | `ACR_NAMESPACE` | 两个镜像仓库所在命名空间 |
 | Secret | `ACR_USERNAME` | Actions 推送账号 |
 | Secret | `ACR_PASSWORD` | Actions 推送凭据 |
+| Secret（Repository） | `ATLAS_URL` | Atlas MySQL URL，仅用于自动迁移 dev 数据库 |
 | Secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
 | Secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
 | Variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
 
-Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。不要配置 SSH 私钥、数据库
-连接串或 `app.env` 内容。
+Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。`ATLAS_URL` 必须配置为
+GitHub Actions Repository Secret，不能配置为 Variable 或 Environment Secret。
+当前 `migrate` job 没有声明 GitHub Environment，因此 Environment Secret 不会生效。
+URL 使用以下占位格式，不要在仓库中填写真实值：
+
+```text
+mysql://USER:URL_ENCODED_PASSWORD@HOST:PORT/DATABASE
+```
+
+密码中的保留字符必须做 URL 编码。数据库账号只授予目标 dev schema 执行仓库
+migration 所需的最小权限，不使用云数据库管理账号，也不授予其他数据库权限。
+不要把 `ATLAS_URL` 复制到 Variables、`app.env`、命令日志或工单。
+
+`.github/atlas-dev.hcl` 通过 `getenv("ATLAS_URL")` 读取 DSN。Workflow 只在
+`migrate` step 注入 Secret，并通过 `docker run --env ATLAS_URL` 传给 Atlas 容器；
+宿主机命令参数只包含环境变量名，不包含 DSN 值。不要配置 SSH 私钥或把
+`app.env` 内容放入 GitHub。
 
 优先为宝塔 webhook 配置与域名匹配、受公共 CA 信任的证书，此时不要设置
 `BAOTA_WEBHOOK_PINNED_PUBKEY`。如果必须使用宝塔自签名证书，生成并核对当前服务端
@@ -259,56 +275,86 @@ location / {
 
 ## 发布流程
 
+`origin/dev` push 的正常 job 顺序固定为：
+
+```text
+preflight -> build-server/build-web -> verify-images -> migrate -> promote -> deploy
+```
+
+`build-server` 与 `build-web` 并行执行。`preflight` 分别输出
+`migration_changed` 和 `deployment_blocked`；未知、缺失或无法验证的状态不会被
+当成 migration。阻断状态会由 `deployment-blocked` job 明确失败，后续
+`verify-images`、`migrate`、`promote` 和 `deploy` 不执行。
+
+### 自动迁移前提
+
+启用自动迁移前，远程 dev 数据库必须已有可信的 Atlas revision 基线。日常发布时，
+现有 schema、已执行 migration 和 revision 记录必须与当前两张已晋级 `:dev` 镜像的
+revision 一致；首次没有 `:dev` 镜像时，则必须与经过校验的 push `before` 一致。
+目标 SHA 新增的文件才可以作为 pending forward migration 执行。若数据库已有
+schema 但缺少或不匹配这份 revision 历史，先做一次受控人工 baseline。自动任务
+不得用 migration 目录重建已有 schema。
+
+GitHub-hosted Runner 还必须能够连接远程 dev MySQL。`ATLAS_URL` 缺失、网络不可达、
+目录 validate 失败或 apply 失败都会终止 `migrate`；两张 `:dev` 标签不晋级，宝塔
+webhook 不调用，服务器继续运行旧镜像。Workflow 不调用数据库备份 API，腾讯云
+备份策略独立配置和核验。
+
 ### 首次部署
 
-首次自动启动前，确认远程数据库 schema 已经与 push 前的 `dev` 代码一致。随后：
+完成上述 Atlas revision baseline 后，首次 push 也按完整 job 顺序执行：
 
-1. 推送不含 `docker/atlas/migrations/**` 变化的目标提交到 `origin/dev`。
+1. 推送目标提交到 `origin/dev`。首次 push 可以包含新的 forward migration。
 2. Actions 确认两张 `:dev` manifest 都不存在后，以 push 前 SHA 检查本次迁移
    变化，并构建、推送 `coze-server:dev-<full-sha>` 和
    `coze-web:dev-<full-sha>`。
-3. Workflow 验证两张不可变镜像和 OCI revision，自动晋级两个 `:dev` 标签，再
-   调用宝塔 webhook，无需手工运行 workflow。
-4. 检查 Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
+3. `verify-images` 确认两张不可变镜像的 OCI revision 都等于目标 SHA。
+4. 确有 migration 时，`migrate` 先 validate 目录，再自动 apply；没有 migration
+   时记录成功的 no-op。
+5. `migrate` 成功后，`promote` 晋级两张 `:dev` 标签，`deploy` 调用宝塔 webhook。
+6. 检查 Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
 
-如果首次 push 包含迁移，workflow 仍会进入 migration hold。先备份并手工执行
-Atlas，再使用同一完整 SHA 运行 `workflow_dispatch`。只有一张 `:dev` 缺失、
-registry 认证失败、超时或其他拉取错误也会保持 hold，不会被当作首次自动启动。
+只有一张 `:dev` manifest 缺失、registry 认证失败、镜像 inspect 失败或 push
+`before` 无法验证时，不进入首次启动路径。不可变镜像可能仍会构建，但
+`deployment-blocked` 会明确失败，数据库、`:dev` 标签和运行服务不变。
 
 ### 日常发布
 
-没有 migration 变化时，push workflow 从当前两张 `:dev` 的一致 revision 比较到
-目标 SHA。两个不可变镜像构建成功后，workflow 先拉取并确认两张镜像的 OCI
-revision 都等于目标 SHA，再依次晋级两个 `:dev` 标签并调用 webhook。服务器再次
-校验双 revision，共同更新两个服务，并在记录成功前核对两个容器实际运行的
-image ID 都是本次候选值。
+日常 push 使用相同的完整 job 顺序。`preflight` 要求当前两张 `:dev` 镜像具有相同
+且可验证的 revision，并证明该 revision 是目标 SHA 的祖先；随后比较完整区间内的
+`docker/atlas/migrations`。没有 migration 时 `migrate` 成功 no-op；确有 migration
+时自动 validate 和 apply。只有不可变镜像、Atlas 和双标签晋级都成功后才调用
+webhook。服务器会再次校验双 revision，共同更新两个服务，并在记录成功前核对
+两个容器的实际 image ID。
 
-### Migration hold
+进入 `dev` 的 forward migration 必须兼容发布前应用。Atlas 成功后，镜像晋级或
+宝塔部署仍可能失败，旧代码会在恢复完成前继续连接已经迁移的 schema。
 
-只要当前已晋级 SHA 到目标 SHA 之间包含 `docker/atlas/migrations` 变化，workflow
-就只构建不可变镜像，不更新 `:dev`，也不调用 webhook。A 被 hold 后，即使又推送
-不含 migration 的 B，比较区间仍从旧的已晋级 SHA 到 B，因此 B 继续 hold。
+### `workflow_dispatch` 边界
 
-在目标 SHA 的受控 checkout 中先校验 migration：
+`workflow_dispatch` 只重放已经构建、仍位于 `origin/dev` 历史中的完整 SHA；它不
+重新构建镜像，也不执行 Atlas 或 down migration。Preflight 先要求当前两张
+`:dev` 镜像的 revision 存在且一致，再按以下四类关系处理：
 
-```bash
-docker run --rm \
-  -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate validate --dir file:///migrations
-```
+| 目标 SHA 与当前 `dev` revision 的关系 | 结果 |
+| --- | --- |
+| 两者相同 | 允许重试已经晋级版本的部署 |
+| 目标 SHA 是当前 revision 的祖先 | 允许应用镜像回滚，不执行 down migration |
+| 目标 SHA 是当前 revision 的后代，且区间没有 migration | 允许前向重放 |
+| 前向区间含 migration、关系无法证明，或当前双 revision 异常 | 阻断并由 `deployment-blocked` 明确失败 |
 
-备份远程数据库并确认维护窗口后，由授权运维人员手工 apply：
+允许的 dispatch 仍会验证两张 `dev-<full-sha>` 不可变镜像及其 OCI revision，之后
+才晋级双标签并调用 webhook。
 
-```bash
-docker run --rm \
-  -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate apply --dir file:///migrations --url "$ATLAS_URL"
-```
+### 失败与重试
 
-`ATLAS_URL` 只存在于受控运维环境。apply 成功后，用同一目标 SHA 执行
-`workflow_dispatch`。Workflow 和服务器脚本都不会自动执行数据库 migration。
+- `migrate` 失败或 `promote` 只晋级了一张标签时，在同一个 Actions run 使用
+  `Re-run failed jobs`。不要新建 `workflow_dispatch` 绕过原 push；dispatch 不会
+  执行 Atlas，部分晋级还会因双 revision 不一致而被阻断。
+- 两张 `:dev` 标签都已晋级，但 `deploy` 的 webhook 或服务器部署失败时，可以对
+  同一 SHA 运行 `workflow_dispatch`。它只重新验证、晋级和部署，不执行 Atlas。
+- `deploy` job 的超时是 15 分钟。curl 连接超时为 10 秒，总请求窗口为 840 秒；
+  超时或非成功响应都会让 job 失败。
 
 ## 回滚
 
