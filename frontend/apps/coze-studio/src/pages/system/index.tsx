@@ -66,6 +66,7 @@ import {
   type BillingSectionKey,
 } from './billing-management-section';
 import { AnnouncementsSection } from './announcements';
+import { ObjectStorageSection } from './object-storage-section';
 
 const ADMIN_PAGE_SIZE = 20;
 
@@ -614,6 +615,9 @@ const SystemManagementPage = () => {
     }
     if (activeSection === 'announcements') {
       return <AnnouncementsSection />;
+    }
+    if (activeSection === 'object-storage') {
+      return <ObjectStorageSection />;
     }
     if (activeSection.startsWith('billing-')) {
       return (

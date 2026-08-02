@@ -23,6 +23,7 @@ import (
 
 	"gorm.io/gorm"
 
+	applicationobjectstorage "github.com/coze-dev/coze-studio/backend/application/objectstorage"
 	appsandbox "github.com/coze-dev/coze-studio/backend/application/sandbox"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
@@ -42,7 +43,8 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/imagex/impl/veimagex"
 	"github.com/coze-dev/coze-studio/backend/infra/orm/impl/mysql"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
-	storage "github.com/coze-dev/coze-studio/backend/infra/storage/impl"
+	storage "github.com/coze-dev/coze-studio/backend/infra/storage"
+	storageconfig "github.com/coze-dev/coze-studio/backend/infra/storage/config"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
@@ -70,15 +72,23 @@ type AppDependencies struct {
 func Init(ctx context.Context) (*AppDependencies, error) {
 	deps := &AppDependencies{}
 	var err error
-	deps.OSS, err = storage.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("init tos client failed, err=%w", err)
-	}
-
 	deps.DB, err = mysql.New()
 	if err != nil {
 		return nil, fmt.Errorf("init db failed, err=%w", err)
 	}
+
+	storageBootstrapper := applicationobjectstorage.NewBootstrapper(deps.DB)
+	storageBootstrapper.AllowHTTP = applicationobjectstorage.AllowHTTPFromEnv(os.Getenv)
+	storageRuntime, err := storageBootstrapper.Bootstrap(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("init object storage failed, err=%w", err)
+	}
+	deps.OSS = storageRuntime.Storage
+	applicationobjectstorage.SetDefaultService(applicationobjectstorage.NewService(applicationobjectstorage.ServiceComponents{
+		Repository: storageconfig.NewMySQLRepository(deps.DB),
+		Codec:      storageBootstrapper.Codec,
+		AllowHTTP:  storageBootstrapper.AllowHTTP,
+	}))
 
 	deps.CacheCli = redis.New()
 
@@ -108,7 +118,7 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 		return nil, fmt.Errorf("init es client failed, err=%w", err)
 	}
 
-	deps.ImageXClient, err = initImageX(ctx)
+	deps.ImageXClient, err = initImageX(storageRuntime.ImageX)
 	if err != nil {
 		return nil, fmt.Errorf("init imagex client failed, err=%w", err)
 	}
@@ -172,10 +182,13 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 	return deps, nil
 }
 
-func initImageX(ctx context.Context) (imagex.ImageX, error) {
+func initImageX(storageBacked imagex.ImageX) (imagex.ImageX, error) {
 	uploadComponentType := os.Getenv(consts.FileUploadComponentType)
 	if uploadComponentType != consts.FileUploadComponentTypeImagex {
-		return storage.NewImagex(ctx)
+		if storageBacked == nil {
+			return nil, fmt.Errorf("storage-backed imagex is not configured")
+		}
+		return storageBacked, nil
 	}
 
 	return veimagex.NewDefault()
