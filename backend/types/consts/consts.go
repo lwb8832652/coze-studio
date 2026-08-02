@@ -22,6 +22,7 @@ const (
 	RunMode            = "RUN_MODE"
 	MySQLDsn           = "MYSQL_DSN"
 	RedisAddr          = "REDIS_ADDR"
+	RedisDB            = "REDIS_DB"
 	VeImageXAK         = "VE_IMAGEX_AK"
 	VeImageXSK         = "VE_IMAGEX_SK"
 	VeImageXServerID   = "VE_IMAGEX_SERVER_ID"

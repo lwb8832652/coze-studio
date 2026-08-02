@@ -32,3 +32,20 @@ func TestSessionAuthAllowsPublicSiteConfigurationWithoutSession(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
 	require.Equal(t, "ok", string(response.Result().Body()))
 }
+
+func TestSessionAuthAllowsHealthzWithoutSession(t *testing.T) {
+	h := server.Default()
+	h.Use(RequestInspectorMW())
+	h.Use(SessionAuthMWWithValidator(func(context.Context, string) (*userentity.Session, error) {
+		t.Fatal("health check must not validate a session")
+		return nil, nil
+	}))
+	h.GET("/healthz", func(_ context.Context, c *app.RequestContext) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	response := ut.PerformRequest(h.Engine, http.MethodGet, "/healthz", nil)
+
+	require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
+	require.Equal(t, "ok", string(response.Result().Body()))
+}

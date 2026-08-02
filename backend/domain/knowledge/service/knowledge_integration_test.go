@@ -103,7 +103,10 @@ func (suite *KnowledgeTestSuite) SetupSuite() {
 		panic(err)
 	}
 
-	cacheCli := redis.New()
+	cacheCli, err := redis.New(ctx)
+	if err != nil {
+		panic(err)
+	}
 	idGenSVC, err := idgen.New(cacheCli)
 	if err != nil {
 		panic(err)

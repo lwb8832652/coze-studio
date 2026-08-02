@@ -90,7 +90,10 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 		AllowHTTP:  storageBootstrapper.AllowHTTP,
 	}))
 
-	deps.CacheCli = redis.New()
+	deps.CacheCli, err = redis.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("init redis failed, err=%w", err)
+	}
 
 	deps.IDGenSVC, err = idgen.New(deps.CacheCli)
 	if err != nil {

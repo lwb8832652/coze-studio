@@ -45,12 +45,67 @@ normalize_revision() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+is_ipv4() {
+  local address=${1:-}
+  local octet
+  local -a octets
+
+  [[ "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  IFS=. read -r -a octets <<< "$address"
+  [ "${#octets[@]}" -eq 4 ] || return 1
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+    ((10#$octet <= 255)) || return 1
+  done
+}
+
+is_tcp_port() {
+  local port=${1:-}
+
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  ((10#$port <= 65535))
+}
+
+web_health_base_url() {
+  local host=${WEB_BIND_IP:-0.0.0.0}
+  local port=${WEB_PORT:-8888}
+
+  if [ "$host" = 0.0.0.0 ]; then
+    host=127.0.0.1
+  fi
+  printf 'http://%s:%s' "$host" "$port"
+}
+
 docker_cmd() {
   docker "$@"
 }
 
 compose_cmd() {
   docker compose --env-file "$DEPLOY_ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+service_health_status() {
+  local service=$1
+  local container_id status
+
+  if ! container_id=$(compose_cmd ps -q "$service"); then
+    return 1
+  fi
+  [ -n "$container_id" ] || return 1
+  if ! status=$(docker_cmd inspect --format '{{.State.Health.Status}}' "$container_id"); then
+    return 1
+  fi
+  [ -n "$status" ] || return 1
+  printf '%s\n' "$status"
+}
+
+service_is_healthy() {
+  local status
+
+  if ! status=$(service_health_status "$1"); then
+    return 1
+  fi
+  [ "$status" = healthy ]
 }
 
 container_image_id() {
@@ -88,10 +143,29 @@ health_body_matches() {
   fi
 }
 
+health_checks_pass() {
+  local expected_revision=${1:-}
+  local backend_body web_body base_url
+
+  service_is_healthy nsqd || return 1
+
+  if ! backend_body=$(compose_cmd exec -T coze-server curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8888/healthz 2>/dev/null); then
+    return 1
+  fi
+  health_body_matches "$backend_body" "$expected_revision" || return 1
+
+  base_url=$(web_health_base_url)
+  if ! web_body=$(curl --fail --silent --show-error --max-time 5 "$base_url/healthz" 2>/dev/null); then
+    return 1
+  fi
+  health_body_matches "$web_body" "$expected_revision" || return 1
+  curl --fail --silent --show-error --max-time 5 --output /dev/null "$base_url/" 2>/dev/null
+}
+
 wait_for_health() {
   local expected_revision=${1:-}
   local timeout=${DEPLOY_HEALTH_TIMEOUT_SECONDS:-120}
-  local deadline backend_body web_body
+  local deadline
 
   [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || {
     error 'DEPLOY_HEALTH_TIMEOUT_SECONDS must be a positive integer'
@@ -100,13 +174,7 @@ wait_for_health() {
   deadline=$((SECONDS + timeout))
 
   while ((SECONDS < deadline)); do
-    backend_body=
-    web_body=
-    if backend_body=$(compose_cmd exec -T coze-server curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8888/healthz 2>/dev/null) &&
-      health_body_matches "$backend_body" "$expected_revision" &&
-      web_body=$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8888/healthz 2>/dev/null) &&
-      health_body_matches "$web_body" "$expected_revision" &&
-      curl --fail --silent --show-error --max-time 5 --output /dev/null http://127.0.0.1:8888/ 2>/dev/null; then
+    if health_checks_pass "$expected_revision"; then
       return 0
     fi
     sleep 2
@@ -423,6 +491,18 @@ main() {
   # shellcheck disable=SC1090
   source "$DEPLOY_ENV_FILE"
   set +a
+
+  WEB_BIND_IP=${WEB_BIND_IP:-0.0.0.0}
+  WEB_PORT=${WEB_PORT:-8888}
+  if ! is_ipv4 "$WEB_BIND_IP"; then
+    error 'WEB_BIND_IP must be a valid IPv4 address'
+    return 1
+  fi
+  if ! is_tcp_port "$WEB_PORT"; then
+    error 'WEB_PORT must be an integer from 1 to 65535'
+    return 1
+  fi
+  export WEB_BIND_IP WEB_PORT
 
   if [ -z "${ACR_REGISTRY:-}" ] || [ -z "${ACR_NAMESPACE:-}" ]; then
     error 'ACR_REGISTRY and ACR_NAMESPACE are required'

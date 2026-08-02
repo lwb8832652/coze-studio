@@ -36,6 +36,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/oceanbase"
 	"github.com/coze-dev/coze-studio/backend/pkg/envkey"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 type Manager = searchstore.Manager
@@ -61,6 +62,9 @@ func getVectorStore(ctx context.Context, conf *config.KnowledgeConfig) (searchst
 	vsType := strings.ToLower(strings.TrimSpace(os.Getenv("VECTOR_STORE_TYPE")))
 
 	switch vsType {
+	case "":
+		logs.Warnf("VECTOR_STORE_TYPE is not configured; semantic vector retrieval is disabled")
+		return newNoopVectorManager(), nil
 	case "none", "noop", "disabled":
 		return newNoopVectorManager(), nil
 	case "milvus":

@@ -402,12 +402,233 @@ test_first_deployment_failure_cannot_claim_rollback() (
     'first deployment failure attempted to create rollback tags'
 )
 
+test_web_health_base_url_uses_configured_host_port() (
+  WEB_BIND_IP=0.0.0.0
+  WEB_PORT=18888
+  actual=$(web_health_base_url) || fail 'wildcard web health URL could not be built'
+  [ "$actual" = 'http://127.0.0.1:18888' ] || \
+    fail "wildcard web health URL used the wrong host or port: $actual"
+
+  WEB_BIND_IP=192.0.2.10
+  WEB_PORT=18889
+  actual=$(web_health_base_url) || fail 'specific web health URL could not be built'
+  [ "$actual" = 'http://192.0.2.10:18889' ] || \
+    fail "specific web health URL used the wrong host or port: $actual"
+)
+
+test_web_health_base_url_defaults_port() (
+  WEB_BIND_IP=192.0.2.10
+  unset WEB_PORT
+
+  actual=$(web_health_base_url) || fail 'default web health URL could not be built'
+  [ "$actual" = 'http://192.0.2.10:8888' ] || \
+    fail "web health URL did not default to port 8888: $actual"
+)
+
+test_health_checks_stop_at_unhealthy_nsqd() (
+  case_dir=$(mktemp -d "$TEST_ROOT/unhealthy-nsqd.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+
+  compose_cmd() {
+    {
+      printf 'compose'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    if [ "$#" -eq 3 ] && [ "$1" = ps ] && [ "$2" = -q ] && [ "$3" = nsqd ]; then
+      printf 'nsqd-container\n'
+    fi
+  }
+
+  docker_cmd() {
+    {
+      printf 'docker'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    printf 'starting\n'
+  }
+
+  curl() {
+    {
+      printf 'curl'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+  }
+
+  if health_checks_pass "$REV_A"; then
+    fail 'health checks passed while nsqd was unhealthy'
+  fi
+  assert_file_contains "$command_log" '^compose ps -q nsqd$' \
+    'health checks did not inspect the nsqd service first'
+  assert_file_contains "$command_log" '^docker inspect --format \{\{\.State\.Health\.Status\}\} nsqd-container$' \
+    'health checks did not inspect the nsqd container health'
+  assert_file_not_contains "$command_log" '^compose exec ' \
+    'health checks called the backend while nsqd was unhealthy'
+  assert_file_not_contains "$command_log" '^curl ' \
+    'health checks called the web endpoint while nsqd was unhealthy'
+)
+
+test_service_health_status_rejects_empty_inspect_output() (
+  case_dir=$(mktemp -d "$TEST_ROOT/empty-nsqd-health.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+
+  compose_cmd() {
+    [ "$#" -eq 3 ] && [ "$1" = ps ] && [ "$2" = -q ] && [ "$3" = nsqd ] || return 1
+    printf 'nsqd-container\n'
+  }
+
+  docker_cmd() {
+    {
+      printf 'docker'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+  }
+
+  if service_health_status nsqd; then
+    fail 'service health status accepted empty docker inspect output'
+  fi
+  assert_file_contains "$command_log" '^docker inspect --format \{\{\.State\.Health\.Status\}\} nsqd-container$' \
+    'service health status used the wrong docker inspect template'
+)
+
+test_health_checks_use_configured_web_url() (
+  case_dir=$(mktemp -d "$TEST_ROOT/custom-web-health-url.XXXXXX")
+  url_log=$case_dir/urls.log
+  WEB_BIND_IP=192.0.2.10
+  WEB_PORT=18888
+  : > "$url_log"
+
+  service_is_healthy() {
+    [ "$1" = nsqd ]
+  }
+
+  compose_cmd() {
+    [ "$1" = exec ] && [ "$2" = -T ] && [ "$3" = coze-server ] || return 1
+    printf '{"status":"ok","revision":"%s"}\n' "$REV_A"
+  }
+
+  curl() {
+    url=${!#}
+    printf '%s\n' "$url" >> "$url_log"
+    case "$url" in
+      'http://192.0.2.10:18888/healthz')
+        printf '{"status":"ok","revision":"%s"}\n' "$REV_A"
+        ;;
+      'http://192.0.2.10:18888/') return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  health_checks_pass "$REV_A" || fail 'health checks rejected healthy mocked services'
+  actual=$(<"$url_log")
+  expected=$'http://192.0.2.10:18888/healthz\nhttp://192.0.2.10:18888/'
+  [ "$actual" = "$expected" ] || \
+    fail "health checks used unexpected web URLs: $actual"
+)
+
+test_wait_for_health_retries_then_succeeds() (
+  DEPLOY_HEALTH_TIMEOUT_SECONDS=10
+  SECONDS=0
+  attempts=0
+  sleeps=0
+
+  health_checks_pass() {
+    [ "$1" = "$REV_A" ] || fail 'wait_for_health forwarded the wrong revision'
+    attempts=$((attempts + 1))
+    [ "$attempts" -eq 2 ]
+  }
+
+  sleep() {
+    [ "$1" = 2 ] || fail 'wait_for_health used the wrong retry interval'
+    sleeps=$((sleeps + 1))
+    SECONDS=$((SECONDS + 2))
+  }
+
+  wait_for_health "$REV_A" || fail 'wait_for_health rejected a successful retry'
+  [ "$attempts" -eq 2 ] || fail "wait_for_health made $attempts attempts before success"
+  [ "$sleeps" -eq 1 ] || fail "wait_for_health slept $sleeps times before success"
+)
+
+test_wait_for_health_stops_after_timeout() (
+  case_dir=$(mktemp -d "$TEST_ROOT/health-timeout.XXXXXX")
+  DEPLOY_HEALTH_TIMEOUT_SECONDS=5
+  SECONDS=0
+  attempts=0
+  sleeps=0
+
+  health_checks_pass() {
+    [ "$1" = "$REV_A" ] || fail 'wait_for_health forwarded the wrong revision'
+    attempts=$((attempts + 1))
+    return 1
+  }
+
+  sleep() {
+    [ "$1" = 2 ] || fail 'wait_for_health used the wrong retry interval'
+    sleeps=$((sleeps + 1))
+    SECONDS=$((SECONDS + 2))
+  }
+
+  if wait_for_health "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'wait_for_health succeeded after persistent failures'
+  fi
+  [ "$attempts" -eq 3 ] || fail "wait_for_health made $attempts attempts before timeout"
+  [ "$sleeps" -eq 3 ] || fail "wait_for_health slept $sleeps times before timeout"
+  assert_file_contains "$case_dir/output.log" 'health checks did not pass within 5s' \
+    'wait_for_health did not report the configured timeout'
+)
+
+test_is_ipv4_rejects_malformed_addresses() (
+  for value in \
+    '192.0.2' \
+    '192.0.2.10.1' \
+    '+192.0.2.10' \
+    '192.-1.2.10' \
+    ' 192.0.2.10' \
+    '192.0.2.10 ' \
+    '192. 0.2.10' \
+    '01.2.3.4' \
+    '1.02.3.4' \
+    '1.2.03.4' \
+    '1.2.3.04' \
+    '00.0.0.0' \
+    '256.0.0.1' \
+    '1.2.3.999' \
+    '1..2.3'; do
+    if is_ipv4 "$value"; then
+      fail "is_ipv4 accepted malformed address: $value"
+    fi
+  done
+)
+
+test_is_tcp_port_rejects_non_strict_values() (
+  for value in \
+    '0' \
+    '+1' \
+    '-1' \
+    ' 80' \
+    '80 ' \
+    '65536' \
+    '01' \
+    '00080'; do
+    if is_tcp_port "$value"; then
+      fail "is_tcp_port accepted invalid value: $value"
+    fi
+  done
+)
+
 write_direct_case_files() {
   case_dir=$1
   mkdir -p -- "$case_dir/bin"
   printf '%s\n' \
     'ACR_REGISTRY=registry.example' \
     'ACR_NAMESPACE=example' \
+    'WEB_BIND_IP=0.0.0.0' \
+    'WEB_PORT=8888' \
     'ACR_PASSWORD=sentinel-acr-password' \
     'APP_SECRET=sentinel-app-secret' \
     'BAOTA_WEBHOOK_TOKEN=sentinel-webhook-token' > "$case_dir/deploy.env"
@@ -478,6 +699,60 @@ test_invalid_sha_fails_before_docker() (
   [ ! -e "$marker" ] || fail 'invalid SHA reached Docker'
   assert_file_contains "$case_dir/output.log" 'expected zero arguments or one full 40-hex SHA' \
     'invalid SHA error was not reported'
+)
+
+test_invalid_web_bind_ip_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/invalid-web-bind-ip.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_BIND_IP=999.0.0.1\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'invalid WEB_BIND_IP unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'invalid WEB_BIND_IP reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_BIND_IP must be a valid IPv4 address' \
+    'invalid WEB_BIND_IP error was not reported'
+)
+
+test_leading_zero_web_bind_ip_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/leading-zero-web-bind-ip.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_BIND_IP=01.2.3.4\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'leading-zero WEB_BIND_IP unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'leading-zero WEB_BIND_IP reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_BIND_IP must be a valid IPv4 address' \
+    'leading-zero WEB_BIND_IP error was not reported'
+)
+
+test_invalid_web_port_fails_before_docker() (
+  case_dir=$(mktemp -d "$TEST_ROOT/invalid-web-port.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'WEB_PORT=65536\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'invalid WEB_PORT unexpectedly succeeded'
+  fi
+  [ ! -e "$marker" ] || fail 'invalid WEB_PORT reached Docker'
+  assert_file_contains "$case_dir/output.log" 'WEB_PORT must be an integer from 1 to 65535' \
+    'invalid WEB_PORT error was not reported'
 )
 
 test_logs_never_disclose_secret_sentinels() (
@@ -579,8 +854,20 @@ run_test 'health failure rolls back atomically' test_health_failure_rolls_back_b
 run_test 'success record failure rolls back atomically' test_success_record_failure_rolls_back_both_images
 run_test 'rollback verifies restored image identities' test_rollback_rejects_restored_container_image_mismatch
 run_test 'first deployment failure has no fake rollback' test_first_deployment_failure_cannot_claim_rollback
+run_test 'web health URL uses the configured host port' test_web_health_base_url_uses_configured_host_port
+run_test 'web health URL defaults to port 8888' test_web_health_base_url_defaults_port
+run_test 'unhealthy nsqd blocks application health checks' test_health_checks_stop_at_unhealthy_nsqd
+run_test 'empty inspect health status is rejected' test_service_health_status_rejects_empty_inspect_output
+run_test 'health checks use the configured web URL' test_health_checks_use_configured_web_url
+run_test 'health wait retries transient failures' test_wait_for_health_retries_then_succeeds
+run_test 'health wait stops after persistent failures' test_wait_for_health_stops_after_timeout
+run_test 'leading-zero web bind IP fails before Docker' test_leading_zero_web_bind_ip_fails_before_docker
+run_test 'malformed IPv4 addresses are rejected' test_is_ipv4_rejects_malformed_addresses
+run_test 'invalid TCP port forms are rejected' test_is_tcp_port_rejects_non_strict_values
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction
 run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker
+run_test 'invalid web bind IP fails before Docker' test_invalid_web_bind_ip_fails_before_docker
+run_test 'invalid web port fails before Docker' test_invalid_web_port_fails_before_docker
 run_test 'logs do not disclose secret sentinels' test_logs_never_disclose_secret_sentinels
 run_test 'success record is atomic and complete' test_record_success_is_atomic_and_complete
 run_test 'success record cleans failed temporary file' test_record_success_cleans_temporary_file_when_finalize_fails
