@@ -415,7 +415,7 @@ const ObjectStorageConfigDialog = ({
             <span>下载域名</span>
             <input
               aria-label="对象存储下载域名"
-              placeholder="https://assets.example.com"
+              placeholder="assets.example.com"
               value={draft.download_domain}
               onChange={event =>
                 updateDraft('download_domain', event.target.value)

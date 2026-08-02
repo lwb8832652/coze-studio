@@ -279,7 +279,7 @@ describe('SystemManagementPage', () => {
           provider_type: mockObjectStorageProviderType.QINIU,
           config: {
             bucket: 'coze-assets',
-            download_domain: 'https://assets.example.test',
+            download_domain: 'assets.example.test',
             region: 'z0',
           },
           credential_configured: true,
@@ -848,6 +848,26 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('DeepSeek V4 Pro');
     expect(container.textContent).toContain('deepseek-v4-pro');
     expect(container.textContent).toContain('添加模型');
+  });
+
+  it('guides qiniu download domains without URL schemes', async () => {
+    mockUseParams.mockReturnValue({ section: 'object-storage' });
+
+    await renderPage();
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="新增对象存储配置"]',
+        )!,
+      );
+    });
+
+    const downloadDomainInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="对象存储下载域名"]',
+    );
+    expect(downloadDomainInput?.placeholder).toBe('assets.example.com');
+    expect(downloadDomainInput?.placeholder).not.toContain('://');
   });
 
   it('creates and activates object storage configs from the system section', async () => {
