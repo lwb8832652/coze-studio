@@ -37,7 +37,7 @@ import (
 type huaweiOBSClient struct {
 	client         *obs.ObsClient
 	streamOpener   huaweiOBSObjectStreamOpener
-	readinessCheck func() error
+	readinessCheck func(context.Context) error
 	bucketName     string
 }
 
@@ -91,7 +91,11 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderHuaweiOBS, cfg, domain.ValidationMode{})
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderHuaweiOBS, cfg, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +110,10 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 }
 
 func getHuaweiOBSClient(ctx context.Context, ak, sk, bucketName, endpoint, region string) (*huaweiOBSClient, error) {
+	return getHuaweiOBSClientWithReadinessHTTPClient(ctx, ak, sk, bucketName, endpoint, region, nil)
+}
+
+func getHuaweiOBSClientWithReadinessHTTPClient(ctx context.Context, ak, sk, bucketName, endpoint, region string, readinessHTTPClient *http.Client) (*huaweiOBSClient, error) {
 	if err := ctxErr(ctx); err != nil {
 		return nil, err
 	}
@@ -116,13 +124,40 @@ func getHuaweiOBSClient(ctx context.Context, ak, sk, bucketName, endpoint, regio
 	c := &huaweiOBSClient{
 		client:       client,
 		streamOpener: &huaweiOBSSDKObjectStreamOpener{client: client},
-		readinessCheck: func() error {
-			_, err := client.HeadBucket(bucketName)
+		readinessCheck: func(checkCtx context.Context) error {
+			readinessClient, err := newHuaweiOBSReadinessClient(checkCtx, ak, sk, endpoint, region, readinessHTTPClient)
+			if err != nil {
+				return err
+			}
+			defer readinessClient.Close()
+			_, err = readinessClient.HeadBucket(bucketName)
 			return err
 		},
 		bucketName: bucketName,
 	}
 	return c, nil
+}
+
+func newHuaweiOBSReadinessClient(ctx context.Context, ak, sk, endpoint, region string, httpClient *http.Client) (*obs.ObsClient, error) {
+	if httpClient != nil {
+		return obs.New(
+			ak,
+			sk,
+			endpoint,
+			obs.WithRegion(region),
+			obs.WithRequestContext(ctx),
+			obs.WithMaxRetryCount(0),
+			obs.WithHttpClient(httpClient),
+		)
+	}
+	return obs.New(
+		ak,
+		sk,
+		endpoint,
+		obs.WithRegion(region),
+		obs.WithRequestContext(ctx),
+		obs.WithMaxRetryCount(0),
+	)
 }
 
 func (c *huaweiOBSClient) CheckReadiness(ctx context.Context) error {
@@ -132,7 +167,7 @@ func (c *huaweiOBSClient) CheckReadiness(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := c.readinessCheck(); err != nil {
+	if err := c.readinessCheck(ctx); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
 		}

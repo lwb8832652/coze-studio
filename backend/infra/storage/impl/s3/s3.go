@@ -82,9 +82,13 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
 	runtimeConfig := cfg
 	runtimeConfig.Endpoint = ""
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderAWSS3, runtimeConfig, domain.ValidationMode{})
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderAWSS3, runtimeConfig, mode)
 	if err != nil {
 		return nil, err
 	}

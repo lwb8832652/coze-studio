@@ -214,12 +214,17 @@ func TestMySQLRepositoryUpdateHealthDoesNotBumpVersion(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	checkedAt := time.Now().UTC().Truncate(time.Millisecond)
-	err = repository.UpdateHealth(ctx, created.ID, domain.Health{
-		Status:    domain.HealthHealthy,
-		Code:      "OK",
-		Message:   "connected",
-		LatencyMS: 37,
-		CheckedAt: &checkedAt,
+	err = repository.UpdateHealth(ctx, UpdateHealthInput{
+		ID:                      created.ID,
+		ExpectedVersion:         created.Version,
+		ExpectedRuntimeRevision: created.RuntimeRevision,
+		Health: domain.Health{
+			Status:    domain.HealthHealthy,
+			Code:      "OK",
+			Message:   "connected",
+			LatencyMS: 37,
+			CheckedAt: &checkedAt,
+		},
 	})
 	if err != nil {
 		t.Fatalf("UpdateHealth() error = %v", err)
@@ -238,6 +243,44 @@ func TestMySQLRepositoryUpdateHealthDoesNotBumpVersion(t *testing.T) {
 		after.Health.Message != "connected" || after.Health.LatencyMS != 37 ||
 		after.Health.CheckedAt == nil || !after.Health.CheckedAt.Equal(checkedAt) {
 		t.Fatalf("health = %#v", after.Health)
+	}
+}
+
+func TestMySQLRepositoryUpdateHealthRejectsStaleConfigRevision(t *testing.T) {
+	repository, _ := newObjectStorageSQLiteRepository(t)
+	ctx := context.Background()
+	created, err := repository.Create(ctx, validRepositoryConfig("minio-a"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	nextConfig := created.PublicConfig
+	nextConfig.Bucket = "updated-bucket"
+	if _, err = repository.Update(ctx, UpdateConfigInput{
+		ID:               created.ID,
+		ExpectedVersion:  created.Version,
+		Name:             created.Name,
+		PublicConfig:     nextConfig,
+		CredentialSecret: created.CredentialSecret,
+		RuntimeChanged:   true,
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	err = repository.UpdateHealth(ctx, UpdateHealthInput{
+		ID:                      created.ID,
+		ExpectedVersion:         created.Version,
+		ExpectedRuntimeRevision: created.RuntimeRevision,
+		Health:                  domain.Health{Status: domain.HealthHealthy, Code: "OK"},
+	})
+	if !errors.Is(err, domain.ErrVersionConflict) {
+		t.Fatalf("UpdateHealth(stale config) error = %v", err)
+	}
+	after, err := repository.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if after.Health.Status != domain.HealthUnknown {
+		t.Fatalf("stale health persisted: %+v", after.Health)
 	}
 }
 

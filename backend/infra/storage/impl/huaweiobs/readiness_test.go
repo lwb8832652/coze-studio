@@ -19,7 +19,10 @@ package huaweiobs
 import (
 	"context"
 	"errors"
+	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/contract"
@@ -30,7 +33,7 @@ type huaweiOBSReadinessRecorder struct {
 	err error
 }
 
-func (r *huaweiOBSReadinessRecorder) HeadBucket() error {
+func (r *huaweiOBSReadinessRecorder) HeadBucket(context.Context) error {
 	r.HeadBucketCalls++
 	return r.err
 }
@@ -49,6 +52,51 @@ func TestCheckReadinessCanceledContextDoesNotCallHuaweiSDK(t *testing.T) {
 	if recorder.HeadBucketCalls != 0 {
 		t.Fatalf("HeadBucketCalls = %d, want 0", recorder.HeadBucketCalls)
 	}
+}
+
+func TestHuaweiOBSReadinessCancelsInFlightSDKRequest(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		startedOnce.Do(func() { close(started) })
+		select {
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		case <-release:
+			return nil, errors.New("test request released")
+		}
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := getHuaweiOBSClientWithReadinessHTTPClient(ctx, "ak", "sk", "bucket", "http://obs.example.test", "", httpClient)
+	if err != nil {
+		t.Fatalf("getHuaweiOBSClient() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- client.CheckReadiness(ctx) }()
+
+	<-started
+	cancel()
+	select {
+	case err = <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("CheckReadiness(canceled in flight) error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		unblock()
+		<-done
+		t.Fatal("CheckReadiness did not cancel the in-flight Huawei OBS request")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestCheckReadinessMapsHuaweiSDKError(t *testing.T) {

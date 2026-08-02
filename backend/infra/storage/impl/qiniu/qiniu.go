@@ -92,7 +92,11 @@ func New(ctx context.Context, ak, sk, bucketName, downloadDomain string, useHTTP
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderQiniu, cfg, domain.ValidationMode{})
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderQiniu, cfg, mode)
 	if err != nil {
 		return nil, err
 	}

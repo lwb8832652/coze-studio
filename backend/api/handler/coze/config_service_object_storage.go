@@ -478,11 +478,13 @@ func decodeObjectStorageJSON(c *app.RequestContext, target any) error {
 	if contentLength := c.Request.Header.ContentLength(); contentLength > maxObjectStorageBodyBytes {
 		return errObjectStorageBodyTooLarge
 	}
-	if !c.Request.IsBodyStream() {
-		return domain.ErrConfigInvalid
+	var body []byte
+	if c.Request.IsBodyStream() {
+		body, err = io.ReadAll(io.LimitReader(c.Request.BodyStream(), maxObjectStorageBodyBytes+1))
+		_ = c.Request.CloseBodyStream()
+	} else {
+		body = c.Request.Body()
 	}
-	body, err := io.ReadAll(io.LimitReader(c.Request.BodyStream(), maxObjectStorageBodyBytes+1))
-	_ = c.Request.CloseBodyStream()
 	if err != nil || len(body) == 0 {
 		return domain.ErrConfigInvalid
 	}

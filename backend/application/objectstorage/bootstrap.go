@@ -18,6 +18,7 @@ package objectstorage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -90,6 +91,8 @@ func (b *Bootstrapper) Bootstrap(ctx context.Context) (*BootstrapResult, error) 
 		if err != nil {
 			return nil, err
 		}
+		// Rescue runtime must survive a missing codec, but admin writes can use one when configured.
+		_, _ = b.codec()
 		return b.bootstrapEnvRescue(ctx, envConfig)
 	}
 	return b.bootstrapDatabase(ctx)
@@ -100,6 +103,9 @@ func (b *Bootstrapper) bootstrapEnvRescue(ctx context.Context, envConfig storage
 		ProviderType: envConfig.ProviderType,
 		PublicConfig: envConfig.PublicConfig,
 		Credential:   envConfig.Credential,
+		ValidationMode: domain.ValidationMode{
+			AllowHTTP: b.AllowHTTP,
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -141,10 +147,20 @@ func (b *Bootstrapper) bootstrapDatabase(ctx context.Context) (*BootstrapResult,
 			PublicConfig: envConfig.PublicConfig,
 			Active:       true,
 		}, envConfig.Credential, codec)
+		if errors.Is(err, domain.ErrVersionConflict) {
+			active, err = b.Repository.GetActive(ctx)
+			if err == nil && active == nil {
+				err = domain.ErrPrimaryConfigMissing
+			}
+			if err == nil {
+				credential, err = codec.Decrypt(active.ID, active.ProviderType, storageconfig.CredentialAADVersion, active.CredentialSecret)
+			}
+		} else if err == nil {
+			credential = envConfig.Credential
+		}
 		if err != nil {
 			return nil, err
 		}
-		credential = envConfig.Credential
 	} else {
 		active, err = b.Repository.GetActive(ctx)
 		if err != nil {
@@ -164,6 +180,9 @@ func (b *Bootstrapper) bootstrapDatabase(ctx context.Context) (*BootstrapResult,
 		Credential:      credential,
 		ConfigID:        active.ID,
 		RuntimeRevision: active.RuntimeRevision,
+		ValidationMode: domain.ValidationMode{
+			AllowHTTP: b.AllowHTTP,
+		},
 	})
 	if err != nil {
 		return nil, err

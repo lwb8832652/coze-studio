@@ -110,6 +110,45 @@ func TestServiceTestDraftDoesNotPersistHealthWhenDraftDiffers(t *testing.T) {
 	}
 }
 
+func TestServiceTestRejectsStaleHealthAfterConcurrentConfigUpdate(t *testing.T) {
+	h := newServiceHarness()
+	existing := h.repository.seed(validDomainConfig(1, "minio", true))
+	h.codec.decryptCredential = domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"}
+	h.readiness.started = make(chan struct{})
+	h.readiness.release = make(chan struct{})
+
+	type testOutcome struct {
+		result *TestResult
+		err    error
+	}
+	done := make(chan testOutcome, 1)
+	go func() {
+		result, err := h.service.Test(context.Background(), TestRequest{
+			ID:              existing.ID,
+			ExpectedVersion: existing.Version,
+			ProviderType:    existing.ProviderType,
+			PublicConfig:    existing.PublicConfig,
+		})
+		done <- testOutcome{result: result, err: err}
+	}()
+
+	<-h.readiness.started
+	updated := h.repository.configs[existing.ID]
+	updated.Version++
+	updated.RuntimeRevision++
+	updated.PublicConfig.Bucket = "concurrently-updated"
+	h.repository.configs[existing.ID] = updated
+	close(h.readiness.release)
+
+	outcome := <-done
+	if !errors.Is(outcome.err, domain.ErrVersionConflict) {
+		t.Fatalf("Test(concurrent update) result=%+v error=%v", outcome.result, outcome.err)
+	}
+	if h.repository.healthUpdates != 0 || h.repository.configs[existing.ID].Health.Status != domain.HealthUnknown {
+		t.Fatalf("stale health persisted: updates=%d config=%+v", h.repository.healthUpdates, h.repository.configs[existing.ID])
+	}
+}
+
 func TestServiceActivateRequiresMigrationConfirmationAndRollsBackOnReadinessFailure(t *testing.T) {
 	h := newServiceHarness()
 	target := h.repository.seed(validDomainConfig(2, "target", false))
@@ -254,13 +293,16 @@ func (r *fakeServiceRepository) Update(_ context.Context, input storageconfig.Up
 	return &current, nil
 }
 
-func (r *fakeServiceRepository) UpdateHealth(_ context.Context, id uint64, health domain.Health) error {
-	current, ok := r.configs[id]
+func (r *fakeServiceRepository) UpdateHealth(_ context.Context, input storageconfig.UpdateHealthInput) error {
+	current, ok := r.configs[input.ID]
 	if !ok {
 		return domain.ErrNotFound
 	}
-	current.Health = health
-	r.configs[id] = current
+	if current.Version != input.ExpectedVersion || current.RuntimeRevision != input.ExpectedRuntimeRevision {
+		return domain.ErrVersionConflict
+	}
+	current.Health = input.Health
+	r.configs[input.ID] = current
 	r.healthUpdates++
 	return nil
 }
@@ -342,10 +384,24 @@ func (r *fakeServiceRegistry) New(_ context.Context, input storageimpl.BuildInpu
 }
 
 type fakeReadinessStorage struct {
-	err error
+	err     error
+	started chan struct{}
+	release chan struct{}
 }
 
-func (s *fakeReadinessStorage) CheckReadiness(context.Context) error { return s.err }
+func (s *fakeReadinessStorage) CheckReadiness(ctx context.Context) error {
+	if s.started != nil {
+		close(s.started)
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.err
+}
 
 func (s *fakeReadinessStorage) PutObject(context.Context, string, []byte, ...storage.PutOptFn) error {
 	return nil

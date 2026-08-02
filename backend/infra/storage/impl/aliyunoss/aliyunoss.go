@@ -80,7 +80,11 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderAliyunOSS, cfg, domain.ValidationMode{})
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderAliyunOSS, cfg, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +98,7 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 	endpoint := normalized.EndpointOverride
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("https://oss-%s.aliyuncs.com", normalized.Region)
-	} else if !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
+	} else if !mode.AllowHTTP && !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
 		return nil, fmt.Errorf("%w: endpoint override must use https", domain.ErrConfigInvalid)
 	}
 	return getAliyunOSSClient(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, endpoint, normalized.Region, normalized.ForcePathStyle)

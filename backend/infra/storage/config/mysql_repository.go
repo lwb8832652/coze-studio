@@ -46,6 +46,13 @@ type UpdateConfigInput struct {
 	RuntimeChanged   bool
 }
 
+type UpdateHealthInput struct {
+	ID                      uint64
+	ExpectedVersion         uint64
+	ExpectedRuntimeRevision uint64
+	Health                  domain.Health
+}
+
 type CredentialEncryptor interface {
 	Encrypt(uint64, domain.ProviderType, uint64, domain.CredentialInput) (string, error)
 }
@@ -250,25 +257,25 @@ func (r *MySQLRepository) Update(ctx context.Context, input UpdateConfigInput) (
 	return updated, nil
 }
 
-func (r *MySQLRepository) UpdateHealth(ctx context.Context, id uint64, health domain.Health) error {
+func (r *MySQLRepository) UpdateHealth(ctx context.Context, input UpdateHealthInput) error {
 	db, err := r.dbFor(ctx)
 	if err != nil {
 		return err
 	}
 	result := db.Model(&objectStorageConfigPO{}).
-		Where("id = ?", id).
+		Where("id = ? AND version = ? AND runtime_revision = ?", input.ID, input.ExpectedVersion, input.ExpectedRuntimeRevision).
 		UpdateColumns(map[string]any{
-			"health_status":          string(health.Status),
-			"last_health_code":       health.Code,
-			"last_health_message":    health.Message,
-			"last_health_latency_ms": health.LatencyMS,
-			"last_health_at":         healthTime(health.CheckedAt),
+			"health_status":          string(input.Health.Status),
+			"last_health_code":       input.Health.Code,
+			"last_health_message":    input.Health.Message,
+			"last_health_latency_ms": input.Health.LatencyMS,
+			"last_health_at":         healthTime(input.Health.CheckedAt),
 		})
 	if result.Error != nil {
 		return mapRepositoryError(result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return domain.ErrNotFound
+		return objectStorageCASFailure(db, input.ID)
 	}
 	return nil
 }

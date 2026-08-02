@@ -18,6 +18,7 @@ package objectstorage
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"testing"
@@ -60,6 +61,29 @@ func TestBootstrapImportsLegacyEnvWhenTableEmpty(t *testing.T) {
 	}
 }
 
+func TestBootstrapDebugMinIOPropagatesHTTPValidationModeToProvider(t *testing.T) {
+	h := newBootstrapHarness()
+	h.bootstrap.Registry = storageimpl.DefaultRegistry()
+	h.bootstrap.Getenv = mapGetenv(map[string]string{
+		storageconfig.ObjectStorageConfigSourceEnv: storageconfig.ObjectStorageSourceDatabase,
+		"STORAGE_TYPE":   "minio",
+		"MINIO_ENDPOINT": "minio:9000",
+		"MINIO_AK":       "ak",
+		"MINIO_SK":       "sk",
+		"STORAGE_BUCKET": "coze",
+		"MINIO_USE_SSL":  "false",
+	})
+	h.bootstrap.AllowHTTP = true
+
+	result, err := h.bootstrap.Bootstrap(context.Background())
+	if err != nil {
+		t.Fatalf("Bootstrap(debug MinIO) error = %v", err)
+	}
+	if result.Storage == nil || result.RuntimeDescriptor.ProviderType != domain.ProviderMinIO {
+		t.Fatalf("bootstrap result = %+v", result)
+	}
+}
+
 func TestBootstrapLoadsDatabaseActiveConfig(t *testing.T) {
 	h := newBootstrapHarness()
 	h.repository.count = 1
@@ -89,6 +113,40 @@ func TestBootstrapLoadsDatabaseActiveConfig(t *testing.T) {
 		h.codec.decryptID != 7 ||
 		h.codec.decryptVersion != storageconfig.CredentialAADVersion {
 		t.Fatalf("registry input = %+v codec decrypt id=%d version=%d", h.registry.input, h.codec.decryptID, h.codec.decryptVersion)
+	}
+}
+
+func TestBootstrapRecoversWhenConcurrentImporterCreatesPrimaryConfig(t *testing.T) {
+	h := newBootstrapHarness()
+	h.repository.createErr = domain.ErrVersionConflict
+	h.repository.active = &domain.Config{
+		ID:               9,
+		Name:             "concurrent import",
+		ProviderType:     domain.ProviderQiniu,
+		PublicConfig:     domain.PublicConfig{Bucket: "coze", DownloadDomain: "cdn.example.com", UseHTTPS: true},
+		CredentialSecret: "encrypted",
+		Active:           true,
+		Version:          1,
+		RuntimeRevision:  1,
+	}
+	h.codec.decryptCredential = domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"}
+	h.bootstrap.Getenv = mapGetenv(map[string]string{
+		storageconfig.ObjectStorageConfigSourceEnv: storageconfig.ObjectStorageSourceDatabase,
+		"STORAGE_TYPE":   "minio",
+		"MINIO_ENDPOINT": "minio:9000",
+		"MINIO_AK":       "ak",
+		"MINIO_SK":       "sk",
+		"STORAGE_BUCKET": "coze",
+		"MINIO_USE_SSL":  "false",
+	})
+	h.bootstrap.AllowHTTP = true
+
+	result, err := h.bootstrap.Bootstrap(context.Background())
+	if err != nil {
+		t.Fatalf("Bootstrap(concurrent import) error = %v", err)
+	}
+	if result.RuntimeDescriptor.ConfigID != 9 || h.repository.getActiveCalls != 1 || h.codec.decryptID != 9 {
+		t.Fatalf("runtime=%+v getActive=%d decryptID=%d", result.RuntimeDescriptor, h.repository.getActiveCalls, h.codec.decryptID)
 	}
 }
 
@@ -126,6 +184,29 @@ func TestBootstrapEnvRescueBypassesDatabaseAndCodec(t *testing.T) {
 	}
 	if h.repository.getActiveCalls != 0 || len(h.repository.created) != 0 {
 		t.Fatalf("rescue touched repository: getActive=%d created=%d", h.repository.getActiveCalls, len(h.repository.created))
+	}
+}
+
+func TestBootstrapEnvRescueLoadsAvailableCodecForAdminMutations(t *testing.T) {
+	h := newBootstrapHarness()
+	h.bootstrap.Codec = nil
+	h.bootstrap.Getenv = mapGetenv(map[string]string{
+		storageconfig.ObjectStorageConfigSourceEnv:  storageconfig.ObjectStorageSourceEnv,
+		storageconfig.ObjectStorageCredentialKeyEnv: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"STORAGE_TYPE":   "minio",
+		"MINIO_ENDPOINT": "minio:9000",
+		"MINIO_AK":       "ak",
+		"MINIO_SK":       "sk",
+		"STORAGE_BUCKET": "coze",
+		"MINIO_USE_SSL":  "false",
+	})
+	h.bootstrap.AllowHTTP = true
+
+	if _, err := h.bootstrap.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap(env with codec) error = %v", err)
+	}
+	if h.bootstrap.Codec == nil {
+		t.Fatal("Bootstrap(env with codec) left admin credential codec unavailable")
 	}
 }
 
@@ -184,6 +265,7 @@ func newBootstrapHarness() *bootstrapHarness {
 type fakeBootstrapRepository struct {
 	count          int64
 	countErr       error
+	createErr      error
 	active         *domain.Config
 	activeErr      error
 	getActiveCalls int
@@ -204,6 +286,9 @@ func (r *fakeBootstrapRepository) GetActive(context.Context) (*domain.Config, er
 }
 
 func (r *fakeBootstrapRepository) CreateWithCredential(_ context.Context, config domain.Config, credential domain.CredentialInput, codec storageconfig.CredentialEncryptor) (*domain.Config, error) {
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
 	if config.ID == 0 {
 		config.ID = uint64(len(r.created) + 1)
 	}

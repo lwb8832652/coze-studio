@@ -36,6 +36,7 @@ type BuildInput struct {
 	Credential      domain.CredentialInput
 	ConfigID        uint64
 	RuntimeRevision uint64
+	ValidationMode  domain.ValidationMode
 }
 
 type Builder func(context.Context, BuildInput) (storage.Storage, error)
@@ -51,25 +52,25 @@ func NewRegistry() *Registry {
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 	registry.Register(domain.ProviderMinIO, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return minio.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return minio.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderAWSS3, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return s3.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return s3.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderTOS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return tos.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return tos.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderQiniu, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return qiniu.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return qiniu.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderAliyunOSS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return aliyunoss.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return aliyunoss.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderTencentCOS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return tencentcos.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return tencentcos.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	registry.Register(domain.ProviderHuaweiOBS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
-		return huaweiobs.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+		return huaweiobs.NewFromConfigWithMode(ctx, input.PublicConfig, input.Credential, input.ValidationMode)
 	})
 	return registry
 }

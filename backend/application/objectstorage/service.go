@@ -37,7 +37,7 @@ type Repository interface {
 	GetActive(context.Context) (*domain.Config, error)
 	CreateWithCredential(context.Context, domain.Config, domain.CredentialInput, storageconfig.CredentialEncryptor) (*domain.Config, error)
 	Update(context.Context, storageconfig.UpdateConfigInput) (*domain.Config, error)
-	UpdateHealth(context.Context, uint64, domain.Health) error
+	UpdateHealth(context.Context, storageconfig.UpdateHealthInput) error
 	Activate(context.Context, uint64, uint64) (*domain.Config, error)
 	Delete(context.Context, uint64, uint64, domain.RuntimeDescriptor) error
 }
@@ -261,7 +261,7 @@ func (s *Service) Test(ctx context.Context, request TestRequest) (*TestResult, e
 	}
 	health, readinessErr := s.checkReadiness(ctx, provider, publicConfig, credential, 0, 0)
 	if target != nil && persistHealth {
-		if err := s.repository.UpdateHealth(ctx, target.ID, health); err != nil {
+		if err := s.repository.UpdateHealth(ctx, healthUpdateInput(*target, health)); err != nil {
 			return nil, err
 		}
 	}
@@ -305,12 +305,12 @@ func (s *Service) Activate(ctx context.Context, request ActivateRequest) (*Confi
 		target.RuntimeRevision,
 	)
 	if readinessErr != nil {
-		if updateErr := s.repository.UpdateHealth(ctx, target.ID, health); updateErr != nil {
+		if updateErr := s.repository.UpdateHealth(ctx, healthUpdateInput(*target, health)); updateErr != nil {
 			return nil, updateErr
 		}
 		return nil, readinessErr
 	}
-	if err := s.repository.UpdateHealth(ctx, target.ID, health); err != nil {
+	if err := s.repository.UpdateHealth(ctx, healthUpdateInput(*target, health)); err != nil {
 		return nil, err
 	}
 	activated, err := s.repository.Activate(ctx, target.ID, request.ExpectedVersion)
@@ -417,6 +417,9 @@ func (s *Service) checkReadiness(
 		Credential:      credential,
 		ConfigID:        configID,
 		RuntimeRevision: runtimeRevision,
+		ValidationMode: domain.ValidationMode{
+			AllowHTTP: s.allowHTTP,
+		},
 	})
 	if err == nil {
 		checker, ok := client.(storage.ReadinessChecker)
@@ -487,6 +490,15 @@ func readinessError(err error) error {
 		return err
 	default:
 		return fmt.Errorf("%w: %s", domain.ErrConnectionFailed, domain.ErrorCodeOf(domain.ErrConnectionFailed))
+	}
+}
+
+func healthUpdateInput(config domain.Config, health domain.Health) storageconfig.UpdateHealthInput {
+	return storageconfig.UpdateHealthInput{
+		ID:                      config.ID,
+		ExpectedVersion:         config.Version,
+		ExpectedRuntimeRevision: config.RuntimeRevision,
+		Health:                  health,
 	}
 }
 

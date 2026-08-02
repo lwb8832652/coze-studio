@@ -28,6 +28,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
 
+	"github.com/coze-dev/coze-studio/backend/api/middleware"
 	appobjectstorage "github.com/coze-dev/coze-studio/backend/application/objectstorage"
 	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 )
@@ -59,6 +60,7 @@ func TestObjectStorageHandlersRejectIncompleteCredentials(t *testing.T) {
 
 func newObjectStorageTestServer(service objectStorageAdminService) *server.Hertz {
 	h := server.New(server.WithStreamBody(true))
+	h.Use(middleware.RequestBodyCompatibilityMW(maxObjectStorageBodyBytes))
 	handler := newObjectStorageAdminHandler(service)
 	h.GET("/api/admin/config/object-storage/list", handler.list)
 	h.POST("/api/admin/config/object-storage/create", handler.create)

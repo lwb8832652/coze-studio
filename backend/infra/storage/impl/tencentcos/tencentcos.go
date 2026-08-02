@@ -81,7 +81,11 @@ func New(ctx context.Context, ak, sk, bucketName, endpointOverride, region strin
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderTencentCOS, cfg, domain.ValidationMode{})
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderTencentCOS, cfg, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +96,7 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 	if !domain.HasCredentialPair(credential) {
 		return nil, domain.ErrConfigInvalid
 	}
-	if normalized.EndpointOverride != "" && !strings.HasPrefix(strings.ToLower(normalized.EndpointOverride), "https://") {
+	if normalized.EndpointOverride != "" && !mode.AllowHTTP && !strings.HasPrefix(strings.ToLower(normalized.EndpointOverride), "https://") {
 		return nil, fmt.Errorf("%w: endpoint override must use https", domain.ErrConfigInvalid)
 	}
 	return getTencentCOSClient(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.EndpointOverride, normalized.Region)
