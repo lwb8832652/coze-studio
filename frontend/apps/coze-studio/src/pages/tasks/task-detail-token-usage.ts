@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type {
+  WorkbenchRunEvent,
+  WorkbenchTokenUsage,
+  WorkbenchTokenUsageAggregate,
+} from '../workbench/thread-client';
 
-type TaskThreadTokenUsageAggregate =
-  workbenchTask.TaskThreadTokenUsageAggregate;
-type TaskThreadTokenUsage = workbenchTask.TaskThreadTokenUsage;
-type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
+type TaskThreadTokenUsageAggregate = WorkbenchTokenUsageAggregate;
+type TaskThreadTokenUsage = WorkbenchTokenUsage;
+type TaskThreadRunEvent = WorkbenchRunEvent;
 
 export type TaskTokenUsageViewMode = 'off' | 'summary' | 'per_turn' | 'debug';
 

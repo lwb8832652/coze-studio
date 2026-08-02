@@ -111,8 +111,10 @@ const TaskMCPRuntimeAuditRow = ({
 );
 
 export const TaskMCPRuntimeAuditSection = ({
+  spaceId,
   threadId,
 }: {
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [events, setEvents] = useState<TaskThreadMCPRuntimeAuditEvent[]>([]);
@@ -121,7 +123,7 @@ export const TaskMCPRuntimeAuditSection = ({
   const [error, setError] = useState('');
 
   const loadEvents = useCallback(async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       setEvents([]);
       setTotal(0);
       return;
@@ -132,6 +134,7 @@ export const TaskMCPRuntimeAuditSection = ({
     try {
       const response = await listTaskThreadMCPRuntimeAuditEvents({
         thread_id: threadId,
+        space_id: spaceId,
         page: 1,
         page_size: MCP_RUNTIME_AUDIT_PAGE_SIZE,
       });
@@ -144,7 +147,7 @@ export const TaskMCPRuntimeAuditSection = ({
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [spaceId, threadId]);
 
   useEffect(() => {
     void loadEvents();
@@ -155,7 +158,7 @@ export const TaskMCPRuntimeAuditSection = ({
     [events],
   );
 
-  if (!threadId) {
+  if (!spaceId || !threadId) {
     return null;
   }
 

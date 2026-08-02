@@ -41,11 +41,13 @@ const buildListRequest = ({
   includeDeleted,
   query,
   scope,
+  spaceId,
   threadId,
 }: {
   includeDeleted: boolean;
   query: string;
   scope: MemoryScopeFilter;
+  spaceId: string;
   threadId: string;
 }) => {
   const request: {
@@ -54,10 +56,12 @@ const buildListRequest = ({
     page_size: number;
     q?: string;
     scope?: string;
+    space_id: string;
     thread_id: string;
   } = {
     page: 1,
     page_size: MEMORY_PAGE_SIZE,
+    space_id: spaceId,
     thread_id: threadId,
   };
   const trimmedQuery = query.trim();
@@ -77,10 +81,12 @@ const buildListRequest = ({
 const buildUpdateParams = ({
   activeMemory,
   editorState,
+  spaceId,
   threadId,
 }: {
   activeMemory: TaskThreadMemory;
   editorState: MemoryEditorState;
+  spaceId: string;
   threadId: string;
 }) => {
   const content = editorState.content.trim();
@@ -121,12 +127,19 @@ const buildUpdateParams = ({
       score,
       source_id: editorState.sourceID.trim(),
       source_type: editorState.sourceType.trim(),
+      space_id: spaceId,
       thread_id: threadId,
     },
   };
 };
 
-const useTaskMemoryAudit = ({ threadId }: { threadId?: string }) => {
+const useTaskMemoryAudit = ({
+  spaceId,
+  threadId,
+}: {
+  spaceId?: string;
+  threadId?: string;
+}) => {
   const [activeAuditMemory, setActiveAuditMemory] =
     useState<TaskThreadMemory>();
   const [auditError, setAuditError] = useState('');
@@ -137,7 +150,7 @@ const useTaskMemoryAudit = ({ threadId }: { threadId?: string }) => {
   const [auditTotal, setAuditTotal] = useState(0);
 
   const handleOpenAudit = async (memory: TaskThreadMemory) => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       return;
     }
     setActiveAuditMemory(memory);
@@ -150,6 +163,7 @@ const useTaskMemoryAudit = ({ threadId }: { threadId?: string }) => {
         memory_id: memory.memory_id,
         page: 1,
         page_size: MEMORY_PAGE_SIZE,
+        space_id: spaceId,
         thread_id: threadId,
       });
       setAuditEvents(response.data?.events ?? []);
@@ -177,12 +191,14 @@ const useTaskMemoryEditor = ({
   readOnly,
   setActiveAction,
   setError,
+  spaceId,
   threadId,
 }: {
   loadMemories: () => Promise<void>;
   readOnly: boolean;
   setActiveAction: (action: string) => void;
   setError: (message: string) => void;
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [activeMemory, setActiveMemory] = useState<TaskThreadMemory>();
@@ -204,14 +220,19 @@ const useTaskMemoryEditor = ({
     setEditorState(prev => ({ ...prev, ...patch }));
   };
   const handleSaveMemory = async () => {
-    if (!activeMemory || !threadId) {
+    if (!activeMemory || !spaceId || !threadId) {
       return;
     }
     if (readOnly) {
       setEditorError(NO_MEMORY_WRITE_PERMISSION);
       return;
     }
-    const result = buildUpdateParams({ activeMemory, editorState, threadId });
+    const result = buildUpdateParams({
+      activeMemory,
+      editorState,
+      spaceId,
+      threadId,
+    });
     if (result.error || !result.params) {
       setEditorError(result.error ?? '更新任务记忆失败');
       return;
@@ -242,9 +263,11 @@ const useTaskMemoryEditor = ({
 
 export const useTaskMemorySection = ({
   readOnly = false,
+  spaceId,
   threadId,
 }: {
   readOnly?: boolean;
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [activeAction, setActiveAction] = useState('');
@@ -256,19 +279,20 @@ export const useTaskMemorySection = ({
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<MemoryScopeFilter>('all');
   const [total, setTotal] = useState(0);
-  const audit = useTaskMemoryAudit({ threadId });
+  const audit = useTaskMemoryAudit({ spaceId, threadId });
   const listRequest = useMemo(
     () =>
       buildListRequest({
         includeDeleted,
         query,
         scope,
+        spaceId: spaceId ?? '',
         threadId: threadId ?? '',
       }),
-    [includeDeleted, query, scope, threadId],
+    [includeDeleted, query, scope, spaceId, threadId],
   );
   const loadMemories = useCallback(async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       return;
     }
     setLoading(true);
@@ -283,7 +307,7 @@ export const useTaskMemorySection = ({
     } finally {
       setLoading(false);
     }
-  }, [listRequest, threadId]);
+  }, [listRequest, spaceId, threadId]);
 
   useEffect(() => {
     void loadMemories();
@@ -294,6 +318,7 @@ export const useTaskMemorySection = ({
     readOnly,
     setActiveAction,
     setError,
+    spaceId,
     threadId,
   });
   const importExport = useTaskMemoryImportExport({
@@ -305,6 +330,7 @@ export const useTaskMemorySection = ({
     setActiveAction,
     setError,
     setNotice,
+    spaceId,
     threadId,
   });
   const listActions = useTaskMemoryListActions({
@@ -313,6 +339,7 @@ export const useTaskMemorySection = ({
     scope,
     setActiveAction,
     setError,
+    spaceId,
     threadId,
   });
   return {

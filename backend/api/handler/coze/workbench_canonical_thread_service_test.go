@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -34,14 +35,13 @@ import (
 )
 
 func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	previous := appagentthread.SVC
 	appagentthread.SVC = nil
 	t.Cleanup(func() {
 		appagentthread.SVC = previous
 	})
 
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
 	h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 	h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
@@ -88,8 +88,7 @@ func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *t
 }
 
 func TestCreateCanonicalThreadCreatesEmptyThreadInAuthorizedSpace(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
 	authorizer := &canonicalRecordingWorkspaceAuthorizer{}
@@ -135,9 +134,51 @@ func TestCreateCanonicalThreadCreatesEmptyThreadInAuthorizedSpace(t *testing.T) 
 	require.Empty(t, runs.Runs)
 }
 
-func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
+func TestCreateCanonicalThreadResponseIncludesServerReviewedCanEdit(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	response := performCanonicalThreadJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads",
+		`{"metadata":{"title":"editable"}}`,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	requireCanonicalThreadCanEditJSON(t, string(response.Result().Body()), true)
+	var projected canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &projected))
+	require.Equal(t, "editable", projected.Metadata["title"])
+}
+
+func TestCreateCanonicalThreadRejectsForgedCanEditMetadata(t *testing.T) {
+	for _, forged := range []bool{false, true} {
+		forged := forged
+		t.Run(strconv.FormatBool(forged), func(t *testing.T) {
+			h := authenticatedAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			before := canonicalThreadCount(t, 1001, 2)
+			response := performCanonicalThreadJSONRequest(
+				t,
+				h,
+				http.MethodPost,
+				"/api/workbench/threads",
+				fmt.Sprintf(`{"metadata":{"can_edit":%t,"title":"forged"}}`, forged),
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code)
+			require.Equal(t, before, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
 	authorizer := &canonicalRecordingWorkspaceAuthorizer{}
@@ -203,8 +244,7 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 	for name, initialRun := range tests {
 		name, initialRun := name, initialRun
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
-			h := authenticatedAgentThreadTestServer()
+			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
 
@@ -220,8 +260,7 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 }
 
 func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
 
@@ -255,8 +294,7 @@ func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t 
 }
 
 func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
 
@@ -304,8 +342,7 @@ func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testi
 }
 
 func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
 	authorizer := &canonicalRecordingWorkspaceAuthorizer{}
@@ -365,8 +402,7 @@ func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *test
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
-			h := authenticatedAgentThreadTestServer()
+			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
 			authorizer := &canonicalRecordingWorkspaceAuthorizer{}
@@ -381,8 +417,7 @@ func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *test
 }
 
 func TestSearchCanonicalThreadsUsesAuthorizedSpaceFiltersAndExactOffset(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
 	authorizer := &canonicalRecordingWorkspaceAuthorizer{}
@@ -410,9 +445,32 @@ func TestSearchCanonicalThreadsUsesAuthorizedSpaceFiltersAndExactOffset(t *testi
 	require.NotEqual(t, strconv.FormatInt(second.ThreadID, 10), threads[0].ThreadID)
 }
 
-func TestSearchCanonicalThreadsSupportsIDsSortAndPaginationHeaders(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
+func TestSearchCanonicalThreadsResponseIncludesServerReviewedCanEdit(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
+	installAgentThreadTestService(t)
+	createCanonicalTestThread(t, 1001, "editable", `{"can_edit":true,"team":"alpha"}`)
+
+	response := performCanonicalThreadJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/search",
+		`{"limit":10}`,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var threads []json.RawMessage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &threads))
+	require.Len(t, threads, 1)
+	requireCanonicalThreadCanEditJSON(t, string(threads[0]), true)
+	var projected canonicalThread
+	require.NoError(t, json.Unmarshal(threads[0], &projected))
+	require.Equal(t, "alpha", projected.Metadata["team"])
+}
+
+func TestSearchCanonicalThreadsSupportsIDsSortAndPaginationHeaders(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
 
@@ -437,8 +495,7 @@ func TestSearchCanonicalThreadsSupportsIDsSortAndPaginationHeaders(t *testing.T)
 }
 
 func TestSearchCanonicalThreadsSortsByProjectedSDKStatus(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
 
@@ -475,8 +532,7 @@ func TestSearchCanonicalThreadsRejectsUnsupportedProjectionFields(t *testing.T) 
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
-			h := authenticatedAgentThreadTestServer()
+			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 			installAgentThreadTestService(t)
 
@@ -490,8 +546,7 @@ func TestSearchCanonicalThreadsRejectsUnsupportedProjectionFields(t *testing.T) 
 }
 
 func TestGetCanonicalThreadRejectsIncludeAndProjectsAuthorizedThread(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "read me", `{"team":"alpha"}`)
@@ -508,9 +563,45 @@ func TestGetCanonicalThreadRejectsIncludeAndProjectsAuthorizedThread(t *testing.
 	require.Equal(t, "read me", projected.Metadata["title"])
 }
 
+func TestGetCanonicalThreadRejectsThreadOutsideDeclaredSpace(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "space scoped", `{}`)
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10)
+
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		path,
+		nil,
+		ut.Header{Key: canonicalSpaceIDHeader, Value: "2002"},
+	)
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "resource_not_found", public.Code)
+}
+
+func TestGetCanonicalThreadResponseIncludesServerReviewedCanEdit(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "editable", `{"can_edit":false,"team":"alpha"}`)
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10)
+
+	response := ut.PerformRequest(h.Engine, http.MethodGet, path, nil)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	requireCanonicalThreadCanEditJSON(t, string(response.Result().Body()), true)
+	var projected canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &projected))
+	require.Equal(t, "alpha", projected.Metadata["team"])
+}
+
 func TestPatchCanonicalThreadUpdatesSafeMetadataAndSupportsMinimalResponse(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "before", `{"keep":"yes"}`)
@@ -539,6 +630,36 @@ func TestPatchCanonicalThreadUpdatesSafeMetadataAndSupportsMinimalResponse(t *te
 	require.Empty(t, minimal.Result().Body())
 }
 
+func TestPatchCanonicalThreadRejectsForgedCanEditMetadata(t *testing.T) {
+	for _, forged := range []bool{false, true} {
+		forged := forged
+		t.Run(strconv.FormatBool(forged), func(t *testing.T) {
+			h := authenticatedAgentThreadTestServer()
+			h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
+			h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
+			installAgentThreadTestService(t)
+			thread := createCanonicalTestThread(t, 1001, "before", `{"team":"alpha"}`)
+			path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10)
+
+			response := performCanonicalThreadJSONRequest(
+				t,
+				h,
+				http.MethodPatch,
+				path,
+				fmt.Sprintf(`{"metadata":{"can_edit":%t,"team":"forged"}}`, forged),
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code)
+
+			read := ut.PerformRequest(h.Engine, http.MethodGet, path, nil)
+			require.Equal(t, http.StatusOK, read.Code)
+			requireCanonicalThreadCanEditJSON(t, string(read.Result().Body()), true)
+			var projected canonicalThread
+			require.NoError(t, json.Unmarshal(read.Result().Body(), &projected))
+			require.Equal(t, "alpha", projected.Metadata["team"])
+		})
+	}
+}
+
 func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 	tests := map[string]string{
 		"space":             `{"metadata":{"space_id":"9999"}}`,
@@ -549,8 +670,7 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
-			h := authenticatedAgentThreadTestServer()
+			h := canonicalAgentThreadTestServer()
 			h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "before", `{}`)
@@ -569,8 +689,7 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 }
 
 func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
 	installAgentThreadTestService(t)
 
@@ -606,8 +725,7 @@ func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testi
 }
 
 func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/state", GetCanonicalThreadState)
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
 	installAgentThreadTestService(t)
@@ -655,8 +773,7 @@ func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *tes
 }
 
 func TestCanonicalThreadStateRejectsSensitiveCustomBeforePersistence(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
 	installAgentThreadTestService(t)
 	thread, _ := createCanonicalStateFixture(t)
@@ -681,8 +798,7 @@ func TestCanonicalThreadStateRejectsSensitiveCustomBeforePersistence(t *testing.
 }
 
 func TestCanonicalThreadHistoryGETAndPOSTReturnSameOrderedSafeStates(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
 	h.GET("/api/workbench/threads/:thread_id/history", GetCanonicalThreadHistory)
 	h.POST("/api/workbench/threads/:thread_id/history", PostCanonicalThreadHistory)
@@ -724,8 +840,7 @@ func TestCanonicalThreadHistoryGETAndPOSTReturnSameOrderedSafeStates(t *testing.
 }
 
 func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-	h := authenticatedAgentThreadTestServer()
+	h := canonicalAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
 	installAgentThreadTestService(t)
 
@@ -756,6 +871,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 	path := "/api/workbench/threads/" + strconv.FormatInt(created.Thread.ThreadID, 10) + "/messages"
 	firstResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?limit=100", nil)
 	require.Equal(t, http.StatusOK, firstResponse.Code)
+	require.Equal(t, "126", firstResponse.Result().Header.Get("X-Pagination-Total"))
 	var firstPage struct {
 		Data          []*canonicalMessage `json:"data"`
 		HasMore       bool                `json:"has_more"`
@@ -773,6 +889,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 
 	secondResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?after_seq=100&limit=100", nil)
 	require.Equal(t, http.StatusOK, secondResponse.Code)
+	require.Equal(t, "126", secondResponse.Result().Header.Get("X-Pagination-Total"))
 	var secondPage struct {
 		Data         []*canonicalMessage `json:"data"`
 		HasMore      bool                `json:"has_more"`
@@ -788,6 +905,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 
 	beforeResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?before_seq=101&limit=2", nil)
 	require.Equal(t, http.StatusOK, beforeResponse.Code)
+	require.Equal(t, "126", beforeResponse.Result().Header.Get("X-Pagination-Total"))
 	var beforePage struct {
 		Data          []*canonicalMessage `json:"data"`
 		HasMore       bool                `json:"has_more"`
@@ -800,6 +918,104 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 	require.True(t, beforePage.HasMore)
 	require.NotNil(t, beforePage.NextBeforeSeq)
 	require.Equal(t, "99", *beforePage.NextBeforeSeq)
+}
+
+func TestListCanonicalThreadMessagesProjectsLegacyJournalIDsAsDecimalStrings(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "legacy journal", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"legacy input"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	eventResponse, err := appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"legacy output"}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, eventResponse)
+	require.NotNil(t, eventResponse.Event)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, strconv.FormatInt(runResponse.Run.RunID, 10), page.Data[0].MessageID)
+	require.Equal(t, strconv.FormatInt(eventResponse.Event.EventID, 10), page.Data[1].MessageID)
+	for _, message := range page.Data {
+		messageID, parseErr := strconv.ParseInt(message.MessageID, 10, 64)
+		require.NoError(t, parseErr)
+		require.Positive(t, messageID)
+	}
+	require.NotContains(t, string(response.Result().Body()), `"message_id":"run-`)
+	require.NotContains(t, string(response.Result().Body()), `"message_id":"event-`)
+}
+
+func TestListCanonicalThreadMessagesPrefersPersistedAssistantOverVisibleEventDuplicate(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "deduplicated journal", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"deduplicate input"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	_, err = appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"deduplicated output","tool_calls":[{"id":"call-1","name":"catalog","arguments":{}}]}`,
+		},
+	)
+	require.NoError(t, err)
+	persisted, err := appagentthread.SVC.AppendMessage(
+		context.Background(),
+		&appagentthread.AppendMessageRequest{
+			ThreadID: thread.ThreadID,
+			RunID:    runResponse.Run.RunID,
+			Role:     appagentthread.MessageRoleAssistant,
+			Content:  "deduplicated output",
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.NotNil(t, persisted.Message)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, appagentthread.MessageRoleUser, appagentthread.MessageRole(page.Data[0].Role))
+	require.Equal(t, appagentthread.MessageRoleAssistant, appagentthread.MessageRole(page.Data[1].Role))
+	require.Equal(t, "deduplicated output", page.Data[1].Content)
+	require.Equal(t, strconv.FormatInt(persisted.Message.MessageID, 10), page.Data[1].MessageID)
+	require.Equal(t, 1, strings.Count(string(response.Result().Body()), "deduplicated output"))
 }
 
 func performCanonicalThreadJSONRequest(
@@ -823,6 +1039,26 @@ func performCanonicalThreadJSONRequest(
 		&ut.Body{Body: strings.NewReader(body), Len: len(body)},
 		requestHeaders...,
 	)
+}
+
+func canonicalAgentThreadTestServer() *server.Hertz {
+	return canonicalAgentThreadTestServerForUser(2)
+}
+
+func canonicalAgentThreadTestServerForUser(userID int64) *server.Hertz {
+	return canonicalAgentThreadTestServerForUserAndSpace(userID, 1001)
+}
+
+func canonicalAgentThreadTestServerForUserAndSpace(userID, spaceID int64) *server.Hertz {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(userID))
+	h.Use(func(ctx context.Context, c *app.RequestContext) {
+		if len(c.GetHeader(canonicalSpaceIDHeader)) == 0 {
+			c.Request.Header.Set(canonicalSpaceIDHeader, strconv.FormatInt(spaceID, 10))
+		}
+		c.Next(ctx)
+	})
+	return h
 }
 
 func canonicalThreadMessagesAndRuns(

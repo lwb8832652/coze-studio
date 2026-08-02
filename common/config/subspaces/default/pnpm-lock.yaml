@@ -72,6 +72,9 @@ importers:
       '@coze-arch/coze-design':
         specifier: 0.0.7-alpha.985c0d
         version: 0.0.7-alpha.985c0d(@types/react@18.2.37)(acorn@8.15.0)(react-dom@18.2.0)(react@18.2.0)
+      '@coze-arch/fetch-stream':
+        specifier: workspace:*
+        version: link:../../packages/arch/fetch-stream
       '@coze-arch/foundation-sdk':
         specifier: workspace:*
         version: link:../../packages/arch/foundation-sdk
@@ -7341,6 +7344,9 @@ importers:
       sucrase:
         specifier: ^3.32.0
         version: 3.35.0
+      typescript:
+        specifier: 5.8.2
+        version: 5.8.2
       vitest:
         specifier: ~3.0.5
         version: 3.0.9(@types/node@18.18.9)(happy-dom@12.10.3)

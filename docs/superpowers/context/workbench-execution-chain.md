@@ -1,6 +1,6 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-07-26
+更新时间：2026-07-30
 状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
@@ -11,8 +11,10 @@ Workbench 当前只有一套生产 Run 执行内核：Go `agentthread` 控制面
 
 ```text
 React UI
-  -> generated Workbench API client / Thrift contract
-  -> Hertz HTTP handler
+  -> page service wrapper
+  -> canonicalThreadClient singleton / CanonicalThreadCoreClient
+  -> canonical Thread Thrift contract
+  -> Hertz canonical HTTP handler
   -> agentthread ApplicationService
   -> agentthread domain service
   -> GORM / MySQL transaction
@@ -22,8 +24,8 @@ React UI
   -> ADKExecutor / Eino Runner / ChatModelAgent
   -> MapADKEvent / EventSink
   -> MySQL RunEvent
-  -> Hertz SSE
-  -> browser EventSource / TaskDetail projection
+  -> Hertz canonical SSE
+  -> @coze-arch/fetch-stream / TaskDetail projection
 ```
 
 这不是两套新旧 Workbench。`ChatTask` 已退役；`legacy` 仅用于读取和恢复历史无
@@ -39,7 +41,7 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
 - `precedes` 只表示同一已验证流程中的时序，不等同于函数调用。
 - Graphify 派生边只补充检索上下文，不能覆盖合同中的显式关系。
 - `workbench_execution_v1` profile 由调用者默认强制启用，用完整结构摘要固定
-  authority rule、scope、节点属性、边、链、8 类查询、排除语义及其源码证据；
+  authority rule、scope、节点属性、边、链、9 类查询、排除语义及其源码证据；
   不得通过删改 profile/authority path、query/chain/exclusion、关键节点属性或
   禁词来自我关闭校验。
 - 派生物分为两张同基底图：`query-graph.json` 把每个业务问题建成检索意图节点
@@ -57,22 +59,26 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
 
 ### Workbench 立即创建
 
-`WorkbenchPage.handleSend` 调用生成客户端 `CreateTaskThread`，经 Thrift 路由到
-Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThread`
-调用领域层 `CreateThreadRunMessage`，最终由 MySQL `CreateThreadBundle` 在一个
-原子聚合中持久化 Thread、初始 Message、Pending Run 和初始 Event。
+`WorkbenchPage.handleSend` 调用页面适配函数 `createTaskThread`，后者只委托唯一
+`canonicalThreadClient.createThread`。canonical client 请求
+`POST /api/workbench/threads`，经 `CreateCanonicalThread` handler 进入
+`ApplicationService.CreateTaskThread`；应用层调用领域层
+`CreateThreadRunMessage`，最终由 MySQL `CreateThreadBundle` 在一个原子聚合中
+持久化 Thread、初始 Message、Pending Run 和初始 Event。
 
 源码锚点：
 
 - `frontend/apps/coze-studio/src/pages/workbench/index.tsx`：`handleSend`
 - `frontend/apps/coze-studio/src/pages/workbench/service.ts`：`createTaskThread`
-- `frontend/packages/arch/api-schema/src/idl/workbench/task.ts`：生成客户端
-  `CreateTaskThread` / `CreateTaskThreadRun`
-- `idl/workbench/task.thrift`：`WorkbenchTaskService.CreateTaskThread`
-- `backend/api/model/workbench/task/task.go`：生成模型 `CreateTaskThreadRequest`
-- `backend/api/router/coze/api.go`：生成 Hertz `task_threads` / `runs` 路由
-- `backend/api/router/coze/custom_routes.go`：`run_events/stream` SSE 路由
-- `backend/api/handler/coze/workbench_thread_service.go`：`CreateTaskThread`
+- `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client-singleton.ts`：
+  唯一 `canonicalThreadClient`
+- `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`：
+  `CanonicalThreadCoreClient.createThread/createRun/subscribeRunEvents`
+- `frontend/packages/arch/api-schema/src/idl/workbench/thread.ts`：canonical 生成类型
+- `idl/workbench/thread.thrift`：`WorkbenchCanonicalThreadService`
+- `backend/api/router/coze/api.go`：47 条 `/api/workbench/threads/**` 路由
+- `backend/api/handler/coze/workbench_canonical_thread_service.go`：
+  `CreateCanonicalThread`
 - `backend/application/agentthread/service.go`：`CreateTaskThread`
 - `backend/domain/agentthread/service/service_impl.go`：`CreateThreadRunMessage`
 - `backend/domain/agentthread/repository/mysql.go`：`CreateThreadBundle`
@@ -81,9 +87,9 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
 
 文件模式使用同一个 `handleSend`，但时序固定为：
 
-1. `CreateTaskThread(defer_start=true)` 只建立 Thread；
-2. `uploadTaskThreadFiles` 上传并取得受限文件元数据；
-3. `CreateTaskThreadRun` 创建正式 Pending Run。
+1. `canonicalThreadClient.createThread(defer_start=true)` 只建立 Thread；
+2. `canonicalThreadClient.uploadFiles` 上传并取得受限文件元数据；
+3. `canonicalThreadClient.createRun` 创建正式 Pending Run。
 
 该顺序由
 `frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx` 的
@@ -92,8 +98,8 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
 
 ### TaskDetail Follow-up
 
-`sendFollowUpMessage` 只提交当前轮消息，先上传文件，再调用
-`CreateTaskThreadRun`。服务端通过 Thread 历史重建权威输入。
+`sendFollowUpMessage` 只提交当前轮消息，先通过 canonical client 上传文件，再调用
+`createRun`。服务端通过 Thread 历史重建权威输入。
 
 源码锚点：
 
@@ -104,10 +110,11 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
 
 ### 其它入口
 
-- LangGraph-compatible API：有 Thread 的 `CreateLangGraphRun` 调用
-  `ApplicationService.CreateRun`；stateless `/api/runs` 先经
-  `createLangGraphStatelessBackingThread` 调用 `ApplicationService.CreateThread`，
-  再创建 Run。两者都是 API 兼容入口，不是 LangGraph 执行器。
+- 本地 LangGraph-compatible HTTP API：`/api/threads/**` 23 条和
+  stateless `/api/runs/**` 10 条路由均已退役，不再是任何生产入口。
+  canonical Run SSE 仅在自有 protocol 实现中保留经审核的
+  LangGraph SDK-compatible event name 与 payload shape，不保留 backing Thread
+  入口，也不导入 LangGraph SDK/runtime。
 - Scheduled Task：
   `AgentTaskExecutor.Execute` 根据 `KeepConversation` 和 `ConversationID` 分支；
   `StartNew` 调用 `CreateTaskThread`，`StartInThread` 复用专属会话并调用
@@ -118,14 +125,14 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
   已有 `session.ThreadID` 时调用 `CreateRun`。
 
 这些入口只生产 Run，不拥有 Run 状态机，也不是独立执行器。
-`query.integration_ingress` 独立验收 LangGraph、Scheduled 和飞书的新建/复用
-Thread 分支是否都进入共享 `ApplicationService` Run 主链。
+`query.integration_ingress` 独立验收 Scheduled 和飞书的
+新建/复用 Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 
 ## 持久化与异步执行
 
 ### 原子 Run 创建
 
-`CreateTaskThreadRun` handler 调用 `ApplicationService.CreateRun`，应用层完成权限、
+`CreateCanonicalRun` handler 调用 `ApplicationService.CreateRun`，应用层完成权限、
 输入、幂等和 runtime 规范化，再调用领域层 `CreateRunBundle`。领域层经
 repository `CreateRunBundle` 原子写入 Run、当前轮 Message、初始 Event 和相关
 admission 状态。
@@ -140,11 +147,12 @@ admission 状态。
 ### Canonical Thread HTTP 契约
 
 `/api/workbench/threads...` 的 Thread create/search/get/patch/delete、state、history
-和 messages handler 已接入真实 HTTP 路由，但由
-`COZE_WORKBENCH_CANONICAL_API_ENABLED` 默认关闭。当前入口只接受 session principal；
-create/search 必须提交 `X-Coze-Space-ID`，服务端再用认证主体校验 workspace。其余资源
-路由从 path Thread/Run 读取服务端归属并执行 Thread 授权，拒绝依赖客户端提交 owner、
-`user_id` 或 `space_id`。
+和 messages handler 以及产品扩展合计 47 条 always-on HTTP 路由。不存在 canonical
+API 环境开关或运行时路由开关。入口只接受 session
+principal；所有 canonical 请求都必须提交 `X-Coze-Space-ID`，服务端先用认证主体校验
+workspace。create/search 直接在声明空间内执行；其余资源路由还会从 path Thread/Run
+读取服务端归属，把声明空间、资源实际空间和 Thread 授权一起校验。任何路由都拒绝
+依赖客户端 body 中的 owner、`user_id` 或 `space_id`。
 
 canonical handler 只做严格 SDK 参数、公开投影和稳定错误适配，随后调用同一个
 `agentthread.ApplicationService`。create 继续进入既有 `CreateThread` 或
@@ -186,10 +194,38 @@ wait/join 只在 Run 终态返回 `200 values`，不再复用旧事件流的 30 
 生产网关仍必须在读取或缓冲 body 前执行同等或更严格的请求体限制，handler 限制是第二道
 契约防线。
 
-canonical create-stream 和 reconnect-stream 两个 SSE handler 仍是 feature gate 后的
-`501` 占位；其余 canonical 路由也继续由默认关闭的 feature gate 隔离，因此当前还没有
-切换生产流量。现有 Workbench UI 继续使用 `/api/workbench/task_threads`，`/api/threads`
-兼容入口也未修改；两条来源合同在完整联调、灰度和观察期结束前都不得删除。
+canonical create-stream 和 reconnect-stream 两个 SSE handler 为 always-on 合同。
+create-stream 在读取请求体前完成 path Thread/space 授权，再严格解析
+submission；随后复用现有原子 Run/Message 创建和 human resume 用例，按 principal 隔离
+幂等键，并在 Run 与 User Message 的公共投影通过后返回精确 `Content-Location` 与指向
+既有 Run GET stream 的 `Location`，写入 metadata、回放持久化事件并跟随 live 事件。
+reconnect-stream 分别校验 query `after_event_id` 和 `Last-Event-ID`，同时存在时使用较大值，
+支持受控 `stream_mode` 覆盖；`cancel_on_disconnect` 只接受固定 SDK 的精确 `1|0` 和显式
+小写 `true|false`，大小写变体、空白包裹及其他值严格拒绝。`messages-tuple` 只作为
+请求 mode，匹配 `message.*`、`llm.*` 及同类公开事件，wire event 固定为 `messages`，data
+为二元数组。两条路径均按 `event_id` 顺序输出审核后的公共事件，终态前执行最后一次
+event flush，且只在 SSE writer 明确确认断连且请求选择 cancel 时取消 Run；reconnect 的
+显式 `true|1` 覆盖 Run 持久化的默认断线策略，`false|0` 不取消。context 结束、流超时和正常
+终态都不会触发取消。执行图用独立 canonical Run SSE chain 记录创建、幂等回放、事件查询、
+human resume 与断线取消的应用层依赖，不把 SSE handler 伪装成非流式 handler 的调用方。
+
+canonical product resources 共用严格的十进制路径 ID、1 MiB JSON body ceiling、exact
+offset pagination 与公开投影 helper。手写 wire projection 必须与 `thread_product.thrift` 的
+required/optional presence 一致，所有必填实体 ID 均 fail closed；公开资源将 ID 和时间规范化为
+字符串/RFC3339，optional 时间只省略零值，任何非零非法时间均 fail closed；Artifact 和 token usage
+先经过 application public projection。非数字
+`source_id`/`target_id` 仅在符合公开标识符与敏感值边界时保留；scan worker 只保留稳定哈希引用，
+不公开租约或原始错误。完成日志只记录审核后的资源、分页和生命周期字段。普通 Run 创建响应可附带
+同一原子 bundle 已提交的 User Message 投影；幂等 POST replay 仍是 create 响应，保留同一公开
+`submission_message`，后续 list/get/read 投影不保留该一次性字段。Thread 的 `Source`、`Progress`
+与最后消息字段仅兼容透传现有 `ThreadSummary`，不在此层补充数据来源；UI 继续保留 messages/title/status
+fallback。
+
+当前 Workbench、任务列表和任务详情 UI 均经唯一 canonical client 使用上述合同。
+`/api/workbench/task_threads/**` 36 条 V1 路由和 `/api/threads/**` 23 条本地
+LangGraph Thread 路由以及 stateless `/api/runs/**` 10 条路由已全部不可达。
+Scheduled Task 的 11 条路由继续由 `idl/workbench/task.thrift` 拥有。三组已退役
+路由都不得作为 UI fallback 或新功能依赖恢复。
 
 ### MySQL 队列与 lease
 
@@ -286,22 +322,23 @@ semantic_loop
 ## 事件回传
 
 Eino 事件不会原样暴露。`MapADKEvent` 生成公共事件，EventSink 经过 application、
-domain 和 MySQL repository 写入 RunEvent。Hertz
-`StreamTaskThreadRunEvents` 按游标读取并以 SSE 输出；前端
-`useTaskThreadRunEventStream` 使用浏览器 `EventSource` 投影 Todo、工具状态、
-子智能体、澄清卡片和终态。
+domain 和 MySQL repository 写入 RunEvent。Hertz `StreamCanonicalRun` 创建 Run 并
+输出事件，`ReconnectCanonicalRunStream` 按游标重放并跟随 SSE；前端
+`useTaskThreadRunEventStream` 委托唯一 client 的 `subscribeRunEvents`，由
+`@coze-arch/fetch-stream` 投影 Todo、工具状态、子智能体、澄清卡片和终态。
 
 Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式和权限失败由
-`backend/api/handler/coze/workbench_thread_service_test.go` 覆盖。
+`backend/api/handler/coze/workbench_canonical_run_stream_test.go` 与前端
+`thread-client/__tests__/workbench-run-stream.test.ts` 覆盖。
 
 ## 控制与恢复
 
-- Cancel：Hertz `CancelTaskThreadRun` -> `ApplicationService.CancelRun` ->
+- Cancel：Hertz `CancelCanonicalRun` -> `ApplicationService.CancelRun` ->
   `threadService.RequestRunCancellation`，先持久化取消事实，再通过
   `ADKCancelRegistry.Cancel` 通知活跃 Eino 执行。
-- Human resume：`ResumeTaskThreadRun` -> `ResumeHumanInteraction`，验证来源 Run、
+- Human resume：`ResumeCanonicalRun` -> `ResumeHumanInteraction`，验证来源 Run、
   interrupt 和 checkpoint 后原子创建 queued resume bundle。
-- Subagent retry：`RetryTaskThreadSubagentRun` -> `RetrySubagentRun`，根据失败或取消
+- Subagent retry：`RetryCanonicalSubagentRun` -> `RetrySubagentRun`，根据失败或取消
   的子 Run 创建幂等顶层 retry command bundle。
 - Checkpoint resume：`ADKCheckpointStore` 保存 Eino bytes 的内部封装；
   `ADKExecutor.Resume` 使用 resume target 和 Eino Runner 恢复，不向 API/UI 暴露
@@ -324,10 +361,12 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 
 版本都来自当前仓库 manifest 或生成文件，不依靠记忆推断：
 
-- UI：React `~18.2.0`、React Router `^6.11.1`、browser EventSource；来源
-  `frontend/apps/coze-studio/package.json` 与对应生产源码。
+- UI：React `~18.2.0`、React Router `^6.11.1`、
+  `@coze-arch/fetch-stream` workspace package；来源
+  `frontend/apps/coze-studio/package.json` 与 canonical client 生产源码。
 - API 合同：Thriftgo `0.4.5` 生成模型；来源
-  `backend/api/model/workbench/task/task.go` 生成头。
+  `backend/api/model/workbench/thread_contract/thread.go` 生成头。`task/task.go` 只服务
+  Scheduled Task。
 - HTTP/SSE：Hertz `v0.10.2`；JSON codec 为 Sonic `v1.15.0`。
 - 后端运行：Go `1.24.0`；Run worker 使用 goroutine、context 和 ticker。
 - 持久化：GORM `v1.25.11`、GORM MySQL driver `v1.5.7`，本仓库 MySQL
@@ -346,7 +385,9 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 
 ## 明确边界
 
-- LangGraph：只有兼容 HTTP/API 语义，不导入或运行 LangGraph SDK。
+- LangGraph：本地 `/api/threads/**` 与 `/api/runs/**` 兼容 HTTP 路由均已退役；
+  canonical SSE 仅保留经审核的 SDK-compatible wire shape，不导入或运行
+  LangGraph SDK/runtime。
 - DeerFlow：只有 mode、config、指令与行为兼容语义，由当前 Go/Eino 实现；
   不存在 DeerFlow runtime。
 - legacy executor：只处理历史无 runtime 标记记录和显式迁移测试；新 Run 拒绝

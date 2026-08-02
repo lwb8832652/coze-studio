@@ -402,9 +402,11 @@ const WorkbenchPage = () => {
         const uploadResponse = await uploadTaskThreadFiles({
           thread_id: thread.thread_id,
           files,
+          space_id,
         });
         await createTaskThreadRun({
           thread_id: thread.thread_id,
+          space_id,
           input: buildNewTaskRunInput({
             message: submitPayload.message,
             uploadedFiles: uploadResponse.data?.files,

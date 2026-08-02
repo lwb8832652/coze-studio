@@ -1167,6 +1167,45 @@ func TestThreadRepositoryCreateAndListMessages(t *testing.T) {
 	require.Equal(t, int64(20), got[1].RunID)
 }
 
+func TestThreadRepositoryListRecentMessagesByRolesFiltersBeforeLimit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	for _, message := range []*entity.Message{
+		{ID: 1, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser, Content: "old public", CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, Role: entity.MessageRoleAssistant, Content: "middle public", CreatedAt: 200},
+		{ID: 3, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser, Content: "newest public", CreatedAt: 300},
+		{ID: 4, ThreadID: 11, RunID: 21, Role: entity.MessageRoleUser, Content: "other thread", CreatedAt: 400},
+	} {
+		require.NoError(t, repo.CreateMessage(context.Background(), message))
+	}
+	for index := 0; index < 45; index++ {
+		require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+			ID:        int64(100 + index),
+			ThreadID:  10,
+			RunID:     20,
+			Role:      entity.MessageRoleSystem,
+			Content:   "system noise",
+			CreatedAt: int64(1000 + index),
+		}))
+	}
+
+	got, err := repo.ListRecentMessagesByRoles(context.Background(), ListRecentMessagesByRolesRequest{
+		ThreadID: 10,
+		Roles:    []entity.MessageRole{entity.MessageRoleUser, entity.MessageRoleAssistant},
+		Limit:    2,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(2), got[0].ID)
+	require.Equal(t, "middle public", got[0].Content)
+	require.Equal(t, int64(3), got[1].ID)
+	require.Equal(t, "newest public", got[1].Content)
+}
+
 func TestThreadRepositoryCreateAndGetRun(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

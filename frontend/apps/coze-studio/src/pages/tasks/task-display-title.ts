@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { artifactFileName } from './task-artifacts-helpers';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 
 const TITLE_MAX_LENGTH = 48;
 const KNOWN_FILE_EXTENSION_RE =

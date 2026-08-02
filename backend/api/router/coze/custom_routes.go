@@ -14,6 +14,7 @@ import (
 // IDL routes. Existing generated routes are intentionally not duplicated.
 func RegisterCustomRoutes(r *server.Hertz) {
 	r.GET("/api/site/config", handler.GetPublicSiteConfig)
+	r.GET("/healthz", handler.GetHealthz)
 	root := r.Group("/", rootMw()...)
 	api := root.Group("/api", _apiMw()...)
 
@@ -22,7 +23,6 @@ func RegisterCustomRoutes(r *server.Hertz) {
 	registerWorkbenchCustomRoutes(api)
 	registerWorkspaceCustomRoutes(api)
 	registerSpaceCompatibilityRoutes(api)
-	registerLangGraphCustomRoutes(api)
 }
 
 func registerAdminCustomRoutes(api *route.RouterGroup) {
@@ -112,18 +112,6 @@ func registerWorkbenchCustomRoutes(api *route.RouterGroup) {
 	mcpServer.POST("/discover", handler.DiscoverMCPToolServer)
 	mcpServer.GET("/export", handler.ExportMCPToolServer)
 	mcpServer.GET("/audit_events", handler.ListMCPToolAuditEvents)
-
-	thread := workbench.Group("/task_threads/:thread_id")
-	thread.GET("/uploads", handler.ListTaskThreadUploadFiles)
-	thread.POST("/uploads", handler.UploadTaskThreadFiles)
-	thread.DELETE("/uploads/:filename", handler.DeleteTaskThreadUploadFile)
-	thread.GET("/run_events/stream", handler.StreamTaskThreadRunEvents)
-	thread.GET("/artifact_scan_jobs", handler.ListTaskThreadArtifactScanJobs)
-	thread.POST("/artifact_scan_jobs/:job_id/retry", handler.RetryTaskThreadArtifactScanJob)
-	thread.POST("/artifacts/:artifact_id/scan_review", handler.ReviewTaskThreadArtifactScan)
-	thread.GET("/artifacts/:artifact_id/content", handler.GetTaskThreadArtifactContent)
-	thread.DELETE("/artifacts/:artifact_id", handler.DeleteTaskThreadArtifact)
-	thread.POST("/artifacts/:artifact_id/restore", handler.RestoreTaskThreadArtifact)
 }
 
 func registerWorkspaceCustomRoutes(api *route.RouterGroup) {
@@ -143,45 +131,4 @@ func registerSpaceCompatibilityRoutes(api *route.RouterGroup) {
 	playgroundAPI := api.Group("/playground_api", _playground_apiMw()...)
 	space := playgroundAPI.Group("/space", _spaceMw()...)
 	space.POST("/save", handler.SaveSpaceV2)
-}
-
-func registerLangGraphCustomRoutes(api *route.RouterGroup) {
-	api.POST("/threads", handler.CreateLangGraphThread)
-	api.POST("/threads/search", handler.SearchLangGraphThreads)
-	thread := api.Group("/threads/:thread_id")
-	thread.GET("", handler.GetLangGraphThread)
-	thread.PATCH("", handler.PatchLangGraphThread)
-	thread.DELETE("", handler.DeleteLangGraphThread)
-	thread.GET("/state", handler.GetLangGraphThreadState)
-	thread.POST("/state", handler.PostLangGraphThreadState)
-	thread.GET("/history", handler.GetLangGraphThreadHistory)
-	thread.POST("/history", handler.PostLangGraphThreadHistory)
-	thread.GET("/checkpoints/:checkpoint_id/resume", handler.GetLangGraphCheckpointResumeReadiness)
-	thread.GET("/messages", handler.ListLangGraphThreadMessages)
-	thread.GET("/runs", handler.ListLangGraphRuns)
-	thread.POST("/runs", handler.CreateLangGraphRun)
-	thread.POST("/runs/stream", handler.CreateLangGraphRunStream)
-	thread.POST("/runs/wait", handler.WaitLangGraphRun)
-
-	run := thread.Group("/runs/:run_id")
-	run.GET("", handler.GetLangGraphRun)
-	run.GET("/messages", handler.ListLangGraphRunMessages)
-	run.GET("/events", handler.ListLangGraphRunEvents)
-	run.POST("/cancel", handler.CancelLangGraphRun)
-	run.GET("/stream", handler.StreamLangGraphRun)
-	run.POST("/stream", handler.StreamLangGraphRun)
-	run.POST("/join", handler.JoinLangGraphRun)
-	run.GET("/join", handler.JoinLangGraphRunStream)
-
-	api.POST("/runs", handler.CreateLangGraphStatelessRun)
-	api.POST("/runs/stream", handler.CreateLangGraphStatelessRunStream)
-	api.POST("/runs/wait", handler.WaitLangGraphStatelessRun)
-	statelessRun := api.Group("/runs/:run_id")
-	statelessRun.GET("", handler.GetLangGraphStatelessRun)
-	statelessRun.GET("/messages", handler.ListLangGraphStatelessRunMessages)
-	statelessRun.GET("/feedback", handler.ListLangGraphStatelessRunFeedback)
-	statelessRun.POST("/cancel", handler.CancelLangGraphStatelessRun)
-	statelessRun.GET("/stream", handler.StreamLangGraphStatelessRun)
-	statelessRun.POST("/join", handler.JoinLangGraphStatelessRun)
-	statelessRun.GET("/join", handler.JoinLangGraphStatelessRunStream)
 }

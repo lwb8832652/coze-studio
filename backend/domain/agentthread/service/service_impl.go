@@ -398,6 +398,34 @@ func (s *threadService) ListMessages(ctx context.Context, req *ListMessagesReque
 	})
 }
 
+func (s *threadService) ListRecentMessagesByRoles(
+	ctx context.Context,
+	req *ListRecentMessagesByRolesRequest,
+) ([]*entity.Message, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("list recent messages request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+	if len(req.Roles) == 0 {
+		return []*entity.Message{}, nil
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	return s.repo.ListRecentMessagesByRoles(ctx, repository.ListRecentMessagesByRolesRequest{
+		ThreadID: req.ThreadID,
+		Roles:    append([]entity.MessageRole(nil), req.Roles...),
+		Limit:    limit,
+	})
+}
+
 func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error) {
 	if err := s.requireComponents(); err != nil {
 		return nil, err

@@ -18,8 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import {
   artifactInlinePreviewKind,
   artifactFileName,
@@ -40,7 +39,7 @@ import {
   type ArtifactScanReviewDecision,
 } from './service';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 
 export interface TaskArtifactActions {
   activeAction: string;

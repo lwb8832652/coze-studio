@@ -505,6 +505,9 @@ canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。�
   "metadata": {"source": "workbench_detail_followup"},
   "config": {"runtime": "eino_adk", "mode": "pro"},
   "context": {},
+  "coze": {
+    "message_metadata": {"source": "workbench_detail_followup"}
+  },
   "stream_mode": ["messages-tuple", "updates"],
   "multitask_strategy": "reject",
   "on_disconnect": "continue",
@@ -518,12 +521,14 @@ canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。�
 | 字段 | 规则 |
 | --- | --- |
 | `assistant_id` | 首期只接受公开别名 `agent`；不接受任意内部 assistant ID，也不因此承诺 assistants API |
-| `input` | 普通 Run 必填；`messages` 必须只有一个非空 User Message，表示本次 state update，不得被当作客户端提交的权威完整历史。使用 `command.resume` 时必须省略或为 `null` |
+| `input` | 普通 Run 和顶层失败重试必填；`messages` 必须只有一个非空 User Message，表示本次 state update，不得被当作客户端提交的权威完整历史。顶层重试只把它作为新 Run 的规范化执行输入，不据此新增 Message。使用 `command.resume` 时必须省略或为 `null` |
 | `input.uploaded_files` | 最多 10 项；每项只接受正整数或十进制字符串形式的 `file_id`，其他描述字段一律拒绝。服务端按 session principal 和 path Thread 查询文件并重建名称、路径、大小等权威摘要 |
-| `command.resume` | SDK 恢复形式；不得和普通 `input`、`metadata`、`config`、`context` 同时提交，并与专用 `resume` route 进入同一恢复用例 |
+| `command.resume` | SDK 恢复形式；不得和普通 `input`、`metadata`、`config`、`context`、顶层 retry 扩展同时提交，并与专用 `resume` route 进入同一恢复用例 |
 | `metadata` | 仅允许业务标签；身份、空间、权限和内部状态由服务端覆盖或拒绝 |
 | `config` | 服务端重新校验 runtime、mode、模型与资源；客户端不能扩大能力 |
 | `context` | 只接受公开、有限大小的上下文；凭据和内部 provider 配置禁止传入 |
+| `coze.message_metadata` | 只用于普通 turn，必须是满足持久化大小和敏感字段校验的 object；服务端将其写入与 Run 原子创建的同一条 User Message。不得与顶层 retry 扩展同时提交 |
+| `coze.attempt_kind/source_run_id` | 普通 turn 必须同时省略；顶层失败重试固定提交 `attempt_kind=retry` 和正十进制字符串 `source_run_id`。`attempt_kind=turn`、单独 source、未知字段或与 `message_metadata` 混用均返回 `422` |
 | `stream_mode` | string 或 string array；省略时规范化为 `values`，与固定 Python SDK 默认值一致 |
 | `multitask_strategy` | 首期只支持 `reject`；未知或未实现值返回 `422` |
 | `on_disconnect` | `cancel` 或 `continue`；省略时为 `cancel`，canonical UI 必须显式传 `continue` |
@@ -553,17 +558,20 @@ canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。�
 - HTTP body 最大 1 MiB；外部生产网关必须在代理读取或缓冲 body 前执行同等或更严格的
   限制，应用 handler 再做一次契约校验；
 - 本次 User Message 最大 256 KiB；
-- `config`、`context` 中单个字符串最大 32 KiB，最大嵌套深度 16，每层 object 或 array
+- `coze.message_metadata`、`config`、`context` 中单个字符串最大 32 KiB，最大嵌套深度
+  16，每层 object 或 array
   最多 256 项；
 - 身份、workspace/tenant、token、cookie、private key、provider 原始载荷和其他内部字段
   在持久化前拒绝，不能依赖响应投影再隐藏；`appended_message_id`、`source_run_id`、
   `attempt_kind`、human-interaction/checkpoint-resume 标记和 `_idempotency/_message` 也属于
   服务端字段，canonical metadata 不能提交。
 
-`Idempotency-Key` 只允许放在 header，去除首尾空白后最长 128 字节。相同 Thread 的重试
-必须回放首个已提交 Run 和 User Message，不重新验证已经变化的可变外部状态，因此即使
-首个请求引用的上传文件随后被删除，也必须返回相同 `run_id` 和 `message_id`；同一工作空间
-内把该 key 用于另一 Thread 时返回 `409 idempotency_conflict`，且不暴露原资源标识。body
+`Idempotency-Key` 只允许放在 header，去除首尾空白后最长 128 字节。相同 Thread 的普通
+turn 重放必须返回首个已提交 Run 和 User Message；顶层失败重试只回放首个已提交 Run，
+不得查询或补建 User Message。两者均不重新验证已经变化的可变外部状态，因此即使首个请求
+引用的上传文件随后被删除，也必须返回相同 `run_id`，普通 turn 还必须返回相同
+`message_id`；同一认证 principal 在同一工作空间内把该 key 用于另一 Thread 时返回
+`409 idempotency_conflict`，且不暴露原资源标识。body
 中的 `idempotency_key` 始终返回 `422`。这些冲突与回放规则同时适用于普通创建、
 `command.resume` 和专用 `resume` route；恢复路径不能把跨 Thread 冲突降级成 `500`。
 服务端为 opt-in canonical Run 持久化不公开的 operation + payload fingerprint：同键、同
@@ -573,6 +581,37 @@ context、执行选项，或在 turn/resume 间复用 key，统一返回 `409 id
 应用层、领域层和仓储层新增的 operation、fingerprint、Message 关联及重放校验字段必须默认
 为空或 `false`，且只由 canonical handler 显式启用；历史调用即使已有 `_idempotency` 同名
 metadata，也不得自动切换到新指纹语义。
+
+顶层失败任务重试固定使用下列扩展；普通 turn 不发送 `attempt_kind=turn`：
+
+```json
+{
+  "assistant_id": "agent",
+  "input": {
+    "messages": [{"role": "user", "content": "重新执行当前任务"}],
+    "uploaded_files": [{"file_id": "5001"}]
+  },
+  "metadata": {"source": "task_retry"},
+  "config": {"runtime": "eino_adk", "mode": "pro"},
+  "context": {},
+  "coze": {
+    "attempt_kind": "retry",
+    "source_run_id": "3001"
+  },
+  "stream_mode": ["messages-tuple", "updates"],
+  "multitask_strategy": "reject",
+  "on_disconnect": "continue",
+  "durability": "async"
+}
+```
+
+来源 Run 必须属于 path Thread、是顶层 task Run 且状态为 `failed`；缺失或跨 Thread 返回
+`404`，子智能体来源返回 `422 invalid_retry`，非失败来源返回 `409 run_not_retryable`。
+服务端保留一个规范化 User Message 输入和权威附件摘要以构造新 Run，但不创建 Message
+记录；create 响应因此不包含 `coze.message_id` 或 `coze.submission_message`。retry 使用独立
+operation `workbench.run.retry.v1`，fingerprint 必须包含来源 Run、规范化输入、附件、
+metadata、config、context 和执行选项，不能与普通 turn 或 resume 共用幂等结果。
+`POST runs`、`runs/wait` 和 `runs/stream` 必须复用同一严格解析及校验逻辑。
 
 SDK 恢复请求固定为下列结构；`source_run_id` 是来源 interrupted Run，响应中的新
 `run_id` 是恢复 attempt：
@@ -696,8 +735,10 @@ Run 响应不得回显原始 `input`、`command`、`config` 或 `context`。这�
 - resume 的 schema、kind、decision、interaction 匹配和响应大小错误返回
   `422 invalid_resume`；来源 Run 已不再可恢复的状态竞争返回 `409 run_not_resumable`；
   checkpoint 损坏、依赖失败等真正服务端故障才返回 `5xx`。
-- 顶层失败任务重试仍调用普通 Run 创建，设置 `coze.attempt_kind=retry` 和来源元数据；
-  子智能体 retry 作为产品扩展另行保留，不能和顶层 retry 混为一谈。
+- 顶层失败任务重试仍调用同一应用层 Run 创建用例，通过请求扩展
+  `coze.attempt_kind=retry/source_run_id` 表达新 attempt；该路径不新增 User Message，
+  响应只投影新 Run 和来源关系。子智能体 retry 作为产品扩展另行保留，不能和顶层 retry
+  混为一谈。
 
 ### 7.5 读取、排序与分页
 
@@ -756,8 +797,11 @@ data: [{"type":"AIMessageChunk","content":"完成"},{"run_id":"3001","node":"age
 
 - `GET .../{run_id}/stream` 接受 `Last-Event-ID`；可以同时接受明确的
   `after_event_id`，两者都合法时取较大值。
-- `GET .../{run_id}/stream` 接受 SDK 的 `stream_mode` 和默认
-  `cancel_on_disconnect=0` query；非零取消语义未完成前返回 `422`。
+- `GET .../{run_id}/stream` 接受 SDK 的 `stream_mode`；`cancel_on_disconnect` 只兼容固定
+  JavaScript SDK 的精确 `1|0` 和显式小写 `true|false`，大小写变体、空白包裹及其他值
+  返回 `422`。`true|1` 是本次连接的明确取消策略，只有
+  writer 确认客户端断开时才取消，并覆盖 Run 持久化的 `on_disconnect=continue` 默认值；
+  `false|0` 或省略不取消。
 - cursor 必须以 64 位十进制整数解析；前端使用 `BigInt` 或字符串整数比较器。
 - 服务端先回放 cursor 之后的持久化公开事件，再进入实时订阅，二者之间不得丢事件。
 - 客户端按 `event_id` 去重；未知 `event` 记录安全遥测后继续，不能终止整个流。
@@ -1265,6 +1309,9 @@ validation_field, unsupported_field, error_code, error_class, retryable
   安全关联字段，必须返回 `404`，不得触发 application/domain 调用。
 - deferred 创建使用 `submission_kind=deferred_initial_run`，后续 Message + Run 创建使用
   `submission_kind=initial_run_with_uploads`，二者用各自 trace 并通过 Thread ID 关联。
+- canonical 普通 turn 使用 `submission_kind=run_turn`；顶层失败重试使用
+  `submission_kind=run_retry` 并记录审核后的 `source_run_id`。两者都不得记录请求 body、
+  Message 内容、metadata 原文、config 或 context。
 - worker claim、lease 续约与最终化使用 `run_id + run_generation + lease_id_hash`
   关联；晚到结果被拒绝必须记录当前/提交 generation 和稳定拒绝原因。
 - 外部依赖日志只记录审核后的依赖名、操作、状态类别和耗时，不记录请求 URL

@@ -64,6 +64,11 @@ type canonicalThread struct {
 type canonicalThreadCoze struct {
 	ProductStatus     string `json:"product_status"`
 	InitialSubmission any    `json:"initial_submission"`
+	Source            string `json:"source"`
+	Progress          int32  `json:"progress"`
+	LastUserMessage   string `json:"last_user_message"`
+	LastAgentMessage  string `json:"last_agent_message"`
+	CanEdit           bool   `json:"can_edit"`
 }
 
 type canonicalRun struct {
@@ -79,13 +84,18 @@ type canonicalRun struct {
 }
 
 type canonicalRunCoze struct {
-	MessageID      *string  `json:"message_id"`
-	AttemptKind    string   `json:"attempt_kind"`
-	SourceRunID    *string  `json:"source_run_id"`
-	StreamModes    []string `json:"stream_modes"`
-	OnDisconnect   string   `json:"on_disconnect"`
-	Durability     string   `json:"durability"`
-	TerminalReason *string  `json:"terminal_reason"`
+	MessageID         *string           `json:"message_id"`
+	SubmissionMessage *canonicalMessage `json:"submission_message,omitempty"`
+	AttemptKind       string            `json:"attempt_kind"`
+	SourceRunID       *string           `json:"source_run_id"`
+	ParentRunID       *string           `json:"parent_run_id"`
+	RunKind           string            `json:"run_kind"`
+	StreamModes       []string          `json:"stream_modes"`
+	OnDisconnect      string            `json:"on_disconnect"`
+	Durability        string            `json:"durability"`
+	TerminalReason    *string           `json:"terminal_reason"`
+	StartedAt         *string           `json:"started_at"`
+	EndedAt           *string           `json:"ended_at"`
 }
 
 type canonicalMessage struct {
@@ -97,8 +107,6 @@ type canonicalMessage struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt string         `json:"created_at"`
 	Seq       string         `json:"seq,omitempty"`
-
-	sortCreatedAt int64
 }
 
 type canonicalRunEvent struct {
@@ -171,14 +179,23 @@ func projectCanonicalThread(
 	if err != nil {
 		return nil, err
 	}
-	if complete {
-		return projectCanonicalThreadSnapshot(summary, snapshot)
+	if !complete {
+		snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+		if err != nil {
+			return nil, err
+		}
 	}
-	snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+	projected, err := projectCanonicalThreadSnapshot(summary, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	return projectCanonicalThreadSnapshot(summary, snapshot)
+	projected.Coze.CanEdit = canonicalThreadCanEdit(ctx, summary.CreatorID)
+	return projected, nil
+}
+
+func canonicalThreadCanEdit(ctx context.Context, creatorID int64) bool {
+	viewerID := workbenchViewerIDFromCtx(ctx)
+	return viewerID > 0 && creatorID > 0 && viewerID == creatorID
 }
 
 func canonicalThreadSnapshotFromProductStatus(
@@ -215,6 +232,10 @@ func projectCanonicalThreadSnapshot(
 	if summary.ThreadID <= 0 {
 		return nil, fmt.Errorf("canonical thread projection requires a positive thread id")
 	}
+	source, err := canonicalThreadSource(summary.Source)
+	if err != nil {
+		return nil, err
+	}
 
 	status, productStatus, err := canonicalThreadStatus(snapshot.LatestRun, snapshot.Interrupts)
 	if err != nil {
@@ -236,6 +257,14 @@ func projectCanonicalThreadSnapshot(
 		Interrupts: interrupts,
 		Coze: canonicalThreadCoze{
 			ProductStatus: productStatus,
+			Source:        source,
+			Progress:      summary.Progress,
+			LastUserMessage: canonicalCleanString(
+				summary.LastUserMessage, canonicalMaxPublicValueRunes,
+			),
+			LastAgentMessage: canonicalCleanString(
+				summary.LastAgentMessage, canonicalMaxPublicValueRunes,
+			),
 		},
 	}, nil
 }
@@ -253,6 +282,10 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	if err != nil {
 		return nil, err
 	}
+	runKind, err := canonicalRunKind(public.RunKind)
+	if err != nil {
+		return nil, err
+	}
 	rawMetadata := canonicalJSONObject(summary.Metadata)
 	metadata := canonicalMetadataFromMap(rawMetadata, "")
 	messageID := canonicalNestedMetadataID(rawMetadata, "_message", "message_id")
@@ -265,6 +298,14 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	multitaskStrategy := strings.TrimSpace(public.MultitaskStrategy)
 	if multitaskStrategy == "" {
 		multitaskStrategy = "reject"
+	}
+	startedAt, err := canonicalOptionalTime(public.StartedAt, "run started_at")
+	if err != nil {
+		return nil, err
+	}
+	endedAt, err := canonicalOptionalTime(public.EndedAt, "run ended_at")
+	if err != nil {
+		return nil, err
 	}
 
 	return &canonicalRun{
@@ -280,10 +321,14 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 			MessageID:      messageID,
 			AttemptKind:    canonicalRunAttemptKind(public.RunKind, rawMetadata),
 			SourceRunID:    sourceRunID,
+			ParentRunID:    canonicalOptionalTimeID(public.ParentRunID),
+			RunKind:        runKind,
 			StreamModes:    canonicalRunStreamModes(public.StreamMode),
 			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
 			Durability:     canonicalRunDurability(public.Durability),
 			TerminalReason: terminalReason,
+			StartedAt:      startedAt,
+			EndedAt:        endedAt,
 		},
 	}, nil
 }
@@ -401,7 +446,7 @@ func loadCanonicalThreadProjectionSnapshot(
 		return canonicalThreadProjectionSnapshot{}, fmt.Errorf("agent thread application service is unavailable")
 	}
 
-	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	runs, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
 		ThreadID: threadID,
 		Page:     1,
@@ -573,6 +618,8 @@ func canonicalRunAttemptKind(kind appagentthread.RunKind, metadata map[string]an
 		"coze.human_interaction_resolved.v1",
 	) != nil:
 		return "resume"
+	case kind == appagentthread.RunKindTask && canonicalProjectedTopLevelRetrySourceRunID(metadata) != nil:
+		return "retry"
 	case canonicalMetadataObjectSchema(
 		metadata,
 		"subagent_retry",
@@ -597,6 +644,9 @@ func canonicalRunSourceRunID(metadata map[string]any) *string {
 		}
 		return canonicalNestedMetadataID(metadata, "checkpoint_resume", "source_run_id")
 	}
+	if sourceRunID := canonicalProjectedTopLevelRetrySourceRunID(metadata); sourceRunID != nil {
+		return sourceRunID
+	}
 	if canonicalMetadataObjectSchema(
 		metadata,
 		"subagent_retry",
@@ -605,6 +655,14 @@ func canonicalRunSourceRunID(metadata map[string]any) *string {
 		return canonicalMetadataID(metadata["source_run_id"])
 	}
 	return nil
+}
+
+func canonicalProjectedTopLevelRetrySourceRunID(metadata map[string]any) *string {
+	attemptKind, ok := metadata["attempt_kind"].(string)
+	if !ok || strings.TrimSpace(attemptKind) != "retry" {
+		return nil
+	}
+	return canonicalMetadataID(metadata["source_run_id"])
 }
 
 func canonicalNestedMetadataID(metadata map[string]any, objectKey, idKey string) *string {
@@ -674,6 +732,68 @@ func canonicalRunDurability(string) string {
 	return "async"
 }
 
+func canonicalThreadSource(source appagentthread.ThreadSource) (string, error) {
+	switch source {
+	case "":
+		return "", nil
+	case appagentthread.ThreadSourceWeb, appagentthread.ThreadSourceIM, appagentthread.ThreadSourceAPI:
+		return string(source), nil
+	default:
+		return "", fmt.Errorf("unsupported canonical thread source %q", source)
+	}
+}
+
+func canonicalRunKind(kind appagentthread.RunKind) (string, error) {
+	switch kind {
+	case "", appagentthread.RunKindTask:
+		return "task", nil
+	case appagentthread.RunKindSubagent:
+		return "subagent", nil
+	default:
+		return "", fmt.Errorf("unsupported canonical run kind %q", kind)
+	}
+}
+
+func canonicalOptionalTimeID(value int64) *string {
+	if value <= 0 {
+		return nil
+	}
+	formatted := strconv.FormatInt(value, 10)
+	return &formatted
+}
+
+func canonicalOptionalTime(value int64, resource string) (*string, error) {
+	return canonicalCheckedTime(value, resource)
+}
+
+func canonicalRequiredTime(value int64, resource string) (string, error) {
+	projected, err := canonicalCheckedTime(value, resource)
+	if err != nil {
+		return "", err
+	}
+	if projected == nil {
+		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	return *projected, nil
+}
+
+func canonicalCheckedTime(value int64, resource string) (*string, error) {
+	if value == 0 {
+		return nil, nil
+	}
+	if value < 0 {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	projected := canonicalTime(value)
+	if projected == "" {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, projected); err != nil {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	return &projected, nil
+}
+
 func canonicalMetadataFromJSON(raw, title string) map[string]any {
 	return canonicalMetadataFromMap(canonicalJSONObject(raw), title)
 }
@@ -692,7 +812,7 @@ func canonicalEntityMetadataFromMap(source map[string]any, title string) map[str
 
 func removeCanonicalInternalMetadata(metadata map[string]any) {
 	for _, key := range []string{
-		"status", "appended_message_id", "source_run_id", "parent_run_id", "requested_at",
+		"status", "appended_message_id", "attempt_kind", "source_run_id", "parent_run_id", "requested_at",
 	} {
 		delete(metadata, key)
 	}
@@ -752,7 +872,7 @@ func canonicalMetadataValue(value any) (any, bool) {
 		return typed, true
 	case string:
 		projected := canonicalCleanString(typed, canonicalMaxMetadataRunes)
-		if projected == "" || canonicalSensitiveValuePattern.MatchString(projected) {
+		if projected == "" || canonicalMetadataStringIsSensitive(projected) {
 			return nil, false
 		}
 		return projected, true
@@ -761,13 +881,22 @@ func canonicalMetadataValue(value any) (any, bool) {
 	}
 }
 
+func canonicalMetadataStringIsSensitive(value string) bool {
+	// This reviewed business label contains the substring "sk_", which the
+	// generic credential detector intentionally treats as sensitive elsewhere.
+	if value == "task_retry" {
+		return false
+	}
+	return canonicalSensitiveValuePattern.MatchString(value)
+}
+
 func canonicalProtectedMetadataKey(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
 	if canonicalUnsafePublicField(normalized) {
 		return true
 	}
 	for _, fragment := range []string{
-		"owner", "creator", "user_id", "space", "runtime", "credential", "secret", "token",
+		"owner", "creator", "user_id", "space", "can_edit", "runtime", "credential", "secret", "token",
 		"api_key", "apikey", "authorization", "password", "legacy_task_id", "worker_id",
 		"lease_owner", "lease_token", "idempotency_key", "checkpoint_bytes", "provider_body",
 		"hidden_config",
@@ -904,6 +1033,7 @@ func canonicalUnsafePublicField(key string) bool {
 		"raw_provider", "tool_arguments", "tool_args", "tool_result", "hidden_config", "legacy_task_id",
 		"worker_id", "lease_owner", "lease_token", "idempotency_key", "error_chain", "stack_trace",
 		"traceback", "api_key", "credential", "secret", "access_token", "authorization", "password",
+		"raw_usage", "signed_url", "download_url", "object_url",
 	} {
 		if strings.Contains(normalized, fragment) {
 			return true

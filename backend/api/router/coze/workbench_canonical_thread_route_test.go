@@ -58,12 +58,46 @@ var canonicalThreadRoutes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/threads/:thread_id/runs/:run_id/messages"},
 }
 
+var canonicalProductRoutes = []routeExpectation{
+	{http.MethodPost, "/api/workbench/threads/:thread_id/messages"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/suggestions"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/uploads"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/uploads"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/uploads/:file_id"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/content"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/artifacts/:artifact_id"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifact_scan_jobs"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/token_usage"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories"},
+	{http.MethodPut, "/api/workbench/threads/:thread_id/memories/:memory_id"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/memories/:memory_id"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/:memory_id/restore"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/clear"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories/export"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/import"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories/audit_events"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/guardrail_audit_events"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/guardrail_audit_events/export"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/mcp_runtime_audit_events"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/retry"},
+}
+
+func canonicalRouteSnapshot() []routeExpectation {
+	result := append([]routeExpectation{}, canonicalThreadRoutes...)
+	return append(result, canonicalProductRoutes...)
+}
+
 var forbiddenCanonicalThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/stream"},
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/join"},
 }
 
-var workbenchTaskThreadRouteSnapshot = []routeExpectation{
+var retiredTaskThreadV1Routes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/task_threads"},
 	{http.MethodPost, "/api/workbench/task_threads"},
 	{http.MethodGet, "/api/workbench/task_threads/:thread_id"},
@@ -102,7 +136,27 @@ var workbenchTaskThreadRouteSnapshot = []routeExpectation{
 	{http.MethodDelete, "/api/workbench/task_threads/:thread_id/uploads/:filename"},
 }
 
-var langGraphThreadRouteSnapshot = []routeExpectation{
+var scheduledTaskRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_tasks"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPut, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodDelete, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/enable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/disable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/execute"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id/executions"},
+}
+
+var scheduledTaskTargetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_targets"},
+}
+
+var scheduledTaskCronPresetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_cron_presets"},
+}
+
+var retiredLangGraphThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/threads"},
 	{http.MethodPost, "/api/threads/search"},
 	{http.MethodGet, "/api/threads/:thread_id"},
@@ -126,6 +180,19 @@ var langGraphThreadRouteSnapshot = []routeExpectation{
 	{http.MethodPost, "/api/threads/:thread_id/runs/:run_id/stream"},
 	{http.MethodGet, "/api/threads/:thread_id/state"},
 	{http.MethodPost, "/api/threads/:thread_id/state"},
+}
+
+var retiredLangGraphStatelessRunRoutes = []routeExpectation{
+	{http.MethodPost, "/api/runs"},
+	{http.MethodPost, "/api/runs/stream"},
+	{http.MethodPost, "/api/runs/wait"},
+	{http.MethodGet, "/api/runs/:run_id"},
+	{http.MethodGet, "/api/runs/:run_id/messages"},
+	{http.MethodGet, "/api/runs/:run_id/feedback"},
+	{http.MethodPost, "/api/runs/:run_id/cancel"},
+	{http.MethodGet, "/api/runs/:run_id/stream"},
+	{http.MethodPost, "/api/runs/:run_id/join"},
+	{http.MethodGet, "/api/runs/:run_id/join"},
 }
 
 var retiredChatTaskPaths = []string{
@@ -153,10 +220,72 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	Register(h)
 	RegisterCustomRoutes(h)
 
-	registeredRoutes := registeredRouteSet(h)
-
 	t.Run("registers the canonical route surface", func(t *testing.T) {
-		requireRegisteredRoutes(t, registeredRoutes, canonicalThreadRoutes)
+		require.Len(t, canonicalRouteSnapshot(), 47)
+		requireExactRouteSnapshot(t, h, "/api/workbench/threads", canonicalRouteSnapshot())
+	})
+
+	t.Run("keeps the Scheduled Task route surface", func(t *testing.T) {
+		require.Len(t, scheduledTaskRoutes, 9)
+		require.Equal(
+			t,
+			11,
+			len(scheduledTaskRoutes)+len(scheduledTaskTargetRoutes)+len(scheduledTaskCronPresetRoutes),
+		)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_tasks", scheduledTaskRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_targets", scheduledTaskTargetRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_cron_presets", scheduledTaskCronPresetRoutes)
+	})
+
+	t.Run("keeps all retired LangGraph thread method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphThreadRoutes, 23)
+		requireExactRouteSnapshot(t, h, "/api/threads", nil)
+		for _, route := range retiredLangGraphThreadRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
+	})
+
+	t.Run("keeps all stateless LangGraph run method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphStatelessRunRoutes, 10)
+		requireExactRouteSnapshot(t, h, "/api/runs", nil)
+		for _, route := range retiredLangGraphStatelessRunRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
+	})
+
+	t.Run("keeps all TaskThread V1 method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredTaskThreadV1Routes, 36)
+		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", nil)
+		for _, route := range retiredTaskThreadV1Routes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
 	})
 
 	t.Run("excludes forbidden canonical POST variants", func(t *testing.T) {
@@ -174,15 +303,9 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves the workbench task thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", workbenchTaskThreadRouteSnapshot)
-	})
-
-	t.Run("preserves the LangGraph thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
-	})
-
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
+		requireExactRouteSnapshot(t, h, "/api/workbench/tasks", nil)
+		requireExactRouteSnapshot(t, h, "/api/workbench/chat", nil)
 		for _, path := range retiredChatTaskPaths {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				requireUnreachableRoute(t, h, handlerBoundary, method, path)
@@ -211,29 +334,6 @@ func requireUnreachableRoute(
 		method,
 		path,
 	)
-}
-
-func registeredRouteSet(h *server.Hertz) map[routeExpectation]struct{} {
-	routes := make(map[routeExpectation]struct{}, len(h.Routes()))
-	for _, route := range h.Routes() {
-		routes[routeExpectation{method: route.Method, path: route.Path}] = struct{}{}
-	}
-	return routes
-}
-
-func requireRegisteredRoutes(
-	t *testing.T,
-	registeredRoutes map[routeExpectation]struct{},
-	expectedRoutes []routeExpectation,
-) {
-	t.Helper()
-	for _, route := range expectedRoutes {
-		route := route
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			_, ok := registeredRoutes[route]
-			require.True(t, ok, "canonical route is not registered: %s %s", route.method, route.path)
-		})
-	}
 }
 
 func requireExactRouteSnapshot(
@@ -265,6 +365,16 @@ func sortedRouteExpectations(routes []routeExpectation) []routeExpectation {
 }
 
 func concreteRoutePath(path string) string {
-	path = strings.ReplaceAll(path, ":thread_id", "1")
-	return strings.ReplaceAll(path, ":run_id", "2")
+	replacements := map[string]string{
+		":thread_id":   "1",
+		":run_id":      "2",
+		":artifact_id": "3",
+		":job_id":      "4",
+		":memory_id":   "5",
+		":filename":    "file.txt",
+	}
+	for parameter, value := range replacements {
+		path = strings.ReplaceAll(path, parameter, value)
+	}
+	return path
 }

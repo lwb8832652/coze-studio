@@ -14,651 +14,369 @@
  * limitations under the License.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   workbench,
   workbenchSkill,
   workbenchTask,
 } from '@coze-studio/api-schema';
 
-vi.mock('lottie-web', () => ({
-  destroy: vi.fn(),
-  loadAnimation: vi.fn(),
-  default: {
-    destroy: vi.fn(),
-    loadAnimation: vi.fn(),
-  },
-}));
-
 import {
   appendTaskThreadMessage,
+  cancelTaskThreadRun,
+  clearTaskThreadMemories,
+  createTaskThread,
   createTaskThreadRun,
   deleteTaskThreadArtifact,
-  fetchTaskThreadArtifactContent,
-  getTaskThreadArtifactSignedURL,
-  getTaskThread,
-  getTaskThreadTokenUsage,
-  listTaskThreadMemories,
-  listTaskThreadArtifactScanJobs,
-  listTaskThreadArtifacts,
-  listTaskThreadRunEvents,
-  listTaskThreadMessages,
-  listTaskThreadRuns,
-  listTaskThreads,
-  reviewTaskThreadArtifactScan,
-  retryTaskThreadArtifactScanJob,
-  restoreTaskThreadArtifact,
-  restoreTaskThreadMemory,
-  resumeTaskThreadRun,
-  updateTaskThreadMemory,
   deleteTaskThreadMemory,
-  clearTaskThreadMemories,
-  listTaskThreadMemoryAuditEvents,
-  listTaskThreadGuardrailAuditEvents,
-  exportTaskThreadMemories,
   exportTaskThreadGuardrailAuditEvents,
+  exportTaskThreadMemories,
+  fetchTaskThreadArtifactContent,
+  generateTaskThreadSuggestions,
+  getTaskThread,
+  getTaskThreadArtifactSignedURL,
+  getTaskThreadTokenUsage,
   getWorkbenchRuntimeDoctor,
   importTaskThreadMemories,
   installSkillFromArtifact,
+  listTaskThreadArtifacts,
+  listTaskThreadArtifactScanJobs,
+  listTaskThreadGuardrailAuditEvents,
+  listTaskThreadMemories,
+  listTaskThreadMemoryAuditEvents,
+  listTaskThreadMessages,
+  listTaskThreadMCPRuntimeAuditEvents,
+  listTaskThreadRunEvents,
+  listTaskThreadRuns,
+  listTaskThreads,
+  restoreTaskThreadArtifact,
+  restoreTaskThreadMemory,
+  resumeTaskThreadRun,
+  retryTaskThreadArtifactScanJob,
+  retryTaskThreadSubagentRun,
+  reviewTaskThreadArtifactScan,
+  updateTaskThreadMemory,
 } from '../service';
+import {
+  artifactScanJobTransportFixture,
+  artifactTransportFixture,
+  memoryAuditTransportFixture,
+  memoryTransportFixture,
+} from '../../workbench/thread-client/__tests__/fixtures';
+
+const canonicalClient = vi.hoisted(() => ({
+  contract: 'canonical_v1' as const,
+  clearMemories: vi.fn(),
+  deleteArtifact: vi.fn(),
+  deleteMemory: vi.fn(),
+  getArtifactContent: vi.fn(),
+  getArtifactSignedURL: vi.fn(),
+  listArtifactScanJobs: vi.fn(),
+  listRunEvents: vi.fn(),
+  listRuns: vi.fn(),
+  listMemories: vi.fn(),
+  listMemoryAuditEvents: vi.fn(),
+  restoreArtifact: vi.fn(),
+  restoreMemory: vi.fn(),
+  retryArtifactScanJob: vi.fn(),
+  reviewArtifactScan: vi.fn(),
+  updateMemory: vi.fn(),
+}));
+
+const spaceStore = vi.hoisted(() => ({
+  getSpaceId: vi.fn(() => 'store-space'),
+}));
+
+vi.mock('lottie-web', () => ({
+  destroy: vi.fn(),
+  loadAnimation: vi.fn(),
+  default: { destroy: vi.fn(), loadAnimation: vi.fn() },
+}));
+
+vi.mock('../../workbench/thread-client/canonical-thread-client', () => ({
+  CanonicalThreadClient: vi.fn(function recordingCanonicalThreadClient() {
+    return canonicalClient;
+  }),
+  CanonicalThreadCoreClient: vi.fn(
+    function recordingCanonicalThreadCoreClient() {
+      return canonicalClient;
+    },
+  ),
+}));
+
+vi.mock('@coze-foundation/space-store', () => ({
+  useSpaceStore: Object.assign(vi.fn(), {
+    getState: () => ({ getSpaceId: spaceStore.getSpaceId }),
+  }),
+}));
+
+const artifact = artifactTransportFixture.visible;
+const scanJob = artifactScanJobTransportFixture.visible;
+const memory = memoryTransportFixture.visible;
+const memoryAudit = memoryAuditTransportFixture.visible;
+const blob = new Blob(['artifact'], { type: 'text/plain' });
+const directFetch = vi.fn();
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', directFetch);
+
+  canonicalClient.listMemories.mockResolvedValue({
+    items: [memory],
+    total: 1,
+    has_more: false,
+  });
+  canonicalClient.updateMemory.mockResolvedValue({ memory, updated: true });
+  canonicalClient.deleteMemory.mockResolvedValue(undefined);
+  canonicalClient.clearMemories.mockResolvedValue({ deleted: 1 });
+  canonicalClient.restoreMemory.mockResolvedValue({ memory, restored: true });
+  canonicalClient.listMemoryAuditEvents.mockResolvedValue({
+    items: [memoryAudit],
+    total: 1,
+    has_more: false,
+  });
+  canonicalClient.listArtifactScanJobs.mockResolvedValue({
+    items: [scanJob],
+    total: 1,
+    has_more: false,
+  });
+  canonicalClient.listRunEvents.mockResolvedValue({
+    items: [],
+    total: 0,
+    has_more: false,
+  });
+  canonicalClient.listRuns.mockResolvedValue({
+    items: [],
+    total: 0,
+    has_more: false,
+  });
+  canonicalClient.retryArtifactScanJob.mockResolvedValue({
+    job: scanJob,
+    retried: true,
+  });
+  canonicalClient.reviewArtifactScan.mockResolvedValue({
+    artifact_id: artifact.artifact_id,
+    decision: 'release',
+    reviewed: true,
+    scan_status: 'clean',
+  });
+  canonicalClient.getArtifactContent.mockResolvedValue({
+    blob,
+    content_disposition: 'inline; filename="artifact.txt"',
+    content_type: 'text/plain',
+  });
+  canonicalClient.getArtifactSignedURL.mockResolvedValue({
+    artifact_id: artifact.artifact_id,
+    content_type: artifact.content_type,
+    expires_in_seconds: 300,
+    preview_mode: artifact.preview_mode,
+    url: 'https://storage.example.test/artifact',
+  });
+  canonicalClient.deleteArtifact.mockResolvedValue(undefined);
+  canonicalClient.restoreArtifact.mockResolvedValue({
+    artifact,
+    restored: true,
+  });
+});
 
 describe('task thread service', () => {
-  it('exports task-thread API clients for the new task source', () => {
-    expect(typeof listTaskThreads).toBe('function');
-    expect(typeof getTaskThread).toBe('function');
-    expect(typeof listTaskThreadMessages).toBe('function');
-    expect(typeof appendTaskThreadMessage).toBe('function');
-    expect(typeof listTaskThreadRuns).toBe('function');
-    expect(typeof createTaskThreadRun).toBe('function');
-    expect(typeof resumeTaskThreadRun).toBe('function');
-    expect(typeof listTaskThreadRunEvents).toBe('function');
-    expect(typeof getTaskThreadTokenUsage).toBe('function');
-    expect(typeof listTaskThreadMemories).toBe('function');
-    expect(typeof updateTaskThreadMemory).toBe('function');
-    expect(typeof deleteTaskThreadMemory).toBe('function');
-    expect(typeof clearTaskThreadMemories).toBe('function');
-    expect(typeof restoreTaskThreadMemory).toBe('function');
-    expect(typeof listTaskThreadMemoryAuditEvents).toBe('function');
-    expect(typeof listTaskThreadGuardrailAuditEvents).toBe('function');
-    expect(typeof exportTaskThreadMemories).toBe('function');
-    expect(typeof exportTaskThreadGuardrailAuditEvents).toBe('function');
-    expect(typeof importTaskThreadMemories).toBe('function');
-    expect(typeof getWorkbenchRuntimeDoctor).toBe('function');
-    expect(typeof listTaskThreadArtifacts).toBe('function');
-    expect(typeof listTaskThreadArtifactScanJobs).toBe('function');
-    expect(typeof retryTaskThreadArtifactScanJob).toBe('function');
-    expect(typeof reviewTaskThreadArtifactScan).toBe('function');
-    expect(typeof fetchTaskThreadArtifactContent).toBe('function');
-    expect(typeof getTaskThreadArtifactSignedURL).toBe('function');
-    expect(typeof deleteTaskThreadArtifact).toBe('function');
-    expect(typeof restoreTaskThreadArtifact).toBe('function');
-    expect(typeof installSkillFromArtifact).toBe('function');
+  it('keeps every page-facing Task Thread export callable', () => {
+    const exports = [
+      listTaskThreads,
+      createTaskThread,
+      getTaskThread,
+      listTaskThreadMessages,
+      generateTaskThreadSuggestions,
+      appendTaskThreadMessage,
+      listTaskThreadRuns,
+      createTaskThreadRun,
+      resumeTaskThreadRun,
+      cancelTaskThreadRun,
+      retryTaskThreadSubagentRun,
+      listTaskThreadRunEvents,
+      getTaskThreadTokenUsage,
+      listTaskThreadArtifacts,
+      listTaskThreadMemories,
+      updateTaskThreadMemory,
+      deleteTaskThreadMemory,
+      clearTaskThreadMemories,
+      restoreTaskThreadMemory,
+      listTaskThreadMemoryAuditEvents,
+      listTaskThreadGuardrailAuditEvents,
+      listTaskThreadMCPRuntimeAuditEvents,
+      exportTaskThreadMemories,
+      exportTaskThreadGuardrailAuditEvents,
+      importTaskThreadMemories,
+      listTaskThreadArtifactScanJobs,
+      retryTaskThreadArtifactScanJob,
+      reviewTaskThreadArtifactScan,
+      fetchTaskThreadArtifactContent,
+      getTaskThreadArtifactSignedURL,
+      deleteTaskThreadArtifact,
+      restoreTaskThreadArtifact,
+    ];
+
+    exports.forEach(serviceExport =>
+      expect(serviceExport).toBeTypeOf('function'),
+    );
   });
 
-  it('exports Runtime Doctor client from generated workbench schema', () => {
+  it('keeps Runtime Doctor and Skill install on generated non-Thread owners', () => {
     expect(getWorkbenchRuntimeDoctor).toBe(workbench.GetWorkbenchRuntimeDoctor);
     expect(getWorkbenchRuntimeDoctor.meta).toMatchObject({
       method: 'GET',
-      reqMapping: {
-        query: ['space_id'],
-      },
       url: '/api/workbench/runtime_doctor',
     });
-  });
-
-  it('exports .skill artifact install client from generated workbenchSkill schema', () => {
     expect(installSkillFromArtifact).toBe(
       workbenchSkill.InstallSkillFromArtifact,
     );
     expect(installSkillFromArtifact.meta).toMatchObject({
       method: 'POST',
-      reqMapping: {
-        body: ['space_id', 'thread_id', 'artifact_id'],
-      },
       url: '/api/workbench/skills/install',
     });
   });
 
-  it('exports task memory clients from generated workbenchTask schema', () => {
-    expect(listTaskThreadMemories).toBe(workbenchTask.ListTaskThreadMemories);
-    expect(updateTaskThreadMemory).toBe(workbenchTask.UpdateTaskThreadMemory);
-    expect(deleteTaskThreadMemory).toBe(workbenchTask.DeleteTaskThreadMemory);
-    expect(clearTaskThreadMemories).toBe(workbenchTask.ClearTaskThreadMemories);
-    expect(restoreTaskThreadMemory).toBe(workbenchTask.RestoreTaskThreadMemory);
-    expect(listTaskThreadMemoryAuditEvents).toBe(
-      workbenchTask.ListTaskThreadMemoryAuditEvents,
-    );
-    expect(listTaskThreadGuardrailAuditEvents).toBe(
-      workbenchTask.ListTaskThreadGuardrailAuditEvents,
-    );
-    expect(exportTaskThreadMemories).toBe(
-      workbenchTask.ExportTaskThreadMemories,
-    );
-    expect(exportTaskThreadGuardrailAuditEvents).toBe(
-      workbenchTask.ExportTaskThreadGuardrailAuditEvents,
-    );
-    expect(importTaskThreadMemories).toBe(
-      workbenchTask.ImportTaskThreadMemories,
-    );
-  });
+  it('forwards explicit Run event scope, filters, and cancellation', async () => {
+    const controller = new AbortController();
 
-  it('maps generated task memory API metadata', () => {
-    expect(listTaskThreadMemories.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: [
-          'run_id',
-          'scope',
-          'scopes',
-          'q',
-          'include_expired',
-          'include_deleted',
-          'page',
-          'page_size',
-        ],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories',
+    await listTaskThreadRunEvents({
+      event_types: ['run.completed'],
+      page: 1,
+      page_size: 25,
+      run_id: 'run-1',
+      signal: controller.signal,
+      space_id: 'space-1',
+      thread_id: 'thread-1',
     });
-    expect(updateTaskThreadMemory.meta).toMatchObject({
-      method: 'PUT',
-      reqMapping: {
-        body: [
-          'run_id',
-          'scope',
-          'content',
-          'metadata',
-          'score',
-          'confidence',
-          'source_type',
-          'source_id',
-          'correction_of_memory_id',
-          'corrected_at',
-          'expires_at',
-        ],
-        path: ['thread_id', 'memory_id'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/:memory_id',
-    });
-    expect(deleteTaskThreadMemory.meta).toMatchObject({
-      method: 'DELETE',
-      reqMapping: {
-        path: ['thread_id', 'memory_id'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/:memory_id',
-    });
-    expect(clearTaskThreadMemories.meta).toMatchObject({
-      method: 'POST',
-      reqMapping: {
-        body: ['run_id', 'scopes'],
-        path: ['thread_id'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/clear',
-    });
-    expect(restoreTaskThreadMemory.meta).toMatchObject({
-      method: 'POST',
-      reqMapping: {
-        path: ['thread_id', 'memory_id'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/:memory_id/restore',
-    });
-    expect(listTaskThreadMemoryAuditEvents.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: ['memory_id', 'page', 'page_size'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/audit_events',
-    });
-    expect(listTaskThreadGuardrailAuditEvents.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: ['run_id', 'page', 'page_size'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/guardrail_audit_events',
-    });
-    expect(exportTaskThreadMemories.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: [
-          'run_id',
-          'scope',
-          'scopes',
-          'q',
-          'include_expired',
-          'include_deleted',
-          'limit',
-        ],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/export',
-    });
-    expect(exportTaskThreadGuardrailAuditEvents.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: ['run_id', 'page', 'page_size'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/guardrail_audit_events/export',
-    });
-    expect(importTaskThreadMemories.meta).toMatchObject({
-      method: 'POST',
-      reqMapping: {
-        body: ['memories'],
-        path: ['thread_id'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/memories/import',
+
+    expect(canonicalClient.listRuns).not.toHaveBeenCalled();
+    expect(canonicalClient.listRunEvents).toHaveBeenCalledWith({
+      event_types: ['run.completed'],
+      limit: 25,
+      run_id: 'run-1',
+      signal: controller.signal,
+      space_id: 'space-1',
+      thread_id: 'thread-1',
     });
   });
 
-  it('lists artifact scan jobs with encoded filters and pagination', async () => {
-    const payload = {
-      data: {
-        jobs: [
-          {
-            artifact_id: 'artifact/1',
-            attempt_count: 3,
-            available_at: 1717000400000,
-            created_at: 1717000200000,
-            ended_at: 1717000350000,
-            file_id: 'file-1',
-            job_id: 'scan-job-1',
-            last_error: 'scanner unavailable',
-            lease_expires_at: 0,
-            run_id: 'run-1',
-            scanner: 'clamav',
-            space_id: 'space-1',
-            started_at: 1717000300000,
-            status: 'failed',
-            thread_id: 'thread 1',
-            updated_at: 1717000350000,
-            user_id: 'user-1',
-            worker_id: 'worker-a',
-          },
-        ],
-        total: 1,
-      },
+  it('moves Memory transport away from generated workbenchTask clients', async () => {
+    expect(listTaskThreadMemories).not.toBe(
+      workbenchTask.ListTaskThreadMemories,
+    );
+    expect(updateTaskThreadMemory).not.toBe(
+      workbenchTask.UpdateTaskThreadMemory,
+    );
+
+    const response = await listTaskThreadMemories({
+      thread_id: memory.thread_id,
+      page: 1,
+      page_size: 20,
+    });
+
+    expect(response).toEqual({
       code: 0,
-      msg: '',
-    };
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () => Promise.resolve(payload),
-      ok: true,
+      msg: 'success',
+      data: { memories: [memory], total: 1 },
     });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await listTaskThreadArtifactScanJobs({
-        artifact_id: 'artifact/1',
-        page: 2,
-        page_size: 20,
-        scanner: 'clamav',
-        status: 'failed',
-        thread_id: 'thread 1',
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifact_scan_jobs?artifact_id=artifact%2F1&status=failed&scanner=clamav&page=2&page_size=20',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'GET',
-        }),
-      );
-      expect(response).toBe(payload);
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
+    expect(canonicalClient.listMemories).toHaveBeenCalledWith({
+      space_id: 'store-space',
+      thread_id: memory.thread_id,
+      page: 1,
+      page_size: 20,
+    });
+    expect(directFetch).not.toHaveBeenCalled();
   });
 
-  it('retries an artifact scan job with encoded route params', async () => {
-    const payload = {
-      data: {
-        job: {
-          artifact_id: 'artifact/1',
-          attempt_count: 3,
-          available_at: 1717000400000,
-          created_at: 1717000200000,
-          ended_at: 0,
-          file_id: 'file-1',
-          job_id: 'scan-job/1',
-          last_error: 'manual retry requested',
-          lease_expires_at: 0,
-          run_id: 'run-1',
-          scanner: 'clamav',
-          space_id: 'space-1',
-          started_at: 0,
-          status: 'pending',
-          thread_id: 'thread 1',
-          updated_at: 1717000400000,
-          user_id: 'user-1',
-          worker_id: '',
-        },
-        retried: true,
-      },
+  it('delegates Artifact and scan operations with current response shapes', async () => {
+    const jobs = await listTaskThreadArtifactScanJobs({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+      page: 2,
+      page_size: 10,
+    });
+    const retry = await retryTaskThreadArtifactScanJob({
+      thread_id: artifact.thread_id,
+      job_id: scanJob.job_id,
+    });
+    const review = await reviewTaskThreadArtifactScan({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+      decision: 'release',
+      reason: '  reviewed  ',
+    });
+    const content = await fetchTaskThreadArtifactContent({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+      mode: 'preview',
+    });
+    const signedURL = await getTaskThreadArtifactSignedURL({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+      mode: 'preview',
+      ttl_seconds: 300,
+    });
+    await deleteTaskThreadArtifact({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+    });
+    const restore = await restoreTaskThreadArtifact({
+      thread_id: artifact.thread_id,
+      artifact_id: artifact.artifact_id,
+    });
+
+    expect(jobs).toEqual({
       code: 0,
-      msg: '',
-    };
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () => Promise.resolve(payload),
-      ok: true,
+      msg: 'success',
+      data: { jobs: [scanJob], total: 1 },
     });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await retryTaskThreadArtifactScanJob({
-        job_id: 'scan-job/1',
-        thread_id: 'thread 1',
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifact_scan_jobs/scan-job%2F1/retry',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'POST',
-        }),
-      );
-      expect(response).toBe(payload);
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('reviews an artifact scan status with encoded route params and JSON body', async () => {
-    const payload = {
-      data: {
-        artifact_id: 'artifact/1',
-        decision: 'release',
-        reviewed: true,
-        scan_status: 'clean',
-      },
+    expect(retry).toMatchObject({
       code: 0,
-      msg: '',
-    };
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () => Promise.resolve(payload),
-      ok: true,
+      msg: 'success',
+      data: { retried: true },
     });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await reviewTaskThreadArtifactScan({
-        artifact_id: 'artifact/1',
-        decision: 'release',
-        reason: 'approved by security reviewer',
-        thread_id: 'thread 1',
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1/scan_review',
-        expect.objectContaining({
-          body: JSON.stringify({
-            decision: 'release',
-            reason: 'approved by security reviewer',
-          }),
-          headers: expect.objectContaining({
-            'content-type': 'application/json',
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'POST',
-        }),
-      );
-      expect(response).toBe(payload);
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
+    expect(review).toMatchObject({ code: 0, msg: 'success' });
+    expect(content).toEqual({
+      blob,
+      contentDisposition: 'inline; filename="artifact.txt"',
+      contentType: 'text/plain',
+    });
+    expect(signedURL.data?.url).toBe('https://storage.example.test/artifact');
+    expect(restore).toEqual({
+      code: 0,
+      msg: 'success',
+      data: { artifact_id: artifact.artifact_id, restored: true },
+    });
+    expect(canonicalClient.reviewArtifactScan).toHaveBeenCalledWith({
+      artifact_id: artifact.artifact_id,
+      decision: 'release',
+      reason: '  reviewed  ',
+      space_id: 'store-space',
+      thread_id: artifact.thread_id,
+    });
+    expect(directFetch).not.toHaveBeenCalled();
   });
 
-  it('fetches artifact content as a blob with encoded route params and mode', async () => {
-    const blob = new Blob(['artifact body'], {
-      type: 'text/plain; charset=utf-8',
-    });
-    const fetchMock = vi.fn().mockResolvedValue({
-      blob: () => Promise.resolve(blob),
-      headers: new Headers({
-        'content-disposition': "inline; filename*=UTF-8''report.txt",
-        'content-type': 'text/plain; charset=utf-8',
+  it('maps canonical scan policy codes to safe page errors', async () => {
+    canonicalClient.getArtifactSignedURL.mockRejectedValue(
+      Object.assign(new Error('internal detail must not escape'), {
+        code: 'scan_pending',
       }),
-      ok: true,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
+    );
 
-    try {
-      const response = await fetchTaskThreadArtifactContent({
-        artifact_id: 'artifact/1',
+    await expect(
+      getTaskThreadArtifactSignedURL({
+        thread_id: artifact.thread_id,
+        artifact_id: artifact.artifact_id,
         mode: 'preview',
-        thread_id: 'thread 1',
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1/content?mode=preview',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'GET',
-        }),
-      );
-      expect(response.blob).toBe(blob);
-      expect(response.contentDisposition).toBe(
-        "inline; filename*=UTF-8''report.txt",
-      );
-      expect(response.contentType).toBe('text/plain; charset=utf-8');
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('creates an artifact signed URL with encoded route params and TTL', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
       }),
-      json: () =>
-        Promise.resolve({
-          code: 0,
-          data: {
-            artifact_id: 'artifact/1',
-            content_type: 'text/plain; charset=utf-8',
-            expires_in_seconds: 300,
-            preview_mode: 'text',
-            url: 'https://storage.example.test/signed/report.txt?token=abc',
-          },
-          msg: 'success',
-        }),
-      ok: true,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await getTaskThreadArtifactSignedURL({
-        artifact_id: 'artifact/1',
-        mode: 'preview',
-        thread_id: 'thread 1',
-        ttl_seconds: 300,
-      });
-
-      expect(response.data?.url).toContain('https://storage.example.test');
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1/signed_url?mode=preview&ttl_seconds=300',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'GET',
-        }),
-      );
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('creates an artifact download signed URL with encoded route params', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () =>
-        Promise.resolve({
-          code: 0,
-          data: {
-            artifact_id: 'artifact/1',
-            content_type: 'text/html; charset=utf-8',
-            expires_in_seconds: 300,
-            preview_mode: 'download',
-            url: 'https://storage.example.test/signed/page.html?token=abc',
-          },
-          msg: 'success',
-        }),
-      ok: true,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await getTaskThreadArtifactSignedURL({
-        artifact_id: 'artifact/1',
+    ).rejects.toThrow('产物安全扫描中，暂不能预览');
+    await expect(
+      getTaskThreadArtifactSignedURL({
+        thread_id: artifact.thread_id,
+        artifact_id: artifact.artifact_id,
         mode: 'download',
-        thread_id: 'thread 1',
-        ttl_seconds: 300,
-      });
-
-      expect(response.data?.url).toContain('https://storage.example.test');
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1/signed_url?mode=download&ttl_seconds=300',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'GET',
-        }),
-      );
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('maps artifact scan-pending signed URL rejection to safe preview message', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
       }),
-      json: () =>
-        Promise.resolve({
-          code: 409,
-          msg: 'artifact content blocked by scan policy',
-          reason: 'scan_pending',
-        }),
-      ok: false,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      await expect(
-        getTaskThreadArtifactSignedURL({
-          artifact_id: 'artifact-pdf',
-          mode: 'preview',
-          thread_id: 'thread 1',
-          ttl_seconds: 300,
-        }),
-      ).rejects.toThrow('产物安全扫描中，暂不能预览');
-      await expect(
-        getTaskThreadArtifactSignedURL({
-          artifact_id: 'artifact-pdf',
-          mode: 'download',
-          thread_id: 'thread 1',
-          ttl_seconds: 300,
-        }),
-      ).rejects.toThrow('产物安全扫描中，暂不能下载');
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('deletes a task-thread artifact with encoded route params', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () => Promise.resolve({ code: 0, msg: 'success' }),
-      ok: true,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      await deleteTaskThreadArtifact({
-        artifact_id: 'artifact/1',
-        thread_id: 'thread 1',
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'DELETE',
-        }),
-      );
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
-  });
-
-  it('restores a task-thread artifact with encoded route params', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      headers: new Headers({
-        'content-type': 'application/json',
-      }),
-      json: () =>
-        Promise.resolve({
-          code: 0,
-          data: { artifact_id: 'artifact/1', restored: true },
-          msg: 'success',
-        }),
-      ok: true,
-    });
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = fetchMock;
-
-    try {
-      const response = await restoreTaskThreadArtifact({
-        artifact_id: 'artifact/1',
-        thread_id: 'thread 1',
-      });
-
-      expect(response.data?.restored).toBe(true);
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/workbench/task_threads/thread%201/artifacts/artifact%2F1/restore',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'x-requested-with': 'XMLHttpRequest',
-          }),
-          method: 'POST',
-        }),
-      );
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
+    ).rejects.toThrow('产物安全扫描中，暂不能下载');
   });
 });

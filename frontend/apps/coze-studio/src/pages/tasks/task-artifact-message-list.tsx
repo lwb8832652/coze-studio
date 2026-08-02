@@ -16,7 +16,6 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozDocument,
   IconCozDownload,
@@ -24,6 +23,7 @@ import {
 } from '@coze-arch/coze-design/icons';
 import { Button } from '@coze-arch/coze-design';
 
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import {
   artifactScanStatus,
   artifactFileExtension,
@@ -38,7 +38,7 @@ import {
 } from './task-artifact-actions';
 import type { ArtifactScanReviewDecision } from './service';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   'application/json': 'JSON',

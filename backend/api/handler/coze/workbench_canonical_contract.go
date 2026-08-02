@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +39,6 @@ import (
 )
 
 const (
-	canonicalAPIEnabledEnv   = "COZE_WORKBENCH_CANONICAL_API_ENABLED"
 	canonicalContractVersion = "canonical_v1"
 	canonicalSpaceIDHeader   = "X-Coze-Space-ID"
 )
@@ -69,19 +67,12 @@ type canonicalRequestLog struct {
 	RunID              int64
 	SourceRunID        int64
 	AfterEventID       int64
+	ResourceType       string
+	ResourceID         string
+	Limit              int32
+	Offset             int32
+	LifecycleStage     string
 	StartedAt          time.Time
-}
-
-func canonicalAPIEnabled(getenv func(string) string) bool {
-	return getenv != nil && getenv(canonicalAPIEnabledEnv) == "true"
-}
-
-func requireCanonicalAPI(_ context.Context, c *app.RequestContext) bool {
-	if canonicalAPIEnabled(os.Getenv) {
-		return true
-	}
-	c.Status(hertzconsts.StatusNotFound)
-	return false
 }
 
 func requireCanonicalAgentThreadService(ctx context.Context, c *app.RequestContext) bool {
@@ -231,6 +222,39 @@ func canonicalSpaceID(ctx context.Context, c *app.RequestContext) (int64, *canon
 	return 0, &mapped
 }
 
+type canonicalSpaceAccessContextKey struct{}
+
+// requireCanonicalSpaceAccess validates the declared workspace before carrying
+// it into the existing Thread authorization request.
+func requireCanonicalSpaceAccess(
+	ctx context.Context,
+	c *app.RequestContext,
+) (context.Context, bool) {
+	spaceID, public := canonicalSpaceID(ctx, c)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return ctx, false
+	}
+	return context.WithValue(ctx, canonicalSpaceAccessContextKey{}, spaceID), true
+}
+
+func canonicalSpaceIDFromContext(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	spaceID, _ := ctx.Value(canonicalSpaceAccessContextKey{}).(int64)
+	return spaceID
+}
+
+func canonicalThreadAccessContext(ctx context.Context, threadID, runID int64) context.Context {
+	return appagentthread.WithThreadAccessRequest(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		SpaceID:  canonicalSpaceIDFromContext(ctx),
+		ThreadID: threadID,
+		RunID:    runID,
+	})
+}
+
 func writeCanonicalError(
 	ctx context.Context,
 	c *app.RequestContext,
@@ -282,10 +306,7 @@ func canonicalRunJoinPath(threadID, runID int64) string {
 }
 
 func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, limit int) {
-	if total < 0 {
-		total = 0
-	}
-	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
+	setCanonicalPaginationTotal(c, total)
 	c.Response.Header.Del("X-Pagination-Next")
 	if offset < 0 || limit <= 0 {
 		return
@@ -296,6 +317,13 @@ func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, l
 		return
 	}
 	c.Header("X-Pagination-Next", strconv.FormatInt(current+int64(limit), 10))
+}
+
+func setCanonicalPaginationTotal(c *app.RequestContext, total int64) {
+	if total < 0 {
+		total = 0
+	}
+	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
 }
 
 func logCanonicalRequestCompleted(
@@ -313,12 +341,14 @@ func logCanonicalRequestCompleted(
 	}
 	outcome = canonicalLogOutcome(outcome)
 	logs.CtxInfof(ctx,
-		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s principal_id_hash=%s thread_id=%d run_id=%d source_run_id=%d after_event_id=%d response_body_kind=%s location_kind=%s content_location_present=%t response_projection_version=%s stream_modes=%s raise_error_mode=%s failure_projection=%s idempotency_key_hash=%s",
+		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s principal_id_hash=%s thread_id=%d run_id=%d source_run_id=%d after_event_id=%d resource_type=%s resource_id=%s limit=%d offset=%d lifecycle_stage=%s response_body_kind=%s location_kind=%s content_location_present=%t response_projection_version=%s stream_modes=%s raise_error_mode=%s failure_projection=%s idempotency_key_hash=%s",
 		canonicalContractVersion, canonicalTraceID(ctx), info.Operation, info.RouteTemplate,
 		string(c.Method()), c.Response.StatusCode(), duration, outcome,
 		canonicalSubmissionKind(info.SubmissionKind),
 		canonicalLogHash(strconv.FormatInt(workbenchViewerIDFromCtx(ctx), 10)),
 		info.ThreadID, info.RunID, info.SourceRunID, info.AfterEventID,
+		canonicalLogResourceType(info.ResourceType), canonicalLogResourceID(info.ResourceID),
+		canonicalLogPageValue(info.Limit), canonicalLogPageValue(info.Offset), canonicalLogLifecycleStage(info.LifecycleStage),
 		canonicalResponseBodyKind(info.ResponseBodyKind, c.Response.StatusCode()),
 		canonicalLocationKind(info.LocationKind),
 		len(c.Response.Header.Peek("Content-Location")) > 0,
@@ -362,7 +392,7 @@ func canonicalHTTPOutcome(status int) string {
 
 func canonicalSubmissionKind(value string) string {
 	switch value {
-	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_resume":
+	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_retry", "run_resume":
 		return value
 	default:
 		return "not_applicable"
@@ -390,11 +420,53 @@ func canonicalLogHashValue(value string) string {
 	return value
 }
 
+func canonicalLogResourceType(value string) string {
+	return canonicalLogEnum(value, "none",
+		"upload", "artifact", "artifact_content", "artifact_signed_url", "artifact_scan_job", "artifact_scan_review",
+		"token_usage", "token_usage_aggregate", "run_token_usage_aggregate", "subagent_retry",
+		"memory", "memory_audit", "memory_import", "memory_export",
+		"guardrail_audit", "guardrail_export", "mcp_runtime_audit")
+}
+
+func canonicalLogResourceID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	allDigits := true
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
+			return strconv.FormatInt(parsed, 10)
+		}
+	}
+	return canonicalLogHash(value)
+}
+
+func canonicalLogPageValue(value int32) int32 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func canonicalLogLifecycleStage(value string) string {
+	return canonicalLogEnum(value, "none",
+		"created", "pending", "queued", "processing", "running", "completed", "failed", "deleted",
+		"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export",
+		"upload", "uploaded", "scan", "scanned", "read", "signed", "updated", "restored", "reviewed", "retried", "approved", "rejected")
+}
+
 func canonicalResponseBodyKind(value string, status int) string {
 	if status >= hertzconsts.StatusBadRequest {
 		return "error"
 	}
-	return canonicalLogEnum(value, "none", "run", "run_array", "values", "event_page", "message_page", "empty")
+	return canonicalLogEnum(value, "none", "run", "run_array", "values", "event_page", "message_page", "empty", "bytes")
 }
 
 func canonicalLocationKind(value string) string {
@@ -476,6 +548,30 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"resource_not_found",
 			"Resource not found",
 			"access_denied",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetrySourceNotFound):
+		return *newCanonicalError(
+			hertzconsts.StatusNotFound,
+			"resource_not_found",
+			"Resource not found",
+			"top_level_retry_source_not_found",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryInvalid):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"invalid_retry",
+			"Top-level retry request is invalid",
+			"invalid_top_level_retry",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_retryable",
+			"Run is not retryable",
+			"top_level_retry_source_not_failed",
 			false,
 		)
 	case errors.Is(err, appagentthread.ErrActiveRunExists):

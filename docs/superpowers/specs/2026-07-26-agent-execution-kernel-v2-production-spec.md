@@ -335,7 +335,7 @@ WorkbenchChat 使用一套持久化对象，不再把“聊天”“任务”和
 | 事件增量 | `GET /api/workbench/task_threads/:thread_id/run_events/stream` | 目标 `GET /api/workbench/threads/{thread_id}/runs/{run_id}/stream`，支持 cursor、去重、心跳和断线续传 |
 | 人机恢复 | `POST .../runs/:run_id/resume` | canonical 路径绑定来源 Run，创建新 attempt，不原地改写 interrupted Run |
 | 取消 | `POST .../runs/:run_id/cancel` | canonical 幂等终止，不再启动新工具调用 |
-| 失败任务重试 | `POST .../runs` | canonical 普通 Run 创建表达新顶层 attempt，不追加重复 User Message |
+| 失败任务重试 | `POST .../runs` | canonical Run 创建通过 `coze.attempt_kind=retry/source_run_id` 表达新顶层 attempt，不追加重复 User Message |
 | 子智能体重试 | `POST .../runs/:run_id/retry` | 作为 canonical 产品扩展保留，只表示子智能体重试 |
 
 本文档原先使用的 `POST /api/workspaces/{space_id}/agent-runs` 不再是目标合同。
@@ -354,10 +354,19 @@ canonical Thread/Run 合同，通过不同 principal、scope、限流和容量�
 | WBC-G03 | 首页发送流程以单个 `loading` 表达提交、执行和页面阻塞 | 分离提交状态、Run 状态和传输状态，三个状态机不得相互推断 |
 | WBC-G04 | 详情页初次 EventSource 未使用快照最大 `event_id`，事件按 `created_at + 字符串 id` 归并 | canonical 前后端成对实现快照高水位、无精度损失的 `event_id` 去重与升序归并 |
 | WBC-G05 | query cursor 非零时服务端固定优先 query，可能覆盖自动重连的 `Last-Event-ID` | canonical 分别校验两个 cursor 并取较大值，与 G04 同批上线 |
-| WBC-G06 | 失败任务可通过 `CreateTaskThreadRun` 新建顶层 retry Run；专用 `.../retry` 只覆盖子智能体 | 明确两类重试的对象、输入、消息和幂等边界，不能用端点名称混为一谈 |
+| WBC-G06 | 失败任务可通过 `CreateTaskThreadRun` 新建顶层 retry Run；专用 `.../retry` 只覆盖子智能体 | canonical 顶层 retry 使用 `POST .../runs` 的 `coze.attempt_kind=retry/source_run_id` 扩展且不新增 Message；子智能体继续使用专用产品扩展，两者不得共用语义 |
 | WBC-G07 | `/api/workbench/tasks*` 与 `/api/workbench/chat` 已无 route/handler，负向测试要求 `404` | 保持退役，任何非 `404`、新 DTO、fallback 或 application/domain 依赖均阻塞发布 |
 | WBC-G08 | Workbench 顶层请求省略策略，Domain 已规范化为 `reject`，Repository 在事务内拒绝活动顶层 Run | 保持服务端准入语义；补页面冲突体验和稳定错误合同前，不要求客户端增加策略字段 |
 | WBC-G09 | 顶层失败任务 retry 使用详情页当前 Thread 投影中的输入文本并记录来源元数据，但重建当前默认 Workbench 模式/资源配置；resume 与 subagent retry 则继承来源或父 Run 策略 | 单独决定“重新执行当前默认”还是“重放来源能力快照”；本期保持现状，不暗改 config |
+
+canonical 新合同只在 opt-in route 生效，不改变当前 TaskThread V1：普通追问可通过
+`coze.message_metadata` 把审核后的 Message 元数据与 User Message + Run 原子持久化；顶层
+失败重试固定使用 `coze.attempt_kind=retry` 和正十进制字符串 `source_run_id`，两类扩展互斥。
+retry 来源必须是同 Thread 的失败顶层 task Run；新 attempt 保留规范化输入、权威附件、
+config、context、Run metadata 和执行选项，但不创建 User Message，响应也不返回
+`message_id/submission_message`。普通 turn、顶层 retry 和 resume 使用独立 operation 与 payload
+fingerprint；`POST runs`、`runs/wait`、`runs/stream` 共享同一解析和校验规则。当前生产 UI 在
+双 client、adapter 和页面回归门禁通过前仍使用 V1，不读取这些新字段。
 
 #### 9.4.2.1 当前 TaskThread 接口参数冻结矩阵
 
@@ -615,6 +624,10 @@ sequenceDiagram
 - 失败任务重试当前由详情页调用 `CreateTaskThreadRun` 创建新顶层 attempt，输入取详情
   页当前 Thread 投影中的任务文本，配置重建为当前默认 Workbench 选择，并以
   `thread_id + source_run_id + task_retry` 作为稳定键；该路径不追加 User Message。
+- canonical UI 迁移后沿用上述业务结果，通过 `POST /api/workbench/threads/{thread_id}/runs`
+  的 `coze.attempt_kind=retry/source_run_id` 提交。服务端只创建新 Run，验证来源属于同一
+  Thread、是顶层 task 且已失败；create、wait、stream 的幂等重放均不得查询或补建 User
+  Message。
 - 该顶层 retry 不是来源 Run 能力/模型/资源快照的原样 replay，策略字段省略后重新落到
   `reject/cancel/async`。是否改成继承来源合同属于 WBC-G09，不在本期调整请求。
 - `.../retry` 专用端点只支持子智能体重试，并创建带来源关系的 queued 顶层 replay

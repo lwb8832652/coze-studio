@@ -133,6 +133,7 @@ describe('task usage SSE invalidation queue', () => {
     const Harness = () => {
       usageState = useTaskUsageData({
         enabled: true,
+        spaceID: 'space-1',
         threadID: 'thread-waterline',
       });
       return null;
@@ -229,6 +230,7 @@ describe('task usage SSE invalidation queue', () => {
     const Harness = () => {
       usageState = useTaskUsageData({
         enabled: true,
+        spaceID: 'space-1',
         threadID: 'thread-waterline',
       });
       return null;

@@ -26,15 +26,16 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '1416db1cad28094f49e4082bf23816627c8641fc7a3df69943ef35fb2a3d41d6';
+  'b55f04871f4d85070999dfe49ef54215cf95c7b83bb50d09f0096e6265de2031';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
   'entry.task_detail_followup',
-  'entry.langgraph_compat',
-  'entry.langgraph_stateless',
   'entry.scheduled_task',
   'entry.feishu_message',
+  'entry.workbench_canonical_thread_http',
+  'entry.workbench_canonical_run_http',
+  'entry.workbench_canonical_run_stream',
   'run.atomic_create',
   'run.pending_worker_execute',
   'run.event_projection',
@@ -63,6 +64,7 @@ const REQUIRED_QUERY_IDS = [
   'query.data_capabilities',
   'query.integration_ingress',
   'query.runtime_boundaries',
+  'query.canonical_thread_http',
 ];
 const REQUIRED_EXCLUSION_IDS = [
   'exclude.k2',
@@ -72,11 +74,22 @@ const REQUIRED_EXCLUSION_IDS = [
   'exclude.legacy_new_run',
   'exclude.external_queue',
   'exclude.build_tools',
+  'exclude.taskthread_v1_routes',
+  'exclude.langgraph_thread_routes',
 ];
 const REQUIRED_NODE_IDS = [
-  'compat.langgraph.create_run',
-  'compat.langgraph.stateless_run',
-  'compat.langgraph.stateless_backing_thread',
+  'frontend.client.singleton',
+  'frontend.api.create_thread',
+  'frontend.api.upload_files',
+  'frontend.api.create_run',
+  'frontend.events.run_subscription',
+  'contract.workbench.route_surface',
+  'contract.workbench_canonical_thread.thrift',
+  'contract.workbench_scheduled_task.thrift',
+  'http.workbench.canonical_thread',
+  'http.workbench.canonical_run',
+  'http.workbench.canonical_run_stream',
+  'framework.fetch_stream',
   'compat.deerflow_config',
   'integration.scheduled.execute',
   'integration.scheduled.start_new',
@@ -93,10 +106,18 @@ const REQUIRED_NODE_IDS = [
   'historical.legacy_runtime',
 ];
 const REQUIRED_EDGE_IDS = [
-  'edge.langgraph_calls_app_create_run',
-  'edge.langgraph_stateless_calls_backing_thread',
-  'edge.langgraph_backing_calls_create_thread',
-  'edge.langgraph_stateless_thread_precedes_run',
+  'edge.create_thread_uses_singleton',
+  'edge.create_run_uses_singleton',
+  'edge.run_subscription_uses_singleton',
+  'edge.canonical_create_thread_routes_handler',
+  'edge.canonical_thread_submission_calls_create_task_thread',
+  'edge.canonical_create_run_routes_handler',
+  'edge.canonical_run_handler_calls_app_create_run',
+  'edge.repo_event_streams_canonical',
+  'edge.canonical_stream_to_subscription',
+  'edge.run_subscription_uses_fetch_stream',
+  'edge.canonical_route_surface_maps_contract',
+  'edge.scheduled_route_surface_maps_contract',
   'edge.scheduled_execute_routes_new',
   'edge.scheduled_calls_create_thread',
   'edge.scheduled_execute_routes_existing',
@@ -113,25 +134,65 @@ const REQUIRED_EDGE_IDS = [
   'edge.legacy_excluded_from_new_runs',
 ];
 const REQUIRED_EDGE_SHAPES = {
-  'edge.langgraph_calls_app_create_run': [
-    'compat.langgraph.create_run',
+  'edge.create_thread_uses_singleton': [
+    'frontend.api.create_thread',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.create_run_uses_singleton': [
+    'frontend.api.create_run',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.run_subscription_uses_singleton': [
+    'frontend.events.run_subscription',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.canonical_create_thread_routes_handler': [
+    'frontend.api.create_thread',
+    'routes_to',
+    'http.workbench.canonical_thread',
+  ],
+  'edge.canonical_thread_submission_calls_create_task_thread': [
+    'http.workbench.canonical_thread',
+    'delegates_to',
+    'application.create_task_thread',
+  ],
+  'edge.canonical_create_run_routes_handler': [
+    'frontend.api.create_run',
+    'routes_to',
+    'http.workbench.canonical_run',
+  ],
+  'edge.canonical_run_handler_calls_app_create_run': [
+    'http.workbench.canonical_run',
     'delegates_to',
     'application.create_run',
   ],
-  'edge.langgraph_stateless_calls_backing_thread': [
-    'compat.langgraph.stateless_run',
-    'calls',
-    'compat.langgraph.stateless_backing_thread',
+  'edge.repo_event_streams_canonical': [
+    'repository.create_run_event',
+    'streams_to',
+    'http.workbench.canonical_run_stream',
   ],
-  'edge.langgraph_backing_calls_create_thread': [
-    'compat.langgraph.stateless_backing_thread',
-    'delegates_to',
-    'application.create_thread',
+  'edge.canonical_stream_to_subscription': [
+    'http.workbench.canonical_run_stream',
+    'streams_to',
+    'frontend.events.run_subscription',
   ],
-  'edge.langgraph_stateless_thread_precedes_run': [
-    'application.create_thread',
-    'precedes',
-    'application.create_run',
+  'edge.run_subscription_uses_fetch_stream': [
+    'frontend.events.run_subscription',
+    'implemented_with',
+    'framework.fetch_stream',
+  ],
+  'edge.canonical_route_surface_maps_contract': [
+    'contract.workbench.route_surface',
+    'maps_to',
+    'contract.workbench_canonical_thread.thrift',
+  ],
+  'edge.scheduled_route_surface_maps_contract': [
+    'contract.workbench.route_surface',
+    'maps_to',
+    'contract.workbench_scheduled_task.thrift',
   ],
   'edge.scheduled_execute_routes_new': [
     'integration.scheduled.execute',
@@ -355,8 +416,9 @@ const validateCanonicalProfile = (contract, required) => {
       errors.push(`profile_forbidden_term_missing: ${term}`);
     }
     for (const node of asArray(contract?.nodes)) {
-      const searchable =
-        `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+      const searchable = `${stringValue(node?.id)} ${stringValue(
+        node?.label,
+      )}`.toLowerCase();
       if (
         node?.production_status === CURRENT_STATUS &&
         searchable.includes(term)
@@ -547,8 +609,9 @@ const validateForbiddenCurrentNodes = contract => {
     if (node?.production_status !== CURRENT_STATUS) {
       continue;
     }
-    const searchable =
-      `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+    const searchable = `${stringValue(node?.id)} ${stringValue(
+      node?.label,
+    )}`.toLowerCase();
     for (const term of forbiddenTerms) {
       if (searchable.includes(term)) {
         errors.push(`forbidden_current_node: ${node.id}: ${term}`);
@@ -949,7 +1012,9 @@ export const validateContract = async (contract, options) => {
         resolvedVersions[nodeID] = resolvedVersion;
         if (resolvedVersion !== stringValue(node?.version)) {
           errors.push(
-            `framework_version_mismatch: ${nodeID}: declared ${stringValue(node?.version)} resolved ${resolvedVersion}`,
+            `framework_version_mismatch: ${nodeID}: declared ${stringValue(
+              node?.version,
+            )} resolved ${resolvedVersion}`,
           );
         }
       } catch (error) {
@@ -969,17 +1034,23 @@ export const validateContract = async (contract, options) => {
     }
     if (!nodesByID.has(edge?.from)) {
       errors.push(
-        `edge_source_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.from)}`,
+        `edge_source_missing: ${edgeID || '<missing-edge-id>'}: ${String(
+          edge?.from,
+        )}`,
       );
     }
     if (!nodesByID.has(edge?.to)) {
       errors.push(
-        `edge_target_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.to)}`,
+        `edge_target_missing: ${edgeID || '<missing-edge-id>'}: ${String(
+          edge?.to,
+        )}`,
       );
     }
     if (!ALLOWED_RELATIONS.has(edge?.relation)) {
       errors.push(
-        `edge_relation_invalid: ${edgeID || '<missing-edge-id>'}: ${String(edge?.relation)}`,
+        `edge_relation_invalid: ${edgeID || '<missing-edge-id>'}: ${String(
+          edge?.relation,
+        )}`,
       );
     }
     if (edge?.confidence !== 'extracted') {

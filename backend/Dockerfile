@@ -1,3 +1,6 @@
+ARG GIT_REVISION=unknown
+ARG SOURCE_URL=unknown
+
 # Stage 1: Builder for Go application
 FROM golang:1.24-alpine AS builder
 
@@ -19,6 +22,11 @@ RUN go build -ldflags="-s -w" -o /app/opencoze main.go
 
 # Stage 2: Final image
 FROM alpine:3.22.0
+ARG GIT_REVISION
+ARG SOURCE_URL
+
+LABEL org.opencontainers.image.revision=$GIT_REVISION
+LABEL org.opencontainers.image.source=$SOURCE_URL
 
 WORKDIR /app
 
@@ -72,5 +80,6 @@ RUN chmod +x /app/parse_pdf.py /app/parse_docx.py  && \
 EXPOSE 8888
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV APP_REVISION=$GIT_REVISION
 
 CMD ["/app/opencoze"]

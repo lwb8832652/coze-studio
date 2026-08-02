@@ -36,7 +36,8 @@ export interface TaskThreadDetailEvent {
 export interface TaskThreadDetailModel {
   id: string;
   space_id: string;
-  creator_id: string;
+  creator_id?: string;
+  can_edit?: boolean;
   conversation_id?: string;
   title: string;
   status: TaskThreadDetailStatus;
@@ -47,3 +48,17 @@ export interface TaskThreadDetailModel {
   created_at: number;
   updated_at: number;
 }
+
+export const isTaskThreadDetailReadOnly = ({
+  task,
+  userID,
+}: {
+  task?: TaskThreadDetailModel;
+  userID?: string;
+}): boolean => {
+  if (typeof task?.can_edit === 'boolean') {
+    return !task.can_edit;
+  }
+
+  return Boolean(task?.creator_id && userID && task.creator_id !== userID);
+};

@@ -60,9 +60,24 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 当前只支持飞书官方 Go SDK。配置按工作空间隔离，secret 加密且不回显；外部
 事件先持久化去重，再进入异步 Agent 流程。
 
+### dev 预发布部署
+
+推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
+不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
+服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
+revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
+
+Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
+不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
+完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。该服务器只运行
+两个应用容器，MySQL、Elasticsearch、Redis 和对象存储均为远程服务。
+
+这是允许短时中断的单实例 dev/预发布流程，不等于生产发布。推送授权、数据库
+操作和生产发布保持独立权限边界。
+
 ## 主要产品域
 
-- 任务与 Agent Workbench：唯一事实模型为 TaskThread、Message、Run 和
+- 任务与 Agent Workbench：唯一公共事实模型为 Thread、Message、Run 和
   RunEvent，详细边界见 `docs/superpowers/context/workbench-chat.md`；
 - 工作空间与系统管理：成员、角色、系统配置、模型和管理员能力；
 - 对象存储控制面：多云配置、加密 credential、主配置切换和 env rescue；
@@ -70,6 +85,27 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 - AppDev 与 Sandbox：项目文件、构建、预览、Provider 和安全网关；
 - 通知与计划任务：可靠通知、公告、定时执行、幂等和重试；
 - 计费与配额：服务端事实、审计和安全边界。
+
+## Workbench Canonical API
+
+`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 47 条 always-on
+Thread、Run、Message、Upload、Artifact、Memory、Token Usage、Guardrail 和 MCP
+Runtime Audit 路由。前端页面服务统一委托给进程内唯一
+`canonicalThreadClient`；不存在运行时 client selector、canonical 路由开关或旧 HTTP
+fallback。session principal 和 path resource 决定身份与资源归属，workspace 请求
+使用 `X-Coze-Space-ID` 并由服务端再次授权。
+
+canonical handler 只负责严格 HTTP 合同、公开投影、错误映射和脱敏结构化日志，
+继续调用现有 `agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。
+公共合同由 `idl/workbench/thread.thrift` 与 `thread_product.thrift` 定义；
+`idl/workbench/task.thrift` 只保留 11 条 Scheduled Task 合同。
+
+旧 `/api/workbench/task_threads/**` 的 36 条路由和本地 LangGraph Thread
+`/api/threads/**` 的 23 条路由、stateless LangGraph `/api/runs/**` 的 10 条路由均已
+不可达；ChatTask 全栈已退役，这些合同都不得恢复为 fallback。canonical
+Run SSE 仅保留经审核的 LangGraph SDK-compatible event shape，不保留旧 HTTP
+路由或 LangGraph runtime。内部 `CreateTaskThread` 应用用例仍被 canonical 首次提交、
+Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合同。
 
 ## 事实来源
 
@@ -97,8 +133,11 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
 - 本地调试：`docs/superpowers/runbooks/local-debug-and-test.md`
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
+- dev 预发布运维：`deploy/dev/README.md`
 - Sandbox：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
 - Guardrail：`docs/superpowers/runbooks/guardrail-audit-operations.md`
+- Workbench canonical product client：
+  `docs/superpowers/runbooks/workbench-canonical-product-client-validation.md`
 - Agent Runtime：`docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
 
 ## 更新规则

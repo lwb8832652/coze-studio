@@ -18,7 +18,7 @@ import {
   ListWorkspaceModels,
   WorkspaceModelScope,
 } from '@coze-studio/api-schema/workbench-model';
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import { workbench } from '@coze-studio/api-schema';
 import {
   DeveloperApi,
   KnowledgeApi,
@@ -26,7 +26,46 @@ import {
   workflowApi,
 } from '@coze-arch/bot-api';
 
+import {
+  type LegacyPageResponse,
+  presentTaskThreadCreateResponse,
+  presentTaskThreadMessageResponse,
+  presentTaskThreadRunCreateResponse,
+  presentTaskThreadUploadResponse,
+} from './thread-client/legacy-page-response';
+import {
+  canonicalThreadClient,
+  resolvePageServiceSpaceID,
+} from './thread-client/canonical-thread-client-singleton';
+import {
+  type AppendWorkbenchMessageRequest,
+  type CreateWorkbenchRunRequest,
+  type CreateWorkbenchThreadRequest,
+  type WorkbenchMessage,
+  type WorkbenchRun,
+  type WorkbenchThreadCreation,
+} from './thread-client';
 import { type WorkbenchLLMModel } from './components/types';
+
+interface PageScopedRequest {
+  space_id?: string;
+}
+
+type OptionalPageSpace<Request extends { space_id: string }> = Omit<
+  Request,
+  'space_id'
+> &
+  PageScopedRequest;
+
+type CreateTaskThreadRequest = OptionalPageSpace<CreateWorkbenchThreadRequest>;
+type AppendTaskThreadMessageRequest =
+  OptionalPageSpace<AppendWorkbenchMessageRequest>;
+type CreateTaskThreadRunRequest = OptionalPageSpace<CreateWorkbenchRunRequest>;
+type CreateTaskThreadResponse = LegacyPageResponse<WorkbenchThreadCreation>;
+type AppendTaskThreadMessageResponse = LegacyPageResponse<WorkbenchMessage>;
+interface CreateTaskThreadRunResponse extends LegacyPageResponse<WorkbenchRun> {
+  message?: WorkbenchMessage;
+}
 
 export interface WorkbenchReferenceResource {
   id: string;
@@ -34,9 +73,35 @@ export interface WorkbenchReferenceResource {
   description?: string;
 }
 
-export const createTaskThread = workbenchTask.CreateTaskThread;
-export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
-export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
+export const createTaskThread = async (
+  request: CreateTaskThreadRequest,
+): Promise<CreateTaskThreadResponse> =>
+  presentTaskThreadCreateResponse(
+    await canonicalThreadClient.createThread({
+      ...request,
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    }),
+  );
+
+export const appendTaskThreadMessage = async (
+  request: AppendTaskThreadMessageRequest,
+): Promise<AppendTaskThreadMessageResponse> =>
+  presentTaskThreadMessageResponse(
+    await canonicalThreadClient.appendMessage({
+      ...request,
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    }),
+  );
+
+export const createTaskThreadRun = async (
+  request: CreateTaskThreadRunRequest,
+): Promise<CreateTaskThreadRunResponse> =>
+  presentTaskThreadRunCreateResponse(
+    await canonicalThreadClient.createRun({
+      ...request,
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    }),
+  );
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 
 export interface TaskThreadUploadedFile {
@@ -59,43 +124,33 @@ export interface UploadTaskThreadFilesResponse {
 
 export const uploadTaskThreadFiles = async ({
   files,
+  space_id: spaceID,
   thread_id: threadId,
 }: {
   thread_id: string;
+  space_id?: string;
   files: File[];
 }): Promise<UploadTaskThreadFilesResponse> => {
   if (!threadId || files.length === 0) {
-    return {
-      data: {
-        files: [],
-        skipped_files: [],
-      },
-      code: 0,
-      msg: 'success',
-    };
+    return presentTaskThreadUploadResponse({
+      uploads: [],
+      skipped_files: [],
+    });
   }
 
-  const formData = new FormData();
-  files.forEach(file => {
-    formData.append('files', file, file.name);
-  });
-
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(threadId)}/uploads`,
-    {
-      method: 'POST',
-      body: formData,
-    },
-  );
-  if (!response.ok) {
-    throw new Error('上传附件失败');
+  try {
+    return presentTaskThreadUploadResponse(
+      await canonicalThreadClient.uploadFiles({
+        files,
+        space_id: resolvePageServiceSpaceID(spaceID),
+        thread_id: threadId,
+      }),
+    );
+  } catch (cause) {
+    const error = new Error('上传附件失败');
+    (error as Error & { cause?: unknown }).cause = cause;
+    throw error;
   }
-  const payload = (await response.json()) as UploadTaskThreadFilesResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '上传附件失败');
-  }
-
-  return payload;
 };
 
 export const getWorkbenchLLMModels = async (

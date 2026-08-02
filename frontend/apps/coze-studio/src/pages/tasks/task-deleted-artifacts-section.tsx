@@ -16,14 +16,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import { IconCozDocument } from '@coze-arch/coze-design/icons';
 import { Button, List, Tag } from '@coze-arch/coze-design';
 
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import { artifactFileName, formatArtifactSize } from './task-artifacts-helpers';
 import { listTaskThreadArtifacts, restoreTaskThreadArtifact } from './service';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 
 const DELETED_ARTIFACT_PAGE_SIZE = 50;
 

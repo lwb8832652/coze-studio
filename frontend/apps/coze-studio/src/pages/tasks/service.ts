@@ -14,530 +14,503 @@
  * limitations under the License.
  */
 
-import {
-  workbench,
-  workbenchSkill,
-  workbenchTask,
-} from '@coze-studio/api-schema';
+import { workbench, workbenchSkill } from '@coze-studio/api-schema';
 
 import {
-  taskThreadArtifactPayloadError,
-  taskThreadArtifactServiceError,
-} from './task-artifact-safe-error';
+  type LegacyPageResponse,
+  presentEmptyTaskThreadRunEventListResponse,
+  presentTaskThreadCreateResponse,
+  presentTaskThreadGetResponse,
+  presentTaskThreadGuardrailAuditExportResponse,
+  presentTaskThreadGuardrailAuditListResponse,
+  presentTaskThreadMCPRuntimeAuditListResponse,
+  presentTaskThreadMemoryExportResponse,
+  presentTaskThreadMemoryImportResponse,
+  presentTaskThreadMessageListResponse,
+  presentTaskThreadMessageResponse,
+  presentTaskThreadRunCancellationResponse,
+  presentTaskThreadRunCreateResponse,
+  presentTaskThreadRunEventListResponse,
+  presentTaskThreadRunListResponse,
+  presentTaskThreadRunResponse,
+  presentTaskThreadSuggestionsResponse,
+  presentTaskThreadListResponse,
+} from '../workbench/thread-client/legacy-page-response';
+import {
+  canonicalThreadClient,
+  resolvePageServiceSpaceID,
+} from '../workbench/thread-client/canonical-thread-client-singleton';
+import type {
+  ExportWorkbenchGuardrailAuditEventsRequest,
+  ImportWorkbenchMemoriesRequest,
+  ListWorkbenchGuardrailAuditEventsRequest,
+  ListWorkbenchMCPRuntimeAuditEventsRequest,
+  WorkbenchGuardrailAuditEvent,
+  WorkbenchGuardrailAuditExport,
+  WorkbenchMCPRuntimeAuditEvent,
+  WorkbenchMemory,
+  WorkbenchMemoryAuditEvent,
+  WorkbenchMemoryExport,
+  WorkbenchMemoryImportItem,
+  WorkbenchMemoryImportResult,
+} from '../workbench/thread-client';
+import type {
+  AppendTaskThreadMessageRequest,
+  AppendTaskThreadMessageResponse,
+  CancelTaskThreadRunRequest,
+  CancelTaskThreadRunResponse,
+  CreateTaskThreadRequest,
+  CreateTaskThreadResponse,
+  CreateTaskThreadRunRequest,
+  CreateTaskThreadRunResponse,
+  GenerateTaskThreadSuggestionsRequest,
+  GenerateTaskThreadSuggestionsResponse,
+  GetTaskThreadRequest,
+  GetTaskThreadResponse,
+  ListTaskThreadMessagesRequest,
+  ListTaskThreadMessagesResponse,
+  ListTaskThreadRunEventsRequest,
+  ListTaskThreadRunEventsResponse,
+  ListTaskThreadRunsRequest,
+  ListTaskThreadRunsResponse,
+  ListTaskThreadsRequest,
+  ListTaskThreadsResponse,
+  PageSpace,
+  PageScopedRequest,
+  ResumeTaskThreadRunRequest,
+  ResumeTaskThreadRunResponse,
+  RetryTaskThreadSubagentRunRequest,
+  RetryTaskThreadSubagentRunResponse,
+} from './task-service-contract';
 
 export {
   uploadTaskThreadFiles,
   type TaskThreadUploadedFile,
 } from '../workbench/service';
 export { isTaskThreadArtifactSafeError } from './task-artifact-safe-error';
-
-export const listTaskThreads = workbenchTask.ListTaskThreads;
-export const createTaskThread = workbenchTask.CreateTaskThread;
-export const getTaskThread = workbenchTask.GetTaskThread;
-export const listTaskThreadMessages = workbenchTask.ListTaskThreadMessages;
-export const generateTaskThreadSuggestions =
-  workbenchTask.GenerateTaskThreadSuggestions;
-export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
-export const listTaskThreadRuns = workbenchTask.ListTaskThreadRuns;
-export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
-export const resumeTaskThreadRun = workbenchTask.ResumeTaskThreadRun;
-export const cancelTaskThreadRun = workbenchTask.CancelTaskThreadRun;
-export const retryTaskThreadSubagentRun =
-  workbenchTask.RetryTaskThreadSubagentRun;
-export const listTaskThreadRunEvents = workbenchTask.ListTaskThreadRunEvents;
+export {
+  deleteTaskThreadArtifact,
+  fetchTaskThreadArtifactContent,
+  getTaskThreadArtifactSignedURL,
+  listTaskThreadArtifacts,
+  listTaskThreadArtifactScanJobs,
+  restoreTaskThreadArtifact,
+  retryTaskThreadArtifactScanJob,
+  reviewTaskThreadArtifactScan,
+  type ArtifactScanReviewDecision,
+  type ListTaskThreadArtifactScanJobsResponse,
+  type RestoreTaskThreadArtifactResponse,
+  type RetryTaskThreadArtifactScanJobResponse,
+  type ReviewTaskThreadArtifactScanResponse,
+  type TaskThreadArtifactContentResponse,
+  type TaskThreadArtifactScanJob,
+  type TaskThreadArtifactSignedURLResponse,
+} from './task-artifact-service';
+export {
+  clearTaskThreadMemories,
+  deleteTaskThreadMemory,
+  listTaskThreadMemories,
+  listTaskThreadMemoryAuditEvents,
+  restoreTaskThreadMemory,
+  updateTaskThreadMemory,
+} from './task-memory-service';
 export { getTaskThreadTokenUsage } from './task-usage-service';
-export const listTaskThreadArtifacts = workbenchTask.ListTaskThreadArtifacts;
-export const listTaskThreadMemories = workbenchTask.ListTaskThreadMemories;
-export const updateTaskThreadMemory = workbenchTask.UpdateTaskThreadMemory;
-export const deleteTaskThreadMemory = workbenchTask.DeleteTaskThreadMemory;
-export const clearTaskThreadMemories = workbenchTask.ClearTaskThreadMemories;
-export const restoreTaskThreadMemory = workbenchTask.RestoreTaskThreadMemory;
-export const listTaskThreadMemoryAuditEvents =
-  workbenchTask.ListTaskThreadMemoryAuditEvents;
-export const listTaskThreadGuardrailAuditEvents =
-  workbenchTask.ListTaskThreadGuardrailAuditEvents;
-export const listTaskThreadMCPRuntimeAuditEvents =
-  workbenchTask.ListTaskThreadMCPRuntimeAuditEvents;
-export const exportTaskThreadMemories = workbenchTask.ExportTaskThreadMemories;
-export const exportTaskThreadGuardrailAuditEvents =
-  workbenchTask.ExportTaskThreadGuardrailAuditEvents;
-export const importTaskThreadMemories = workbenchTask.ImportTaskThreadMemories;
+
+const LEGACY_MESSAGE_PAGE_SIZE = 50;
+const LEGACY_RUN_EVENT_PAGE_SIZE = 100;
+
+const pageResponse = <Response>(value: unknown): Response => value as Response;
+const legacyPageNumber = (value?: number): number =>
+  Number.isSafeInteger(value) && (value ?? 0) > 0 ? (value as number) : 1;
+const legacyPageSize = (value: number | undefined, fallback: number): number =>
+  Number.isSafeInteger(value) && (value ?? 0) > 0
+    ? (value as number)
+    : fallback;
+
+export const listTaskThreads = async (
+  request: ListTaskThreadsRequest,
+): Promise<ListTaskThreadsResponse> =>
+  pageResponse(
+    presentTaskThreadListResponse(
+      await canonicalThreadClient.searchThreads({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const createTaskThread = async (
+  request: CreateTaskThreadRequest,
+): Promise<CreateTaskThreadResponse> =>
+  pageResponse(
+    presentTaskThreadCreateResponse(
+      await canonicalThreadClient.createThread({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const getTaskThread = async (
+  request: GetTaskThreadRequest,
+): Promise<GetTaskThreadResponse> =>
+  pageResponse(
+    presentTaskThreadGetResponse(
+      await canonicalThreadClient.getThread({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const listTaskThreadMessages = async (
+  request: ListTaskThreadMessagesRequest,
+): Promise<ListTaskThreadMessagesResponse> => {
+  const {
+    page: requestedPage,
+    page_size: requestedPageSize,
+    space_id: spaceID,
+    ...messageRequest
+  } = request;
+  const page = legacyPageNumber(requestedPage);
+  const pageSize = legacyPageSize(requestedPageSize, LEGACY_MESSAGE_PAGE_SIZE);
+  const offset = (page - 1) * pageSize;
+  const resolvedSpaceID = resolvePageServiceSpaceID(spaceID);
+  const messagePage = await canonicalThreadClient.listMessages({
+    ...messageRequest,
+    ...(offset > 0 ? { after_seq: String(offset) } : {}),
+    limit: pageSize,
+    space_id: resolvedSpaceID,
+  });
+  return pageResponse(presentTaskThreadMessageListResponse(messagePage));
+};
+
+export const generateTaskThreadSuggestions = async (
+  request: GenerateTaskThreadSuggestionsRequest,
+): Promise<GenerateTaskThreadSuggestionsResponse> =>
+  presentTaskThreadSuggestionsResponse(
+    await canonicalThreadClient.generateSuggestions({
+      ...request,
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    }),
+  );
+
+export const appendTaskThreadMessage = async (
+  request: AppendTaskThreadMessageRequest,
+): Promise<AppendTaskThreadMessageResponse> =>
+  pageResponse(
+    presentTaskThreadMessageResponse(
+      await canonicalThreadClient.appendMessage({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const listTaskThreadRuns = async (
+  request: ListTaskThreadRunsRequest,
+): Promise<ListTaskThreadRunsResponse> => {
+  const {
+    parent_run_id: parentRunID,
+    space_id: spaceID,
+    ...runRequest
+  } = request;
+
+  return pageResponse(
+    presentTaskThreadRunListResponse(
+      await canonicalThreadClient.listRuns({
+        ...runRequest,
+        ...(parentRunID && parentRunID !== '0'
+          ? { parent_run_id: parentRunID }
+          : {}),
+        space_id: resolvePageServiceSpaceID(spaceID),
+      }),
+    ),
+  );
+};
+
+export const createTaskThreadRun = async (
+  request: CreateTaskThreadRunRequest,
+): Promise<CreateTaskThreadRunResponse> =>
+  pageResponse(
+    presentTaskThreadRunCreateResponse(
+      await canonicalThreadClient.createRun({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const resumeTaskThreadRun = async (
+  request: ResumeTaskThreadRunRequest,
+): Promise<ResumeTaskThreadRunResponse> =>
+  pageResponse(
+    presentTaskThreadRunResponse(
+      await canonicalThreadClient.resumeRun({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const cancelTaskThreadRun = async (
+  request: CancelTaskThreadRunRequest,
+): Promise<CancelTaskThreadRunResponse> => {
+  await canonicalThreadClient.cancelRun({
+    ...request,
+    space_id: resolvePageServiceSpaceID(request.space_id),
+  });
+
+  // Canonical cancel is a 204 command. The page refreshes authoritative detail
+  // after success, so synthesizing or refetching a stale Run would add risk.
+  return pageResponse(presentTaskThreadRunCancellationResponse());
+};
+
+export const retryTaskThreadSubagentRun = async (
+  request: RetryTaskThreadSubagentRunRequest,
+): Promise<RetryTaskThreadSubagentRunResponse> =>
+  pageResponse(
+    presentTaskThreadRunResponse(
+      await canonicalThreadClient.retrySubagentRun({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
+  );
+
+export const listTaskThreadRunEvents = async (
+  request: ListTaskThreadRunEventsRequest,
+): Promise<ListTaskThreadRunEventsResponse> => {
+  const {
+    event_types: eventTypes,
+    page: requestedPage,
+    page_size: requestedPageSize,
+    run_id: requestedRunID,
+    signal,
+    space_id: requestedSpaceID,
+    thread_id: threadID,
+  } = request;
+  const page = legacyPageNumber(requestedPage);
+  const pageSize = legacyPageSize(
+    requestedPageSize,
+    LEGACY_RUN_EVENT_PAGE_SIZE,
+  );
+  const spaceID = resolvePageServiceSpaceID(requestedSpaceID);
+  let runID = requestedRunID;
+
+  if (!runID) {
+    // The legacy detail loader omitted run_id. Canonical events are Run-scoped,
+    // so bridge that call to the latest top-level Run during UI migration.
+    const runs = await canonicalThreadClient.listRuns({
+      space_id: spaceID,
+      thread_id: threadID,
+      page: 1,
+      page_size: 1,
+      signal,
+    });
+    runID = runs.items[0]?.run_id;
+  }
+  if (!runID) {
+    return pageResponse(presentEmptyTaskThreadRunEventListResponse());
+  }
+
+  // Canonical public events already contain approved message/tool projections;
+  // never reconstruct the legacy journal side channel with internal payloads.
+  const result = await listCanonicalRunEventPage({
+    eventTypes,
+    page,
+    pageSize,
+    runID,
+    signal,
+    spaceID,
+    threadID,
+  });
+  return pageResponse(presentTaskThreadRunEventListResponse(result));
+};
+
+const listCanonicalRunEventPage = async ({
+  eventTypes,
+  page,
+  pageSize,
+  runID,
+  signal,
+  spaceID,
+  threadID,
+}: {
+  eventTypes?: string[];
+  page: number;
+  pageSize: number;
+  runID: string;
+  signal?: AbortSignal;
+  spaceID: string;
+  threadID: string;
+}) => {
+  let currentPage = 1;
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+
+  while (true) {
+    const result = await canonicalThreadClient.listRunEvents({
+      space_id: spaceID,
+      thread_id: threadID,
+      run_id: runID,
+      ...(eventTypes === undefined ? {} : { event_types: eventTypes }),
+      ...(cursor === undefined ? {} : { cursor }),
+      limit: pageSize,
+      signal,
+    });
+    if (currentPage >= page) {
+      return result;
+    }
+    if (!result.next_cursor) {
+      if (result.has_more) {
+        throw new Error('Canonical Run Event cursor is missing');
+      }
+      return { items: [], total: result.total, has_more: false };
+    }
+    if (seenCursors.has(result.next_cursor)) {
+      throw new Error('Canonical Run Event cursor repeated');
+    }
+    seenCursors.add(result.next_cursor);
+    cursor = result.next_cursor;
+    currentPage += 1;
+  }
+};
+
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 export const installSkillFromArtifact = workbenchSkill.InstallSkillFromArtifact;
-export type TaskThreadMemory = workbenchTask.TaskThreadMemory;
-export type TaskThreadMemoryAuditEvent =
-  workbenchTask.TaskThreadMemoryAuditEvent;
-export type TaskThreadGuardrailAuditEvent =
-  workbenchTask.TaskThreadGuardrailAuditEvent;
-export type TaskThreadMCPRuntimeAuditEvent =
-  workbenchTask.TaskThreadMCPRuntimeAuditEvent;
-export type ListTaskThreadMemoriesResponse =
-  workbenchTask.ListTaskThreadMemoriesResponse;
-export type UpdateTaskThreadMemoryResponse =
-  workbenchTask.UpdateTaskThreadMemoryResponse;
-export type DeleteTaskThreadMemoryResponse =
-  workbenchTask.DeleteTaskThreadMemoryResponse;
-export type ClearTaskThreadMemoriesResponse =
-  workbenchTask.ClearTaskThreadMemoriesResponse;
-export type RestoreTaskThreadMemoryResponse =
-  workbenchTask.RestoreTaskThreadMemoryResponse;
-export type ListTaskThreadMemoryAuditEventsResponse =
-  workbenchTask.ListTaskThreadMemoryAuditEventsResponse;
-export type ListTaskThreadGuardrailAuditEventsResponse =
-  workbenchTask.ListTaskThreadGuardrailAuditEventsResponse;
-export type ListTaskThreadMCPRuntimeAuditEventsResponse =
-  workbenchTask.ListTaskThreadMCPRuntimeAuditEventsResponse;
+export type TaskThreadMemory = WorkbenchMemory;
+export type TaskThreadMemoryAuditEvent = WorkbenchMemoryAuditEvent;
+export type TaskThreadGuardrailAuditEvent = WorkbenchGuardrailAuditEvent;
+export type TaskThreadMCPRuntimeAuditEvent = WorkbenchMCPRuntimeAuditEvent;
+export type ListTaskThreadMemoriesResponse = LegacyPageResponse<{
+  memories: WorkbenchMemory[];
+  total: number;
+}>;
+export type UpdateTaskThreadMemoryResponse = LegacyPageResponse<{
+  memory: WorkbenchMemory;
+  updated: boolean;
+}>;
+export type DeleteTaskThreadMemoryResponse = Omit<
+  LegacyPageResponse<never>,
+  'data'
+>;
+export type ClearTaskThreadMemoriesResponse = LegacyPageResponse<{
+  deleted: number;
+}>;
+export type RestoreTaskThreadMemoryResponse = LegacyPageResponse<{
+  memory: WorkbenchMemory;
+  restored: boolean;
+}>;
+export type ListTaskThreadMemoryAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchMemoryAuditEvent[];
+  total: number;
+}>;
+export type ListTaskThreadGuardrailAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchGuardrailAuditEvent[];
+  total: number;
+}>;
+export type ListTaskThreadMCPRuntimeAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchMCPRuntimeAuditEvent[];
+  total: number;
+}>;
+export type ExportTaskThreadMemoriesData = WorkbenchMemoryExport;
 export type ExportTaskThreadMemoriesResponse =
-  workbenchTask.ExportTaskThreadMemoriesResponse;
-export type ExportTaskThreadMemoriesData =
-  workbenchTask.ExportTaskThreadMemoriesData;
-export type ExportTaskThreadGuardrailAuditEventsResponse =
-  workbenchTask.ExportTaskThreadGuardrailAuditEventsResponse;
+  LegacyPageResponse<ExportTaskThreadMemoriesData>;
 export type ExportTaskThreadGuardrailAuditEventsData =
-  workbenchTask.ExportTaskThreadGuardrailAuditEventsData;
-export type ImportTaskThreadMemoryItem =
-  workbenchTask.ImportTaskThreadMemoryItem;
+  WorkbenchGuardrailAuditExport & {
+    page: number;
+    page_size: number;
+  };
+export type ExportTaskThreadGuardrailAuditEventsResponse =
+  LegacyPageResponse<ExportTaskThreadGuardrailAuditEventsData>;
+export type ImportTaskThreadMemoryItem = WorkbenchMemoryImportItem;
 export type ImportTaskThreadMemoriesResponse =
-  workbenchTask.ImportTaskThreadMemoriesResponse;
+  LegacyPageResponse<WorkbenchMemoryImportResult>;
 export type WorkbenchRuntimeDoctorData = workbench.WorkbenchRuntimeDoctorData;
 export type RuntimeDoctorCheck = workbench.RuntimeDoctorCheck;
 
-export const getTaskThreadRunEventsStreamURL = ({
-  afterEventId,
-  runId,
-  threadId,
-}: {
-  threadId: string;
-  runId?: string;
-  afterEventId?: string;
-}) => {
-  const params = new URLSearchParams();
-  if (runId) {
-    params.set('run_id', runId);
-  }
-  if (afterEventId) {
-    params.set('after_event_id', afterEventId);
-  }
-
-  const query = params.toString();
-
-  return `/api/workbench/task_threads/${encodeURIComponent(
-    threadId,
-  )}/run_events/stream${query ? `?${query}` : ''}`;
-};
-
-export interface TaskThreadArtifactContentResponse {
-  blob: Blob;
-  contentDisposition: string;
-  contentType: string;
-}
-
-export interface TaskThreadArtifactSignedURLResponse {
-  data?: {
-    artifact_id: string;
-    url: string;
-    expires_in_seconds: number;
-    content_type: string;
-    preview_mode: string;
-  };
-  code: number;
-  msg: string;
-  reason?: string;
-}
-
-export interface TaskThreadArtifactScanJob {
-  job_id: string;
-  thread_id: string;
-  run_id: string;
-  space_id: string;
-  user_id: string;
-  artifact_id: string;
-  file_id: string;
-  scanner: string;
-  status: string;
-  worker_id: string;
-  attempt_count: number;
-  last_error: string;
-  available_at: number;
-  lease_expires_at: number;
-  started_at: number;
-  ended_at: number;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ListTaskThreadArtifactScanJobsResponse {
-  data?: {
-    jobs: TaskThreadArtifactScanJob[];
-    total: number;
-  };
-  code: number;
-  msg: string;
-}
-
-export interface RetryTaskThreadArtifactScanJobResponse {
-  data?: {
-    job?: TaskThreadArtifactScanJob;
-    retried: boolean;
-  };
-  code: number;
-  msg: string;
-}
-
-export type ArtifactScanReviewDecision = 'release' | 'quarantine' | 'block';
-
-export interface ReviewTaskThreadArtifactScanResponse {
-  data?: {
-    artifact_id: string;
-    decision: ArtifactScanReviewDecision;
-    reviewed: boolean;
-    scan_status: string;
-  };
-  code: number;
-  msg: string;
-}
-
-export interface RestoreTaskThreadArtifactResponse {
-  data?: {
-    artifact_id: string;
-    restored: boolean;
-  };
-  code: number;
-  msg: string;
-}
-
-export const listTaskThreadArtifactScanJobs = async ({
-  artifact_id: artifactID,
-  page,
-  page_size: pageSize,
-  run_id: runID,
-  scanner,
-  space_id: spaceID,
-  status,
-  thread_id: threadID,
-}: {
+interface ExportTaskThreadMemoriesRequest extends PageScopedRequest {
   thread_id: string;
   run_id?: string;
-  artifact_id?: string;
-  space_id?: string;
-  status?: string;
-  scanner?: string;
-  page?: number;
-  page_size?: number;
-}): Promise<ListTaskThreadArtifactScanJobsResponse> => {
-  const params = new URLSearchParams();
-  if (runID) {
-    params.set('run_id', runID);
-  }
-  if (artifactID) {
-    params.set('artifact_id', artifactID);
-  }
-  if (status) {
-    params.set('status', status);
-  }
-  if (scanner) {
-    params.set('scanner', scanner);
-  }
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  if (page) {
-    params.set('page', String(page));
-  }
-  if (pageSize) {
-    params.set('page_size', String(pageSize));
-  }
+  scope?: string;
+  scopes?: string[];
+  q?: string;
+  include_expired?: boolean;
+  include_deleted?: boolean;
+  limit?: number;
+  signal?: AbortSignal;
+}
+type ImportTaskThreadMemoriesRequest =
+  PageSpace<ImportWorkbenchMemoriesRequest>;
+type ListTaskThreadGuardrailAuditEventsRequest =
+  PageSpace<ListWorkbenchGuardrailAuditEventsRequest>;
+type ExportTaskThreadGuardrailAuditEventsRequest =
+  PageSpace<ExportWorkbenchGuardrailAuditEventsRequest>;
+type ListTaskThreadMCPRuntimeAuditEventsRequest =
+  PageSpace<ListWorkbenchMCPRuntimeAuditEventsRequest>;
 
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifact_scan_jobs${query ? `?${query}` : ''}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'GET',
-    },
+export const exportTaskThreadMemories = async (
+  request: ExportTaskThreadMemoriesRequest,
+): Promise<ExportTaskThreadMemoriesResponse> => {
+  const { limit, space_id: spaceID, ...memoryRequest } = request;
+
+  return pageResponse(
+    presentTaskThreadMemoryExportResponse(
+      await canonicalThreadClient.exportMemories({
+        ...memoryRequest,
+        ...(limit === undefined ? {} : { page_size: limit }),
+        space_id: resolvePageServiceSpaceID(spaceID),
+      }),
+    ),
   );
-
-  if (!response.ok) {
-    throw new Error('读取产物扫描队列失败');
-  }
-
-  const payload =
-    (await response.json()) as ListTaskThreadArtifactScanJobsResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '读取产物扫描队列失败');
-  }
-
-  return payload;
 };
 
-export const retryTaskThreadArtifactScanJob = async ({
-  job_id: jobID,
-  space_id: spaceID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  job_id: string;
-  space_id?: string;
-}): Promise<RetryTaskThreadArtifactScanJobResponse> => {
-  const params = new URLSearchParams();
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifact_scan_jobs/${encodeURIComponent(jobID)}/retry${
-      query ? `?${query}` : ''
-    }`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'POST',
-    },
+export const importTaskThreadMemories = async (
+  request: ImportTaskThreadMemoriesRequest,
+): Promise<ImportTaskThreadMemoriesResponse> =>
+  pageResponse(
+    presentTaskThreadMemoryImportResponse(
+      await canonicalThreadClient.importMemories({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
   );
 
-  if (!response.ok) {
-    throw new Error('重试产物扫描任务失败');
-  }
-
-  const payload =
-    (await response.json()) as RetryTaskThreadArtifactScanJobResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '重试产物扫描任务失败');
-  }
-
-  return payload;
-};
-
-export const reviewTaskThreadArtifactScan = async ({
-  artifact_id: artifactID,
-  decision,
-  reason,
-  space_id: spaceID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  artifact_id: string;
-  space_id?: string;
-  decision: ArtifactScanReviewDecision;
-  reason?: string;
-}): Promise<ReviewTaskThreadArtifactScanResponse> => {
-  const body =
-    reason && reason.trim()
-      ? { decision, reason: reason.trim() }
-      : { decision };
-  const params = new URLSearchParams();
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}/scan_review${
-      query ? `?${query}` : ''
-    }`,
-    {
-      body: JSON.stringify(body),
-      headers: {
-        'content-type': 'application/json',
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'POST',
-    },
+export const listTaskThreadGuardrailAuditEvents = async (
+  request: ListTaskThreadGuardrailAuditEventsRequest,
+): Promise<ListTaskThreadGuardrailAuditEventsResponse> =>
+  pageResponse(
+    presentTaskThreadGuardrailAuditListResponse(
+      await canonicalThreadClient.listGuardrailAuditEvents({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
   );
 
-  if (!response.ok) {
-    throw new Error('审核产物扫描状态失败');
-  }
-
-  const payload =
-    (await response.json()) as ReviewTaskThreadArtifactScanResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '审核产物扫描状态失败');
-  }
-
-  return payload;
-};
-
-export const fetchTaskThreadArtifactContent = async ({
-  artifact_id: artifactID,
-  mode,
-  space_id: spaceID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  artifact_id: string;
-  space_id?: string;
-  mode: 'preview' | 'download';
-}): Promise<TaskThreadArtifactContentResponse> => {
-  const params = new URLSearchParams();
-  params.set('mode', mode);
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}/content?${params.toString()}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'GET',
-    },
+export const exportTaskThreadGuardrailAuditEvents = async (
+  request: ExportTaskThreadGuardrailAuditEventsRequest,
+): Promise<ExportTaskThreadGuardrailAuditEventsResponse> =>
+  pageResponse(
+    presentTaskThreadGuardrailAuditExportResponse(
+      await canonicalThreadClient.exportGuardrailAuditEvents({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+      request,
+    ),
   );
 
-  if (!response.ok) {
-    throw new Error('读取任务产物失败');
-  }
-
-  return {
-    blob: await response.blob(),
-    contentDisposition: response.headers.get('content-disposition') ?? '',
-    contentType: response.headers.get('content-type') ?? '',
-  };
-};
-
-export const getTaskThreadArtifactSignedURL = async ({
-  artifact_id: artifactID,
-  mode,
-  space_id: spaceID,
-  thread_id: threadID,
-  ttl_seconds: ttlSeconds,
-}: {
-  thread_id: string;
-  artifact_id: string;
-  space_id?: string;
-  mode: 'preview' | 'download';
-  ttl_seconds?: number;
-}): Promise<TaskThreadArtifactSignedURLResponse> => {
-  const params = new URLSearchParams();
-  params.set('mode', mode);
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  if (ttlSeconds) {
-    params.set('ttl_seconds', String(ttlSeconds));
-  }
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifacts/${encodeURIComponent(
-      artifactID,
-    )}/signed_url?${params.toString()}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'GET',
-    },
+export const listTaskThreadMCPRuntimeAuditEvents = async (
+  request: ListTaskThreadMCPRuntimeAuditEventsRequest,
+): Promise<ListTaskThreadMCPRuntimeAuditEventsResponse> =>
+  pageResponse(
+    presentTaskThreadMCPRuntimeAuditListResponse(
+      await canonicalThreadClient.listMCPRuntimeAuditEvents({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    ),
   );
-
-  if (!response.ok) {
-    throw await taskThreadArtifactServiceError(
-      response,
-      '生成任务产物签名链接失败',
-      mode,
-    );
-  }
-
-  const payload =
-    (await response.json()) as TaskThreadArtifactSignedURLResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw taskThreadArtifactPayloadError(
-      payload.reason,
-      '生成任务产物签名链接失败',
-      mode,
-    );
-  }
-
-  return payload;
-};
-
-export const deleteTaskThreadArtifact = async ({
-  artifact_id: artifactID,
-  space_id: spaceID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  artifact_id: string;
-  space_id?: string;
-}) => {
-  const params = new URLSearchParams();
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}${query ? `?${query}` : ''}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'DELETE',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('删除任务产物失败');
-  }
-
-  if (response.headers.get('content-type')?.includes('application/json')) {
-    const payload = (await response.json()) as {
-      code?: number;
-      msg?: string;
-    };
-    if (typeof payload.code === 'number' && payload.code !== 0) {
-      throw new Error(payload.msg || '删除任务产物失败');
-    }
-  }
-};
-
-export const restoreTaskThreadArtifact = async ({
-  artifact_id: artifactID,
-  space_id: spaceID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  artifact_id: string;
-  space_id?: string;
-}): Promise<RestoreTaskThreadArtifactResponse> => {
-  const params = new URLSearchParams();
-  if (spaceID) {
-    params.set('space_id', spaceID);
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}/restore${
-      query ? `?${query}` : ''
-    }`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'POST',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('恢复任务产物失败');
-  }
-
-  const payload = (await response.json()) as RestoreTaskThreadArtifactResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '恢复任务产物失败');
-  }
-
-  return payload;
-};

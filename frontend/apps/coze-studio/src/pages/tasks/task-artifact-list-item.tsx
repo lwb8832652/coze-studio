@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozDocument,
   IconCozDownload,
@@ -24,6 +23,7 @@ import {
 } from '@coze-arch/coze-design/icons';
 import { Button, Popconfirm, Tag } from '@coze-arch/coze-design';
 
+import type { WorkbenchArtifact } from '../workbench/thread-client';
 import {
   artifactDisplayPath,
   artifactFileName,
@@ -35,7 +35,7 @@ import {
 } from './task-artifacts-helpers';
 import type { ArtifactScanReviewDecision } from './service';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadArtifact = WorkbenchArtifact;
 export type ArtifactActionMode = 'preview' | 'download' | 'install_skill';
 
 interface ArtifactReviewActionButtonProps {
