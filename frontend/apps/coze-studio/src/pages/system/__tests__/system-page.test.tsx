@@ -950,12 +950,12 @@ describe('SystemManagementPage', () => {
         provider_type: mockObjectStorageProviderType.MINIO,
       }),
     );
-    expect(
-      mockCreateObjectStorageConfig.mock.calls[0]?.[0].config,
-    ).toMatchObject({
-      bucket: 'coze',
-      endpoint: 'http://minio:9000',
-    });
+    expect(mockCreateObjectStorageConfig.mock.calls[0]?.[0].config).toMatchObject(
+      {
+        bucket: 'coze',
+        endpoint: 'http://minio:9000',
+      },
+    );
 
     await act(async () => {
       Simulate.click(

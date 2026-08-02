@@ -50,9 +50,7 @@ vi.mock('../service', async importOriginal => {
     listAdminUserSpaces: vi.fn(),
     listAdminUsers: vi.fn().mockResolvedValue({ users: [], total: 0 }),
     listAdminWorkspaceMembers: vi.fn(),
-    listAdminWorkspaces: vi
-      .fn()
-      .mockResolvedValue({ workspaces: [], total: 0 }),
+    listAdminWorkspaces: vi.fn().mockResolvedValue({ workspaces: [], total: 0 }),
     resetAdminUserPassword: vi.fn(),
     saveAdminBasicConfig: vi.fn(),
     updateAdminUser: vi.fn(),

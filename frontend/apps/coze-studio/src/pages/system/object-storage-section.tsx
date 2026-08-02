@@ -325,9 +325,7 @@ const ObjectStorageConfigDialog = ({
             <h2 id="object-storage-dialog-title">
               {mode === 'create' ? '新增对象存储配置' : '编辑对象存储配置'}
             </h2>
-            <p>
-              支持七牛、阿里 OSS、腾讯 COS、华为 OBS、AWS S3、MinIO 和 TOS。
-            </p>
+            <p>支持七牛、阿里 OSS、腾讯 COS、华为 OBS、AWS S3、MinIO 和 TOS。</p>
           </div>
           <button
             aria-label="关闭对象存储配置表单"
@@ -533,11 +531,7 @@ const ObjectStorageConfigDialog = ({
             <span>{testing ? '测试中...' : '测试连接'}</span>
           </button>
           <div>
-            <button
-              disabled={saving || testing}
-              type="button"
-              onClick={onCancel}
-            >
+            <button disabled={saving || testing} type="button" onClick={onCancel}>
               取消
             </button>
             <button
@@ -574,8 +568,7 @@ export const ObjectStorageSection = () => {
     useState<ObjectStorageConfigView | null>(null);
 
   const activeConfig = useMemo(
-    () =>
-      configs.find(config => config.runtime_active || config.desired_active),
+    () => configs.find(config => config.runtime_active || config.desired_active),
     [configs],
   );
 
@@ -782,9 +775,7 @@ export const ObjectStorageSection = () => {
         <article>
           <span>运行来源</span>
           <strong>{RUNTIME_SOURCE_LABELS[runtimeSource]}</strong>
-          <small>
-            {restartRequired ? '切换后需重启生效' : '运行中配置已同步'}
-          </small>
+          <small>{restartRequired ? '切换后需重启生效' : '运行中配置已同步'}</small>
         </article>
         <article>
           <span>配置数量</span>
@@ -848,9 +839,7 @@ export const ObjectStorageSection = () => {
                       {config.desired_active ? <span>主配置</span> : null}
                       {config.runtime_active ? <span>运行中</span> : null}
                       {config.restart_required ? <span>需重启</span> : null}
-                      {config.credential_configured ? (
-                        <span>密钥已配置</span>
-                      ) : null}
+                      {config.credential_configured ? <span>密钥已配置</span> : null}
                     </div>
                   </td>
                   <td>{formatTime(config.updated_at)}</td>
@@ -876,7 +865,10 @@ export const ObjectStorageSection = () => {
                             .then(result => setMessage(result))
                             .catch(error =>
                               setMessage(
-                                getErrorMessage(error, '对象存储连接测试失败'),
+                                getErrorMessage(
+                                  error,
+                                  '对象存储连接测试失败',
+                                ),
                               ),
                             )
                         }

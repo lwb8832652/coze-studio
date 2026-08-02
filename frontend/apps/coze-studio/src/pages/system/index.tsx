@@ -59,7 +59,6 @@ import {
 } from './service';
 import { SandboxManagementSection } from './sandbox-management-section';
 import { OverviewSection } from './overview-section';
-import { ObjectStorageSection } from './object-storage-section';
 import { ModelConfigSection } from './model-config-section';
 import { SYSTEM_NAV_GROUPS, SYSTEM_SECTIONS } from './content';
 import {
@@ -67,6 +66,7 @@ import {
   type BillingSectionKey,
 } from './billing-management-section';
 import { AnnouncementsSection } from './announcements';
+import { ObjectStorageSection } from './object-storage-section';
 
 const ADMIN_PAGE_SIZE = 20;
 
