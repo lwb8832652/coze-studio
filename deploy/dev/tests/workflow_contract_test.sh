@@ -56,8 +56,9 @@ assert_contract(concurrency['queue'] == 'max', 'all pending dev deployments must
 assert_contract(workflow['permissions'] == { 'contents' => 'read' }, 'permissions must be contents: read only')
 
 jobs = workflow.fetch('jobs', {})
-expected_jobs = %w[preflight build-server build-web migration-hold verify-images promote deploy]
+expected_jobs = %w[preflight build-server build-web verify-images migrate promote deploy]
 assert_contract((expected_jobs - jobs.keys).empty?, 'required jobs are missing')
+assert_contract(!jobs.key?('migration-hold'), 'manual migration-hold job must be removed')
 
 preflight = jobs.fetch('preflight')
 expected_preflight_outputs = {
@@ -134,27 +135,26 @@ assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
                   "#{job_name} must not publish the mutable dev tag")
 end
 
-hold = jobs.fetch('migration-hold')
-assert_contract((%w[preflight build-server build-web] - needs(hold)).empty?,
-                'migration-hold must wait for preflight and both builds')
-assert_contract(hold['if'].to_s.include?('migration_changed') &&
-                hold['if'].to_s.include?("github.event_name == 'push'"),
-                'migration-hold must be limited to migration pushes')
-hold_text = job_text(hold)
-%w[GITHUB_STEP_SUMMARY workflow_dispatch target_sha].each do |token|
-  assert_contract(hold_text.include?(token), "migration-hold summary is missing #{token}")
-end
-
 verify = jobs.fetch('verify-images')
 assert_contract(needs(verify).sort == %w[build-server build-web preflight],
                 'verify-images must wait for preflight and both push builds')
 verify_if = verify['if'].to_s
-%w[always build-server build-web].each do |token|
+%w[always preflight build-server build-web].each do |token|
   assert_contract(verify_if.include?(token), "verify-images condition is missing #{token}")
 end
+assert_contract(verify_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
+                'verify-images must stop blocked deployments')
+assert_contract(!verify_if.include?('migration_changed'),
+                'verified migration pushes must reach image verification')
 assert_contract(verify_if.include?("github.event_name == 'push'") &&
                 verify_if.include?("github.event_name == 'workflow_dispatch'"),
                 'verify-images must gate both push and workflow_dispatch')
+assert_contract(verify_if.include?("needs.build-server.result == 'success'") &&
+                verify_if.include?("needs.build-web.result == 'success'"),
+                'push verification must require both successful builds')
+assert_contract(verify_if.include?("needs.build-server.result == 'skipped'") &&
+                verify_if.include?("needs.build-web.result == 'skipped'"),
+                'workflow_dispatch verification must require both skipped builds')
 verify_text = job_text(verify)
 assert_contract(verify_text.include?('docker/login-action@v4'), 'verify-images must log in to ACR')
 %w[coze-server:dev- coze-web:dev- docker\ pull docker\ image\ inspect org.opencontainers.image.revision].each do |token|
@@ -162,15 +162,92 @@ assert_contract(verify_text.include?('docker/login-action@v4'), 'verify-images m
 end
 assert_contract(!verify_text.include?('docker/build-push-action'), 'dispatch must not rebuild images')
 
+migrate = jobs.fetch('migrate')
+assert_contract(needs(migrate) == %w[preflight verify-images],
+                'migrate must wait for preflight and immutable image verification only')
+assert_contract(migrate['runs-on'] == 'ubuntu-latest', 'migrate must run on ubuntu-latest')
+assert_contract(migrate['timeout-minutes'] == 10, 'migrate timeout must be 10 minutes')
+migrate_if = migrate['if'].to_s
+%w[always preflight verify-images deployment_blocked].each do |token|
+  assert_contract(migrate_if.include?(token), "migrate condition is missing #{token}")
+end
+assert_contract(migrate_if.include?("needs.preflight.result == 'success'"),
+                'migrate must require preflight success')
+assert_contract(migrate_if.include?("needs.verify-images.result == 'success'"),
+                'migrate must require immutable image verification success')
+assert_contract(migrate_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
+                'migrate must stop blocked deployments')
+
+migrate_steps = migrate.fetch('steps', [])
+checkout_step = migrate_steps.find { |step| step['uses'] == 'actions/checkout@v7' }
+assert_contract(checkout_step.is_a?(Hash), 'migrate must check out the verified target')
+expected_migration_if = "${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}"
+assert_contract(checkout_step['if'].to_s == expected_migration_if,
+                'migration checkout must run only for migration pushes')
+assert_contract(checkout_step.fetch('with', {})['ref'] == '${{ needs.preflight.outputs.target_sha }}',
+                'migration checkout must use the preflight target SHA')
+
+migration_step = migrate_steps.find do |step|
+  step['name'] == 'Validate and apply Atlas migrations'
+end
+assert_contract(migration_step.is_a?(Hash), 'Atlas migration step is missing')
+assert_contract(migration_step['if'].to_s == expected_migration_if,
+                'Atlas migration must run only for migration pushes')
+assert_contract(migration_step.fetch('env', {}) == {
+                  'ATLAS_URL' => '${{ secrets.ATLAS_URL }}'
+                }, 'ATLAS_URL must be injected only from the step secret environment')
+migration_run = migration_step['run'].to_s
+assert_contract(!migration_run.include?('${{ secrets.ATLAS_URL }}'),
+                'ATLAS_URL must not be interpolated into shell source')
+assert_contract(migrate.fetch('env', {}).keys.none? { |key| key == 'ATLAS_URL' },
+                'ATLAS_URL must not be injected at job scope')
+atlas_secret_references = File.read(workflow_path).scan(/\$\{\{\s*secrets\.ATLAS_URL\s*\}\}/).length
+assert_contract(atlas_secret_references == 1,
+                'ATLAS_URL secret must appear exactly once in the migration step environment')
+assert_contract(migration_run.include?('set -euo pipefail'),
+                'Atlas migration script must fail closed')
+assert_contract(!migration_run.match?(/set\s+-[^\n]*x/),
+                'Atlas migration script must not enable xtrace')
+atlas_image = 'arigaio/atlas:0.35.0-community-alpine'
+assert_contract(migration_run.scan(atlas_image).length == 2,
+                'validate and apply must both use the repository Atlas version')
+validate_index = migration_run.index('migrate validate')
+apply_index = migration_run.index('migrate apply')
+assert_contract(validate_index && apply_index && validate_index < apply_index,
+                'migrate must validate before apply')
+
+no_op_step = migrate_steps.find { |step| step['name'] == 'Record migration no-op' }
+assert_contract(no_op_step.is_a?(Hash), 'migrate no-op step is missing')
+no_op_if = no_op_step['if'].to_s
+assert_contract(no_op_if.include?("github.event_name != 'push'") &&
+                no_op_if.include?("needs.preflight.outputs.migration_changed != 'true'"),
+                'migrate no-op must cover workflow_dispatch and pushes without migrations')
+assert_contract(no_op_step['run'].to_s.include?('needs.preflight.outputs.target_sha'),
+                'migrate no-op must identify the target SHA')
+
 promote = jobs.fetch('promote')
-assert_contract((expected_jobs[0, 6] - ['migration-hold', 'promote'] - needs(promote)).empty?,
-                'promote dependencies are incomplete')
+assert_contract(
+  needs(promote) == %w[preflight build-server build-web verify-images migrate],
+  'promote dependencies are incomplete'
+)
 promote_if = promote['if'].to_s
-%w[always migration_changed build-server build-web verify-images].each do |token|
+%w[always deployment_blocked build-server build-web verify-images migrate].each do |token|
   assert_contract(promote_if.include?(token), "promote condition is missing #{token}")
 end
-assert_contract(promote_if.scan("needs.verify-images.result == 'success'").length == 2,
-                'both promotion paths must require immutable image verification')
+assert_contract(promote_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
+                'promotion must stop blocked deployments')
+assert_contract(promote_if.include?("needs.verify-images.result == 'success'"),
+                'promotion must require immutable image verification')
+assert_contract(promote_if.include?("needs.migrate.result == 'success'"),
+                'promotion must require migration success')
+assert_contract(promote_if.include?("needs.build-server.result == 'success'") &&
+                promote_if.include?("needs.build-web.result == 'success'"),
+                'push promotion must require both successful builds')
+assert_contract(promote_if.include?("needs.build-server.result == 'skipped'") &&
+                promote_if.include?("needs.build-web.result == 'skipped'"),
+                'workflow_dispatch promotion must require both skipped builds')
+assert_contract(!promote_if.include?('migration_changed'),
+                'successful automatic migration must permit promotion')
 assert_contract(!promote_if.include?("needs.verify-images.result == 'skipped'"),
                 'push promotion must not skip immutable image verification')
 promote_text = job_text(promote)
@@ -194,8 +271,6 @@ assert_contract(deploy_text.match?(/header|-H/i), 'optional webhook token must b
 raw = File.read(workflow_path)
 forbidden = {
   /ssh[-_ ]?(key|private)|id_rsa/i => 'SSH credentials',
-  /atlas\s+migrate\s+apply/i => 'Atlas migration apply',
-  /mysql|database_url|db_password/i => 'database access',
   /\bprod(?:uction)?\b/i => 'production deployment'
 }
 forbidden.each do |pattern, label|
@@ -378,6 +453,102 @@ for mode in server-inspect-error web-inspect-error; do
   assert_output "$blocked_output" 'deployment_blocked=true' \
     "$mode did not fail closed"
 done
+
+MIGRATE_SCRIPT=$SEMANTIC_ROOT/migrate.sh
+MIGRATE_DOCKER_LOG=$SEMANTIC_ROOT/migrate-docker.log
+
+ruby - "$WORKFLOW" > "$MIGRATE_SCRIPT" <<'EXTRACT'
+require 'yaml'
+
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+step = workflow.fetch('jobs').fetch('migrate').fetch('steps').find do |candidate|
+  candidate['name'] == 'Validate and apply Atlas migrations'
+end
+abort 'Atlas migration step is missing' unless step
+puts step.fetch('run')
+EXTRACT
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf "%s\n" "$*" >> "$MIGRATE_DOCKER_LOG"' \
+  'if [[ "$*" == *"migrate validate"* ]] &&' \
+  '  [ "${MIGRATE_DOCKER_MODE:-success}" = validate-fail ]; then' \
+  '  exit 42' \
+  'fi' \
+  'if [[ "$*" == *"migrate apply"* ]] &&' \
+  '  [ "${MIGRATE_DOCKER_MODE:-success}" = apply-fail ]; then' \
+  '  exit 43' \
+  'fi' \
+  'exit 0' > "$TEST_BIN/docker"
+chmod +x "$TEST_BIN/docker"
+
+: > "$MIGRATE_DOCKER_LOG"
+if PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+  ATLAS_URL= bash "$MIGRATE_SCRIPT"; then
+  printf 'workflow contract failure: empty ATLAS_URL was accepted\n' >&2
+  exit 1
+fi
+[ ! -s "$MIGRATE_DOCKER_LOG" ] || {
+  printf 'workflow contract failure: Docker ran with empty ATLAS_URL\n' >&2
+  exit 1
+}
+
+DUMMY_ATLAS_URL='mysql://contract:masked@example.invalid/dev'
+: > "$MIGRATE_DOCKER_LOG"
+PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+  ATLAS_URL="$DUMMY_ATLAS_URL" bash "$MIGRATE_SCRIPT"
+migration_call_count=$(wc -l < "$MIGRATE_DOCKER_LOG" | tr -d ' ')
+[ "$migration_call_count" -eq 2 ] || {
+  printf 'workflow contract failure: successful migration did not run Docker exactly twice\n' >&2
+  exit 1
+}
+first_migration_call=$(sed -n '1p' "$MIGRATE_DOCKER_LOG")
+second_migration_call=$(sed -n '2p' "$MIGRATE_DOCKER_LOG")
+[[ "$first_migration_call" == *"migrate validate"* ]] || {
+  printf 'workflow contract failure: Atlas validation did not run first\n' >&2
+  exit 1
+}
+[[ "$second_migration_call" == *"migrate apply"* ]] || {
+  printf 'workflow contract failure: Atlas apply did not run second\n' >&2
+  exit 1
+}
+
+: > "$MIGRATE_DOCKER_LOG"
+if PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+  MIGRATE_DOCKER_MODE=validate-fail ATLAS_URL="$DUMMY_ATLAS_URL" \
+  bash "$MIGRATE_SCRIPT"; then
+  printf 'workflow contract failure: Atlas validation failure was ignored\n' >&2
+  exit 1
+fi
+migration_call_count=$(wc -l < "$MIGRATE_DOCKER_LOG" | tr -d ' ')
+[ "$migration_call_count" -eq 1 ] || {
+  printf 'workflow contract failure: apply ran after validation failure\n' >&2
+  exit 1
+}
+first_migration_call=$(sed -n '1p' "$MIGRATE_DOCKER_LOG")
+[[ "$first_migration_call" == *"migrate validate"* ]] || {
+  printf 'workflow contract failure: validation failure did not come from validate\n' >&2
+  exit 1
+}
+
+: > "$MIGRATE_DOCKER_LOG"
+if PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+  MIGRATE_DOCKER_MODE=apply-fail ATLAS_URL="$DUMMY_ATLAS_URL" \
+  bash "$MIGRATE_SCRIPT"; then
+  printf 'workflow contract failure: Atlas apply failure was ignored\n' >&2
+  exit 1
+fi
+migration_call_count=$(wc -l < "$MIGRATE_DOCKER_LOG" | tr -d ' ')
+[ "$migration_call_count" -eq 2 ] || {
+  printf 'workflow contract failure: apply failure did not follow one validation call\n' >&2
+  exit 1
+}
+second_migration_call=$(sed -n '2p' "$MIGRATE_DOCKER_LOG")
+[[ "$second_migration_call" == *"migrate apply"* ]] || {
+  printf 'workflow contract failure: apply failure did not come from apply\n' >&2
+  exit 1
+}
 
 DEPLOY_SCRIPT=$SEMANTIC_ROOT/deploy.sh
 CURL_ARGS_FILE=$SEMANTIC_ROOT/curl-args
