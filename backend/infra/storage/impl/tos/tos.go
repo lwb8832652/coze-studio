@@ -23,11 +23,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos/enum"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/fileutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/goutil"
@@ -78,11 +78,33 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 	if err != nil {
 		return nil, err
 	}
-	// t.test()
 	return t, nil
 }
 
+func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderTOS, cfg, mode)
+	if err != nil {
+		return nil, err
+	}
+	credential = domain.NormalizeCredentialInput(credential)
+	if err = domain.ValidateCredentialInput(credential); err != nil {
+		return nil, err
+	}
+	if !domain.HasCredentialPair(credential) {
+		return nil, domain.ErrConfigInvalid
+	}
+	return getTosClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.Endpoint, normalized.Region, false)
+}
+
 func getTosClient(ctx context.Context, ak, sk, bucketName, endpoint, region string) (*tosClient, error) {
+	return getTosClientWithOptions(ctx, ak, sk, bucketName, endpoint, region, true)
+}
+
+func getTosClientWithOptions(ctx context.Context, ak, sk, bucketName, endpoint, region string, createBucket bool) (*tosClient, error) {
 	credential := tos.NewStaticCredentials(ak, sk)
 	client, err := tos.NewClientV2(endpoint,
 		tos.WithCredentials(credential), tos.WithRegion(region))
@@ -100,10 +122,11 @@ func getTosClient(ctx context.Context, ak, sk, bucketName, endpoint, region stri
 		bucketName: bucketName,
 	}
 
-	// Create bucket
-	err = t.CheckAndCreateBucket(ctx)
-	if err != nil {
-		return nil, err
+	if createBucket {
+		err = t.CheckAndCreateBucket(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return t, nil
@@ -123,59 +146,6 @@ func (t *tosClient) CheckReadiness(ctx context.Context) error {
 		return storage.ErrReadinessUnavailable
 	}
 	return nil
-}
-
-func (t *tosClient) test() {
-	// test list objects
-	ctx := context.Background()
-
-	// test upload
-	objectKey := fmt.Sprintf("test-%s.txt", time.Now().Format("20060102150405"))
-	err := t.PutObject(ctx, objectKey, []byte("hello world"), storage.WithTagging(map[string]string{
-		"uid":             "7543149965070155780",
-		"conversation_id": "7543149965070155781",
-		"type":            "user",
-	}))
-	if err != nil {
-		logs.CtxErrorf(ctx, "PutObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	f, err := t.HeadObject(ctx, objectKey, storage.WithGetTagging(true), storage.WithURL(true))
-	if err != nil {
-		logs.CtxErrorf(ctx, "HeadObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
-	logs.CtxInfof(ctx, "HeadObject file success, f: %v, err: %v", conv.DebugJsonToStr(f), err)
-
-	if f != nil {
-		logs.CtxInfof(ctx, "HeadObject success, f: %v, tagging: %v", *f, f.Tagging)
-	}
-
-	f, err = t.HeadObject(ctx, "not_exit.txt", storage.WithGetTagging(true), storage.WithURL(true))
-	logs.CtxInfof(ctx, "HeadObject not exit success, f: %v, err: %v", f, err)
-
-	t.ListAllObjects(ctx, "", storage.WithGetTagging(true))
-
-	// test download
-	content, err := t.GetObject(ctx, objectKey)
-	if err != nil {
-		logs.CtxErrorf(ctx, "GetObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	logs.CtxInfof(ctx, "GetObject content: %s", string(content))
-
-	// Test Get URL
-	url, err := t.GetObjectUrl(ctx, objectKey)
-	if err != nil {
-		logs.CtxErrorf(ctx, "GetObjectUrl failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	logs.CtxInfof(ctx, "GetObjectUrl url: %s", url)
-
-	// test delete
-	err = t.DeleteObject(ctx, objectKey)
-	if err != nil {
-		logs.CtxErrorf(ctx, "DeleteObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
 }
 
 func (t *tosClient) CheckAndCreateBucket(ctx context.Context) error {
@@ -443,8 +413,8 @@ func (t *tosClient) ListAllObjects(ctx context.Context, prefix string, opts ...s
 		}
 
 		for _, object := range output.Files {
-			logs.CtxDebugf(ctx, "key = %s, lastModified = %s, eTag = %s, size = %d, tagging = %v, url = %s",
-				object.Key, object.LastModified, object.ETag, object.Size, object.Tagging, object.URL)
+			logs.CtxDebugf(ctx, "key = %s, lastModified = %s, eTag = %s, size = %d, tagging = %v",
+				object.Key, object.LastModified, object.ETag, object.Size, object.Tagging)
 			files = append(files, object)
 		}
 

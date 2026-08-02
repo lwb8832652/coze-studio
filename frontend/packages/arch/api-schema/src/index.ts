@@ -24,3 +24,4 @@ export * as workbenchModel from './idl/workbench/model';
 export * as workbenchSkill from './idl/workbench/skill';
 export * as pluginDevelop from './idl/plugin/plugin_develop';
 export * as playground from './idl/playground/playground';
+export * as adminConfig from './idl/admin/config';

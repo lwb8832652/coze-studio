@@ -53,6 +53,30 @@ runtime 和 build 均 fail closed，不使用内存 fallback。可信反向代�
 `APP_DEV_ARTIFACT_TRUSTED_PROXY_CIDRS`。上述 keyring 必须跨重启稳定，不能使用
 临时随机 key；所有 credential/token 只能来自密钥管理，不能写入 tracked 文件。
 
+### 对象存储配置
+
+对象存储默认使用数据库控制面：
+
+```bash
+OBJECT_STORAGE_CONFIG_SOURCE=database
+OBJECT_STORAGE_CREDENTIAL_KEY=<32-byte-base64-key>
+```
+
+首次启动且 `object_storage_configs` 为空时，后端会读取兼容 env 存储配置
+（`STORAGE_TYPE`、`STORAGE_BUCKET`、MinIO/TOS/S3/七牛/OSS/COS/OBS 对应 AK/SK
+等），加密 AK/SK 后导入为主配置。之后以数据库中的已激活配置为事实源，管理员可在
+`/system/object-storage` 新增、编辑、测试、删除和激活七牛、阿里 OSS、腾讯 COS、
+华为 OBS、AWS S3、MinIO、TOS 配置；页面不回显 AK/SK，编辑时只能替换密钥。
+
+`OBJECT_STORAGE_CREDENTIAL_KEY` 必须在进程重启、滚动发布和多副本之间保持稳定，
+否则数据库中已保存的对象存储密钥无法解密，启动和运行时检查会 fail closed。生产
+环境应从密钥管理注入该 key，不要使用 `docker/.env.example` 的本地示例值。
+
+激活新的主配置会先做连接测试并写入数据库；当前进程不会静默热切换已初始化的
+storage client。若页面显示需重启，请重启后端实例，让 bootstrap 使用新的主配置。
+只有数据库配置损坏且需要抢修时才临时设置 `OBJECT_STORAGE_CONFIG_SOURCE=env`，
+该模式会绕过数据库控制面直接使用 env 配置。
+
 `APP_DEV_RUNNER_ENDPOINT` 和 `APP_DEV_RUNNER_TOKEN` 已删除，不再作为兼容配置
 或 fallback 来源。debug host runtime 仅在 `APP_ENV=debug` 且
 `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；此模式的 HTTP gateway 只允许字面

@@ -34,6 +34,14 @@
 
 身份、空间、角色和系统管理员权限始终由服务端认证上下文及持久化事实决定。
 
+对象存储运行时默认由数据库中的 `object_storage_configs` 主配置驱动。首次启动且
+表为空时，后端会从兼容 env 存储配置导入一条主配置，并用
+`OBJECT_STORAGE_CREDENTIAL_KEY` 加密 AK/SK；`OBJECT_STORAGE_CONFIG_SOURCE=env`
+只作为数据库配置不可用时的 rescue bypass。系统管理页支持七牛、阿里 OSS、腾讯
+COS、华为 OBS、AWS S3、MinIO 和 TOS 的多配置维护、连接测试、激活和删除，密钥
+不回显。切换主配置持久化后，运行中进程可能展示 `restart_required`，以重启后的
+bootstrap 结果作为真正运行时事实。
+
 ### Agent Runtime
 
 Eino ADK 是执行内核，Coze 保存公共 task、event、checkpoint、memory、artifact、
@@ -52,11 +60,32 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 当前只支持飞书官方 Go SDK。配置按工作空间隔离，secret 加密且不回显；外部
 事件先持久化去重，再进入异步 Agent 流程。
 
+### dev 预发布部署
+
+推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
+不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
+服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
+revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
+
+Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
+不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
+完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。
+
+该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
+Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚
+保留其命名卷。dev 部署允许省略向量数据库配置，未配置时保留 Elasticsearch
+全文检索并关闭语义向量检索。Web 默认通过可配置的公网 HTTP 端口发布，域名与
+TLS 由宝塔独立终止。
+
+这是允许短时中断的单实例 dev/预发布流程，不等于生产发布。推送授权、数据库
+操作和生产发布保持独立权限边界。
+
 ## 主要产品域
 
 - 任务与 Agent Workbench：唯一公共事实模型为 Thread、Message、Run 和
   RunEvent，详细边界见 `docs/superpowers/context/workbench-chat.md`；
 - 工作空间与系统管理：成员、角色、系统配置、模型和管理员能力；
+- 对象存储控制面：多云配置、加密 credential、主配置切换和 env rescue；
 - Skill 与 MCP：配置、版本、授权、健康状态和运行时装配；
 - AppDev 与 Sandbox：项目文件、构建、预览、Provider 和安全网关；
 - 通知与计划任务：可靠通知、公告、定时执行、幂等和重试；
@@ -109,6 +138,7 @@ Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合�
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
 - 本地调试：`docs/superpowers/runbooks/local-debug-and-test.md`
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
+- dev 预发布运维：`deploy/dev/README.md`
 - Sandbox：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
 - Guardrail：`docs/superpowers/runbooks/guardrail-audit-operations.md`
 - Workbench canonical product client：

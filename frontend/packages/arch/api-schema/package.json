@@ -17,7 +17,8 @@
     "./workbench-journal": "./src/workbench-journal.ts",
     "./workbench-tool": "./src/idl/workbench/tool.ts",
     "./plugin-develop": "./src/idl/plugin/plugin_develop.ts",
-    "./playground": "./src/idl/playground/playground.ts"
+    "./playground": "./src/idl/playground/playground.ts",
+    "./admin-config": "./src/idl/admin/config.ts"
   },
   "main": "src/index.ts",
   "typesVersions": {
@@ -54,6 +55,9 @@
       ],
       "playground": [
         "./src/idl/playground/playground.ts"
+      ],
+      "admin-config": [
+        "./src/idl/admin/config.ts"
       ]
     }
   },

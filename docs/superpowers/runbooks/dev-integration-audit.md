@@ -173,7 +173,23 @@ git rev-list --left-right --count origin/dev...dev
 ### 4. 第二次报告和确认
 
 报告必须列出合并前后 SHA、最终提交范围、重新运行的全部验证、工具影响分析、
-远程竞态检查和剩余风险。报告后停止；只有用户第二次明确确认才可推送。
+远程竞态检查和剩余风险。
+
+仓库启用 dev 自动发布后，第二次报告还必须明确列出：
+
+- 目标远程分支 `origin/dev` 和待推送的完整目标 SHA；
+- 目标 SHA 的文件范围、验证结果以及是否包含数据库 migration；
+- 推送将触发的 ACR 前后端镜像构建、不可变标签、`dev` 标签晋级条件；
+- 宝塔 webhook 对 dev/预发布服务器的自动更新副作用；
+- migration push 只构建不可变镜像并进入 hold，不会自动 apply、晋级或部署。
+
+报告后停止。用户第二次明确确认只授权报告中 exact SHA 的 `origin/dev` 推送，
+以及该次 workflow 按报告条件产生的 ACR 和宝塔预发布副作用。该确认不授权生产
+发布、Atlas 或其他数据库 apply、数据库备份、down migration、人工回滚及其他
+服务器操作。
+
+若 `origin/dev` 在任一审计或等待确认期间变化，当前确认失效。回到需求分支吸收
+新基准，并从第一次审计重新执行，不能只补一次远程竞态检查后继续推送。
 
 ## 推送与核验
 
@@ -188,3 +204,9 @@ git rev-parse dev
 远程 SHA 必须与本地 `dev` 一致。推送被拒绝时不得 force push，也不得自动覆盖
 本地 `dev`；保留并报告本地 merge SHA，按用户明确授权恢复基准后从第一次审计
 开始。
+
+推送成功后找到该目标 SHA 对应的 `Publish and deploy dev images` Actions run，
+记录 run URL 和最终状态。无 migration 的发布应核对两张不可变镜像、两个 `dev`
+标签、宝塔调用及服务 revision；migration hold 应核对两张不可变镜像已构建、
+`dev` 标签未晋级且 webhook 未调用。这个核验不授权重跑 workflow、手工 dispatch、
+数据库操作或服务器修复；出现失败时先报告，再取得对应操作的单独授权。

@@ -60,6 +60,8 @@ if [[ ! -f "$TARGET_ENV_FILE" ]]; then
     fi
 fi
 
+"$SCRIPT_DIR/ensure_object_storage_credential_key.sh" "$TARGET_ENV_FILE"
+
 # Check if already configured for OceanBase
 if grep -q "VECTOR_STORE_TYPE.*oceanbase" "$TARGET_ENV_FILE"; then
     echo -e "${YELLOW}Already configured for OceanBase${NC}"
