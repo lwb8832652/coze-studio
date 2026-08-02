@@ -522,14 +522,14 @@ git commit -m "feat: automate dev atlas migrations"
 Add this README row:
 
 ```markdown
-| Secret | `ATLAS_URL` | Atlas MySQL URL，仅用于自动迁移 dev 数据库 |
-| Secret | `ATLAS_CA_PEM` | 可选；`ATLAS_URL` 使用 `ssl-ca=/atlas-ca.pem` 时提供私有 CA |
+| Secret（Repository） | `ATLAS_URL` | Atlas MySQL URL，仅用于自动迁移 dev 数据库 |
+| Secret（Repository，可选） | `ATLAS_CA_PEM` | `ATLAS_URL` 使用 `ssl-ca=/atlas-ca.pem` 时提供私有 CA |
 ```
 
-Replace “不要配置数据库连接串” with text requiring `ATLAS_URL` to remain a Secret, use
-a least-privilege dev schema account, require `mysql://` with exactly one `tls=true`, URL-encode
-password characters, and never copy it into Variables, `app.env`, logs, or tickets. Apply the
-same handling rule to `ATLAS_CA_PEM`.
+Replace “不要配置数据库连接串” with text requiring `ATLAS_URL` to remain a Repository
+Secret, use a least-privilege dev schema account, require `mysql://` with exactly one
+`tls=true`, URL-encode password characters, and never copy it into Variables, Environment
+Secrets, `app.env`, logs, or tickets. Apply the same handling rule to `ATLAS_CA_PEM`.
 
 - [ ] **Step 2: Replace manual migration operations with the automatic sequence**
 
