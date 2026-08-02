@@ -8,6 +8,11 @@
 
 **Architecture:** Split preflight's current overloaded migration flag into `migration_changed` and `deployment_blocked`, so only a proven Git migration diff can reach the database. Build and verify both immutable images first, run Atlas from a dedicated GitHub Actions job using the `ATLAS_URL` secret, and require that job to succeed before promotion and deployment.
 
+> **Implementation status (2026-08-02):** Complete. The executable contract is the current
+> `.github/workflows/deploy-dev.yml`, its workflow contract tests, and the dev integration
+> runbook. The task snippets below describe the TDD progression; when a snippet is abbreviated,
+> do not use it in place of the finalized workflow.
+
 **Tech Stack:** GitHub Actions YAML, Bash, Ruby YAML contract tests, Atlas Community 1.2.3, Docker, Git.
 
 ---
@@ -383,7 +388,7 @@ fi
   exit 1
 }
 
-DUMMY_ATLAS_URL='mysql://contract:masked@example.invalid/dev'
+DUMMY_ATLAS_URL='mysql://contract:masked@example.invalid/dev?tls=true'
 : > "$MIGRATE_DOCKER_LOG"
 PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
   ATLAS_URL="$DUMMY_ATLAS_URL" bash "$MIGRATE_SCRIPT"
@@ -445,52 +450,16 @@ if: >-
 
 - [ ] **Step 2: Replace `migration-hold` with `migrate`**
 
-Add this job after `verify-images`:
+Add the `migrate` job after `verify-images` and delete `migration-hold`. The finalized job must
+use the exact immutable Atlas image recorded in this plan, validate `ATLAS_URL` as a
+`mysql://` URL with exactly one `tls=true`, and enforce the optional `ATLAS_CA_PEM` /
+`ssl-ca=/atlas-ca.pem` pairing. Pass only the environment variable name to Docker, read it from
+`.github/atlas-dev.hcl`, mount any temporary CA read-only with mode `0600`, and remove it via an
+exit trap. Never place the URL value in Docker argv or interpolate either secret into shell
+source. Use the current `.github/workflows/deploy-dev.yml` migration step as the executable
+reference rather than duplicating that security-sensitive script here.
 
-```yaml
-migrate:
-  runs-on: ubuntu-latest
-  timeout-minutes: 10
-  needs: [preflight, verify-images]
-  if: >-
-    always() &&
-    needs.preflight.result == 'success' &&
-    needs.preflight.outputs.deployment_blocked != 'true' &&
-    needs.verify-images.result == 'success'
-  steps:
-    - name: Check out migration target
-      if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
-      uses: actions/checkout@v7
-      with:
-        ref: ${{ needs.preflight.outputs.target_sha }}
-
-    - name: Validate and apply Atlas migrations
-      if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
-      shell: bash
-      env:
-        ATLAS_URL: ${{ secrets.ATLAS_URL }}
-      run: |
-        set -euo pipefail
-        if [ -z "${ATLAS_URL:-}" ]; then
-          echo "ATLAS_URL secret is required for dev migrations" >&2
-          exit 1
-        fi
-        docker run --rm \
-          -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-          arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
-          migrate validate --dir file:///migrations
-        docker run --rm \
-          -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-          arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
-          migrate apply --dir file:///migrations --url "$ATLAS_URL"
-
-    - name: Record migration no-op
-      if: ${{ github.event_name != 'push' || needs.preflight.outputs.migration_changed != 'true' }}
-      shell: bash
-      run: echo "No Atlas migration is required for ${{ needs.preflight.outputs.target_sha }}"
-```
-
-Delete the `migration-hold` job completely.
+The no-op step is valid only when preflight explicitly returns `migration_changed == 'false'`.
 
 - [ ] **Step 3: Gate promotion on migration success**
 
@@ -554,11 +523,13 @@ Add this README row:
 
 ```markdown
 | Secret | `ATLAS_URL` | Atlas MySQL URL，仅用于自动迁移 dev 数据库 |
+| Secret | `ATLAS_CA_PEM` | 可选；`ATLAS_URL` 使用 `ssl-ca=/atlas-ca.pem` 时提供私有 CA |
 ```
 
 Replace “不要配置数据库连接串” with text requiring `ATLAS_URL` to remain a Secret, use
-a least-privilege dev schema account, URL-encode password characters, and never copy it into
-Variables, `app.env`, logs, or tickets.
+a least-privilege dev schema account, require `mysql://` with exactly one `tls=true`, URL-encode
+password characters, and never copy it into Variables, `app.env`, logs, or tickets. Apply the
+same handling rule to `ATLAS_CA_PEM`.
 
 - [ ] **Step 2: Replace manual migration operations with the automatic sequence**
 
@@ -665,7 +636,7 @@ from local verification.
 - [ ] **Step 4: Run repository hygiene checks**
 
 ```bash
-git diff --check dev...HEAD
+git diff --check origin/dev...HEAD
 git status --short --branch
 rg -n "(mysql://[^[:space:]]+:[^[:space:]]+@|ATLAS_URL=.+@|MYSQL_PASSWORD=|QINIU_SECRET_KEY=)" \
   .github deploy/dev docs/superpowers
@@ -702,8 +673,10 @@ explicit user confirmation.
 
 - [ ] **Step 2: Merge into local `dev` after confirmation**
 
-Fast-forward local `dev` to current `origin/dev`, merge the reviewed feature SHA without editing
-on `dev`, and record both parents and the resulting merge SHA.
+First require local `dev` to contain no commits missing from `origin/dev`, as specified by the
+integration runbook. Then fast-forward local `dev` to current `origin/dev`, merge the reviewed
+feature SHA without editing on `dev`, and record both parents and the resulting merge SHA. Stop
+instead of combining this feature with unrelated unpublished `dev` commits.
 
 - [ ] **Step 3: Perform the second local-dev audit**
 
@@ -714,10 +687,13 @@ Stop for the second explicit user confirmation.
 
 - [ ] **Step 4: Verify the external prerequisite without reading its value**
 
-Before push, confirm that GitHub Actions has a Secret named `ATLAS_URL` and that the TencentDB
-network policy permits the runner to connect. Do not print or retrieve the Secret value. If the
-Atlas revision baseline for the existing remote schema has not been established, stop for a
-one-time manual baseline operation instead of pushing.
+Before push, freshly verify that TencentDB accepts TLS and that the actual runner can reach it
+through an approved network policy. Confirm that GitHub Actions has a Repository Secret named
+`ATLAS_URL`; it must use `mysql://` and exactly one `tls=true`. When the URL declares
+`ssl-ca=/atlas-ca.pem`, also confirm a Repository Secret named `ATLAS_CA_PEM`; otherwise that
+secret must be absent. Do not print or retrieve either value. If the Atlas revision baseline for
+the existing remote schema has not been established, stop: baseline writes revision state and
+requires its own explicit database-mutation authorization.
 
 - [ ] **Step 5: Push and monitor the exact SHA after confirmation**
 
