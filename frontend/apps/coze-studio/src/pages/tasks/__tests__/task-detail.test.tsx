@@ -2569,6 +2569,31 @@ describe('TaskDetailPage', () => {
     );
   });
 
+  it('keeps the Journal split reachable on medium-width task detail pages', () => {
+    const journalStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/pages/tasks/journal/journal.less'),
+      'utf8',
+    );
+
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.coze-prototype-task-detail-page[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?display: flex;/,
+    );
+  });
+
+  it('gives the Journal the full task workspace on compact screens', () => {
+    const journalStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/pages/tasks/journal/journal.less'),
+      'utf8',
+    );
+
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?\.coze-prototype-detail-inner[\s\S]*?display: none;/,
+    );
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?\.journal-panel[\s\S]*?width: 100%;/,
+    );
+  });
+
   it('renders canonical thread guardrail audit records with metadata-only fields', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

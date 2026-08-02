@@ -1529,7 +1529,27 @@
   }
 }
 
+@media (max-width: 900px) {
+  .coze-prototype-task-detail-page
+    .coze-prototype-detail-split[data-journal-open='true'] {
+    display: flex;
+  }
+}
+
 @media (max-width: 720px) {
+  .coze-prototype-task-detail-page
+    .coze-prototype-detail-split[data-journal-open='true'] {
+    .coze-prototype-detail-inner {
+      display: none;
+    }
+
+    .journal-panel {
+      flex: 1 1 100%;
+      width: 100%;
+      border-left: 0;
+    }
+  }
+
   .journal-panel-tabs {
     gap: 4px;
     padding: 0 8px;
