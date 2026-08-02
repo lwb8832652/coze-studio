@@ -8,16 +8,18 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 WORKFLOW=$REPO_ROOT/.github/workflows/deploy-dev.yml
+ATLAS_CONFIG=$REPO_ROOT/.github/atlas-dev.hcl
 
 if [ ! -f "$WORKFLOW" ]; then
   printf 'workflow contract failure: %s is missing\n' "$WORKFLOW" >&2
   exit 1
 fi
 
-ruby - "$WORKFLOW" <<'RUBY'
+ruby - "$WORKFLOW" "$ATLAS_CONFIG" <<'RUBY'
 require 'yaml'
 
 workflow_path = ARGV.fetch(0)
+atlas_config_path = ARGV.fetch(1)
 workflow = YAML.safe_load(File.read(workflow_path), aliases: true)
 
 def assert_contract(condition, message)
@@ -33,6 +35,10 @@ end
 
 def needs(job)
   Array(job['needs'])
+end
+
+def normalized_expression(expression)
+  expression.to_s.gsub(/\s+/, ' ').strip
 end
 
 assert_contract(workflow.is_a?(Hash), 'workflow root must be a mapping')
@@ -55,9 +61,24 @@ assert_contract(concurrency['cancel-in-progress'] == false, 'in-progress deploym
 assert_contract(concurrency['queue'] == 'max', 'all pending dev deployments must remain queued')
 assert_contract(workflow['permissions'] == { 'contents' => 'read' }, 'permissions must be contents: read only')
 
+assert_contract(File.file?(atlas_config_path), 'Atlas dev config is missing')
+expected_atlas_config = <<~HCL
+  env "dev" {
+    url = getenv("ATLAS_URL")
+    migration {
+      dir = "file:///migrations"
+    }
+  }
+HCL
+atlas_config = File.read(atlas_config_path)
+assert_contract(atlas_config == expected_atlas_config,
+                'Atlas dev config must use only the ATLAS_URL environment and migration directory')
+assert_contract(!atlas_config.match?(%r{(?:mysql|mariadb|postgres(?:ql)?)://}i),
+                'Atlas dev config must not contain a plaintext database URL')
+
 jobs = workflow.fetch('jobs', {})
-expected_jobs = %w[preflight build-server build-web verify-images migrate promote deploy]
-assert_contract((expected_jobs - jobs.keys).empty?, 'required jobs are missing')
+expected_jobs = %w[preflight build-server build-web deployment-blocked verify-images migrate promote deploy]
+assert_contract(jobs.keys.sort == expected_jobs.sort, 'workflow jobs must match the required state machine')
 assert_contract(!jobs.key?('migration-hold'), 'manual migration-hold job must be removed')
 
 preflight = jobs.fetch('preflight')
@@ -93,7 +114,11 @@ assert_contract(resolve_env['TARGET_SHA_INPUT'].to_s.include?('inputs.target_sha
 assert_contract(!resolve_run.include?('${{ inputs.target_sha }}'),
                 'dispatch target_sha must not be interpolated into shell source')
 assert_contract(preflight_text.include?('actions/checkout@v7'), 'preflight must use checkout v7')
-assert_contract(preflight_text.include?('docker/login-action@v4'), 'push preflight must log in to ACR')
+preflight_login = preflight.fetch('steps', []).find do |step|
+  step['uses'] == 'docker/login-action@v4'
+end
+assert_contract(preflight_login.is_a?(Hash), 'preflight must log in to ACR')
+assert_contract(!preflight_login.key?('if'), 'preflight ACR login must run for push and workflow_dispatch')
 assert_contract(preflight_text.include?('fetch-depth') && preflight_text.include?('0'),
                 'preflight must fetch full history')
 %w[github.event.before GITHUB_SHA origin/dev merge-base docker/atlas/migrations GITHUB_OUTPUT].each do |token|
@@ -135,26 +160,61 @@ assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
                   "#{job_name} must not publish the mutable dev tag")
 end
 
+deployment_blocked = jobs.fetch('deployment-blocked')
+assert_contract(needs(deployment_blocked) == %w[preflight build-server build-web],
+                'deployment-blocked must wait for preflight and both build jobs')
+expected_deployment_blocked_if = normalized_expression(<<~'EXPRESSION')
+  always() &&
+  needs.preflight.result == 'success' &&
+  (
+    needs.preflight.outputs.deployment_blocked != 'false' ||
+    (
+      needs.preflight.outputs.migration_changed != 'true' &&
+      needs.preflight.outputs.migration_changed != 'false'
+    )
+  )
+EXPRESSION
+assert_contract(
+  normalized_expression(deployment_blocked['if']) == expected_deployment_blocked_if,
+  'deployment-blocked must fail blocked and invalid preflight states'
+)
+blocked_step = deployment_blocked.fetch('steps', []).find do |step|
+  step['name'] == 'Fail blocked or invalid preflight state'
+end
+assert_contract(blocked_step.is_a?(Hash), 'deployment-blocked failure step is missing')
+blocked_run = blocked_step['run'].to_s
+assert_contract(blocked_run.include?('Deployment blocked by preflight state validation') &&
+                blocked_run.match?(/\bexit\s+1\b/),
+                'deployment-blocked must emit a safe diagnostic and fail')
+assert_contract(!job_text(deployment_blocked).include?('secrets.'),
+                'deployment-blocked diagnostics must not read secrets')
+
 verify = jobs.fetch('verify-images')
 assert_contract(needs(verify).sort == %w[build-server build-web preflight],
                 'verify-images must wait for preflight and both push builds')
+assert_contract(verify['timeout-minutes'] == 15, 'verify-images timeout must be 15 minutes')
 verify_if = verify['if'].to_s
-%w[always preflight build-server build-web].each do |token|
-  assert_contract(verify_if.include?(token), "verify-images condition is missing #{token}")
-end
-assert_contract(verify_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
-                'verify-images must stop blocked deployments')
+expected_verify_if = normalized_expression(<<~'EXPRESSION')
+  always() &&
+  needs.preflight.result == 'success' &&
+  needs.preflight.outputs.deployment_blocked == 'false' &&
+  (
+    (
+      github.event_name == 'push' &&
+      needs.build-server.result == 'success' &&
+      needs.build-web.result == 'success'
+    ) ||
+    (
+      github.event_name == 'workflow_dispatch' &&
+      needs.build-server.result == 'skipped' &&
+      needs.build-web.result == 'skipped'
+    )
+  )
+EXPRESSION
+assert_contract(normalized_expression(verify_if) == expected_verify_if,
+                'verify-images must accept only explicit unblocked push or dispatch states')
 assert_contract(!verify_if.include?('migration_changed'),
                 'verified migration pushes must reach image verification')
-assert_contract(verify_if.include?("github.event_name == 'push'") &&
-                verify_if.include?("github.event_name == 'workflow_dispatch'"),
-                'verify-images must gate both push and workflow_dispatch')
-assert_contract(verify_if.include?("needs.build-server.result == 'success'") &&
-                verify_if.include?("needs.build-web.result == 'success'"),
-                'push verification must require both successful builds')
-assert_contract(verify_if.include?("needs.build-server.result == 'skipped'") &&
-                verify_if.include?("needs.build-web.result == 'skipped'"),
-                'workflow_dispatch verification must require both skipped builds')
 verify_text = job_text(verify)
 assert_contract(verify_text.include?('docker/login-action@v4'), 'verify-images must log in to ACR')
 %w[coze-server:dev- coze-web:dev- docker\ pull docker\ image\ inspect org.opencontainers.image.revision].each do |token|
@@ -168,15 +228,18 @@ assert_contract(needs(migrate) == %w[preflight verify-images],
 assert_contract(migrate['runs-on'] == 'ubuntu-latest', 'migrate must run on ubuntu-latest')
 assert_contract(migrate['timeout-minutes'] == 10, 'migrate timeout must be 10 minutes')
 migrate_if = migrate['if'].to_s
-%w[always preflight verify-images deployment_blocked].each do |token|
-  assert_contract(migrate_if.include?(token), "migrate condition is missing #{token}")
-end
-assert_contract(migrate_if.include?("needs.preflight.result == 'success'"),
-                'migrate must require preflight success')
-assert_contract(migrate_if.include?("needs.verify-images.result == 'success'"),
-                'migrate must require immutable image verification success')
-assert_contract(migrate_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
-                'migrate must stop blocked deployments')
+expected_migrate_if = normalized_expression(<<~'EXPRESSION')
+  always() &&
+  needs.preflight.result == 'success' &&
+  needs.preflight.outputs.deployment_blocked == 'false' &&
+  (
+    needs.preflight.outputs.migration_changed == 'true' ||
+    needs.preflight.outputs.migration_changed == 'false'
+  ) &&
+  needs.verify-images.result == 'success'
+EXPRESSION
+assert_contract(normalized_expression(migrate_if) == expected_migrate_if,
+                'migrate must accept only explicit unblocked migration states')
 
 migrate_steps = migrate.fetch('steps', [])
 checkout_step = migrate_steps.find { |step| step['uses'] == 'actions/checkout@v7' }
@@ -211,6 +274,16 @@ assert_contract(!migration_run.match?(/set\s+-[^\n]*x/),
 atlas_image = 'arigaio/atlas:0.35.0-community-alpine'
 assert_contract(migration_run.scan(atlas_image).length == 2,
                 'validate and apply must both use the repository Atlas version')
+assert_contract(migration_run.include?('--env ATLAS_URL'),
+                'Atlas apply must pass only the ATLAS_URL environment variable name to Docker')
+assert_contract(migration_run.include?('$PWD/docker/atlas/migrations:/migrations:ro'),
+                'Atlas migrations must be mounted read-only')
+assert_contract(migration_run.include?('$PWD/.github/atlas-dev.hcl:/atlas.hcl:ro'),
+                'Atlas dev config must be mounted read-only')
+assert_contract(migration_run.include?('migrate apply --config file:///atlas.hcl --env dev'),
+                'Atlas apply must use the mounted dev configuration')
+assert_contract(!migration_run.include?('--url'),
+                'Atlas apply must not put the database URL in Docker argv')
 validate_index = migration_run.index('migrate validate')
 apply_index = migration_run.index('migrate apply')
 assert_contract(validate_index && apply_index && validate_index < apply_index,
@@ -219,9 +292,10 @@ assert_contract(validate_index && apply_index && validate_index < apply_index,
 no_op_step = migrate_steps.find { |step| step['name'] == 'Record migration no-op' }
 assert_contract(no_op_step.is_a?(Hash), 'migrate no-op step is missing')
 no_op_if = no_op_step['if'].to_s
-assert_contract(no_op_if.include?("github.event_name != 'push'") &&
-                no_op_if.include?("needs.preflight.outputs.migration_changed != 'true'"),
-                'migrate no-op must cover workflow_dispatch and pushes without migrations')
+assert_contract(
+  no_op_if == "${{ needs.preflight.outputs.migration_changed == 'false' }}",
+  'migrate no-op must run only for an explicit no-migration state'
+)
 assert_contract(no_op_step['run'].to_s.include?('needs.preflight.outputs.target_sha'),
                 'migrate no-op must identify the target SHA')
 
@@ -230,22 +304,29 @@ assert_contract(
   needs(promote) == %w[preflight build-server build-web verify-images migrate],
   'promote dependencies are incomplete'
 )
+assert_contract(promote['timeout-minutes'] == 10, 'promote timeout must be 10 minutes')
 promote_if = promote['if'].to_s
-%w[always deployment_blocked build-server build-web verify-images migrate].each do |token|
-  assert_contract(promote_if.include?(token), "promote condition is missing #{token}")
-end
-assert_contract(promote_if.include?("needs.preflight.outputs.deployment_blocked != 'true'"),
-                'promotion must stop blocked deployments')
-assert_contract(promote_if.include?("needs.verify-images.result == 'success'"),
-                'promotion must require immutable image verification')
-assert_contract(promote_if.include?("needs.migrate.result == 'success'"),
-                'promotion must require migration success')
-assert_contract(promote_if.include?("needs.build-server.result == 'success'") &&
-                promote_if.include?("needs.build-web.result == 'success'"),
-                'push promotion must require both successful builds')
-assert_contract(promote_if.include?("needs.build-server.result == 'skipped'") &&
-                promote_if.include?("needs.build-web.result == 'skipped'"),
-                'workflow_dispatch promotion must require both skipped builds')
+expected_promote_if = normalized_expression(<<~'EXPRESSION')
+  always() &&
+  needs.preflight.result == 'success' &&
+  needs.preflight.outputs.deployment_blocked == 'false' &&
+  needs.verify-images.result == 'success' &&
+  needs.migrate.result == 'success' &&
+  (
+    (
+      github.event_name == 'push' &&
+      needs.build-server.result == 'success' &&
+      needs.build-web.result == 'success'
+    ) ||
+    (
+      github.event_name == 'workflow_dispatch' &&
+      needs.build-server.result == 'skipped' &&
+      needs.build-web.result == 'skipped'
+    )
+  )
+EXPRESSION
+assert_contract(normalized_expression(promote_if) == expected_promote_if,
+                'promote must accept only explicit unblocked and successful states')
 assert_contract(!promote_if.include?('migration_changed'),
                 'successful automatic migration must permit promotion')
 assert_contract(!promote_if.include?("needs.verify-images.result == 'skipped'"),
@@ -261,11 +342,16 @@ end
 
 deploy = jobs.fetch('deploy')
 assert_contract(needs(deploy) == ['promote'], 'deploy must need promote only')
+assert_contract(deploy['timeout-minutes'] == 5, 'deploy timeout must be 5 minutes')
 deploy_text = job_text(deploy)
 %w[curl --fail-with-body BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN BAOTA_WEBHOOK_PINNED_PUBKEY
-   needs.promote.outputs.target_sha --pinnedpubkey --insecure].each do |token|
+   needs.promote.outputs.target_sha --pinnedpubkey --insecure --connect-timeout --max-time].each do |token|
   assert_contract(deploy_text.include?(token), "deploy webhook is missing #{token}")
 end
+assert_contract(deploy_text.match?(/--connect-timeout\s+10/),
+                'deploy webhook connect timeout must be 10 seconds')
+assert_contract(deploy_text.match?(/--max-time\s+120/),
+                'deploy webhook total timeout must be 120 seconds')
 assert_contract(deploy_text.match?(/header|-H/i), 'optional webhook token must be sent in a header')
 
 raw = File.read(workflow_path)
@@ -454,6 +540,73 @@ for mode in server-inspect-error web-inspect-error; do
     "$mode did not fail closed"
 done
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'if [ "${1:-}" = fetch ]; then' \
+  '  exit 0' \
+  'fi' \
+  'if [ "${1:-}" = merge-base ] && [ "${2:-}" = --is-ancestor ] &&' \
+  '  [ "${3:-}" = "$DISPATCH_TARGET_SHA" ] &&' \
+  '  [ "${4:-}" = refs/remotes/origin/dev ]; then' \
+  '  exit 0' \
+  'fi' \
+  'exit 96' > "$TEST_BIN/git"
+chmod +x "$TEST_BIN/git"
+
+run_dispatch() {
+  docker_mode=$1
+  deployed_revision=$2
+  target_revision=$3
+  output_file=$4
+
+  : > "$output_file"
+  (
+    cd -- "$TEST_REPO"
+    PATH="$TEST_BIN:$PATH" \
+      DOCKER_MODE="$docker_mode" \
+      DEPLOYED_REVISION="$deployed_revision" \
+      ALTERNATE_REVISION="$BEFORE_REVISION" \
+      DISPATCH_TARGET_SHA="$target_revision" \
+      GITHUB_EVENT_NAME=workflow_dispatch \
+      GITHUB_SHA="$target_revision" \
+      TARGET_SHA_INPUT="$target_revision" \
+      BEFORE_SHA= \
+      SERVER_DEV_IMAGE=registry.example/coze-server:dev \
+      WEB_DEV_IMAGE=registry.example/coze-web:dev \
+      GITHUB_OUTPUT="$output_file" \
+      bash "$RESOLVE_SCRIPT"
+  )
+}
+
+DISPATCH_OUTPUT=$SEMANTIC_ROOT/dispatch-output
+run_dispatch deployed "$TARGET_REVISION" "$TARGET_REVISION" "$DISPATCH_OUTPUT"
+assert_output "$DISPATCH_OUTPUT" "target_sha=$TARGET_REVISION" \
+  'verified dispatch wrote the wrong target SHA'
+assert_output "$DISPATCH_OUTPUT" 'migration_changed=false' \
+  'verified dispatch did not produce an explicit no-migration state'
+assert_output "$DISPATCH_OUTPUT" 'deployment_blocked=false' \
+  'dispatch was blocked even though both current images matched the target'
+
+DISPATCH_MISMATCH_OUTPUT=$SEMANTIC_ROOT/dispatch-mismatch-output
+run_dispatch deployed "$BEFORE_REVISION" "$TARGET_REVISION" \
+  "$DISPATCH_MISMATCH_OUTPUT"
+assert_output "$DISPATCH_MISMATCH_OUTPUT" 'migration_changed=false' \
+  'dispatch target mismatch invented a migration'
+assert_output "$DISPATCH_MISMATCH_OUTPUT" 'deployment_blocked=true' \
+  'dispatch target mismatch was not blocked'
+
+for mode in registry-error missing server-missing inconsistent \
+  server-inspect-error web-inspect-error; do
+  dispatch_blocked_output=$SEMANTIC_ROOT/dispatch-$mode-output
+  run_dispatch "$mode" "$TARGET_REVISION" "$TARGET_REVISION" \
+    "$dispatch_blocked_output"
+  assert_output "$dispatch_blocked_output" 'migration_changed=false' \
+    "dispatch $mode invented a migration"
+  assert_output "$dispatch_blocked_output" 'deployment_blocked=true' \
+    "dispatch $mode did not fail closed"
+done
+
 MIGRATE_SCRIPT=$SEMANTIC_ROOT/migrate.sh
 MIGRATE_DOCKER_LOG=$SEMANTIC_ROOT/migrate-docker.log
 
@@ -494,7 +647,7 @@ fi
   exit 1
 }
 
-DUMMY_ATLAS_URL='mysql://contract:masked@example.invalid/dev'
+DUMMY_ATLAS_URL='mysql://example.invalid/dev'
 : > "$MIGRATE_DOCKER_LOG"
 PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
   ATLAS_URL="$DUMMY_ATLAS_URL" bash "$MIGRATE_SCRIPT"
@@ -511,6 +664,30 @@ second_migration_call=$(sed -n '2p' "$MIGRATE_DOCKER_LOG")
 }
 [[ "$second_migration_call" == *"migrate apply"* ]] || {
   printf 'workflow contract failure: Atlas apply did not run second\n' >&2
+  exit 1
+}
+if grep -Fq -- "$DUMMY_ATLAS_URL" "$MIGRATE_DOCKER_LOG"; then
+  printf 'workflow contract failure: ATLAS_URL leaked into Docker argv\n' >&2
+  exit 1
+fi
+[[ "$second_migration_call" == *"--env ATLAS_URL"* ]] || {
+  printf 'workflow contract failure: Docker did not inherit ATLAS_URL by name\n' >&2
+  exit 1
+}
+[[ "$second_migration_call" == *"/migrations:ro"* ]] || {
+  printf 'workflow contract failure: Atlas migrations were not mounted read-only\n' >&2
+  exit 1
+}
+[[ "$second_migration_call" == *"/atlas.hcl:ro"* ]] || {
+  printf 'workflow contract failure: Atlas config was not mounted read-only\n' >&2
+  exit 1
+}
+[[ "$second_migration_call" == *"migrate apply --config file:///atlas.hcl --env dev"* ]] || {
+  printf 'workflow contract failure: Atlas apply did not use the dev HCL config\n' >&2
+  exit 1
+}
+[[ "$second_migration_call" != *"--url"* ]] || {
+  printf 'workflow contract failure: Atlas apply still passed a URL argument\n' >&2
   exit 1
 }
 
@@ -587,6 +764,14 @@ if grep -Eqx -- '--insecure|--pinnedpubkey' "$CURL_ARGS_FILE"; then
   printf 'workflow contract failure: public webhook unexpectedly disabled CA verification\n' >&2
   exit 1
 fi
+assert_output "$CURL_ARGS_FILE" '--connect-timeout' \
+  'webhook did not configure a connection timeout'
+assert_output "$CURL_ARGS_FILE" '10' \
+  'webhook connection timeout is not 10 seconds'
+assert_output "$CURL_ARGS_FILE" '--max-time' \
+  'webhook did not configure a total timeout'
+assert_output "$CURL_ARGS_FILE" '120' \
+  'webhook total timeout is not 120 seconds'
 
 DUMMY_PIN='sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 run_deploy "$DUMMY_PIN"
