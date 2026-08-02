@@ -60,16 +60,33 @@ expected_jobs = %w[preflight build-server build-web migration-hold verify-images
 assert_contract((expected_jobs - jobs.keys).empty?, 'required jobs are missing')
 
 preflight = jobs.fetch('preflight')
+expected_preflight_outputs = {
+  'target_sha' => '${{ steps.resolve.outputs.target_sha }}',
+  'migration_changed' => '${{ steps.resolve.outputs.migration_changed }}',
+  'deployment_blocked' => '${{ steps.resolve.outputs.deployment_blocked }}'
+}
 assert_contract(
-  preflight.fetch('outputs', {}).keys.sort ==
-    %w[deployment_blocked migration_changed target_sha],
-  'preflight must expose target_sha, migration_changed, and deployment_blocked'
+  preflight.fetch('outputs', {}) == expected_preflight_outputs,
+  'preflight outputs must map target_sha, migration_changed, and deployment_blocked to resolve'
 )
 preflight_text = job_text(preflight)
 resolve_step = preflight.fetch('steps', []).find { |step| step['id'] == 'resolve' }
 assert_contract(resolve_step.is_a?(Hash), 'preflight resolve step is missing')
 resolve_run = resolve_step['run'].to_s
 resolve_env = resolve_step.fetch('env', {})
+expected_preflight_outputs.each_key do |output_name|
+  shell_variable = '$' + output_name
+  write_token = [
+    "printf '#{output_name}=%s\\n'",
+    "\"#{shell_variable}\"",
+    '>> "$GITHUB_OUTPUT"'
+  ].join(' ')
+  write_count = resolve_run.scan(Regexp.new(Regexp.escape(write_token))).length
+  assert_contract(write_count == 1,
+                  "resolve must write #{output_name} to GITHUB_OUTPUT exactly once")
+end
+assert_contract(resolve_run.scan(/>> "\$GITHUB_OUTPUT"/).length == 3,
+                'resolve must write exactly three values to GITHUB_OUTPUT')
 assert_contract(resolve_env['TARGET_SHA_INPUT'].to_s.include?('inputs.target_sha'),
                 'dispatch target_sha must enter the script through an environment variable')
 assert_contract(!resolve_run.include?('${{ inputs.target_sha }}'),
@@ -233,7 +250,7 @@ printf '%s\n' \
   'if [ "$1" = pull ]; then' \
   '  image=${@: -1}' \
   '  case "${DOCKER_MODE:-deployed}" in' \
-  '    deployed|inconsistent) exit 0 ;;' \
+  '    deployed|inconsistent|server-inspect-error|web-inspect-error) exit 0 ;;' \
   '    missing)' \
   '      printf "Error response from daemon: manifest unknown: manifest unknown\\n" >&2' \
   '      exit 1' \
@@ -259,6 +276,14 @@ printf '%s\n' \
   '    printf "%s\\n" "$ALTERNATE_REVISION"' \
   '  else' \
   '    printf "%s\\n" "$DEPLOYED_REVISION"' \
+  '  fi' \
+  '  if [ "${DOCKER_MODE:-deployed}" = server-inspect-error ] &&' \
+  '    [[ "$image" == *coze-server:dev ]]; then' \
+  '    exit 1' \
+  '  fi' \
+  '  if [ "${DOCKER_MODE:-deployed}" = web-inspect-error ] &&' \
+  '    [[ "$image" == *coze-web:dev ]]; then' \
+  '    exit 1' \
   '  fi' \
   '  exit 0' \
   'fi' \
@@ -337,6 +362,16 @@ assert_output "$BOOTSTRAP_MIGRATION_OUTPUT" 'deployment_blocked=false' \
 for mode in registry-error server-missing inconsistent; do
   blocked_output=$SEMANTIC_ROOT/$mode-output
   run_preflight "$mode" "$DEPLOYED_REVISION" "$BEFORE_REVISION" \
+    "$TARGET_REVISION" "$blocked_output"
+  assert_output "$blocked_output" 'migration_changed=false' \
+    "$mode was incorrectly classified as a migration"
+  assert_output "$blocked_output" 'deployment_blocked=true' \
+    "$mode did not fail closed"
+done
+
+for mode in server-inspect-error web-inspect-error; do
+  blocked_output=$SEMANTIC_ROOT/$mode-output
+  run_preflight "$mode" "$BEFORE_REVISION" "$BEFORE_REVISION" \
     "$TARGET_REVISION" "$blocked_output"
   assert_output "$blocked_output" 'migration_changed=false' \
     "$mode was incorrectly classified as a migration"

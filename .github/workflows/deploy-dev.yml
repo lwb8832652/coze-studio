@@ -90,35 +90,42 @@ jobs:
               docker pull "$WEB_DEV_IMAGE" >/dev/null 2>"$web_pull_error" || web_pull_status=$?
 
               if [ "$server_pull_status" -eq 0 ] && [ "$web_pull_status" -eq 0 ]; then
-                server_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SERVER_DEV_IMAGE" 2>/dev/null || true)
-                web_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WEB_DEV_IMAGE" 2>/dev/null || true)
-                server_deployed_revision=$(printf '%s' "$server_deployed_revision" | tr '[:upper:]' '[:lower:]')
-                web_deployed_revision=$(printf '%s' "$web_deployed_revision" | tr '[:upper:]' '[:lower:]')
+                server_inspect_status=0
+                web_inspect_status=0
+                server_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SERVER_DEV_IMAGE" 2>/dev/null) || server_inspect_status=$?
+                web_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WEB_DEV_IMAGE" 2>/dev/null) || web_inspect_status=$?
 
-                if [[ "$server_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
-                  [[ "$web_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
-                  [ "$server_deployed_revision" = "$web_deployed_revision" ]; then
-                  deployed_revision=$server_deployed_revision
-                  if git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
-                    git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
-                    comparison_base=$deployed_revision
-                    if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
-                      migration_changed=false
-                      deployment_blocked=false
-                    else
-                      diff_status=$?
-                      if [ "$diff_status" -eq 1 ]; then
-                        migration_changed=true
+                if [ "$server_inspect_status" -eq 0 ] && [ "$web_inspect_status" -eq 0 ]; then
+                  server_deployed_revision=$(printf '%s' "$server_deployed_revision" | tr '[:upper:]' '[:lower:]')
+                  web_deployed_revision=$(printf '%s' "$web_deployed_revision" | tr '[:upper:]' '[:lower:]')
+
+                  if [[ "$server_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
+                    [[ "$web_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
+                    [ "$server_deployed_revision" = "$web_deployed_revision" ]; then
+                    deployed_revision=$server_deployed_revision
+                    if git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
+                      git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
+                      comparison_base=$deployed_revision
+                      if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
+                        migration_changed=false
                         deployment_blocked=false
                       else
-                        echo "migration diff failed; blocking deployment" >&2
+                        diff_status=$?
+                        if [ "$diff_status" -eq 1 ]; then
+                          migration_changed=true
+                          deployment_blocked=false
+                        else
+                          echo "migration diff failed; blocking deployment" >&2
+                        fi
                       fi
+                    else
+                      echo "deployed revision is unavailable from target history; blocking deployment" >&2
                     fi
                   else
-                    echo "deployed revision is unavailable from target history; blocking deployment" >&2
+                    echo "deployed server and web revisions are missing or inconsistent; blocking deployment" >&2
                   fi
                 else
-                  echo "deployed server and web revisions are missing or inconsistent; blocking deployment" >&2
+                  echo "deployed server or web image inspection failed; blocking deployment" >&2
                 fi
               elif [ "$server_pull_status" -ne 0 ] &&
                 [ "$web_pull_status" -ne 0 ] &&
