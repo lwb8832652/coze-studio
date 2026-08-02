@@ -196,6 +196,41 @@ func _listmodelsMw() []app.HandlerFunc {
 	return nil
 }
 
+func _object_storageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _activateobjectstorageconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createobjectstorageconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deleteobjectstorageconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listobjectstorageconfigsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _testobjectstorageconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateobjectstorageconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _app_devMw() []app.HandlerFunc {
 	// your code...
 	return nil

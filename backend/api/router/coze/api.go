@@ -78,6 +78,15 @@ func Register(r *server.Hertz) {
 						_manage.GET("/list", append(_listmodelsMw(), coze.ListModels)...)
 					}
 				}
+				{
+					_object_storage := _config.Group("/object-storage", _object_storageMw()...)
+					_object_storage.POST("/activate", append(_activateobjectstorageconfigMw(), coze.ActivateObjectStorageConfig)...)
+					_object_storage.POST("/create", append(_createobjectstorageconfigMw(), coze.CreateObjectStorageConfig)...)
+					_object_storage.POST("/delete", append(_deleteobjectstorageconfigMw(), coze.DeleteObjectStorageConfig)...)
+					_object_storage.GET("/list", append(_listobjectstorageconfigsMw(), coze.ListObjectStorageConfigs)...)
+					_object_storage.POST("/test", append(_testobjectstorageconfigMw(), coze.TestObjectStorageConfig)...)
+					_object_storage.POST("/update", append(_updateobjectstorageconfigMw(), coze.UpdateObjectStorageConfig)...)
+				}
 			}
 		}
 		{

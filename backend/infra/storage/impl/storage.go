@@ -18,85 +18,49 @@ package impl
 
 import (
 	"context"
-	"fmt"
 	"os"
+	"strings"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/imagex"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
-	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/minio"
-	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/s3"
-	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/tos"
-	"github.com/coze-dev/coze-studio/backend/pkg/envkey"
+	storageconfig "github.com/coze-dev/coze-studio/backend/infra/storage/config"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 type Storage = storage.Storage
 
 func New(ctx context.Context) (Storage, error) {
-	storageType := os.Getenv(consts.StorageType)
-	switch storageType {
-	case "minio":
-		return minio.New(
-			ctx,
-			os.Getenv(consts.MinIOEndpoint),
-			os.Getenv(consts.MinIOAK),
-			os.Getenv(consts.MinIOSK),
-			os.Getenv(consts.StorageBucket),
-			envkey.GetBoolD("MINIO_USE_SSL", false),
-		)
-	case "tos":
-		return tos.New(
-			ctx,
-			os.Getenv(consts.TOSAccessKey),
-			os.Getenv(consts.TOSSecretKey),
-			os.Getenv(consts.StorageBucket),
-			os.Getenv(consts.TOSEndpoint),
-			os.Getenv(consts.TOSRegion),
-		)
-	case "s3":
-		return s3.New(
-			ctx,
-			os.Getenv(consts.S3AccessKey),
-			os.Getenv(consts.S3SecretKey),
-			os.Getenv(consts.StorageBucket),
-			os.Getenv(consts.S3Endpoint),
-			os.Getenv(consts.S3Region),
-		)
+	envConfig, err := storageconfig.LoadEnvConfig(os.Getenv, domain.ValidationMode{AllowHTTP: envStorageAllowHTTP(os.Getenv)})
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, fmt.Errorf("unknown storage type: %s", storageType)
+	client, err := DefaultRegistry().New(ctx, BuildInput{
+		ProviderType: envConfig.ProviderType,
+		PublicConfig: envConfig.PublicConfig,
+		Credential:   envConfig.Credential,
+	})
+	if err != nil {
+		return nil, err
+	}
+	SetRuntimeDescriptor(domain.RuntimeDescriptor{
+		Source:       domain.RuntimeSourceEnvRescue,
+		ProviderType: envConfig.ProviderType,
+	})
+	return client, nil
 }
 
 func NewImagex(ctx context.Context) (imagex.ImageX, error) {
-	storageType := os.Getenv(consts.StorageType)
-	switch storageType {
-	case "minio":
-		return minio.NewStorageImagex(
-			ctx,
-			os.Getenv(consts.MinIOEndpoint),
-			os.Getenv(consts.MinIOAK),
-			os.Getenv(consts.MinIOSK),
-			os.Getenv(consts.StorageBucket),
-			envkey.GetBoolD("MINIO_USE_SSL", false),
-		)
-	case "tos":
-		return tos.NewStorageImagex(
-			ctx,
-			os.Getenv(consts.TOSAccessKey),
-			os.Getenv(consts.TOSSecretKey),
-			os.Getenv(consts.StorageBucket),
-			os.Getenv(consts.TOSEndpoint),
-			os.Getenv(consts.TOSRegion),
-		)
-	case "s3":
-		return s3.NewStorageImagex(
-			ctx,
-			os.Getenv(consts.S3AccessKey),
-			os.Getenv(consts.S3SecretKey),
-			os.Getenv(consts.StorageBucket),
-			os.Getenv(consts.S3Endpoint),
-			os.Getenv(consts.S3Region),
-		)
+	client, err := New(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("unknown storage type: %s", storageType)
+	return NewStorageBackedImageX(client), nil
+}
+
+func envStorageAllowHTTP(getenv func(string) string) bool {
+	if getenv == nil {
+		return false
+	}
+	return strings.EqualFold(getenv(consts.RunMode), "debug")
 }

@@ -528,6 +528,164 @@ func (p *ParserType) Value() (driver.Value, error) {
 	return int64(*p), nil
 }
 
+type ObjectStorageProviderType int64
+
+const (
+	ObjectStorageProviderType_QINIU       ObjectStorageProviderType = 1
+	ObjectStorageProviderType_ALIYUN_OSS  ObjectStorageProviderType = 2
+	ObjectStorageProviderType_TENCENT_COS ObjectStorageProviderType = 3
+	ObjectStorageProviderType_HUAWEI_OBS  ObjectStorageProviderType = 4
+	ObjectStorageProviderType_AWS_S3      ObjectStorageProviderType = 5
+	ObjectStorageProviderType_MINIO       ObjectStorageProviderType = 6
+	ObjectStorageProviderType_TOS         ObjectStorageProviderType = 7
+)
+
+func (p ObjectStorageProviderType) String() string {
+	switch p {
+	case ObjectStorageProviderType_QINIU:
+		return "QINIU"
+	case ObjectStorageProviderType_ALIYUN_OSS:
+		return "ALIYUN_OSS"
+	case ObjectStorageProviderType_TENCENT_COS:
+		return "TENCENT_COS"
+	case ObjectStorageProviderType_HUAWEI_OBS:
+		return "HUAWEI_OBS"
+	case ObjectStorageProviderType_AWS_S3:
+		return "AWS_S3"
+	case ObjectStorageProviderType_MINIO:
+		return "MINIO"
+	case ObjectStorageProviderType_TOS:
+		return "TOS"
+	}
+	return "<UNSET>"
+}
+
+func ObjectStorageProviderTypeFromString(s string) (ObjectStorageProviderType, error) {
+	switch s {
+	case "QINIU":
+		return ObjectStorageProviderType_QINIU, nil
+	case "ALIYUN_OSS":
+		return ObjectStorageProviderType_ALIYUN_OSS, nil
+	case "TENCENT_COS":
+		return ObjectStorageProviderType_TENCENT_COS, nil
+	case "HUAWEI_OBS":
+		return ObjectStorageProviderType_HUAWEI_OBS, nil
+	case "AWS_S3":
+		return ObjectStorageProviderType_AWS_S3, nil
+	case "MINIO":
+		return ObjectStorageProviderType_MINIO, nil
+	case "TOS":
+		return ObjectStorageProviderType_TOS, nil
+	}
+	return ObjectStorageProviderType(0), fmt.Errorf("not a valid ObjectStorageProviderType string")
+}
+
+func ObjectStorageProviderTypePtr(v ObjectStorageProviderType) *ObjectStorageProviderType { return &v }
+func (p *ObjectStorageProviderType) Scan(value interface{}) (err error) {
+	var result sql.NullInt64
+	err = result.Scan(value)
+	*p = ObjectStorageProviderType(result.Int64)
+	return
+}
+
+func (p *ObjectStorageProviderType) Value() (driver.Value, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return int64(*p), nil
+}
+
+type ObjectStorageHealthStatus int64
+
+const (
+	ObjectStorageHealthStatus_UNKNOWN   ObjectStorageHealthStatus = 1
+	ObjectStorageHealthStatus_HEALTHY   ObjectStorageHealthStatus = 2
+	ObjectStorageHealthStatus_UNHEALTHY ObjectStorageHealthStatus = 3
+)
+
+func (p ObjectStorageHealthStatus) String() string {
+	switch p {
+	case ObjectStorageHealthStatus_UNKNOWN:
+		return "UNKNOWN"
+	case ObjectStorageHealthStatus_HEALTHY:
+		return "HEALTHY"
+	case ObjectStorageHealthStatus_UNHEALTHY:
+		return "UNHEALTHY"
+	}
+	return "<UNSET>"
+}
+
+func ObjectStorageHealthStatusFromString(s string) (ObjectStorageHealthStatus, error) {
+	switch s {
+	case "UNKNOWN":
+		return ObjectStorageHealthStatus_UNKNOWN, nil
+	case "HEALTHY":
+		return ObjectStorageHealthStatus_HEALTHY, nil
+	case "UNHEALTHY":
+		return ObjectStorageHealthStatus_UNHEALTHY, nil
+	}
+	return ObjectStorageHealthStatus(0), fmt.Errorf("not a valid ObjectStorageHealthStatus string")
+}
+
+func ObjectStorageHealthStatusPtr(v ObjectStorageHealthStatus) *ObjectStorageHealthStatus { return &v }
+func (p *ObjectStorageHealthStatus) Scan(value interface{}) (err error) {
+	var result sql.NullInt64
+	err = result.Scan(value)
+	*p = ObjectStorageHealthStatus(result.Int64)
+	return
+}
+
+func (p *ObjectStorageHealthStatus) Value() (driver.Value, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return int64(*p), nil
+}
+
+type ObjectStorageRuntimeSource int64
+
+const (
+	ObjectStorageRuntimeSource_DATABASE   ObjectStorageRuntimeSource = 1
+	ObjectStorageRuntimeSource_ENV_RESCUE ObjectStorageRuntimeSource = 2
+)
+
+func (p ObjectStorageRuntimeSource) String() string {
+	switch p {
+	case ObjectStorageRuntimeSource_DATABASE:
+		return "DATABASE"
+	case ObjectStorageRuntimeSource_ENV_RESCUE:
+		return "ENV_RESCUE"
+	}
+	return "<UNSET>"
+}
+
+func ObjectStorageRuntimeSourceFromString(s string) (ObjectStorageRuntimeSource, error) {
+	switch s {
+	case "DATABASE":
+		return ObjectStorageRuntimeSource_DATABASE, nil
+	case "ENV_RESCUE":
+		return ObjectStorageRuntimeSource_ENV_RESCUE, nil
+	}
+	return ObjectStorageRuntimeSource(0), fmt.Errorf("not a valid ObjectStorageRuntimeSource string")
+}
+
+func ObjectStorageRuntimeSourcePtr(v ObjectStorageRuntimeSource) *ObjectStorageRuntimeSource {
+	return &v
+}
+func (p *ObjectStorageRuntimeSource) Scan(value interface{}) (err error) {
+	var result sql.NullInt64
+	err = result.Scan(value)
+	*p = ObjectStorageRuntimeSource(result.Int64)
+	return
+}
+
+func (p *ObjectStorageRuntimeSource) Value() (driver.Value, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return int64(*p), nil
+}
+
 type GetModelListReq struct {
 	Keyword        *string    `thrift:"keyword,1,optional" form:"keyword" json:"keyword,omitempty" query:"keyword"`
 	ProviderKey    *string    `thrift:"provider_key,2,optional" form:"provider_key" json:"provider_key,omitempty" query:"provider_key"`
@@ -21285,6 +21443,5297 @@ func (p *ParserConfig) String() string {
 
 }
 
+type ObjectStoragePublicConfig struct {
+	Bucket           *string `thrift:"bucket,1,optional" form:"bucket" json:"bucket,omitempty" query:"bucket"`
+	Region           *string `thrift:"region,2,optional" form:"region" json:"region,omitempty" query:"region"`
+	Endpoint         *string `thrift:"endpoint,3,optional" form:"endpoint" json:"endpoint,omitempty" query:"endpoint"`
+	EndpointOverride *string `thrift:"endpoint_override,4,optional" form:"endpoint_override" json:"endpoint_override,omitempty" query:"endpoint_override"`
+	ForcePathStyle   *bool   `thrift:"force_path_style,5,optional" form:"force_path_style" json:"force_path_style,omitempty" query:"force_path_style"`
+	UseSsl           *bool   `thrift:"use_ssl,6,optional" form:"use_ssl" json:"use_ssl,omitempty" query:"use_ssl"`
+	DownloadDomain   *string `thrift:"download_domain,7,optional" form:"download_domain" json:"download_domain,omitempty" query:"download_domain"`
+	UseHTTPS         *bool   `thrift:"use_https,8,optional" form:"use_https" json:"use_https,omitempty" query:"use_https"`
+}
+
+func NewObjectStoragePublicConfig() *ObjectStoragePublicConfig {
+	return &ObjectStoragePublicConfig{}
+}
+
+func (p *ObjectStoragePublicConfig) InitDefault() {
+}
+
+var ObjectStoragePublicConfig_Bucket_DEFAULT string
+
+func (p *ObjectStoragePublicConfig) GetBucket() (v string) {
+	if !p.IsSetBucket() {
+		return ObjectStoragePublicConfig_Bucket_DEFAULT
+	}
+	return *p.Bucket
+}
+
+var ObjectStoragePublicConfig_Region_DEFAULT string
+
+func (p *ObjectStoragePublicConfig) GetRegion() (v string) {
+	if !p.IsSetRegion() {
+		return ObjectStoragePublicConfig_Region_DEFAULT
+	}
+	return *p.Region
+}
+
+var ObjectStoragePublicConfig_Endpoint_DEFAULT string
+
+func (p *ObjectStoragePublicConfig) GetEndpoint() (v string) {
+	if !p.IsSetEndpoint() {
+		return ObjectStoragePublicConfig_Endpoint_DEFAULT
+	}
+	return *p.Endpoint
+}
+
+var ObjectStoragePublicConfig_EndpointOverride_DEFAULT string
+
+func (p *ObjectStoragePublicConfig) GetEndpointOverride() (v string) {
+	if !p.IsSetEndpointOverride() {
+		return ObjectStoragePublicConfig_EndpointOverride_DEFAULT
+	}
+	return *p.EndpointOverride
+}
+
+var ObjectStoragePublicConfig_ForcePathStyle_DEFAULT bool
+
+func (p *ObjectStoragePublicConfig) GetForcePathStyle() (v bool) {
+	if !p.IsSetForcePathStyle() {
+		return ObjectStoragePublicConfig_ForcePathStyle_DEFAULT
+	}
+	return *p.ForcePathStyle
+}
+
+var ObjectStoragePublicConfig_UseSsl_DEFAULT bool
+
+func (p *ObjectStoragePublicConfig) GetUseSsl() (v bool) {
+	if !p.IsSetUseSsl() {
+		return ObjectStoragePublicConfig_UseSsl_DEFAULT
+	}
+	return *p.UseSsl
+}
+
+var ObjectStoragePublicConfig_DownloadDomain_DEFAULT string
+
+func (p *ObjectStoragePublicConfig) GetDownloadDomain() (v string) {
+	if !p.IsSetDownloadDomain() {
+		return ObjectStoragePublicConfig_DownloadDomain_DEFAULT
+	}
+	return *p.DownloadDomain
+}
+
+var ObjectStoragePublicConfig_UseHTTPS_DEFAULT bool
+
+func (p *ObjectStoragePublicConfig) GetUseHTTPS() (v bool) {
+	if !p.IsSetUseHTTPS() {
+		return ObjectStoragePublicConfig_UseHTTPS_DEFAULT
+	}
+	return *p.UseHTTPS
+}
+
+var fieldIDToName_ObjectStoragePublicConfig = map[int16]string{
+	1: "bucket",
+	2: "region",
+	3: "endpoint",
+	4: "endpoint_override",
+	5: "force_path_style",
+	6: "use_ssl",
+	7: "download_domain",
+	8: "use_https",
+}
+
+func (p *ObjectStoragePublicConfig) IsSetBucket() bool {
+	return p.Bucket != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetRegion() bool {
+	return p.Region != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetEndpoint() bool {
+	return p.Endpoint != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetEndpointOverride() bool {
+	return p.EndpointOverride != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetForcePathStyle() bool {
+	return p.ForcePathStyle != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetUseSsl() bool {
+	return p.UseSsl != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetDownloadDomain() bool {
+	return p.DownloadDomain != nil
+}
+
+func (p *ObjectStoragePublicConfig) IsSetUseHTTPS() bool {
+	return p.UseHTTPS != nil
+}
+
+func (p *ObjectStoragePublicConfig) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ObjectStoragePublicConfig[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Bucket = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Region = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Endpoint = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.EndpointOverride = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ForcePathStyle = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.UseSsl = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.DownloadDomain = _field
+	return nil
+}
+func (p *ObjectStoragePublicConfig) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.UseHTTPS = _field
+	return nil
+}
+
+func (p *ObjectStoragePublicConfig) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ObjectStoragePublicConfig"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBucket() {
+		if err = oprot.WriteFieldBegin("bucket", thrift.STRING, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Bucket); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetRegion() {
+		if err = oprot.WriteFieldBegin("region", thrift.STRING, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Region); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetEndpoint() {
+		if err = oprot.WriteFieldBegin("endpoint", thrift.STRING, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Endpoint); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetEndpointOverride() {
+		if err = oprot.WriteFieldBegin("endpoint_override", thrift.STRING, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.EndpointOverride); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetForcePathStyle() {
+		if err = oprot.WriteFieldBegin("force_path_style", thrift.BOOL, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.ForcePathStyle); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetUseSsl() {
+		if err = oprot.WriteFieldBegin("use_ssl", thrift.BOOL, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.UseSsl); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetDownloadDomain() {
+		if err = oprot.WriteFieldBegin("download_domain", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.DownloadDomain); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetUseHTTPS() {
+		if err = oprot.WriteFieldBegin("use_https", thrift.BOOL, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.UseHTTPS); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *ObjectStoragePublicConfig) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ObjectStoragePublicConfig(%+v)", *p)
+
+}
+
+type ObjectStorageCredentialInput struct {
+	AccessKeyID     *string `thrift:"access_key_id,1,optional" form:"access_key_id" json:"access_key_id,omitempty" query:"access_key_id"`
+	SecretAccessKey *string `thrift:"secret_access_key,2,optional" form:"secret_access_key" json:"secret_access_key,omitempty" query:"secret_access_key"`
+}
+
+func NewObjectStorageCredentialInput() *ObjectStorageCredentialInput {
+	return &ObjectStorageCredentialInput{}
+}
+
+func (p *ObjectStorageCredentialInput) InitDefault() {
+}
+
+var ObjectStorageCredentialInput_AccessKeyID_DEFAULT string
+
+func (p *ObjectStorageCredentialInput) GetAccessKeyID() (v string) {
+	if !p.IsSetAccessKeyID() {
+		return ObjectStorageCredentialInput_AccessKeyID_DEFAULT
+	}
+	return *p.AccessKeyID
+}
+
+var ObjectStorageCredentialInput_SecretAccessKey_DEFAULT string
+
+func (p *ObjectStorageCredentialInput) GetSecretAccessKey() (v string) {
+	if !p.IsSetSecretAccessKey() {
+		return ObjectStorageCredentialInput_SecretAccessKey_DEFAULT
+	}
+	return *p.SecretAccessKey
+}
+
+var fieldIDToName_ObjectStorageCredentialInput = map[int16]string{
+	1: "access_key_id",
+	2: "secret_access_key",
+}
+
+func (p *ObjectStorageCredentialInput) IsSetAccessKeyID() bool {
+	return p.AccessKeyID != nil
+}
+
+func (p *ObjectStorageCredentialInput) IsSetSecretAccessKey() bool {
+	return p.SecretAccessKey != nil
+}
+
+func (p *ObjectStorageCredentialInput) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ObjectStorageCredentialInput[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ObjectStorageCredentialInput) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.AccessKeyID = _field
+	return nil
+}
+func (p *ObjectStorageCredentialInput) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SecretAccessKey = _field
+	return nil
+}
+
+func (p *ObjectStorageCredentialInput) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ObjectStorageCredentialInput"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ObjectStorageCredentialInput) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetAccessKeyID() {
+		if err = oprot.WriteFieldBegin("access_key_id", thrift.STRING, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.AccessKeyID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ObjectStorageCredentialInput) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSecretAccessKey() {
+		if err = oprot.WriteFieldBegin("secret_access_key", thrift.STRING, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.SecretAccessKey); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ObjectStorageCredentialInput) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ObjectStorageCredentialInput(%+v)", *p)
+
+}
+
+type ObjectStorageHealthView struct {
+	Status    ObjectStorageHealthStatus `thrift:"status,1,default,ObjectStorageHealthStatus" form:"status" json:"status" query:"status"`
+	Code      *string                   `thrift:"code,2,optional" form:"code" json:"code,omitempty" query:"code"`
+	Message   *string                   `thrift:"message,3,optional" form:"message" json:"message,omitempty" query:"message"`
+	LatencyMs *int64                    `thrift:"latency_ms,4,optional" form:"latency_ms" json:"latency_ms,omitempty" query:"latency_ms"`
+	CheckedAt *string                   `thrift:"checked_at,5,optional" form:"checked_at" json:"checked_at,omitempty" query:"checked_at"`
+}
+
+func NewObjectStorageHealthView() *ObjectStorageHealthView {
+	return &ObjectStorageHealthView{}
+}
+
+func (p *ObjectStorageHealthView) InitDefault() {
+}
+
+func (p *ObjectStorageHealthView) GetStatus() (v ObjectStorageHealthStatus) {
+	return p.Status
+}
+
+var ObjectStorageHealthView_Code_DEFAULT string
+
+func (p *ObjectStorageHealthView) GetCode() (v string) {
+	if !p.IsSetCode() {
+		return ObjectStorageHealthView_Code_DEFAULT
+	}
+	return *p.Code
+}
+
+var ObjectStorageHealthView_Message_DEFAULT string
+
+func (p *ObjectStorageHealthView) GetMessage() (v string) {
+	if !p.IsSetMessage() {
+		return ObjectStorageHealthView_Message_DEFAULT
+	}
+	return *p.Message
+}
+
+var ObjectStorageHealthView_LatencyMs_DEFAULT int64
+
+func (p *ObjectStorageHealthView) GetLatencyMs() (v int64) {
+	if !p.IsSetLatencyMs() {
+		return ObjectStorageHealthView_LatencyMs_DEFAULT
+	}
+	return *p.LatencyMs
+}
+
+var ObjectStorageHealthView_CheckedAt_DEFAULT string
+
+func (p *ObjectStorageHealthView) GetCheckedAt() (v string) {
+	if !p.IsSetCheckedAt() {
+		return ObjectStorageHealthView_CheckedAt_DEFAULT
+	}
+	return *p.CheckedAt
+}
+
+var fieldIDToName_ObjectStorageHealthView = map[int16]string{
+	1: "status",
+	2: "code",
+	3: "message",
+	4: "latency_ms",
+	5: "checked_at",
+}
+
+func (p *ObjectStorageHealthView) IsSetCode() bool {
+	return p.Code != nil
+}
+
+func (p *ObjectStorageHealthView) IsSetMessage() bool {
+	return p.Message != nil
+}
+
+func (p *ObjectStorageHealthView) IsSetLatencyMs() bool {
+	return p.LatencyMs != nil
+}
+
+func (p *ObjectStorageHealthView) IsSetCheckedAt() bool {
+	return p.CheckedAt != nil
+}
+
+func (p *ObjectStorageHealthView) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ObjectStorageHealthView[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field ObjectStorageHealthStatus
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = ObjectStorageHealthStatus(v)
+	}
+	p.Status = _field
+	return nil
+}
+func (p *ObjectStorageHealthView) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *ObjectStorageHealthView) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Message = _field
+	return nil
+}
+func (p *ObjectStorageHealthView) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.LatencyMs = _field
+	return nil
+}
+func (p *ObjectStorageHealthView) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CheckedAt = _field
+	return nil
+}
+
+func (p *ObjectStorageHealthView) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ObjectStorageHealthView"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("status", thrift.I32, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(int32(p.Status)); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCode() {
+		if err = oprot.WriteFieldBegin("code", thrift.STRING, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Code); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetMessage() {
+		if err = oprot.WriteFieldBegin("message", thrift.STRING, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Message); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetLatencyMs() {
+		if err = oprot.WriteFieldBegin("latency_ms", thrift.I64, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.LatencyMs); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCheckedAt() {
+		if err = oprot.WriteFieldBegin("checked_at", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.CheckedAt); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *ObjectStorageHealthView) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ObjectStorageHealthView(%+v)", *p)
+
+}
+
+type ObjectStorageConfigView struct {
+	ID                   int64                      `thrift:"id,1" form:"id" json:"id,string" query:"id"`
+	Name                 string                     `thrift:"name,2" form:"name" json:"name" query:"name"`
+	ProviderType         ObjectStorageProviderType  `thrift:"provider_type,3,default,ObjectStorageProviderType" form:"provider_type" json:"provider_type" query:"provider_type"`
+	Config               *ObjectStoragePublicConfig `thrift:"config,4" form:"config" json:"config" query:"config"`
+	CredentialConfigured bool                       `thrift:"credential_configured,5" form:"credential_configured" json:"credential_configured" query:"credential_configured"`
+	Health               *ObjectStorageHealthView   `thrift:"health,6" form:"health" json:"health" query:"health"`
+	DesiredActive        bool                       `thrift:"desired_active,7" form:"desired_active" json:"desired_active" query:"desired_active"`
+	RuntimeActive        bool                       `thrift:"runtime_active,8" form:"runtime_active" json:"runtime_active" query:"runtime_active"`
+	RestartRequired      bool                       `thrift:"restart_required,9" form:"restart_required" json:"restart_required" query:"restart_required"`
+	Version              int64                      `thrift:"version,10" form:"version" json:"version,string" query:"version"`
+	RuntimeRevision      int64                      `thrift:"runtime_revision,11" form:"runtime_revision" json:"runtime_revision,string" query:"runtime_revision"`
+	CreatedAt            string                     `thrift:"created_at,12" form:"created_at" json:"created_at" query:"created_at"`
+	UpdatedAt            string                     `thrift:"updated_at,13" form:"updated_at" json:"updated_at" query:"updated_at"`
+}
+
+func NewObjectStorageConfigView() *ObjectStorageConfigView {
+	return &ObjectStorageConfigView{}
+}
+
+func (p *ObjectStorageConfigView) InitDefault() {
+}
+
+func (p *ObjectStorageConfigView) GetID() (v int64) {
+	return p.ID
+}
+
+func (p *ObjectStorageConfigView) GetName() (v string) {
+	return p.Name
+}
+
+func (p *ObjectStorageConfigView) GetProviderType() (v ObjectStorageProviderType) {
+	return p.ProviderType
+}
+
+var ObjectStorageConfigView_Config_DEFAULT *ObjectStoragePublicConfig
+
+func (p *ObjectStorageConfigView) GetConfig() (v *ObjectStoragePublicConfig) {
+	if !p.IsSetConfig() {
+		return ObjectStorageConfigView_Config_DEFAULT
+	}
+	return p.Config
+}
+
+func (p *ObjectStorageConfigView) GetCredentialConfigured() (v bool) {
+	return p.CredentialConfigured
+}
+
+var ObjectStorageConfigView_Health_DEFAULT *ObjectStorageHealthView
+
+func (p *ObjectStorageConfigView) GetHealth() (v *ObjectStorageHealthView) {
+	if !p.IsSetHealth() {
+		return ObjectStorageConfigView_Health_DEFAULT
+	}
+	return p.Health
+}
+
+func (p *ObjectStorageConfigView) GetDesiredActive() (v bool) {
+	return p.DesiredActive
+}
+
+func (p *ObjectStorageConfigView) GetRuntimeActive() (v bool) {
+	return p.RuntimeActive
+}
+
+func (p *ObjectStorageConfigView) GetRestartRequired() (v bool) {
+	return p.RestartRequired
+}
+
+func (p *ObjectStorageConfigView) GetVersion() (v int64) {
+	return p.Version
+}
+
+func (p *ObjectStorageConfigView) GetRuntimeRevision() (v int64) {
+	return p.RuntimeRevision
+}
+
+func (p *ObjectStorageConfigView) GetCreatedAt() (v string) {
+	return p.CreatedAt
+}
+
+func (p *ObjectStorageConfigView) GetUpdatedAt() (v string) {
+	return p.UpdatedAt
+}
+
+var fieldIDToName_ObjectStorageConfigView = map[int16]string{
+	1:  "id",
+	2:  "name",
+	3:  "provider_type",
+	4:  "config",
+	5:  "credential_configured",
+	6:  "health",
+	7:  "desired_active",
+	8:  "runtime_active",
+	9:  "restart_required",
+	10: "version",
+	11: "runtime_revision",
+	12: "created_at",
+	13: "updated_at",
+}
+
+func (p *ObjectStorageConfigView) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *ObjectStorageConfigView) IsSetHealth() bool {
+	return p.Health != nil
+}
+
+func (p *ObjectStorageConfigView) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ObjectStorageConfigView[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ID = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Name = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field ObjectStorageProviderType
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = ObjectStorageProviderType(v)
+	}
+	p.ProviderType = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField4(iprot thrift.TProtocol) error {
+	_field := NewObjectStoragePublicConfig()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CredentialConfigured = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField6(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageHealthView()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Health = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.DesiredActive = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RuntimeActive = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RestartRequired = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField10(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Version = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RuntimeRevision = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CreatedAt = _field
+	return nil
+}
+func (p *ObjectStorageConfigView) ReadField13(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.UpdatedAt = _field
+	return nil
+}
+
+func (p *ObjectStorageConfigView) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ObjectStorageConfigView"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("name", thrift.STRING, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Name); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("provider_type", thrift.I32, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(int32(p.ProviderType)); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("credential_configured", thrift.BOOL, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.CredentialConfigured); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("health", thrift.STRUCT, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Health.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("desired_active", thrift.BOOL, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.DesiredActive); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField8(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("runtime_active", thrift.BOOL, 8); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.RuntimeActive); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField9(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("restart_required", thrift.BOOL, 9); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.RestartRequired); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField10(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("version", thrift.I64, 10); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Version); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField11(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("runtime_revision", thrift.I64, 11); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.RuntimeRevision); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField12(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("created_at", thrift.STRING, 12); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.CreatedAt); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) writeField13(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("updated_at", thrift.STRING, 13); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.UpdatedAt); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
+}
+
+func (p *ObjectStorageConfigView) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ObjectStorageConfigView(%+v)", *p)
+
+}
+
+type ListObjectStorageConfigsReq struct {
+}
+
+func NewListObjectStorageConfigsReq() *ListObjectStorageConfigsReq {
+	return &ListObjectStorageConfigsReq{}
+}
+
+func (p *ListObjectStorageConfigsReq) InitDefault() {
+}
+
+var fieldIDToName_ListObjectStorageConfigsReq = map[int16]string{}
+
+func (p *ListObjectStorageConfigsReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+		if err = iprot.Skip(fieldTypeId); err != nil {
+			goto SkipFieldTypeError
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+SkipFieldTypeError:
+	return thrift.PrependError(fmt.Sprintf("%T skip field type %d error", p, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsReq) Write(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteStructBegin("ListObjectStorageConfigsReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ListObjectStorageConfigsReq(%+v)", *p)
+
+}
+
+type ListObjectStorageConfigsResp struct {
+	Configs         []*ObjectStorageConfigView `thrift:"configs,1,default,list<ObjectStorageConfigView>" form:"configs" json:"configs" query:"configs"`
+	RuntimeSource   ObjectStorageRuntimeSource `thrift:"runtime_source,2,default,ObjectStorageRuntimeSource" form:"runtime_source" json:"runtime_source" query:"runtime_source"`
+	RestartRequired bool                       `thrift:"restart_required,3" form:"restart_required" json:"restart_required" query:"restart_required"`
+	Code            int64                      `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg             string                     `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp        *base.BaseResp             `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewListObjectStorageConfigsResp() *ListObjectStorageConfigsResp {
+	return &ListObjectStorageConfigsResp{}
+}
+
+func (p *ListObjectStorageConfigsResp) InitDefault() {
+}
+
+func (p *ListObjectStorageConfigsResp) GetConfigs() (v []*ObjectStorageConfigView) {
+	return p.Configs
+}
+
+func (p *ListObjectStorageConfigsResp) GetRuntimeSource() (v ObjectStorageRuntimeSource) {
+	return p.RuntimeSource
+}
+
+func (p *ListObjectStorageConfigsResp) GetRestartRequired() (v bool) {
+	return p.RestartRequired
+}
+
+func (p *ListObjectStorageConfigsResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *ListObjectStorageConfigsResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var ListObjectStorageConfigsResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *ListObjectStorageConfigsResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return ListObjectStorageConfigsResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_ListObjectStorageConfigsResp = map[int16]string{
+	1:   "configs",
+	2:   "runtime_source",
+	3:   "restart_required",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *ListObjectStorageConfigsResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *ListObjectStorageConfigsResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ListObjectStorageConfigsResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_ListObjectStorageConfigsResp[fieldId]))
+}
+
+func (p *ListObjectStorageConfigsResp) ReadField1(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*ObjectStorageConfigView, 0, size)
+	values := make([]ObjectStorageConfigView, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Configs = _field
+	return nil
+}
+func (p *ListObjectStorageConfigsResp) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field ObjectStorageRuntimeSource
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = ObjectStorageRuntimeSource(v)
+	}
+	p.RuntimeSource = _field
+	return nil
+}
+func (p *ListObjectStorageConfigsResp) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RestartRequired = _field
+	return nil
+}
+func (p *ListObjectStorageConfigsResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *ListObjectStorageConfigsResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *ListObjectStorageConfigsResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *ListObjectStorageConfigsResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListObjectStorageConfigsResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("configs", thrift.LIST, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Configs)); err != nil {
+		return err
+	}
+	for _, v := range p.Configs {
+		if err := v.Write(oprot); err != nil {
+			return err
+		}
+	}
+	if err := oprot.WriteListEnd(); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("runtime_source", thrift.I32, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(int32(p.RuntimeSource)); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("restart_required", thrift.BOOL, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.RestartRequired); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *ListObjectStorageConfigsResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ListObjectStorageConfigsResp(%+v)", *p)
+
+}
+
+type CreateObjectStorageConfigReq struct {
+	Name         string                        `thrift:"name,1" form:"name" json:"name" query:"name"`
+	ProviderType ObjectStorageProviderType     `thrift:"provider_type,2,default,ObjectStorageProviderType" form:"provider_type" json:"provider_type" query:"provider_type"`
+	Config       *ObjectStoragePublicConfig    `thrift:"config,3" form:"config" json:"config" query:"config"`
+	Credential   *ObjectStorageCredentialInput `thrift:"credential,4" form:"credential" json:"credential" query:"credential"`
+}
+
+func NewCreateObjectStorageConfigReq() *CreateObjectStorageConfigReq {
+	return &CreateObjectStorageConfigReq{}
+}
+
+func (p *CreateObjectStorageConfigReq) InitDefault() {
+}
+
+func (p *CreateObjectStorageConfigReq) GetName() (v string) {
+	return p.Name
+}
+
+func (p *CreateObjectStorageConfigReq) GetProviderType() (v ObjectStorageProviderType) {
+	return p.ProviderType
+}
+
+var CreateObjectStorageConfigReq_Config_DEFAULT *ObjectStoragePublicConfig
+
+func (p *CreateObjectStorageConfigReq) GetConfig() (v *ObjectStoragePublicConfig) {
+	if !p.IsSetConfig() {
+		return CreateObjectStorageConfigReq_Config_DEFAULT
+	}
+	return p.Config
+}
+
+var CreateObjectStorageConfigReq_Credential_DEFAULT *ObjectStorageCredentialInput
+
+func (p *CreateObjectStorageConfigReq) GetCredential() (v *ObjectStorageCredentialInput) {
+	if !p.IsSetCredential() {
+		return CreateObjectStorageConfigReq_Credential_DEFAULT
+	}
+	return p.Credential
+}
+
+var fieldIDToName_CreateObjectStorageConfigReq = map[int16]string{
+	1: "name",
+	2: "provider_type",
+	3: "config",
+	4: "credential",
+}
+
+func (p *CreateObjectStorageConfigReq) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *CreateObjectStorageConfigReq) IsSetCredential() bool {
+	return p.Credential != nil
+}
+
+func (p *CreateObjectStorageConfigReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CreateObjectStorageConfigReq[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Name = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigReq) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field ObjectStorageProviderType
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = ObjectStorageProviderType(v)
+	}
+	p.ProviderType = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigReq) ReadField3(iprot thrift.TProtocol) error {
+	_field := NewObjectStoragePublicConfig()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigReq) ReadField4(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageCredentialInput()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Credential = _field
+	return nil
+}
+
+func (p *CreateObjectStorageConfigReq) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CreateObjectStorageConfigReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("name", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Name); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("provider_type", thrift.I32, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(int32(p.ProviderType)); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("credential", thrift.STRUCT, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Credential.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CreateObjectStorageConfigReq(%+v)", *p)
+
+}
+
+type CreateObjectStorageConfigResp struct {
+	Config   *ObjectStorageConfigView `thrift:"config,1" form:"config" json:"config" query:"config"`
+	Code     int64                    `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                   `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp           `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewCreateObjectStorageConfigResp() *CreateObjectStorageConfigResp {
+	return &CreateObjectStorageConfigResp{}
+}
+
+func (p *CreateObjectStorageConfigResp) InitDefault() {
+}
+
+var CreateObjectStorageConfigResp_Config_DEFAULT *ObjectStorageConfigView
+
+func (p *CreateObjectStorageConfigResp) GetConfig() (v *ObjectStorageConfigView) {
+	if !p.IsSetConfig() {
+		return CreateObjectStorageConfigResp_Config_DEFAULT
+	}
+	return p.Config
+}
+
+func (p *CreateObjectStorageConfigResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *CreateObjectStorageConfigResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var CreateObjectStorageConfigResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *CreateObjectStorageConfigResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return CreateObjectStorageConfigResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_CreateObjectStorageConfigResp = map[int16]string{
+	1:   "config",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *CreateObjectStorageConfigResp) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *CreateObjectStorageConfigResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *CreateObjectStorageConfigResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CreateObjectStorageConfigResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CreateObjectStorageConfigResp[fieldId]))
+}
+
+func (p *CreateObjectStorageConfigResp) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageConfigView()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *CreateObjectStorageConfigResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *CreateObjectStorageConfigResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CreateObjectStorageConfigResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigResp) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *CreateObjectStorageConfigResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CreateObjectStorageConfigResp(%+v)", *p)
+
+}
+
+type UpdateObjectStorageConfigReq struct {
+	ID              int64                         `thrift:"id,1" form:"id" json:"id,string" query:"id"`
+	ExpectedVersion int64                         `thrift:"expected_version,2" form:"expected_version" json:"expected_version,string" query:"expected_version"`
+	Name            string                        `thrift:"name,3" form:"name" json:"name" query:"name"`
+	Config          *ObjectStoragePublicConfig    `thrift:"config,4" form:"config" json:"config" query:"config"`
+	Credential      *ObjectStorageCredentialInput `thrift:"credential,5,optional" form:"credential" json:"credential,omitempty" query:"credential"`
+}
+
+func NewUpdateObjectStorageConfigReq() *UpdateObjectStorageConfigReq {
+	return &UpdateObjectStorageConfigReq{}
+}
+
+func (p *UpdateObjectStorageConfigReq) InitDefault() {
+}
+
+func (p *UpdateObjectStorageConfigReq) GetID() (v int64) {
+	return p.ID
+}
+
+func (p *UpdateObjectStorageConfigReq) GetExpectedVersion() (v int64) {
+	return p.ExpectedVersion
+}
+
+func (p *UpdateObjectStorageConfigReq) GetName() (v string) {
+	return p.Name
+}
+
+var UpdateObjectStorageConfigReq_Config_DEFAULT *ObjectStoragePublicConfig
+
+func (p *UpdateObjectStorageConfigReq) GetConfig() (v *ObjectStoragePublicConfig) {
+	if !p.IsSetConfig() {
+		return UpdateObjectStorageConfigReq_Config_DEFAULT
+	}
+	return p.Config
+}
+
+var UpdateObjectStorageConfigReq_Credential_DEFAULT *ObjectStorageCredentialInput
+
+func (p *UpdateObjectStorageConfigReq) GetCredential() (v *ObjectStorageCredentialInput) {
+	if !p.IsSetCredential() {
+		return UpdateObjectStorageConfigReq_Credential_DEFAULT
+	}
+	return p.Credential
+}
+
+var fieldIDToName_UpdateObjectStorageConfigReq = map[int16]string{
+	1: "id",
+	2: "expected_version",
+	3: "name",
+	4: "config",
+	5: "credential",
+}
+
+func (p *UpdateObjectStorageConfigReq) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *UpdateObjectStorageConfigReq) IsSetCredential() bool {
+	return p.Credential != nil
+}
+
+func (p *UpdateObjectStorageConfigReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_UpdateObjectStorageConfigReq[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ID = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigReq) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ExpectedVersion = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigReq) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Name = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigReq) ReadField4(iprot thrift.TProtocol) error {
+	_field := NewObjectStoragePublicConfig()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigReq) ReadField5(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageCredentialInput()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Credential = _field
+	return nil
+}
+
+func (p *UpdateObjectStorageConfigReq) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateObjectStorageConfigReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("expected_version", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ExpectedVersion); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("name", thrift.STRING, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Name); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCredential() {
+		if err = oprot.WriteFieldBegin("credential", thrift.STRUCT, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Credential.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("UpdateObjectStorageConfigReq(%+v)", *p)
+
+}
+
+type UpdateObjectStorageConfigResp struct {
+	Config   *ObjectStorageConfigView `thrift:"config,1" form:"config" json:"config" query:"config"`
+	Code     int64                    `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                   `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp           `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewUpdateObjectStorageConfigResp() *UpdateObjectStorageConfigResp {
+	return &UpdateObjectStorageConfigResp{}
+}
+
+func (p *UpdateObjectStorageConfigResp) InitDefault() {
+}
+
+var UpdateObjectStorageConfigResp_Config_DEFAULT *ObjectStorageConfigView
+
+func (p *UpdateObjectStorageConfigResp) GetConfig() (v *ObjectStorageConfigView) {
+	if !p.IsSetConfig() {
+		return UpdateObjectStorageConfigResp_Config_DEFAULT
+	}
+	return p.Config
+}
+
+func (p *UpdateObjectStorageConfigResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *UpdateObjectStorageConfigResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var UpdateObjectStorageConfigResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *UpdateObjectStorageConfigResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return UpdateObjectStorageConfigResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_UpdateObjectStorageConfigResp = map[int16]string{
+	1:   "config",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *UpdateObjectStorageConfigResp) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *UpdateObjectStorageConfigResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *UpdateObjectStorageConfigResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_UpdateObjectStorageConfigResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_UpdateObjectStorageConfigResp[fieldId]))
+}
+
+func (p *UpdateObjectStorageConfigResp) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageConfigView()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *UpdateObjectStorageConfigResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *UpdateObjectStorageConfigResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateObjectStorageConfigResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigResp) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *UpdateObjectStorageConfigResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("UpdateObjectStorageConfigResp(%+v)", *p)
+
+}
+
+type TestObjectStorageConfigReq struct {
+	ID              *int64                        `thrift:"id,1,optional" form:"id" json:"id,string,omitempty" query:"id"`
+	ExpectedVersion *int64                        `thrift:"expected_version,2,optional" form:"expected_version" json:"expected_version,string,omitempty" query:"expected_version"`
+	ProviderType    ObjectStorageProviderType     `thrift:"provider_type,3,default,ObjectStorageProviderType" form:"provider_type" json:"provider_type" query:"provider_type"`
+	Config          *ObjectStoragePublicConfig    `thrift:"config,4" form:"config" json:"config" query:"config"`
+	Credential      *ObjectStorageCredentialInput `thrift:"credential,5,optional" form:"credential" json:"credential,omitempty" query:"credential"`
+}
+
+func NewTestObjectStorageConfigReq() *TestObjectStorageConfigReq {
+	return &TestObjectStorageConfigReq{}
+}
+
+func (p *TestObjectStorageConfigReq) InitDefault() {
+}
+
+var TestObjectStorageConfigReq_ID_DEFAULT int64
+
+func (p *TestObjectStorageConfigReq) GetID() (v int64) {
+	if !p.IsSetID() {
+		return TestObjectStorageConfigReq_ID_DEFAULT
+	}
+	return *p.ID
+}
+
+var TestObjectStorageConfigReq_ExpectedVersion_DEFAULT int64
+
+func (p *TestObjectStorageConfigReq) GetExpectedVersion() (v int64) {
+	if !p.IsSetExpectedVersion() {
+		return TestObjectStorageConfigReq_ExpectedVersion_DEFAULT
+	}
+	return *p.ExpectedVersion
+}
+
+func (p *TestObjectStorageConfigReq) GetProviderType() (v ObjectStorageProviderType) {
+	return p.ProviderType
+}
+
+var TestObjectStorageConfigReq_Config_DEFAULT *ObjectStoragePublicConfig
+
+func (p *TestObjectStorageConfigReq) GetConfig() (v *ObjectStoragePublicConfig) {
+	if !p.IsSetConfig() {
+		return TestObjectStorageConfigReq_Config_DEFAULT
+	}
+	return p.Config
+}
+
+var TestObjectStorageConfigReq_Credential_DEFAULT *ObjectStorageCredentialInput
+
+func (p *TestObjectStorageConfigReq) GetCredential() (v *ObjectStorageCredentialInput) {
+	if !p.IsSetCredential() {
+		return TestObjectStorageConfigReq_Credential_DEFAULT
+	}
+	return p.Credential
+}
+
+var fieldIDToName_TestObjectStorageConfigReq = map[int16]string{
+	1: "id",
+	2: "expected_version",
+	3: "provider_type",
+	4: "config",
+	5: "credential",
+}
+
+func (p *TestObjectStorageConfigReq) IsSetID() bool {
+	return p.ID != nil
+}
+
+func (p *TestObjectStorageConfigReq) IsSetExpectedVersion() bool {
+	return p.ExpectedVersion != nil
+}
+
+func (p *TestObjectStorageConfigReq) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *TestObjectStorageConfigReq) IsSetCredential() bool {
+	return p.Credential != nil
+}
+
+func (p *TestObjectStorageConfigReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_TestObjectStorageConfigReq[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ID = _field
+	return nil
+}
+func (p *TestObjectStorageConfigReq) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ExpectedVersion = _field
+	return nil
+}
+func (p *TestObjectStorageConfigReq) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field ObjectStorageProviderType
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = ObjectStorageProviderType(v)
+	}
+	p.ProviderType = _field
+	return nil
+}
+func (p *TestObjectStorageConfigReq) ReadField4(iprot thrift.TProtocol) error {
+	_field := NewObjectStoragePublicConfig()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *TestObjectStorageConfigReq) ReadField5(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageCredentialInput()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Credential = _field
+	return nil
+}
+
+func (p *TestObjectStorageConfigReq) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TestObjectStorageConfigReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetID() {
+		if err = oprot.WriteFieldBegin("id", thrift.I64, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.ID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetExpectedVersion() {
+		if err = oprot.WriteFieldBegin("expected_version", thrift.I64, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.ExpectedVersion); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("provider_type", thrift.I32, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI32(int32(p.ProviderType)); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCredential() {
+		if err = oprot.WriteFieldBegin("credential", thrift.STRUCT, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Credential.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TestObjectStorageConfigReq(%+v)", *p)
+
+}
+
+type TestObjectStorageConfigResp struct {
+	Success  bool                     `thrift:"success,1" form:"success" json:"success" query:"success"`
+	Health   *ObjectStorageHealthView `thrift:"health,2" form:"health" json:"health" query:"health"`
+	Code     int64                    `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                   `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp           `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewTestObjectStorageConfigResp() *TestObjectStorageConfigResp {
+	return &TestObjectStorageConfigResp{}
+}
+
+func (p *TestObjectStorageConfigResp) InitDefault() {
+}
+
+func (p *TestObjectStorageConfigResp) GetSuccess() (v bool) {
+	return p.Success
+}
+
+var TestObjectStorageConfigResp_Health_DEFAULT *ObjectStorageHealthView
+
+func (p *TestObjectStorageConfigResp) GetHealth() (v *ObjectStorageHealthView) {
+	if !p.IsSetHealth() {
+		return TestObjectStorageConfigResp_Health_DEFAULT
+	}
+	return p.Health
+}
+
+func (p *TestObjectStorageConfigResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *TestObjectStorageConfigResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var TestObjectStorageConfigResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *TestObjectStorageConfigResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return TestObjectStorageConfigResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_TestObjectStorageConfigResp = map[int16]string{
+	1:   "success",
+	2:   "health",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *TestObjectStorageConfigResp) IsSetHealth() bool {
+	return p.Health != nil
+}
+
+func (p *TestObjectStorageConfigResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *TestObjectStorageConfigResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_TestObjectStorageConfigResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_TestObjectStorageConfigResp[fieldId]))
+}
+
+func (p *TestObjectStorageConfigResp) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Success = _field
+	return nil
+}
+func (p *TestObjectStorageConfigResp) ReadField2(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageHealthView()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Health = _field
+	return nil
+}
+func (p *TestObjectStorageConfigResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *TestObjectStorageConfigResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *TestObjectStorageConfigResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *TestObjectStorageConfigResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TestObjectStorageConfigResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("success", thrift.BOOL, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.Success); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("health", thrift.STRUCT, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Health.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *TestObjectStorageConfigResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TestObjectStorageConfigResp(%+v)", *p)
+
+}
+
+type ActivateObjectStorageConfigReq struct {
+	ID                 int64 `thrift:"id,1" form:"id" json:"id,string" query:"id"`
+	ExpectedVersion    int64 `thrift:"expected_version,2" form:"expected_version" json:"expected_version,string" query:"expected_version"`
+	MigrationConfirmed bool  `thrift:"migration_confirmed,3" form:"migration_confirmed" json:"migration_confirmed" query:"migration_confirmed"`
+}
+
+func NewActivateObjectStorageConfigReq() *ActivateObjectStorageConfigReq {
+	return &ActivateObjectStorageConfigReq{}
+}
+
+func (p *ActivateObjectStorageConfigReq) InitDefault() {
+}
+
+func (p *ActivateObjectStorageConfigReq) GetID() (v int64) {
+	return p.ID
+}
+
+func (p *ActivateObjectStorageConfigReq) GetExpectedVersion() (v int64) {
+	return p.ExpectedVersion
+}
+
+func (p *ActivateObjectStorageConfigReq) GetMigrationConfirmed() (v bool) {
+	return p.MigrationConfirmed
+}
+
+var fieldIDToName_ActivateObjectStorageConfigReq = map[int16]string{
+	1: "id",
+	2: "expected_version",
+	3: "migration_confirmed",
+}
+
+func (p *ActivateObjectStorageConfigReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ActivateObjectStorageConfigReq[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigReq) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ID = _field
+	return nil
+}
+func (p *ActivateObjectStorageConfigReq) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ExpectedVersion = _field
+	return nil
+}
+func (p *ActivateObjectStorageConfigReq) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.MigrationConfirmed = _field
+	return nil
+}
+
+func (p *ActivateObjectStorageConfigReq) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ActivateObjectStorageConfigReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigReq) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigReq) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("expected_version", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ExpectedVersion); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigReq) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("migration_confirmed", thrift.BOOL, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.MigrationConfirmed); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ActivateObjectStorageConfigReq(%+v)", *p)
+
+}
+
+type ActivateObjectStorageConfigResp struct {
+	Config   *ObjectStorageConfigView `thrift:"config,1" form:"config" json:"config" query:"config"`
+	Code     int64                    `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                   `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp           `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewActivateObjectStorageConfigResp() *ActivateObjectStorageConfigResp {
+	return &ActivateObjectStorageConfigResp{}
+}
+
+func (p *ActivateObjectStorageConfigResp) InitDefault() {
+}
+
+var ActivateObjectStorageConfigResp_Config_DEFAULT *ObjectStorageConfigView
+
+func (p *ActivateObjectStorageConfigResp) GetConfig() (v *ObjectStorageConfigView) {
+	if !p.IsSetConfig() {
+		return ActivateObjectStorageConfigResp_Config_DEFAULT
+	}
+	return p.Config
+}
+
+func (p *ActivateObjectStorageConfigResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *ActivateObjectStorageConfigResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var ActivateObjectStorageConfigResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *ActivateObjectStorageConfigResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return ActivateObjectStorageConfigResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_ActivateObjectStorageConfigResp = map[int16]string{
+	1:   "config",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *ActivateObjectStorageConfigResp) IsSetConfig() bool {
+	return p.Config != nil
+}
+
+func (p *ActivateObjectStorageConfigResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *ActivateObjectStorageConfigResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ActivateObjectStorageConfigResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_ActivateObjectStorageConfigResp[fieldId]))
+}
+
+func (p *ActivateObjectStorageConfigResp) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewObjectStorageConfigView()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Config = _field
+	return nil
+}
+func (p *ActivateObjectStorageConfigResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *ActivateObjectStorageConfigResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *ActivateObjectStorageConfigResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *ActivateObjectStorageConfigResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ActivateObjectStorageConfigResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigResp) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("config", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Config.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *ActivateObjectStorageConfigResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ActivateObjectStorageConfigResp(%+v)", *p)
+
+}
+
+type DeleteObjectStorageConfigReq struct {
+	ID              int64 `thrift:"id,1" form:"id" json:"id,string" query:"id"`
+	ExpectedVersion int64 `thrift:"expected_version,2" form:"expected_version" json:"expected_version,string" query:"expected_version"`
+}
+
+func NewDeleteObjectStorageConfigReq() *DeleteObjectStorageConfigReq {
+	return &DeleteObjectStorageConfigReq{}
+}
+
+func (p *DeleteObjectStorageConfigReq) InitDefault() {
+}
+
+func (p *DeleteObjectStorageConfigReq) GetID() (v int64) {
+	return p.ID
+}
+
+func (p *DeleteObjectStorageConfigReq) GetExpectedVersion() (v int64) {
+	return p.ExpectedVersion
+}
+
+var fieldIDToName_DeleteObjectStorageConfigReq = map[int16]string{
+	1: "id",
+	2: "expected_version",
+}
+
+func (p *DeleteObjectStorageConfigReq) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_DeleteObjectStorageConfigReq[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigReq) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ID = _field
+	return nil
+}
+func (p *DeleteObjectStorageConfigReq) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ExpectedVersion = _field
+	return nil
+}
+
+func (p *DeleteObjectStorageConfigReq) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteObjectStorageConfigReq"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigReq) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigReq) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("expected_version", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ExpectedVersion); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("DeleteObjectStorageConfigReq(%+v)", *p)
+
+}
+
+type DeleteObjectStorageConfigResp struct {
+	Code     int64          `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string         `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp `thrift:"BaseResp,255,required" form:"-" json:"-" query:"-"`
+}
+
+func NewDeleteObjectStorageConfigResp() *DeleteObjectStorageConfigResp {
+	return &DeleteObjectStorageConfigResp{}
+}
+
+func (p *DeleteObjectStorageConfigResp) InitDefault() {
+}
+
+func (p *DeleteObjectStorageConfigResp) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *DeleteObjectStorageConfigResp) GetMsg() (v string) {
+	return p.Msg
+}
+
+var DeleteObjectStorageConfigResp_BaseResp_DEFAULT *base.BaseResp
+
+func (p *DeleteObjectStorageConfigResp) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return DeleteObjectStorageConfigResp_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_DeleteObjectStorageConfigResp = map[int16]string{
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *DeleteObjectStorageConfigResp) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *DeleteObjectStorageConfigResp) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+	var issetBaseResp bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetBaseResp = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetBaseResp {
+		fieldId = 255
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_DeleteObjectStorageConfigResp[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_DeleteObjectStorageConfigResp[fieldId]))
+}
+
+func (p *DeleteObjectStorageConfigResp) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *DeleteObjectStorageConfigResp) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *DeleteObjectStorageConfigResp) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *DeleteObjectStorageConfigResp) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteObjectStorageConfigResp"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigResp) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigResp) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigResp) writeField255(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.BaseResp.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *DeleteObjectStorageConfigResp) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("DeleteObjectStorageConfigResp(%+v)", *p)
+
+}
+
 type ConfigService interface {
 	GetBasicConfiguration(ctx context.Context, req *GetBasicConfigurationReq) (r *GetBasicConfigurationResp, err error)
 
@@ -21317,6 +26766,18 @@ type ConfigService interface {
 	SaveModelGrants(ctx context.Context, req *SaveModelGrantsReq) (r *SaveModelGrantsResp, err error)
 
 	DeleteModel(ctx context.Context, req *DeleteModelReq) (r *DeleteModelResp, err error)
+
+	ListObjectStorageConfigs(ctx context.Context, req *ListObjectStorageConfigsReq) (r *ListObjectStorageConfigsResp, err error)
+
+	CreateObjectStorageConfig(ctx context.Context, req *CreateObjectStorageConfigReq) (r *CreateObjectStorageConfigResp, err error)
+
+	UpdateObjectStorageConfig(ctx context.Context, req *UpdateObjectStorageConfigReq) (r *UpdateObjectStorageConfigResp, err error)
+
+	TestObjectStorageConfig(ctx context.Context, req *TestObjectStorageConfigReq) (r *TestObjectStorageConfigResp, err error)
+
+	ActivateObjectStorageConfig(ctx context.Context, req *ActivateObjectStorageConfigReq) (r *ActivateObjectStorageConfigResp, err error)
+
+	DeleteObjectStorageConfig(ctx context.Context, req *DeleteObjectStorageConfigReq) (r *DeleteObjectStorageConfigResp, err error)
 }
 
 type ConfigServiceClient struct {
@@ -21489,6 +26950,60 @@ func (p *ConfigServiceClient) DeleteModel(ctx context.Context, req *DeleteModelR
 	}
 	return _result.GetSuccess(), nil
 }
+func (p *ConfigServiceClient) ListObjectStorageConfigs(ctx context.Context, req *ListObjectStorageConfigsReq) (r *ListObjectStorageConfigsResp, err error) {
+	var _args ConfigServiceListObjectStorageConfigsArgs
+	_args.Req = req
+	var _result ConfigServiceListObjectStorageConfigsResult
+	if err = p.Client_().Call(ctx, "ListObjectStorageConfigs", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *ConfigServiceClient) CreateObjectStorageConfig(ctx context.Context, req *CreateObjectStorageConfigReq) (r *CreateObjectStorageConfigResp, err error) {
+	var _args ConfigServiceCreateObjectStorageConfigArgs
+	_args.Req = req
+	var _result ConfigServiceCreateObjectStorageConfigResult
+	if err = p.Client_().Call(ctx, "CreateObjectStorageConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *ConfigServiceClient) UpdateObjectStorageConfig(ctx context.Context, req *UpdateObjectStorageConfigReq) (r *UpdateObjectStorageConfigResp, err error) {
+	var _args ConfigServiceUpdateObjectStorageConfigArgs
+	_args.Req = req
+	var _result ConfigServiceUpdateObjectStorageConfigResult
+	if err = p.Client_().Call(ctx, "UpdateObjectStorageConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *ConfigServiceClient) TestObjectStorageConfig(ctx context.Context, req *TestObjectStorageConfigReq) (r *TestObjectStorageConfigResp, err error) {
+	var _args ConfigServiceTestObjectStorageConfigArgs
+	_args.Req = req
+	var _result ConfigServiceTestObjectStorageConfigResult
+	if err = p.Client_().Call(ctx, "TestObjectStorageConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *ConfigServiceClient) ActivateObjectStorageConfig(ctx context.Context, req *ActivateObjectStorageConfigReq) (r *ActivateObjectStorageConfigResp, err error) {
+	var _args ConfigServiceActivateObjectStorageConfigArgs
+	_args.Req = req
+	var _result ConfigServiceActivateObjectStorageConfigResult
+	if err = p.Client_().Call(ctx, "ActivateObjectStorageConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *ConfigServiceClient) DeleteObjectStorageConfig(ctx context.Context, req *DeleteObjectStorageConfigReq) (r *DeleteObjectStorageConfigResp, err error) {
+	var _args ConfigServiceDeleteObjectStorageConfigArgs
+	_args.Req = req
+	var _result ConfigServiceDeleteObjectStorageConfigResult
+	if err = p.Client_().Call(ctx, "DeleteObjectStorageConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
 
 type ConfigServiceProcessor struct {
 	processorMap map[string]thrift.TProcessorFunction
@@ -21526,6 +27041,12 @@ func NewConfigServiceProcessor(handler ConfigService) *ConfigServiceProcessor {
 	self.AddToProcessorMap("GetModelGrants", &configServiceProcessorGetModelGrants{handler: handler})
 	self.AddToProcessorMap("SaveModelGrants", &configServiceProcessorSaveModelGrants{handler: handler})
 	self.AddToProcessorMap("DeleteModel", &configServiceProcessorDeleteModel{handler: handler})
+	self.AddToProcessorMap("ListObjectStorageConfigs", &configServiceProcessorListObjectStorageConfigs{handler: handler})
+	self.AddToProcessorMap("CreateObjectStorageConfig", &configServiceProcessorCreateObjectStorageConfig{handler: handler})
+	self.AddToProcessorMap("UpdateObjectStorageConfig", &configServiceProcessorUpdateObjectStorageConfig{handler: handler})
+	self.AddToProcessorMap("TestObjectStorageConfig", &configServiceProcessorTestObjectStorageConfig{handler: handler})
+	self.AddToProcessorMap("ActivateObjectStorageConfig", &configServiceProcessorActivateObjectStorageConfig{handler: handler})
+	self.AddToProcessorMap("DeleteObjectStorageConfig", &configServiceProcessorDeleteObjectStorageConfig{handler: handler})
 	return self
 }
 func (p *ConfigServiceProcessor) Process(ctx context.Context, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
@@ -22297,6 +27818,294 @@ func (p *configServiceProcessorDeleteModel) Process(ctx context.Context, seqId i
 		result.Success = retval
 	}
 	if err2 = oprot.WriteMessageBegin("DeleteModel", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorListObjectStorageConfigs struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorListObjectStorageConfigs) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceListObjectStorageConfigsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListObjectStorageConfigs", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceListObjectStorageConfigsResult{}
+	var retval *ListObjectStorageConfigsResp
+	if retval, err2 = p.handler.ListObjectStorageConfigs(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListObjectStorageConfigs: "+err2.Error())
+		oprot.WriteMessageBegin("ListObjectStorageConfigs", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListObjectStorageConfigs", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorCreateObjectStorageConfig struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorCreateObjectStorageConfig) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceCreateObjectStorageConfigArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("CreateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceCreateObjectStorageConfigResult{}
+	var retval *CreateObjectStorageConfigResp
+	if retval, err2 = p.handler.CreateObjectStorageConfig(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing CreateObjectStorageConfig: "+err2.Error())
+		oprot.WriteMessageBegin("CreateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("CreateObjectStorageConfig", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorUpdateObjectStorageConfig struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorUpdateObjectStorageConfig) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceUpdateObjectStorageConfigArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("UpdateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceUpdateObjectStorageConfigResult{}
+	var retval *UpdateObjectStorageConfigResp
+	if retval, err2 = p.handler.UpdateObjectStorageConfig(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing UpdateObjectStorageConfig: "+err2.Error())
+		oprot.WriteMessageBegin("UpdateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("UpdateObjectStorageConfig", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorTestObjectStorageConfig struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorTestObjectStorageConfig) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceTestObjectStorageConfigArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("TestObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceTestObjectStorageConfigResult{}
+	var retval *TestObjectStorageConfigResp
+	if retval, err2 = p.handler.TestObjectStorageConfig(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing TestObjectStorageConfig: "+err2.Error())
+		oprot.WriteMessageBegin("TestObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("TestObjectStorageConfig", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorActivateObjectStorageConfig struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorActivateObjectStorageConfig) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceActivateObjectStorageConfigArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ActivateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceActivateObjectStorageConfigResult{}
+	var retval *ActivateObjectStorageConfigResp
+	if retval, err2 = p.handler.ActivateObjectStorageConfig(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ActivateObjectStorageConfig: "+err2.Error())
+		oprot.WriteMessageBegin("ActivateObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ActivateObjectStorageConfig", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type configServiceProcessorDeleteObjectStorageConfig struct {
+	handler ConfigService
+}
+
+func (p *configServiceProcessorDeleteObjectStorageConfig) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := ConfigServiceDeleteObjectStorageConfigArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("DeleteObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := ConfigServiceDeleteObjectStorageConfigResult{}
+	var retval *DeleteObjectStorageConfigResp
+	if retval, err2 = p.handler.DeleteObjectStorageConfig(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing DeleteObjectStorageConfig: "+err2.Error())
+		oprot.WriteMessageBegin("DeleteObjectStorageConfig", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("DeleteObjectStorageConfig", thrift.REPLY, seqId); err2 != nil {
 		err = err2
 	}
 	if err2 = result.Write(oprot); err == nil && err2 != nil {
@@ -27015,5 +32824,1769 @@ func (p *ConfigServiceDeleteModelResult) String() string {
 		return "<nil>"
 	}
 	return fmt.Sprintf("ConfigServiceDeleteModelResult(%+v)", *p)
+
+}
+
+type ConfigServiceListObjectStorageConfigsArgs struct {
+	Req *ListObjectStorageConfigsReq `thrift:"req,1"`
+}
+
+func NewConfigServiceListObjectStorageConfigsArgs() *ConfigServiceListObjectStorageConfigsArgs {
+	return &ConfigServiceListObjectStorageConfigsArgs{}
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) InitDefault() {
+}
+
+var ConfigServiceListObjectStorageConfigsArgs_Req_DEFAULT *ListObjectStorageConfigsReq
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) GetReq() (v *ListObjectStorageConfigsReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceListObjectStorageConfigsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceListObjectStorageConfigsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceListObjectStorageConfigsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewListObjectStorageConfigsReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListObjectStorageConfigs_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceListObjectStorageConfigsArgs(%+v)", *p)
+
+}
+
+type ConfigServiceListObjectStorageConfigsResult struct {
+	Success *ListObjectStorageConfigsResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceListObjectStorageConfigsResult() *ConfigServiceListObjectStorageConfigsResult {
+	return &ConfigServiceListObjectStorageConfigsResult{}
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) InitDefault() {
+}
+
+var ConfigServiceListObjectStorageConfigsResult_Success_DEFAULT *ListObjectStorageConfigsResp
+
+func (p *ConfigServiceListObjectStorageConfigsResult) GetSuccess() (v *ListObjectStorageConfigsResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceListObjectStorageConfigsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceListObjectStorageConfigsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceListObjectStorageConfigsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewListObjectStorageConfigsResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListObjectStorageConfigs_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceListObjectStorageConfigsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceListObjectStorageConfigsResult(%+v)", *p)
+
+}
+
+type ConfigServiceCreateObjectStorageConfigArgs struct {
+	Req *CreateObjectStorageConfigReq `thrift:"req,1"`
+}
+
+func NewConfigServiceCreateObjectStorageConfigArgs() *ConfigServiceCreateObjectStorageConfigArgs {
+	return &ConfigServiceCreateObjectStorageConfigArgs{}
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) InitDefault() {
+}
+
+var ConfigServiceCreateObjectStorageConfigArgs_Req_DEFAULT *CreateObjectStorageConfigReq
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) GetReq() (v *CreateObjectStorageConfigReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceCreateObjectStorageConfigArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceCreateObjectStorageConfigArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceCreateObjectStorageConfigArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewCreateObjectStorageConfigReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CreateObjectStorageConfig_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceCreateObjectStorageConfigArgs(%+v)", *p)
+
+}
+
+type ConfigServiceCreateObjectStorageConfigResult struct {
+	Success *CreateObjectStorageConfigResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceCreateObjectStorageConfigResult() *ConfigServiceCreateObjectStorageConfigResult {
+	return &ConfigServiceCreateObjectStorageConfigResult{}
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) InitDefault() {
+}
+
+var ConfigServiceCreateObjectStorageConfigResult_Success_DEFAULT *CreateObjectStorageConfigResp
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) GetSuccess() (v *CreateObjectStorageConfigResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceCreateObjectStorageConfigResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceCreateObjectStorageConfigResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceCreateObjectStorageConfigResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewCreateObjectStorageConfigResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CreateObjectStorageConfig_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceCreateObjectStorageConfigResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceCreateObjectStorageConfigResult(%+v)", *p)
+
+}
+
+type ConfigServiceUpdateObjectStorageConfigArgs struct {
+	Req *UpdateObjectStorageConfigReq `thrift:"req,1"`
+}
+
+func NewConfigServiceUpdateObjectStorageConfigArgs() *ConfigServiceUpdateObjectStorageConfigArgs {
+	return &ConfigServiceUpdateObjectStorageConfigArgs{}
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) InitDefault() {
+}
+
+var ConfigServiceUpdateObjectStorageConfigArgs_Req_DEFAULT *UpdateObjectStorageConfigReq
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) GetReq() (v *UpdateObjectStorageConfigReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceUpdateObjectStorageConfigArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceUpdateObjectStorageConfigArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceUpdateObjectStorageConfigArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewUpdateObjectStorageConfigReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateObjectStorageConfig_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceUpdateObjectStorageConfigArgs(%+v)", *p)
+
+}
+
+type ConfigServiceUpdateObjectStorageConfigResult struct {
+	Success *UpdateObjectStorageConfigResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceUpdateObjectStorageConfigResult() *ConfigServiceUpdateObjectStorageConfigResult {
+	return &ConfigServiceUpdateObjectStorageConfigResult{}
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) InitDefault() {
+}
+
+var ConfigServiceUpdateObjectStorageConfigResult_Success_DEFAULT *UpdateObjectStorageConfigResp
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) GetSuccess() (v *UpdateObjectStorageConfigResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceUpdateObjectStorageConfigResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceUpdateObjectStorageConfigResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceUpdateObjectStorageConfigResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewUpdateObjectStorageConfigResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateObjectStorageConfig_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceUpdateObjectStorageConfigResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceUpdateObjectStorageConfigResult(%+v)", *p)
+
+}
+
+type ConfigServiceTestObjectStorageConfigArgs struct {
+	Req *TestObjectStorageConfigReq `thrift:"req,1"`
+}
+
+func NewConfigServiceTestObjectStorageConfigArgs() *ConfigServiceTestObjectStorageConfigArgs {
+	return &ConfigServiceTestObjectStorageConfigArgs{}
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) InitDefault() {
+}
+
+var ConfigServiceTestObjectStorageConfigArgs_Req_DEFAULT *TestObjectStorageConfigReq
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) GetReq() (v *TestObjectStorageConfigReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceTestObjectStorageConfigArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceTestObjectStorageConfigArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceTestObjectStorageConfigArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewTestObjectStorageConfigReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TestObjectStorageConfig_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceTestObjectStorageConfigArgs(%+v)", *p)
+
+}
+
+type ConfigServiceTestObjectStorageConfigResult struct {
+	Success *TestObjectStorageConfigResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceTestObjectStorageConfigResult() *ConfigServiceTestObjectStorageConfigResult {
+	return &ConfigServiceTestObjectStorageConfigResult{}
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) InitDefault() {
+}
+
+var ConfigServiceTestObjectStorageConfigResult_Success_DEFAULT *TestObjectStorageConfigResp
+
+func (p *ConfigServiceTestObjectStorageConfigResult) GetSuccess() (v *TestObjectStorageConfigResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceTestObjectStorageConfigResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceTestObjectStorageConfigResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceTestObjectStorageConfigResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewTestObjectStorageConfigResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TestObjectStorageConfig_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceTestObjectStorageConfigResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceTestObjectStorageConfigResult(%+v)", *p)
+
+}
+
+type ConfigServiceActivateObjectStorageConfigArgs struct {
+	Req *ActivateObjectStorageConfigReq `thrift:"req,1"`
+}
+
+func NewConfigServiceActivateObjectStorageConfigArgs() *ConfigServiceActivateObjectStorageConfigArgs {
+	return &ConfigServiceActivateObjectStorageConfigArgs{}
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) InitDefault() {
+}
+
+var ConfigServiceActivateObjectStorageConfigArgs_Req_DEFAULT *ActivateObjectStorageConfigReq
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) GetReq() (v *ActivateObjectStorageConfigReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceActivateObjectStorageConfigArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceActivateObjectStorageConfigArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceActivateObjectStorageConfigArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewActivateObjectStorageConfigReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ActivateObjectStorageConfig_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceActivateObjectStorageConfigArgs(%+v)", *p)
+
+}
+
+type ConfigServiceActivateObjectStorageConfigResult struct {
+	Success *ActivateObjectStorageConfigResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceActivateObjectStorageConfigResult() *ConfigServiceActivateObjectStorageConfigResult {
+	return &ConfigServiceActivateObjectStorageConfigResult{}
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) InitDefault() {
+}
+
+var ConfigServiceActivateObjectStorageConfigResult_Success_DEFAULT *ActivateObjectStorageConfigResp
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) GetSuccess() (v *ActivateObjectStorageConfigResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceActivateObjectStorageConfigResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceActivateObjectStorageConfigResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceActivateObjectStorageConfigResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewActivateObjectStorageConfigResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ActivateObjectStorageConfig_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceActivateObjectStorageConfigResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceActivateObjectStorageConfigResult(%+v)", *p)
+
+}
+
+type ConfigServiceDeleteObjectStorageConfigArgs struct {
+	Req *DeleteObjectStorageConfigReq `thrift:"req,1"`
+}
+
+func NewConfigServiceDeleteObjectStorageConfigArgs() *ConfigServiceDeleteObjectStorageConfigArgs {
+	return &ConfigServiceDeleteObjectStorageConfigArgs{}
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) InitDefault() {
+}
+
+var ConfigServiceDeleteObjectStorageConfigArgs_Req_DEFAULT *DeleteObjectStorageConfigReq
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) GetReq() (v *DeleteObjectStorageConfigReq) {
+	if !p.IsSetReq() {
+		return ConfigServiceDeleteObjectStorageConfigArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_ConfigServiceDeleteObjectStorageConfigArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceDeleteObjectStorageConfigArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewDeleteObjectStorageConfigReq()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteObjectStorageConfig_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceDeleteObjectStorageConfigArgs(%+v)", *p)
+
+}
+
+type ConfigServiceDeleteObjectStorageConfigResult struct {
+	Success *DeleteObjectStorageConfigResp `thrift:"success,0,optional"`
+}
+
+func NewConfigServiceDeleteObjectStorageConfigResult() *ConfigServiceDeleteObjectStorageConfigResult {
+	return &ConfigServiceDeleteObjectStorageConfigResult{}
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) InitDefault() {
+}
+
+var ConfigServiceDeleteObjectStorageConfigResult_Success_DEFAULT *DeleteObjectStorageConfigResp
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) GetSuccess() (v *DeleteObjectStorageConfigResp) {
+	if !p.IsSetSuccess() {
+		return ConfigServiceDeleteObjectStorageConfigResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_ConfigServiceDeleteObjectStorageConfigResult = map[int16]string{
+	0: "success",
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ConfigServiceDeleteObjectStorageConfigResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewDeleteObjectStorageConfigResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteObjectStorageConfig_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *ConfigServiceDeleteObjectStorageConfigResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ConfigServiceDeleteObjectStorageConfigResult(%+v)", *p)
 
 }

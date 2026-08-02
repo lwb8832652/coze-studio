@@ -21,6 +21,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createAdminModel,
   createAdminManagedModel,
+  activateObjectStorageConfig,
+  createObjectStorageConfig,
   createAdminUser,
   deleteAdminModel,
   getAdminBasicConfig,
@@ -30,10 +32,14 @@ import {
   listAdminModelProviders,
   getSystemAdminStatus,
   isAdminBasicConfigConflict,
+  listObjectStorageConfigs,
   listAdminUserSpaces,
   listAdminWorkspaceMembers,
   listAdminUsers,
   listAdminWorkspaces,
+  ObjectStorageHealthStatus,
+  ObjectStorageProviderType,
+  testObjectStorageConfig,
   resetAdminUserPassword,
   saveAdminBasicConfig,
   updateAdminUser,
@@ -439,6 +445,180 @@ describe('system service', () => {
     ).catch(reason => reason);
 
     expect(isAdminBasicConfigConflict(error)).toBe(true);
+  });
+
+  it('lists object storage configs without receiving credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        configs: [
+          {
+            id: '7',
+            name: '七牛主存储',
+            provider_type: ObjectStorageProviderType.QINIU,
+            config: {
+              bucket: 'coze-assets',
+              region: 'z0',
+              download_domain: 'https://assets.example.test',
+            },
+            credential_configured: true,
+            health: {
+              status: ObjectStorageHealthStatus.HEALTHY,
+              latency_ms: 42,
+            },
+            desired_active: true,
+            runtime_active: true,
+            restart_required: false,
+            version: '3',
+            runtime_revision: '3',
+            created_at: '2026-07-28T10:00:00Z',
+            updated_at: '2026-07-28T10:10:00Z',
+          },
+        ],
+        runtime_source: 1,
+        restart_required: false,
+        code: 0,
+        msg: '',
+      }),
+    });
+    globalThis.fetch = fetchMock as never;
+
+    const result = await listObjectStorageConfigs();
+
+    expect(result.configs[0]).toMatchObject({
+      credential_configured: true,
+      desired_active: true,
+      runtime_active: true,
+    });
+    expect(JSON.stringify(result)).not.toContain('secret_access_key');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/config/object-storage/list',
+      {
+        credentials: 'include',
+      },
+    );
+  });
+
+  it('posts object storage mutations with explicit credentials', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          config: {
+            id: '8',
+            name: 'MinIO 备用',
+            provider_type: ObjectStorageProviderType.MINIO,
+            config: {
+              bucket: 'coze',
+              endpoint: 'http://minio:9000',
+              force_path_style: true,
+              use_ssl: false,
+            },
+            credential_configured: true,
+            health: {
+              status: ObjectStorageHealthStatus.UNKNOWN,
+            },
+            desired_active: false,
+            runtime_active: false,
+            restart_required: false,
+            version: '1',
+            runtime_revision: '',
+            created_at: '2026-07-28T10:00:00Z',
+            updated_at: '2026-07-28T10:00:00Z',
+          },
+          code: 0,
+          msg: '',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          health: {
+            status: ObjectStorageHealthStatus.HEALTHY,
+          },
+          code: 0,
+          msg: '',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          config: {
+            id: '8',
+            desired_active: true,
+            runtime_active: true,
+            version: '2',
+          },
+          code: 0,
+          msg: '',
+        }),
+      });
+    globalThis.fetch = fetchMock as never;
+
+    await createObjectStorageConfig({
+      name: 'MinIO 备用',
+      provider_type: ObjectStorageProviderType.MINIO,
+      config: {
+        bucket: 'coze',
+        endpoint: 'http://minio:9000',
+        force_path_style: true,
+        use_ssl: false,
+      },
+      credential: {
+        access_key_id: 'minio-ak',
+        secret_access_key: 'minio-sk',
+      },
+    });
+    await testObjectStorageConfig({
+      id: '8',
+      expected_version: '1',
+      provider_type: ObjectStorageProviderType.MINIO,
+      config: {
+        bucket: 'coze',
+        endpoint: 'http://minio:9000',
+        force_path_style: true,
+        use_ssl: false,
+      },
+    });
+    await activateObjectStorageConfig({
+      id: '8',
+      expected_version: '1',
+      migration_confirmed: true,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/admin/config/object-storage/create',
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      '/api/admin/config/object-storage/test',
+    );
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      '/api/admin/config/object-storage/activate',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({
+        name: 'MinIO 备用',
+        provider_type: ObjectStorageProviderType.MINIO,
+        config: {
+          bucket: 'coze',
+          endpoint: 'http://minio:9000',
+          force_path_style: true,
+          use_ssl: false,
+        },
+        credential: {
+          access_key_id: 'minio-ak',
+          secret_access_key: 'minio-sk',
+        },
+      }),
+      credentials: 'include',
+      method: 'POST',
+    });
   });
 
   it('gets admin model list config', async () => {

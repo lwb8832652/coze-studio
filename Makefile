@@ -27,6 +27,7 @@ env:
 		echo "Env file '$(ENV_FILE)' not found, using example env..."; \
 		cp ./docker/.env.debug.example $(ENV_FILE); \
 	fi
+	@bash ./scripts/setup/ensure_object_storage_credential_key.sh "$(ENV_FILE)"
 	@tmp_file="$$(mktemp)"; \
 	grep -Ev '^(# Agent thread runtime for P0 debug validation|(export[[:space:]]+)?(AGENT_THREAD_RUNTIME_DEFAULT|AGENT_THREAD_EINO_ADK_ENABLED|AGENT_THREAD_WORKER_ENABLED|AGENT_THREAD_WORKER_ID|AGENT_THREAD_WORKER_BATCH_SIZE|AGENT_THREAD_WORKER_INTERVAL_MS)=)' "$(ENV_FILE)" > "$$tmp_file"; \
 	cat "$$tmp_file" > "$(ENV_FILE)"; \
@@ -95,6 +96,7 @@ web_env:
 		echo "Env file '$(WEB_ENV_FILE)' not found, using example env..."; \
 		cp ./docker/.env.example $(WEB_ENV_FILE); \
 	fi
+	@bash ./scripts/setup/ensure_object_storage_credential_key.sh "$(WEB_ENV_FILE)"
 
 web: web_env
 	@echo "Start web server in docker"

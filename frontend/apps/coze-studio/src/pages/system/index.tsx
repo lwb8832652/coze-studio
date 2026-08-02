@@ -59,6 +59,7 @@ import {
 } from './service';
 import { SandboxManagementSection } from './sandbox-management-section';
 import { OverviewSection } from './overview-section';
+import { ObjectStorageSection } from './object-storage-section';
 import { ModelConfigSection } from './model-config-section';
 import { SYSTEM_NAV_GROUPS, SYSTEM_SECTIONS } from './content';
 import {
@@ -614,6 +615,9 @@ const SystemManagementPage = () => {
     }
     if (activeSection === 'announcements') {
       return <AnnouncementsSection />;
+    }
+    if (activeSection === 'object-storage') {
+      return <ObjectStorageSection />;
     }
     if (activeSection.startsWith('billing-')) {
       return (

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
+import type * as SystemService from '../service';
+
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockNavigate = vi.hoisted(() => vi.fn());
@@ -28,26 +30,34 @@ vi.mock('../sandbox-management-section', () => ({
   },
 }));
 
-vi.mock('../service', () => ({
-  createAdminModel: vi.fn(),
-  createAdminUser: vi.fn(),
-  deleteAdminModel: vi.fn(),
-  getAdminBasicConfig: vi.fn().mockResolvedValue({
-    revision: 'rev-1',
-    configuration: {},
-  }),
-  getAdminKnowledgeConfig: vi.fn().mockResolvedValue({ knowledge_config: {} }),
-  getAdminModelList: vi.fn().mockResolvedValue({ provider_model_list: [] }),
-  getSystemAdminStatus: mockAdminStatus,
-  isAdminBasicConfigConflict: vi.fn().mockReturnValue(false),
-  listAdminUserSpaces: vi.fn(),
-  listAdminUsers: vi.fn().mockResolvedValue({ users: [], total: 0 }),
-  listAdminWorkspaceMembers: vi.fn(),
-  listAdminWorkspaces: vi.fn().mockResolvedValue({ workspaces: [], total: 0 }),
-  resetAdminUserPassword: vi.fn(),
-  saveAdminBasicConfig: vi.fn(),
-  updateAdminUser: vi.fn(),
-}));
+vi.mock('../service', async importOriginal => {
+  const actual = await importOriginal<typeof SystemService>();
+  return {
+    ...actual,
+    createAdminModel: vi.fn(),
+    createAdminUser: vi.fn(),
+    deleteAdminModel: vi.fn(),
+    getAdminBasicConfig: vi.fn().mockResolvedValue({
+      revision: 'rev-1',
+      configuration: {},
+    }),
+    getAdminKnowledgeConfig: vi
+      .fn()
+      .mockResolvedValue({ knowledge_config: {} }),
+    getAdminModelList: vi.fn().mockResolvedValue({ provider_model_list: [] }),
+    getSystemAdminStatus: mockAdminStatus,
+    isAdminBasicConfigConflict: vi.fn().mockReturnValue(false),
+    listAdminUserSpaces: vi.fn(),
+    listAdminUsers: vi.fn().mockResolvedValue({ users: [], total: 0 }),
+    listAdminWorkspaceMembers: vi.fn(),
+    listAdminWorkspaces: vi
+      .fn()
+      .mockResolvedValue({ workspaces: [], total: 0 }),
+    resetAdminUserPassword: vi.fn(),
+    saveAdminBasicConfig: vi.fn(),
+    updateAdminUser: vi.fn(),
+  };
+});
 
 import SystemManagementPage from '../index';
 

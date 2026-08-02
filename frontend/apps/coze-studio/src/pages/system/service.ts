@@ -27,8 +27,50 @@ import {
   ScheduleAdminAnnouncement as scheduleAdminAnnouncementGenerated,
   UpdateAdminAnnouncement as updateAdminAnnouncementGenerated,
 } from '@coze-studio/api-schema/playground';
+import {
+  ObjectStorageHealthStatus,
+  ObjectStorageProviderType,
+  ObjectStorageRuntimeSource,
+  type ActivateObjectStorageConfigReq,
+  type ActivateObjectStorageConfigResp,
+  type CreateObjectStorageConfigReq,
+  type CreateObjectStorageConfigResp,
+  type DeleteObjectStorageConfigReq,
+  type DeleteObjectStorageConfigResp,
+  type ListObjectStorageConfigsResp,
+  type ObjectStorageConfigView,
+  type ObjectStorageCredentialInput,
+  type ObjectStorageHealthView,
+  type ObjectStoragePublicConfig,
+  type TestObjectStorageConfigReq,
+  type TestObjectStorageConfigResp,
+  type UpdateObjectStorageConfigReq,
+  type UpdateObjectStorageConfigResp,
+} from '@coze-studio/api-schema/admin-config';
 
 export { AdminAnnouncementRouteType };
+export {
+  ObjectStorageHealthStatus,
+  ObjectStorageProviderType,
+  ObjectStorageRuntimeSource,
+};
+export type {
+  ActivateObjectStorageConfigReq,
+  ActivateObjectStorageConfigResp,
+  CreateObjectStorageConfigReq,
+  CreateObjectStorageConfigResp,
+  DeleteObjectStorageConfigReq,
+  DeleteObjectStorageConfigResp,
+  ListObjectStorageConfigsResp,
+  ObjectStorageConfigView,
+  ObjectStorageCredentialInput,
+  ObjectStorageHealthView,
+  ObjectStoragePublicConfig,
+  TestObjectStorageConfigReq,
+  TestObjectStorageConfigResp,
+  UpdateObjectStorageConfigReq,
+  UpdateObjectStorageConfigResp,
+};
 
 export interface SystemAdminStatus {
   is_admin: boolean;
@@ -652,12 +694,12 @@ export const getSystemAdminStatus = async (): Promise<SystemAdminStatus> => {
 };
 
 const postJSON = async <T>(url: string, body: unknown): Promise<T> => {
-  const headers = new Headers();
-  headers.set('content-type', 'application/json');
   const response = await fetch(url, {
     body: JSON.stringify(body),
     credentials: 'include',
-    headers,
+    headers: {
+      'content-type': 'application/json',
+    },
     method: 'POST',
   });
 
@@ -897,6 +939,49 @@ export const saveAdminBasicConfig = (
     configuration,
     expected_revision: expectedRevision,
   });
+
+export const listObjectStorageConfigs = () =>
+  getJSON<ListObjectStorageConfigsResp>(
+    '/api/admin/config/object-storage/list',
+  );
+
+export const createObjectStorageConfig = (
+  payload: CreateObjectStorageConfigReq,
+) =>
+  postJSON<CreateObjectStorageConfigResp>(
+    '/api/admin/config/object-storage/create',
+    payload,
+  );
+
+export const updateObjectStorageConfig = (
+  payload: UpdateObjectStorageConfigReq,
+) =>
+  postJSON<UpdateObjectStorageConfigResp>(
+    '/api/admin/config/object-storage/update',
+    payload,
+  );
+
+export const testObjectStorageConfig = (payload: TestObjectStorageConfigReq) =>
+  postJSON<TestObjectStorageConfigResp>(
+    '/api/admin/config/object-storage/test',
+    payload,
+  );
+
+export const activateObjectStorageConfig = (
+  payload: ActivateObjectStorageConfigReq,
+) =>
+  postJSON<ActivateObjectStorageConfigResp>(
+    '/api/admin/config/object-storage/activate',
+    payload,
+  );
+
+export const deleteObjectStorageConfig = (
+  payload: DeleteObjectStorageConfigReq,
+) =>
+  postJSON<DeleteObjectStorageConfigResp>(
+    '/api/admin/config/object-storage/delete',
+    payload,
+  );
 
 export const uploadAdminSiteAsset = async (
   kind: AdminSiteAssetKind,

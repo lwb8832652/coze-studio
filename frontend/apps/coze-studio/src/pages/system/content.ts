@@ -31,11 +31,6 @@ export const SYSTEM_SECTIONS = [
     description: '团队空间、个人空间和成员规模',
   },
   {
-    key: 'announcements',
-    title: '公告通知',
-    description: '创建、计划发布和审计管理员公告',
-  },
-  {
     key: 'models',
     title: '模型配置',
     description: '公共模型、供应商和接入密钥管理',
@@ -82,6 +77,16 @@ export const SYSTEM_SECTIONS = [
   },
   { key: 'billing-orders', title: '订单管理', description: '支付和履约状态' },
   {
+    key: 'announcements',
+    title: '公告通知',
+    description: '创建、计划发布和审计管理员公告',
+  },
+  {
+    key: 'object-storage',
+    title: '对象存储',
+    description: '多云对象存储配置和主配置切换',
+  },
+  {
     key: 'settings',
     title: '系统配置',
     description: '知识库和基础服务配置',
@@ -116,7 +121,7 @@ export const SYSTEM_NAV_GROUPS = [
       'billing-orders',
     ],
   },
-  { key: 'system', items: ['announcements', 'settings'] },
+  { key: 'system', items: ['announcements', 'object-storage', 'settings'] },
 ] as const satisfies readonly SystemNavGroup[];
 
 export const SECTION_CONTENT: Record<
@@ -265,6 +270,28 @@ export const SECTION_CONTENT: Record<
         title: '默认范围',
         description: '为 Agent、MCP stdio 和 AppDev 设置默认 Provider。',
         value: '受版本保护',
+      },
+    ],
+  },
+  'object-storage': {
+    heading: '对象存储',
+    summary:
+      '配置七牛、阿里 OSS、腾讯 COS、华为 OBS、AWS S3、MinIO 和 TOS，并激活当前运行使用的主配置。',
+    cards: [
+      {
+        title: '多配置',
+        description: '可新增、编辑、删除不同对象存储配置。',
+        value: '可维护',
+      },
+      {
+        title: '主配置',
+        description: '选择当前使用的对象存储，切换时带版本保护。',
+        value: '可激活',
+      },
+      {
+        title: '密钥保护',
+        description: 'AK/SK 加密保存，管理页不回显明文。',
+        value: '已保护',
       },
     ],
   },

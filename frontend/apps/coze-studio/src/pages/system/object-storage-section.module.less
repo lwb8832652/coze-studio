@@ -1,0 +1,437 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toolbar,
+.summaryGrid,
+.panel {
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.toolbar h2,
+.dialogHeader h2,
+.confirmDialog h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  color: #1d2520;
+}
+
+.toolbar p,
+.dialogHeader p,
+.confirmDialog p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: #607067;
+}
+
+.toolbar > div:last-child,
+.dialogFooter,
+.dialogFooter > div,
+.rowActions,
+.confirmDialog > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.section button,
+.dialog button,
+.confirmDialog button {
+  cursor: pointer;
+
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 34px;
+  padding: 0 12px;
+
+  font-size: 13px;
+  font-weight: 600;
+  color: #34423a;
+
+  background: #fff;
+  border: 1px solid #d8e2db;
+  border-radius: 8px;
+}
+
+.section button:hover:not(:disabled),
+.dialog button:hover:not(:disabled),
+.confirmDialog button:hover:not(:disabled) {
+  color: #19703a;
+  border-color: #24904b;
+}
+
+.section button:disabled,
+.dialog button:disabled,
+.confirmDialog button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.primaryButton {
+  color: #fff !important;
+  background: #218c55 !important;
+  border-color: #218c55 !important;
+}
+
+.dangerButton {
+  color: #b42318 !important;
+  border-color: #f1b8b4 !important;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summaryGrid article,
+.panel {
+  background: #fff;
+  border: 1px solid #dfe6e0;
+  border-radius: 8px;
+  box-shadow: 0 5px 18px rgba(31, 55, 38, 5%);
+}
+
+.summaryGrid article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  min-width: 0;
+  padding: 14px;
+}
+
+.summaryGrid span,
+.summaryGrid small,
+.tableWrap td small,
+.dialogBody small,
+.credentialNotice p {
+  font-size: 12px;
+  line-height: 18px;
+  color: #728178;
+}
+
+.summaryGrid strong {
+  overflow: hidden;
+
+  font-size: 20px;
+  line-height: 28px;
+  color: #1d2520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message {
+  margin: 0;
+  padding: 10px 12px;
+
+  font-size: 13px;
+  line-height: 20px;
+  color: #284a36;
+
+  background: #edf8f0;
+  border: 1px solid #cae8d2;
+  border-radius: 8px;
+}
+
+.panel {
+  overflow: hidden;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.tableWrap table {
+  border-spacing: 0;
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 1060px;
+}
+
+.tableWrap th,
+.tableWrap td {
+  padding: 13px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #edf1ee;
+}
+
+.tableWrap th {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  color: #6b776f;
+
+  background: #f5f7f5;
+}
+
+.tableWrap td {
+  font-size: 13px;
+  line-height: 20px;
+  color: #2d3832;
+}
+
+.tableWrap tbody tr:hover td {
+  background: rgba(33, 140, 85, 4%);
+}
+
+.tableWrap td strong,
+.tableWrap td small {
+  display: block;
+}
+
+.endpointCell {
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+
+.stateTags,
+.rowActions {
+  min-width: 0;
+}
+
+.stateTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stateTags span,
+.healthBadge {
+  display: inline-flex;
+  align-items: center;
+
+  min-height: 24px;
+  padding: 2px 8px;
+
+  font-size: 12px;
+  font-weight: 600;
+  color: #496152;
+
+  background: #eef4f0;
+  border-radius: 999px;
+}
+
+.healthBadge[data-status='2'] {
+  color: #19703a;
+  background: #e7f5ec;
+}
+
+.healthBadge[data-status='3'] {
+  color: #b42318;
+  background: #fff0ee;
+}
+
+.rowActions {
+  max-width: 260px;
+}
+
+.rowActions button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.emptyCell {
+  margin: 0;
+  padding: 26px 14px !important;
+  color: #728178 !important;
+  text-align: center !important;
+}
+
+.dialogBackdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+
+  padding: 64px 20px;
+
+  background: rgba(10, 20, 14, 45%);
+}
+
+.dialog,
+.confirmDialog {
+  width: min(760px, 100%);
+
+  background: #fff;
+  border: 1px solid #dfe6e0;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(18, 32, 24, 22%);
+}
+
+.dialogHeader,
+.dialogFooter {
+  padding: 18px 20px;
+}
+
+.dialogHeader {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  border-bottom: 1px solid #edf1ee;
+}
+
+.dialogBody {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 20px;
+}
+
+.dialogBody label,
+.credentialNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dialogBody label > span {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  color: #596860;
+}
+
+.dialogBody input,
+.dialogBody select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+
+  font-size: 13px;
+  color: #1d2520;
+
+  background: #fff;
+  border: 1px solid #d8e2db;
+  border-radius: 8px;
+}
+
+.dialogBody input:disabled,
+.dialogBody select:disabled {
+  color: #87958c;
+  background: #f5f7f5;
+}
+
+.inlineChecks,
+.credentialNotice {
+  grid-column: 1 / -1;
+}
+
+.inlineChecks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.inlineChecks label,
+.credentialNotice label {
+  flex-direction: row;
+  align-items: center;
+  width: fit-content;
+}
+
+.inlineChecks input,
+.credentialNotice input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.credentialNotice {
+  padding: 12px;
+  background: #f8faf8;
+  border: 1px solid #e3ebe5;
+  border-radius: 8px;
+}
+
+.credentialNotice p {
+  margin: 0;
+}
+
+.dialogFooter {
+  justify-content: space-between;
+  border-top: 1px solid #edf1ee;
+}
+
+.confirmDialog {
+  max-width: 460px;
+  padding: 22px;
+}
+
+.confirmDialog > div {
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+@media (max-width: 980px) {
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar {
+    flex-direction: column;
+  }
+
+  .dialogBody {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .dialogBackdrop {
+    padding: 24px 12px;
+  }
+
+  .toolbar > div:last-child,
+  .dialogFooter,
+  .dialogFooter > div {
+    width: 100%;
+  }
+
+  .section button,
+  .dialog button,
+  .confirmDialog button {
+    flex: 1 1 auto;
+  }
+}

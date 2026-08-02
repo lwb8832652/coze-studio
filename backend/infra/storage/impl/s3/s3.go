@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/fileutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/goutil"
@@ -80,29 +81,60 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 	return t, nil
 }
 
+func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
+	return NewFromConfigWithMode(ctx, cfg, credential, domain.ValidationMode{})
+}
+
+func NewFromConfigWithMode(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput, mode domain.ValidationMode) (storage.Storage, error) {
+	runtimeConfig := cfg
+	runtimeConfig.Endpoint = ""
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderAWSS3, runtimeConfig, mode)
+	if err != nil {
+		return nil, err
+	}
+	credential = domain.NormalizeCredentialInput(credential)
+	if err = domain.ValidateCredentialInput(credential); err != nil {
+		return nil, err
+	}
+	if !domain.HasCredentialPair(credential) {
+		return nil, domain.ErrConfigInvalid
+	}
+	endpoint := normalized.EndpointOverride
+	return getS3ClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, endpoint, normalized.Region, normalized.ForcePathStyle, false, normalized.Region)
+}
+
 func getS3Client(ctx context.Context, ak, sk, bucketName, endpoint, region string) (*s3Client, error) {
+	return getS3ClientWithOptions(ctx, ak, sk, bucketName, endpoint, region, false, true, "auto")
+}
+
+func getS3ClientWithOptions(ctx context.Context, ak, sk, bucketName, endpoint, region string, forcePathStyle bool, createBucket bool, configRegion string) (*s3Client, error) {
 	creds := credentials.NewStaticCredentialsProvider(ak, sk, "")
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			PartitionID:       "aws",
-			URL:               endpoint,
-			SigningRegion:     region,
-			HostnameImmutable: false,
-			Source:            aws.EndpointSourceCustom,
-		}, nil
-	})
+	configOptions := []func(*config.LoadOptions) error{
+		config.WithCredentialsProvider(creds),
+		config.WithRegion(configRegion),
+	}
+	if endpoint != "" {
+		customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				PartitionID:       "aws",
+				URL:               endpoint,
+				SigningRegion:     region,
+				HostnameImmutable: false,
+				Source:            aws.EndpointSourceCustom,
+			}, nil
+		})
+		configOptions = append(configOptions, config.WithEndpointResolverWithOptions(customResolver))
+	}
 	cfg, err := config.LoadDefaultConfig(
 		ctx,
-		config.WithCredentialsProvider(creds),
-		config.WithEndpointResolverWithOptions(customResolver),
-		config.WithRegion("auto"),
+		configOptions...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init config failed, bucketName: %s, endpoint: %s, region: %s, err: %v", bucketName, endpoint, region, err)
 	}
 
 	c := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = false // virtual-host mode
+		o.UsePathStyle = forcePathStyle
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 
@@ -116,9 +148,11 @@ func getS3Client(ctx context.Context, ak, sk, bucketName, endpoint, region strin
 		bucketName: bucketName,
 	}
 
-	err = t.CheckAndCreateBucket(ctx)
-	if err != nil {
-		return nil, err
+	if createBucket {
+		err = t.CheckAndCreateBucket(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return t, nil
@@ -138,37 +172,6 @@ func (t *s3Client) CheckReadiness(ctx context.Context) error {
 		return storage.ErrReadinessUnavailable
 	}
 	return nil
-}
-
-func (t *s3Client) test() {
-	// test upload
-	objectKey := fmt.Sprintf("test-%s.txt", time.Now().Format("20060102150405"))
-	err := t.PutObject(context.Background(), objectKey, []byte("hello world"))
-	if err != nil {
-		logs.CtxErrorf(context.Background(), "PutObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	// test download
-	content, err := t.GetObject(context.Background(), objectKey)
-	if err != nil {
-		logs.CtxErrorf(context.Background(), "GetObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	logs.CtxInfof(context.Background(), "GetObject content: %s", string(content))
-
-	// test get presigned url
-	url, err := t.GetObjectUrl(context.Background(), objectKey)
-	if err != nil {
-		logs.CtxErrorf(context.Background(), "GetObjectUrl failed, objectKey: %s, err: %v", objectKey, err)
-	}
-
-	logs.CtxInfof(context.Background(), "GetObjectUrl url: %s", url)
-
-	// test delete
-	err = t.DeleteObject(context.Background(), objectKey)
-	if err != nil {
-		logs.CtxErrorf(context.Background(), "DeleteObject failed, objectKey: %s, err: %v", objectKey, err)
-	}
 }
 
 func (t *s3Client) CheckAndCreateBucket(ctx context.Context) error {
