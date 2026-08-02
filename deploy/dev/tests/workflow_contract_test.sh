@@ -60,8 +60,11 @@ expected_jobs = %w[preflight build-server build-web migration-hold verify-images
 assert_contract((expected_jobs - jobs.keys).empty?, 'required jobs are missing')
 
 preflight = jobs.fetch('preflight')
-assert_contract(preflight.fetch('outputs', {}).keys.sort == %w[migration_changed target_sha],
-                'preflight must expose only target_sha and migration_changed')
+assert_contract(
+  preflight.fetch('outputs', {}).keys.sort ==
+    %w[deployment_blocked migration_changed target_sha],
+  'preflight must expose target_sha, migration_changed, and deployment_blocked'
+)
 preflight_text = job_text(preflight)
 resolve_step = preflight.fetch('steps', []).find { |step| step['id'] == 'resolve' }
 assert_contract(resolve_step.is_a?(Hash), 'preflight resolve step is missing')
@@ -78,8 +81,10 @@ assert_contract(preflight_text.include?('fetch-depth') && preflight_text.include
 %w[github.event.before GITHUB_SHA origin/dev merge-base docker/atlas/migrations GITHUB_OUTPUT].each do |token|
   assert_contract(preflight_text.include?(token), "preflight is missing #{token}")
 end
-assert_contract(preflight_text.include?('migration_changed=true'),
-                'preflight must have a fail-closed migration result')
+assert_contract(preflight_text.include?('deployment_blocked=true'),
+                'preflight must fail closed with deployment_blocked')
+assert_contract(preflight_text.include?('deployment_blocked=false'),
+                'preflight must explicitly release verified deployments')
 assert_contract(preflight_text.include?("tr '[:upper:]' '[:lower:]'") || preflight_text.include?(',,}'),
                 'preflight must normalize dispatch target_sha to lowercase')
 assert_contract(preflight_text.include?('git cat-file') && preflight_text.include?('git diff --quiet'),
@@ -226,11 +231,19 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'if [ "$1" = pull ]; then' \
+  '  image=${@: -1}' \
   '  case "${DOCKER_MODE:-deployed}" in' \
-  '    deployed) exit 0 ;;' \
+  '    deployed|inconsistent) exit 0 ;;' \
   '    missing)' \
   '      printf "Error response from daemon: manifest unknown: manifest unknown\\n" >&2' \
   '      exit 1' \
+  '      ;;' \
+  '    server-missing)' \
+  '      if [[ "$image" == *coze-server:dev ]]; then' \
+  '        printf "Error response from daemon: manifest unknown: manifest unknown\\n" >&2' \
+  '        exit 1' \
+  '      fi' \
+  '      exit 0' \
   '      ;;' \
   '    registry-error)' \
   '      printf "Error response from daemon: registry connection timed out\\n" >&2' \
@@ -240,7 +253,13 @@ printf '%s\n' \
   '  esac' \
   'fi' \
   'if [ "$1" = image ] && [ "$2" = inspect ]; then' \
-  '  printf "%s\\n" "$DEPLOYED_REVISION"' \
+  '  image=${@: -1}' \
+  '  if [ "${DOCKER_MODE:-deployed}" = inconsistent ] &&' \
+  '    [[ "$image" == *coze-web:dev ]]; then' \
+  '    printf "%s\\n" "$ALTERNATE_REVISION"' \
+  '  else' \
+  '    printf "%s\\n" "$DEPLOYED_REVISION"' \
+  '  fi' \
   '  exit 0' \
   'fi' \
   'exit 97' > "$TEST_BIN/docker"
@@ -248,16 +267,18 @@ chmod +x "$TEST_BIN/docker"
 
 run_preflight() {
   docker_mode=$1
-  before_revision=$2
-  target_revision=$3
-  output_file=$4
+  deployed_revision=$2
+  before_revision=$3
+  target_revision=$4
+  output_file=$5
 
   : > "$output_file"
   (
     cd -- "$TEST_REPO"
     PATH="$TEST_BIN:$PATH" \
       DOCKER_MODE="$docker_mode" \
-      DEPLOYED_REVISION="$DEPLOYED_REVISION" \
+      DEPLOYED_REVISION="$deployed_revision" \
+      ALTERNATE_REVISION="$TARGET_REVISION" \
       GITHUB_EVENT_NAME=push \
       GITHUB_SHA="$target_revision" \
       TARGET_SHA_INPUT= \
@@ -280,27 +301,48 @@ assert_output() {
   }
 }
 
-run_preflight deployed "$BEFORE_REVISION" "$TARGET_REVISION" "$GITHUB_OUTPUT_FILE"
-
+run_preflight deployed "$DEPLOYED_REVISION" "$BEFORE_REVISION" \
+  "$TARGET_REVISION" "$GITHUB_OUTPUT_FILE"
 assert_output "$GITHUB_OUTPUT_FILE" "target_sha=$TARGET_REVISION" \
   'semantic preflight wrote the wrong target SHA'
 assert_output "$GITHUB_OUTPUT_FILE" 'migration_changed=true' \
-  'follow-up push bypassed the pending migration hold'
+  'verified deployed baseline did not discover the pending migration'
+assert_output "$GITHUB_OUTPUT_FILE" 'deployment_blocked=false' \
+  'verified migration diff was incorrectly blocked'
+
+NO_MIGRATION_OUTPUT=$SEMANTIC_ROOT/no-migration-output
+run_preflight deployed "$BEFORE_REVISION" "$BEFORE_REVISION" \
+  "$TARGET_REVISION" "$NO_MIGRATION_OUTPUT"
+assert_output "$NO_MIGRATION_OUTPUT" 'migration_changed=false' \
+  'ordinary follow-up was mistaken for a migration'
+assert_output "$NO_MIGRATION_OUTPUT" 'deployment_blocked=false' \
+  'ordinary verified deployment was blocked'
 
 BOOTSTRAP_OUTPUT=$SEMANTIC_ROOT/bootstrap-output
-run_preflight missing "$BEFORE_REVISION" "$TARGET_REVISION" "$BOOTSTRAP_OUTPUT"
+run_preflight missing "$DEPLOYED_REVISION" "$BEFORE_REVISION" \
+  "$TARGET_REVISION" "$BOOTSTRAP_OUTPUT"
 assert_output "$BOOTSTRAP_OUTPUT" 'migration_changed=false' \
-  'manifest-missing bootstrap push did not continue deployment'
+  'manifest-missing bootstrap invented a migration'
+assert_output "$BOOTSTRAP_OUTPUT" 'deployment_blocked=false' \
+  'verified bootstrap deployment was blocked'
 
 BOOTSTRAP_MIGRATION_OUTPUT=$SEMANTIC_ROOT/bootstrap-migration-output
-run_preflight missing "$DEPLOYED_REVISION" "$BEFORE_REVISION" "$BOOTSTRAP_MIGRATION_OUTPUT"
+run_preflight missing "$DEPLOYED_REVISION" "$DEPLOYED_REVISION" \
+  "$BEFORE_REVISION" "$BOOTSTRAP_MIGRATION_OUTPUT"
 assert_output "$BOOTSTRAP_MIGRATION_OUTPUT" 'migration_changed=true' \
-  'manifest-missing bootstrap bypassed a migration change'
+  'manifest-missing bootstrap missed a migration change'
+assert_output "$BOOTSTRAP_MIGRATION_OUTPUT" 'deployment_blocked=false' \
+  'verified bootstrap migration was incorrectly blocked'
 
-REGISTRY_ERROR_OUTPUT=$SEMANTIC_ROOT/registry-error-output
-run_preflight registry-error "$BEFORE_REVISION" "$TARGET_REVISION" "$REGISTRY_ERROR_OUTPUT"
-assert_output "$REGISTRY_ERROR_OUTPUT" 'migration_changed=true' \
-  'registry failure was mistaken for a manifest-missing bootstrap'
+for mode in registry-error server-missing inconsistent; do
+  blocked_output=$SEMANTIC_ROOT/$mode-output
+  run_preflight "$mode" "$DEPLOYED_REVISION" "$BEFORE_REVISION" \
+    "$TARGET_REVISION" "$blocked_output"
+  assert_output "$blocked_output" 'migration_changed=false' \
+    "$mode was incorrectly classified as a migration"
+  assert_output "$blocked_output" 'deployment_blocked=true' \
+    "$mode did not fail closed"
+done
 
 DEPLOY_SCRIPT=$SEMANTIC_ROOT/deploy.sh
 CURL_ARGS_FILE=$SEMANTIC_ROOT/curl-args

@@ -24,6 +24,7 @@ jobs:
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
       migration_changed: ${{ steps.resolve.outputs.migration_changed }}
+      deployment_blocked: ${{ steps.resolve.outputs.deployment_blocked }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@v7
@@ -66,11 +67,13 @@ jobs:
               exit 1
             fi
             migration_changed=false
+            deployment_blocked=false
           else
             target_sha=$GITHUB_SHA
             before=$BEFORE_SHA
             zero_sha=0000000000000000000000000000000000000000
-            migration_changed=true
+            migration_changed=false
+            deployment_blocked=true
 
             if [[ "$before" =~ ^[0-9a-fA-F]{40}$ ]] &&
               [ "$before" != "$zero_sha" ] &&
@@ -98,44 +101,56 @@ jobs:
                   deployed_revision=$server_deployed_revision
                   if git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
                     git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
-                    if git diff --quiet "$deployed_revision" "$target_sha" -- docker/atlas/migrations; then
+                    comparison_base=$deployed_revision
+                    if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
                       migration_changed=false
+                      deployment_blocked=false
                     else
                       diff_status=$?
-                      if [ "$diff_status" -ne 1 ]; then
-                        echo "migration diff failed; holding deployment" >&2
+                      if [ "$diff_status" -eq 1 ]; then
+                        migration_changed=true
+                        deployment_blocked=false
+                      else
+                        echo "migration diff failed; blocking deployment" >&2
                       fi
                     fi
                   else
-                    echo "deployed revision is unavailable from target history; holding deployment" >&2
+                    echo "deployed revision is unavailable from target history; blocking deployment" >&2
                   fi
                 else
-                  echo "deployed server and web revisions are missing or inconsistent; holding deployment" >&2
+                  echo "deployed server and web revisions are missing or inconsistent; blocking deployment" >&2
                 fi
               elif [ "$server_pull_status" -ne 0 ] &&
                 [ "$web_pull_status" -ne 0 ] &&
                 manifest_is_missing "$server_pull_error" &&
                 manifest_is_missing "$web_pull_error"; then
-                if git diff --quiet "$before" "$target_sha" -- docker/atlas/migrations; then
+                comparison_base=$before
+                if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
                   migration_changed=false
+                  deployment_blocked=false
                   echo "current dev image manifests are absent; allowing bootstrap deployment"
                 else
                   diff_status=$?
-                  if [ "$diff_status" -ne 1 ]; then
-                    echo "bootstrap migration diff failed; holding deployment" >&2
+                  if [ "$diff_status" -eq 1 ]; then
+                    migration_changed=true
+                    deployment_blocked=false
+                    echo "current dev image manifests are absent; allowing bootstrap deployment"
+                  else
+                    echo "bootstrap migration diff failed; blocking deployment" >&2
                   fi
                 fi
               else
-                echo "current dev images could not be verified; holding deployment" >&2
+                echo "current dev images could not be verified; blocking deployment" >&2
               fi
             else
-              echo "migration comparison base is unavailable; holding deployment" >&2
+              echo "migration comparison base is unavailable; blocking deployment" >&2
             fi
           fi
 
           target_sha=$(printf '%s' "$target_sha" | tr '[:upper:]' '[:lower:]')
           printf 'target_sha=%s\n' "$target_sha" >> "$GITHUB_OUTPUT"
           printf 'migration_changed=%s\n' "$migration_changed" >> "$GITHUB_OUTPUT"
+          printf 'deployment_blocked=%s\n' "$deployment_blocked" >> "$GITHUB_OUTPUT"
 
   build-server:
     runs-on: ubuntu-latest
