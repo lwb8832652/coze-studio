@@ -73,16 +73,32 @@ Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基�
 migration，会在不可变镜像验证后自动执行 Atlas；基线、Git 关系或 diff 无法证明
 时 fail closed，`deployment-blocked` job 明确失败。
 
-`ATLAS_URL` 只允许配置为 GitHub Actions Repository Secret。当前 `migrate` job
-没有 GitHub Environment；`.github/atlas-dev.hcl` 通过 `getenv("ATLAS_URL")` 读取
-DSN，workflow 通过 `docker run --env ATLAS_URL` 传递变量名，不把 DSN 值放入宿主机
-命令参数。Atlas 成功后才允许晋级和部署。
+第二次集成审计必须先从 ACR 取得两张当前 `:dev` 镜像的合法且一致 OCI revision，
+再审计 `<deployed-revision>..<target-sha>` 内的全部 migration；首次部署使用已验证的
+push `before`。推送授权只覆盖报告逐项列出的 migration、数据库副作用和 exact SHA。
+Git 对象、祖先关系、diff、旧应用兼容性或 schema/revision 基线无法证明时，不得请求
+推送确认。一次性 Atlas baseline 会写 revision，版本参数是 migration 文件名的时间戳
+而非 Git SHA，必须依据 `migrate status` 和 schema 证据另行获得数据库变更授权。
+
+`ATLAS_URL` 与可选 `ATLAS_CA_PEM` 只允许配置为 GitHub Actions Repository Secret。
+Workflow 要求 `mysql://` URL 含唯一 `tls=true`；使用私有 CA 时，URL 还必须精确声明
+`ssl-ca=/atlas-ca.pem`。CA 以 `600` 临时文件只读挂入 Atlas 容器并在退出时删除；
+Secret 与 URL 不匹配会在 Docker 前失败。DSN 和 PEM 不进入 shell source、命令参数
+或日志。
+
+`migrate` 保持使用 `ubuntu-latest`。标准 GitHub-hosted runner 出口范围多且变化，
+不能用整段 GitHub 地址或 `0.0.0.0/0` 代替受控网络和实际连通性验证；稳定白名单需要
+已配置的 self-hosted runner 或 larger runner 静态出口，并在修改 `runs-on` 前另行
+审计。当前腾讯云 dev MySQL 已验证为不支持 SSL；云侧启用 SSL、实例重启、CA 下载
+核验和 Secret 更新是含 migration 推送前的独立授权前提，本 workflow 不执行这些
+外部变更。
 
 `workflow_dispatch` 不执行 Atlas 或 down migration，只允许重试当前 revision、
 回滚到其祖先，或前向重放不含 migration 的后代；前向含 migration、关系不可证明
-或双 revision 异常时阻断。Migration 或部分晋级失败时在同一个 Actions run 使用
-`Re-run failed jobs`；双标签已晋级而部署失败时可 dispatch 同一 SHA。Forward
-migration 必须兼容暂时继续运行的旧应用。
+或双 revision 异常时阻断。Migration 失败先经单独授权的 `migrate status` 和状态
+证据区分瞬态与确定性故障；只有瞬态故障才在同一 run 重跑，确定性 migration 修复
+后重新审计，数据库修复另行授权。部分晋级仍在同一 run 重跑；双标签已晋级而部署
+失败时可 dispatch 同一 SHA。Forward migration 必须兼容暂时继续运行的旧应用。
 
 该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
 Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚

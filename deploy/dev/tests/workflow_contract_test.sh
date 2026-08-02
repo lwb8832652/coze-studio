@@ -257,20 +257,37 @@ assert_contract(migration_step.is_a?(Hash), 'Atlas migration step is missing')
 assert_contract(migration_step['if'].to_s == expected_migration_if,
                 'Atlas migration must run only for migration pushes')
 assert_contract(migration_step.fetch('env', {}) == {
-                  'ATLAS_URL' => '${{ secrets.ATLAS_URL }}'
-                }, 'ATLAS_URL must be injected only from the step secret environment')
+                  'ATLAS_URL' => '${{ secrets.ATLAS_URL }}',
+                  'ATLAS_CA_PEM' => '${{ secrets.ATLAS_CA_PEM }}'
+                }, 'Atlas secrets must be injected only from the migration step environment')
 migration_run = migration_step['run'].to_s
 assert_contract(!migration_run.include?('${{ secrets.ATLAS_URL }}'),
                 'ATLAS_URL must not be interpolated into shell source')
-assert_contract(migrate.fetch('env', {}).keys.none? { |key| key == 'ATLAS_URL' },
-                'ATLAS_URL must not be injected at job scope')
-atlas_secret_references = File.read(workflow_path).scan(/\$\{\{\s*secrets\.ATLAS_URL\s*\}\}/).length
-assert_contract(atlas_secret_references == 1,
+assert_contract(!migration_run.include?('${{ secrets.ATLAS_CA_PEM }}'),
+                'ATLAS_CA_PEM must not be interpolated into shell source')
+atlas_job_env = migrate.fetch('env', {})
+assert_contract(%w[ATLAS_URL ATLAS_CA_PEM].none? { |key| atlas_job_env.key?(key) },
+                'Atlas secrets must not be injected at job scope')
+atlas_url_secret_references = File.read(workflow_path)
+                                  .scan(/\$\{\{\s*secrets\.ATLAS_URL\s*\}\}/).length
+assert_contract(atlas_url_secret_references == 1,
                 'ATLAS_URL secret must appear exactly once in the migration step environment')
+atlas_ca_secret_references = File.read(workflow_path)
+                                 .scan(/\$\{\{\s*secrets\.ATLAS_CA_PEM\s*\}\}/).length
+assert_contract(atlas_ca_secret_references == 1,
+                'ATLAS_CA_PEM secret must appear exactly once in the migration step environment')
 assert_contract(migration_run.include?('set -euo pipefail'),
                 'Atlas migration script must fail closed')
 assert_contract(!migration_run.match?(/set\s+-[^\n]*x/),
                 'Atlas migration script must not enable xtrace')
+assert_contract(migration_run.include?('$RUNNER_TEMP/atlas-ca.pem'),
+                'custom Atlas CA must use the fixed runner temp path')
+assert_contract(migration_run.match?(/chmod\s+600\s+[^\n]*atlas_ca/),
+                'custom Atlas CA must be chmod 600')
+assert_contract(migration_run.include?('trap') && migration_run.include?('rm -f'),
+                'custom Atlas CA must be removed by an exit trap')
+assert_contract(migration_run.include?('/atlas-ca.pem:ro'),
+                'custom Atlas CA must be mounted read-only at the fixed container path')
 atlas_image = 'arigaio/atlas:0.35.0-community-alpine'
 assert_contract(migration_run.scan(atlas_image).length == 2,
                 'validate and apply must both use the repository Atlas version')
@@ -640,6 +657,7 @@ done
 
 MIGRATE_SCRIPT=$SEMANTIC_ROOT/migrate.sh
 MIGRATE_DOCKER_LOG=$SEMANTIC_ROOT/migrate-docker.log
+MIGRATE_RUNNER_TEMP=$SEMANTIC_ROOT/runner-temp
 
 ruby - "$WORKFLOW" > "$MIGRATE_SCRIPT" <<'EXTRACT'
 require 'yaml'
@@ -652,10 +670,31 @@ abort 'Atlas migration step is missing' unless step
 puts step.fetch('run')
 EXTRACT
 
+mkdir -p -- "$MIGRATE_RUNNER_TEMP"
+
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'printf "%s\n" "$*" >> "$MIGRATE_DOCKER_LOG"' \
+  'if [[ "$*" == *"migrate apply"* ]] &&' \
+  '  [ -n "${EXPECTED_ATLAS_CA_PEM:-}" ]; then' \
+  '  ca_mount=' \
+  '  for argument in "$@"; do' \
+  '    case "$argument" in' \
+  '      *:/atlas-ca.pem:ro) ca_mount=$argument ;;' \
+  '    esac' \
+  '  done' \
+  '  [ -n "$ca_mount" ] || exit 44' \
+  '  ca_file=${ca_mount%:/atlas-ca.pem:ro}' \
+  '  [ -f "$ca_file" ] || exit 45' \
+  '  [ "$(cat -- "$ca_file")" = "$EXPECTED_ATLAS_CA_PEM" ] || exit 46' \
+  '  if ca_mode=$(stat -c "%a" "$ca_file" 2>/dev/null); then' \
+  '    :' \
+  '  else' \
+  '    ca_mode=$(stat -f "%Lp" "$ca_file")' \
+  '  fi' \
+  '  [ "$ca_mode" = 600 ] || exit 47' \
+  'fi' \
   'if [[ "$*" == *"migrate validate"* ]] &&' \
   '  [ "${MIGRATE_DOCKER_MODE:-success}" = validate-fail ]; then' \
   '  exit 42' \
@@ -669,7 +708,8 @@ chmod +x "$TEST_BIN/docker"
 
 : > "$MIGRATE_DOCKER_LOG"
 if PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
-  ATLAS_URL= bash "$MIGRATE_SCRIPT"; then
+  RUNNER_TEMP="$MIGRATE_RUNNER_TEMP" ATLAS_URL= ATLAS_CA_PEM= \
+  bash "$MIGRATE_SCRIPT"; then
   printf 'workflow contract failure: empty ATLAS_URL was accepted\n' >&2
   exit 1
 fi
@@ -678,10 +718,48 @@ fi
   exit 1
 }
 
-DUMMY_ATLAS_URL='mysql://example.invalid/dev'
+assert_migration_url_rejected_before_docker() {
+  case_name=$1
+  atlas_url=$2
+  atlas_ca_pem=${3:-}
+
+  : > "$MIGRATE_DOCKER_LOG"
+  if PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+    RUNNER_TEMP="$MIGRATE_RUNNER_TEMP" ATLAS_URL="$atlas_url" \
+    ATLAS_CA_PEM="$atlas_ca_pem" bash "$MIGRATE_SCRIPT"; then
+    printf 'workflow contract failure: %s ATLAS_URL was accepted\n' "$case_name" >&2
+    exit 1
+  fi
+  [ ! -s "$MIGRATE_DOCKER_LOG" ] || {
+    printf 'workflow contract failure: Docker ran for %s ATLAS_URL\n' "$case_name" >&2
+    exit 1
+  }
+}
+
+assert_migration_url_rejected_before_docker \
+  'missing TLS' 'mysql://example.invalid/dev'
+assert_migration_url_rejected_before_docker \
+  'disabled TLS' 'mysql://example.invalid/dev?tls=false'
+assert_migration_url_rejected_before_docker \
+  'non-MySQL scheme' 'postgres://example.invalid/dev?tls=true'
+assert_migration_url_rejected_before_docker \
+  'CA path without CA secret' \
+  'mysql://example.invalid/dev?tls=true&ssl-ca=/atlas-ca.pem'
+
+DUMMY_ATLAS_CA_PEM=$'-----BEGIN CERTIFICATE-----\nexample.invalid fake certificate\n-----END CERTIFICATE-----'
+assert_migration_url_rejected_before_docker \
+  'CA secret without CA path' 'mysql://example.invalid/dev?tls=true' \
+  "$DUMMY_ATLAS_CA_PEM"
+assert_migration_url_rejected_before_docker \
+  'CA secret with wrong CA path' \
+  'mysql://example.invalid/dev?tls=true&ssl-ca=/example.invalid/atlas-ca.pem' \
+  "$DUMMY_ATLAS_CA_PEM"
+
+DUMMY_ATLAS_URL='mysql://example.invalid/dev?tls=true'
 : > "$MIGRATE_DOCKER_LOG"
 PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
-  ATLAS_URL="$DUMMY_ATLAS_URL" bash "$MIGRATE_SCRIPT"
+  RUNNER_TEMP="$MIGRATE_RUNNER_TEMP" ATLAS_URL="$DUMMY_ATLAS_URL" \
+  ATLAS_CA_PEM= bash "$MIGRATE_SCRIPT"
 migration_call_count=$(wc -l < "$MIGRATE_DOCKER_LOG" | tr -d ' ')
 [ "$migration_call_count" -eq 2 ] || {
   printf 'workflow contract failure: successful migration did not run Docker exactly twice\n' >&2
@@ -719,6 +797,31 @@ fi
 }
 [[ "$second_migration_call" != *"--url"* ]] || {
   printf 'workflow contract failure: Atlas apply still passed a URL argument\n' >&2
+  exit 1
+}
+
+DUMMY_ATLAS_CA_URL='mysql://example.invalid/dev?tls=true&ssl-ca=/atlas-ca.pem'
+: > "$MIGRATE_DOCKER_LOG"
+PATH="$TEST_BIN:$PATH" MIGRATE_DOCKER_LOG="$MIGRATE_DOCKER_LOG" \
+  RUNNER_TEMP="$MIGRATE_RUNNER_TEMP" ATLAS_URL="$DUMMY_ATLAS_CA_URL" \
+  ATLAS_CA_PEM="$DUMMY_ATLAS_CA_PEM" \
+  EXPECTED_ATLAS_CA_PEM="$DUMMY_ATLAS_CA_PEM" bash "$MIGRATE_SCRIPT"
+migration_call_count=$(wc -l < "$MIGRATE_DOCKER_LOG" | tr -d ' ')
+[ "$migration_call_count" -eq 2 ] || {
+  printf 'workflow contract failure: CA migration did not run Docker exactly twice\n' >&2
+  exit 1
+}
+ca_apply_call=$(sed -n '2p' "$MIGRATE_DOCKER_LOG")
+[[ "$ca_apply_call" == *"$MIGRATE_RUNNER_TEMP/atlas-ca.pem:/atlas-ca.pem:ro"* ]] || {
+  printf 'workflow contract failure: custom CA was not mounted read-only at the fixed path\n' >&2
+  exit 1
+}
+if grep -Fq -- "$DUMMY_ATLAS_CA_URL" "$MIGRATE_DOCKER_LOG"; then
+  printf 'workflow contract failure: CA ATLAS_URL leaked into Docker argv\n' >&2
+  exit 1
+fi
+[ ! -e "$MIGRATE_RUNNER_TEMP/atlas-ca.pem" ] || {
+  printf 'workflow contract failure: custom CA file survived migration script exit\n' >&2
   exit 1
 }
 
