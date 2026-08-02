@@ -65,17 +65,20 @@ Atlas 容器的 `/atlas-ca.pem`，并在 step 退出时删除。URL 声明 `ssl-
 不要填写 runner 宿主机上的其他 CA 路径，也不能只填一个 `ssl-ca` 路径后假定文件
 已经挂载。
 
+Validate 和 apply 都固定使用
+`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`。
+MySQL `ssl-ca` 是 Atlas v1.1 之后的能力；不得退回 `0.35.0`，也不得把完整引用缩短为
+可变 tag。
+
 `.github/atlas-dev.hcl` 通过 `getenv("ATLAS_URL")` 读取 DSN。Workflow 只在
 `migrate` step 注入两个 Atlas Secret，并通过 `docker run --env ATLAS_URL` 传递
 URL 的环境变量名；宿主机命令参数不包含 DSN 或 PEM。不要配置 SSH 私钥或把
 `app.env` 内容放入 GitHub。
 
-当前腾讯云 TDSQL-C dev 地址的 MySQL TLS 探测已返回 `MySQL server does not
-support SSL`。云侧启用 SSL 会重启实例，客户端还需要使用该实例下载的 CA。启用
-SSL、接受重启窗口、下载和核验 CA、更新两个 Repository Secret 都是推送前的外部
-配置变更，必须单独获得授权并完成验证；常规 `dev` push 不包含这些授权，本手册也
-不要求或执行这些操作。在这些前提完成前，不得启用自动迁移或批准会触发 migration
-的 push。
+每次第二次集成审计都必须对本轮目标 dev MySQL 端点重新执行 TLS 探测，并记录结果，
+不能复用历史结论。若端点不支持 SSL，必须先单独授权云侧开启 SSL、接受实例重启、
+下载并核验本轮 CA，再更新两个 Repository Secret。常规 `dev` push 不包含这些
+外部配置授权；前提完成前不得批准会触发 migration 的 push。
 
 优先为宝塔 webhook 配置与域名匹配、受公共 CA 信任的证书，此时不要设置
 `BAOTA_WEBHOOK_PINNED_PUBKEY`。如果必须使用宝塔自签名证书，生成并核对当前服务端

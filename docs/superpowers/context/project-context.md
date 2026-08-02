@@ -86,12 +86,16 @@ Workflow 要求 `mysql://` URL 含唯一 `tls=true`；使用私有 CA 时，URL 
 Secret 与 URL 不匹配会在 Docker 前失败。DSN 和 PEM 不进入 shell source、命令参数
 或日志。
 
+Atlas validate/apply 固定使用
+`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`；
+该版本支持 MySQL `ssl-ca`，不得退回 `0.35.0` 或改用可变 tag。
+
 `migrate` 保持使用 `ubuntu-latest`。标准 GitHub-hosted runner 出口范围多且变化，
 不能用整段 GitHub 地址或 `0.0.0.0/0` 代替受控网络和实际连通性验证；稳定白名单需要
 已配置的 self-hosted runner 或 larger runner 静态出口，并在修改 `runs-on` 前另行
-审计。当前腾讯云 dev MySQL 已验证为不支持 SSL；云侧启用 SSL、实例重启、CA 下载
-核验和 Secret 更新是含 migration 推送前的独立授权前提，本 workflow 不执行这些
-外部变更。
+审计。每次第二次集成审计必须记录本轮目标端点的 TLS 探测；端点不支持 SSL 时，
+云侧启用 SSL、实例重启、CA 下载核验和 Secret 更新是含 migration 推送前的独立
+授权前提，本 workflow 不执行这些外部变更。
 
 `workflow_dispatch` 不执行 Atlas 或 down migration，只允许重试当前 revision、
 回滚到其祖先，或前向重放不含 migration 的后代；前向含 migration、关系不可证明

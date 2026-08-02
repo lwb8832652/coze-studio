@@ -108,7 +108,8 @@ promote 和 deploy 都不得继续。
 ## 5. Atlas 执行合同
 
 `migrate` checkout `preflight.target_sha`，使用仓库约定的
-`arigaio/atlas:0.35.0-community-alpine`，按以下顺序运行：
+`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`。
+MySQL `ssl-ca` 从 Atlas v1.1 起可用，完整 tag+digest 不能缩短。任务按以下顺序运行：
 
 1. 确认 `ATLAS_URL` 非空、使用 `mysql://` scheme，并且 query 中只有一个
    `tls=true`；任何失败都不打印 URL。
@@ -156,9 +157,10 @@ job 级环境中。工作流不启用 shell xtrace，不把 DSN 或 PEM 插入 s
   只有 dev 数据库通过受控网络策略安全可达，并从本次实际 runner 验证成功时才启用。
 - 需要稳定白名单时，使用已经配置的 self-hosted runner 或支持静态出口 IP 的 larger
   runner；修改 `runs-on` 前另行审计 runner 加固、容量、凭据和网络边界。
-- 当前腾讯云 TDSQL-C dev 地址已验证返回 `MySQL server does not support SSL`。
-  云侧启用 SSL 会重启实例，客户端需要实例下载的 CA。启用、重启、CA 下载核验和
-  Secret 更新必须在含 migration 的 push 前独立授权；本 workflow 不执行外部变更。
+- **2026-08-02 验证快照：** 当时目标腾讯云 TDSQL-C dev 地址返回 `MySQL server
+  does not support SSL`。该结果只记录设计背景，不代表后续当前状态；每次第二次审计
+  都必须重新探测本轮端点。端点不支持 SSL 时，云侧启用、重启、CA 下载核验和
+  Secret 更新须在含 migration 的 push 前独立授权；本 workflow 不执行外部变更。
 - 工作流继续使用 `contents: read`；数据库 Secret 只注入
   `Validate and apply Atlas migrations` step，再由 HCL 从容器环境读取。
 - GitHub 日志、Docker 参数诊断和错误摘要不得回显 DSN、用户名、密码或 CA 内容。

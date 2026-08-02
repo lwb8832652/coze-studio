@@ -211,9 +211,10 @@ Git SHA。
 | `ATLAS_URL` | 必须是 `mysql://` URL，且 query 中有唯一的 `tls=true` |
 | `ATLAS_CA_PEM`（可选） | 配置私有 CA 时必须同时让 URL 精确声明 `ssl-ca=/atlas-ca.pem`；无 Secret 时 URL 不得声明 `ssl-ca` |
 
-当前腾讯云 TDSQL-C dev 地址已验证为不支持 SSL。云侧启用 SSL 会重启实例，且客户端
-需要实例下载的 CA；启用、重启窗口、CA 下载核验和 Secret 更新必须先取得独立授权。
-这些外部配置没有完成并验证前，不得请求包含 migration 的推送确认。
+每次第二次审计都必须对本轮目标 dev MySQL 端点重新执行 TLS 探测，并把结果写入
+报告，不能复用历史任务的瞬时结论。若端点不支持 SSL，云侧启用 SSL、实例重启窗口、
+CA 下载核验和 Secret 更新必须先取得独立授权；这些外部配置完成并验证前，不得请求
+包含 migration 的推送确认。
 
 `migrate` 当前实际配置必须仍是 `runs-on: ubuntu-latest`。第二次报告记录 workflow
 runner label、本次连通性验证所用的实际 Actions run/runner，以及 dev 数据库受控

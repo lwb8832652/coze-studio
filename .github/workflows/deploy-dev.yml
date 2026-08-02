@@ -422,12 +422,12 @@ jobs:
 
           docker run --rm \
             -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-            arigaio/atlas:0.35.0-community-alpine \
+            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
             migrate validate --dir file:///migrations
           docker "${atlas_apply_args[@]}" \
             -v "$PWD/docker/atlas/migrations:/migrations:ro" \
             -v "$PWD/.github/atlas-dev.hcl:/atlas.hcl:ro" \
-            arigaio/atlas:0.35.0-community-alpine \
+            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
             migrate apply --config file:///atlas.hcl --env dev
 
       - name: Record migration no-op

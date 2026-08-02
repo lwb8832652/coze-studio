@@ -1,12 +1,14 @@
 # Dev Automatic Atlas Migration Implementation Plan
 
+> **Compatibility update (2026-08-03):** Private CA review showed that Atlas 0.35.0 does not consume the MySQL `ssl-ca` parameter. The current implementation therefore pins Atlas 1.2.3 by full tag and manifest digest.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make an `origin/dev` push automatically apply verified Atlas migrations before promoting ACR images and invoking the Baota webhook.
 
 **Architecture:** Split preflight's current overloaded migration flag into `migration_changed` and `deployment_blocked`, so only a proven Git migration diff can reach the database. Build and verify both immutable images first, run Atlas from a dedicated GitHub Actions job using the `ATLAS_URL` secret, and require that job to succeed before promotion and deployment.
 
-**Tech Stack:** GitHub Actions YAML, Bash, Ruby YAML contract tests, Atlas Community 0.35.0, Docker, Git.
+**Tech Stack:** GitHub Actions YAML, Bash, Ruby YAML contract tests, Atlas Community 1.2.3, Docker, Git.
 
 ---
 
@@ -297,7 +299,7 @@ end
 migrate_text = job_text(migrate)
 assert_contract(migrate_text.include?('actions/checkout@v7'),
                 'migrate must check out the verified target')
-assert_contract(migrate_text.include?('arigaio/atlas:0.35.0-community-alpine'),
+assert_contract(migrate_text.include?('arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'),
                 'migrate must use the repository Atlas version')
 assert_contract(migrate_text.include?('migrate validate') &&
                 migrate_text.include?('migrate apply'),
@@ -475,11 +477,11 @@ migrate:
         fi
         docker run --rm \
           -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-          arigaio/atlas:0.35.0-community-alpine \
+          arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
           migrate validate --dir file:///migrations
         docker run --rm \
           -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-          arigaio/atlas:0.35.0-community-alpine \
+          arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
           migrate apply --dir file:///migrations --url "$ATLAS_URL"
 
     - name: Record migration no-op
@@ -653,7 +655,7 @@ Expected: Bash exits 0 and Ruby prints `workflow yaml: passed`.
 ```bash
 docker run --rm \
   -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-  arigaio/atlas:0.35.0-community-alpine \
+  arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
   migrate validate --dir file:///migrations
 ```
 

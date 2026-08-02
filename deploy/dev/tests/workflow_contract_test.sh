@@ -288,9 +288,11 @@ assert_contract(migration_run.include?('trap') && migration_run.include?('rm -f'
                 'custom Atlas CA must be removed by an exit trap')
 assert_contract(migration_run.include?('/atlas-ca.pem:ro'),
                 'custom Atlas CA must be mounted read-only at the fixed container path')
-atlas_image = 'arigaio/atlas:0.35.0-community-alpine'
+atlas_image = 'arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'
 assert_contract(migration_run.scan(atlas_image).length == 2,
-                'validate and apply must both use the repository Atlas version')
+                'validate and apply must both use the immutable Atlas image')
+assert_contract(!migration_run.include?('arigaio/atlas:0.35.0-community-alpine'),
+                'workflow must not use Atlas 0.35 without private CA support')
 assert_contract(migration_run.include?('--env ATLAS_URL'),
                 'Atlas apply must pass only the ATLAS_URL environment variable name to Docker')
 assert_contract(migration_run.include?('$PWD/docker/atlas/migrations:/migrations:ro'),

@@ -145,12 +145,19 @@ export no_proxy="localhost,127.0.0.1,::1"
 
 ## Atlas CLI
 
-本仓库使用 Atlas Community `v0.35.0`：
+本仓库使用 Atlas Community `v1.2.3`，并固定不可变镜像 digest。该版本包含 MySQL
+`ssl-ca` 能力，本地 hash/validate 与 dev workflow 使用同一镜像：
 
 ```bash
-atlas version
-(cd docker/atlas && atlas migrate hash)
-atlas migrate validate --dir file://docker/atlas/migrations
+ATLAS_IMAGE='arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'
+docker run --rm "$ATLAS_IMAGE" version
+docker run --rm \
+  -v "$PWD/docker/atlas/migrations:/migrations" \
+  "$ATLAS_IMAGE" migrate hash --dir file:///migrations
+docker run --rm \
+  -v "$PWD/docker/atlas/migrations:/migrations:ro" \
+  "$ATLAS_IMAGE" migrate validate --dir file:///migrations
+unset ATLAS_IMAGE
 ```
 
 不要手工编辑 `docker/atlas/migrations/atlas.sum`。
