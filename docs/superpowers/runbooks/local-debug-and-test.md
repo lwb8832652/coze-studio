@@ -120,6 +120,78 @@ AES-GCM codec；缺失或不是 16、24、32 bytes 会直接启动失败。Debug
 默认 server seed、runtime registry 与 runtime binding 全部关闭，不会形成只可读或
 只可写的半可用状态。
 
+### Journal 调试
+
+Journal 的四个运行开关保存在 Basic Configuration，不使用环境变量替代。默认
+全部关闭。本地以系统管理员身份先读取
+`GET /api/admin/config/basic/get`，取得 `revision` 和完整
+`journal_runtime_configuration`，再向 `POST /api/admin/config/basic/save` 提交
+CAS patch。`expected_revision` 与内层 `config_revision` 必须使用同一次读取值；
+遇到 `BASE_CONFIG_VERSION_CONFLICT` 时重新读取，不覆盖别人的更新。
+
+本地只调试核心事件流时，可把 projection/UI 对同一批空间设为开启，snapshots 和
+recovery 继续关闭：
+
+```json
+{
+  "expected_revision": "<revision-from-get>",
+  "configuration": {
+    "journal_runtime_configuration": {
+      "journal_projection": true,
+      "journal_ui": true,
+      "journal_snapshots": false,
+      "checkpoint_recovery": false,
+      "journal_projection_rollout_basis_points": 10000,
+      "journal_ui_rollout_basis_points": 10000,
+      "journal_snapshots_rollout_basis_points": 0,
+      "checkpoint_recovery_rollout_basis_points": 0,
+      "sse_tenant_connection_cap": 32,
+      "sse_cluster_connection_cap": 4096,
+      "sse_send_queue_high_watermark": 128,
+      "sse_send_queue_max": 256,
+      "short_request_qps": 20,
+      "short_request_burst": 40,
+      "lease_ttl_seconds": 90,
+      "snapshot_fragment_threshold_bytes": 4194304,
+      "config_revision": "<revision-from-get>"
+    }
+  }
+}
+```
+
+用 Pro 或 Ultra 创建根 Task Run 验证 Journal。Flash 只显示结果，Thinking 只显示
+公共思考摘要，二者不入组；子 Run/subagent 也不单独创建 Journal。简单直接任务
+没有真实公开步骤时不展示空 Journal。当前 Terminal 和 Browser 尚缺满足生产合同
+的数据源，所以不得为了本地界面效果从日志文本猜快照，也不得开启 snapshots 后
+宣称五视图已具备生产条件。
+
+需要检查 Prometheus 指标时显式设置：
+
+```bash
+AGENT_JOURNAL_PROMETHEUS_METRICS_ENABLED=true
+```
+
+需要调试 30/90 天保留清理时，再显式开启 retention worker；它依赖数据库和对象
+存储，依赖缺失会阻止服务启动。变量、默认值、清理顺序和生产处置见
+`docs/superpowers/runbooks/journal-operations.md`。
+
+相关验证命令：
+
+```bash
+(cd backend && GOCACHE=/private/tmp/coze-go-build go test -p 1 -gcflags="all=-l -N" \
+  ./domain/agentthread/... ./application/agentthread/... \
+  ./api/handler/coze/... ./infra/agentthread/...)
+(cd frontend/apps/coze-studio && rushx test)
+(cd frontend/apps/coze-studio && rushx lint)
+(cd frontend/apps/coze-studio && rushx build)
+docker run --rm -v "$PWD/docker/atlas/migrations:/migrations" \
+  arigaio/atlas:0.35.0-community-alpine migrate validate --dir file:///migrations
+```
+
+页面验收覆盖直接任务、多步骤任务、失败/重试、关闭/恢复、五个固定标签、媒体和
+历史 Timeline，并在桌面及移动 viewport 检查控制台。当前生产门禁和回滚顺序以
+`journal-operations.md` 为准。
+
 ## 本地 Web Search Proxy
 
 Go `net/http` 不会自动读取 macOS 系统代理。若本地 `web_search` 请求失败，可在

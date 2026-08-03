@@ -33,6 +33,29 @@ import type {
   WorkbenchArtifactSignedURL,
   WorkbenchGuardrailAuditEvent,
   WorkbenchGuardrailAuditExport,
+  WorkbenchJournalAttempt,
+  WorkbenchJournalBootstrap,
+  WorkbenchJournalBrowserContent,
+  WorkbenchJournalCodeContent,
+  WorkbenchJournalCodeHighlight,
+  WorkbenchJournalContentType,
+  WorkbenchJournalControl,
+  WorkbenchJournalDocumentChapter,
+  WorkbenchJournalDocumentContent,
+  WorkbenchJournalEvent,
+  WorkbenchJournalEventPage,
+  WorkbenchJournalHeartbeat,
+  WorkbenchJournalMetadata,
+  WorkbenchJournalRecoveryCapability,
+  WorkbenchJournalRecoveryResult,
+  WorkbenchJournalSettings,
+  WorkbenchJournalSkill,
+  WorkbenchJournalSnapshot,
+  WorkbenchJournalSnapshotAction,
+  WorkbenchJournalSnapshotActionResult,
+  WorkbenchJournalSnapshotFragment,
+  WorkbenchJournalStreamMessage,
+  WorkbenchJournalTerminalContent,
   WorkbenchMCPRuntimeAuditEvent,
   WorkbenchMemory,
   WorkbenchMemoryAuditEvent,
@@ -804,6 +827,33 @@ const optionalStringField = (
     ? asString(object[key], `${label}.${key}`)
     : undefined;
 
+const optionalStringArrayField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): string[] | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asStringArray(object[key], `${label}.${key}`)
+    : undefined;
+
+const optionalNonNegativeIntegerField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): number | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asSafeNonNegativeInteger(object[key], `${label}.${key}`)
+    : undefined;
+
+const optionalBooleanField = (
+  object: CanonicalRecord,
+  key: string,
+  label: string,
+): boolean | undefined =>
+  Object.prototype.hasOwnProperty.call(object, key)
+    ? asBoolean(object[key], `${label}.${key}`)
+    : undefined;
+
 const optionalEpochField = (
   object: CanonicalRecord,
   key: string,
@@ -928,6 +978,24 @@ const adaptCanonicalArtifact = (
   );
   assertExpectedID(threadID, scope.threadId, `${label}.thread_id`);
   const deletedAt = optionalEpochField(artifact, 'deleted_at', label);
+  const source = optionalStringField(artifact, 'source', label);
+  const generationStatus = optionalStringField(
+    artifact,
+    'generation_status',
+    label,
+  );
+  const capabilities = optionalStringArrayField(
+    artifact,
+    'capabilities',
+    label,
+  );
+  const collectionID = optionalStringField(artifact, 'collection_id', label);
+  const collectionOrder = optionalNonNegativeIntegerField(
+    artifact,
+    'collection_order',
+    label,
+  );
+  const isPrimary = optionalBooleanField(artifact, 'is_primary', label);
   return {
     artifact_id: asResourceID(
       required(artifact, 'artifact_id', label),
@@ -976,6 +1044,16 @@ const adaptCanonicalArtifact = (
       `${label}.updated_at`,
     ),
     ...(deletedAt === undefined ? {} : { deleted_at: deletedAt }),
+    ...(source === undefined ? {} : { source }),
+    ...(generationStatus === undefined
+      ? {}
+      : { generation_status: generationStatus }),
+    ...(capabilities === undefined ? {} : { capabilities }),
+    ...(collectionID === undefined ? {} : { collection_id: collectionID }),
+    ...(collectionOrder === undefined
+      ? {}
+      : { collection_order: collectionOrder }),
+    ...(isPrimary === undefined ? {} : { is_primary: isPrimary }),
   };
 };
 
@@ -1826,3 +1904,1247 @@ export const parseRequiredCanonicalWriteJSONObject = (
   }
   return parsed;
 };
+
+const journalExecutionStatuses = [
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'timed_out',
+] as const;
+const journalContentStatuses = [
+  'empty',
+  'loading',
+  'streaming',
+  'ready',
+  'error',
+  'no_permission',
+] as const;
+const journalProjectionStates = ['healthy', 'degraded', 'disabled'] as const;
+const journalContentTypes = [
+  'document',
+  'terminal',
+  'code',
+  'skill',
+  'browser',
+] as const;
+const journalSnapshotActions = [
+  'copy_command',
+  'copy_output',
+  'copy_code',
+  'open_original',
+  'download_fragment',
+] as const;
+const journalFragmentKinds = [
+  'document_block',
+  'document_chapters',
+  'terminal_stdout',
+  'terminal_stderr',
+  'code_lines',
+  'code_highlights',
+  'skill_items',
+  'browser_thumbnail',
+  'browser_snapshot',
+  'browser_analysis',
+] as const;
+const journalControlTypes = [
+  'journal_disabled',
+  'journal_degraded',
+  'capability_unavailable',
+  'protocol_incompatible',
+] as const;
+const journalErrorCodes = [
+  'JOURNAL_CURSOR_EXPIRED',
+  'JOURNAL_EVENT_GAP',
+  'SNAPSHOT_UNAVAILABLE',
+  'RESOURCE_NOT_FOUND',
+  'RECOVERY_CONFLICT',
+  'RECOVERY_CONFIRM_REQUIRED',
+  'JOURNAL_RATE_LIMITED',
+  'SCHEMA_INCOMPATIBLE',
+  'NO_PERMISSION',
+] as const;
+
+const asLiteral = <T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): T => {
+  const decoded = asString(value, label);
+  if (!allowed.includes(decoded as T)) {
+    return responseFailure(label, `one of ${allowed.join(', ')}`);
+  }
+  return decoded as T;
+};
+
+const optionalJournalString = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): string | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asString(value[key], `${label}.${key}`)
+    : undefined;
+
+const optionalJournalNonEmptyString = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): string | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asNonEmptyString(value[key], `${label}.${key}`)
+    : undefined;
+
+const optionalJournalInteger = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): number | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asSafeNonNegativeInteger(value[key], `${label}.${key}`)
+    : undefined;
+
+const optionalJournalBoolean = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): boolean | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asBoolean(value[key], `${label}.${key}`)
+    : undefined;
+
+const optionalJournalEpoch = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): number | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asEpochMilliseconds(value[key], `${label}.${key}`)
+    : undefined;
+
+const optionalJournalStringArray = (
+  value: CanonicalRecord,
+  key: string,
+  label: string,
+): string[] | undefined =>
+  Object.prototype.hasOwnProperty.call(value, key)
+    ? asStringArray(value[key], `${label}.${key}`)
+    : undefined;
+
+const adaptCanonicalJournalRecoveryCapability = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalRecoveryCapability => {
+  const capability = asRecord(value, label);
+  return {
+    allowed: asBoolean(
+      required(capability, 'allowed', label),
+      `${label}.allowed`,
+    ),
+    requires_confirmation: asBoolean(
+      required(capability, 'requires_confirmation', label),
+      `${label}.requires_confirmation`,
+    ),
+    allowed_actions: asStringArray(
+      required(capability, 'allowed_actions', label),
+      `${label}.allowed_actions`,
+    ),
+    ...(optionalJournalString(capability, 'reason_code', label) === undefined
+      ? {}
+      : {
+          reason_code: optionalJournalString(capability, 'reason_code', label),
+        }),
+  };
+};
+
+const adaptCanonicalJournalAttempt = (
+  value: unknown,
+  scope: AdapterScope,
+  label = 'canonical Journal attempt',
+): WorkbenchJournalAttempt => {
+  const attempt = asRecord(value, label);
+  const runID = asResourceID(
+    required(attempt, 'run_id', label),
+    `${label}.run_id`,
+  );
+  assertExpectedID(runID, scope.runId, `${label}.run_id`);
+  const startedAt = optionalJournalEpoch(attempt, 'started_at', label);
+  const endedAt = optionalJournalEpoch(attempt, 'ended_at', label);
+  return {
+    attempt_id: asNonEmptyString(
+      required(attempt, 'attempt_id', label),
+      `${label}.attempt_id`,
+    ),
+    run_id: runID,
+    status: asLiteral(
+      required(attempt, 'status', label),
+      `${label}.status`,
+      journalExecutionStatuses,
+    ),
+    projection_state: asLiteral(
+      required(attempt, 'projection_state', label),
+      `${label}.projection_state`,
+      journalProjectionStates,
+    ),
+    latest_sequence: asSafeNonNegativeInteger(
+      required(attempt, 'latest_sequence', label),
+      `${label}.latest_sequence`,
+    ),
+    created_at: asEpochMilliseconds(
+      required(attempt, 'created_at', label),
+      `${label}.created_at`,
+    ),
+    ...(startedAt === undefined ? {} : { started_at: startedAt }),
+    ...(endedAt === undefined ? {} : { ended_at: endedAt }),
+    recovery_capability: adaptCanonicalJournalRecoveryCapability(
+      required(attempt, 'recovery_capability', label),
+      `${label}.recovery_capability`,
+    ),
+  };
+};
+
+const validateCanonicalJournalActionPayload = (
+  payload: CanonicalRecord,
+  label: string,
+): void => {
+  const type = asLiteral(required(payload, 'type', label), `${label}.type`, [
+    'generic',
+    ...journalContentTypes,
+  ] as const);
+  const data = asRecord(required(payload, 'data', label), `${label}.data`);
+  asNonEmptyString(
+    required(data, 'action_id', `${label}.data`),
+    `${label}.data.action_id`,
+  );
+  asNonEmptyString(
+    required(data, 'operation', `${label}.data`),
+    `${label}.data.operation`,
+  );
+  asNonEmptyString(
+    required(data, 'target', `${label}.data`),
+    `${label}.data.target`,
+  );
+  asNonEmptyString(
+    required(data, 'display_verb_running', `${label}.data`),
+    `${label}.data.display_verb_running`,
+  );
+  asNonEmptyString(
+    required(data, 'display_verb_completed', `${label}.data`),
+    `${label}.data.display_verb_completed`,
+  );
+  optionalJournalNonEmptyString(data, 'milestone_id', `${label}.data`);
+  const contentType = Object.prototype.hasOwnProperty.call(data, 'content_type')
+    ? asLiteral(
+        data.content_type,
+        `${label}.data.content_type`,
+        journalContentTypes,
+      )
+    : undefined;
+  if (
+    (type === 'generic' && contentType !== undefined) ||
+    (type !== 'generic' && contentType !== type)
+  ) {
+    responseFailure(`${label}.data.content_type`, `match payload type ${type}`);
+  }
+};
+
+const validateCanonicalJournalPayload = (
+  eventType: string,
+  payloadVersion: string | undefined,
+  value: unknown,
+): WorkbenchJournalEvent['payload'] => {
+  const label = 'canonical Journal event.payload';
+  const payload = asJSONObject(value, label);
+  if (payloadVersion === undefined) {
+    return payload;
+  }
+  if (payloadVersion !== '1.0') {
+    return responseFailure('canonical Journal event.payload_version', '1.0');
+  }
+  if (eventType.startsWith('milestone.')) {
+    asLiteral(required(payload, 'type', label), `${label}.type`, ['milestone']);
+    const data = asRecord(required(payload, 'data', label), `${label}.data`);
+    asNonEmptyString(
+      required(data, 'milestone_id', `${label}.data`),
+      `${label}.data.milestone_id`,
+    );
+    asNonEmptyString(
+      required(data, 'title', `${label}.data`),
+      `${label}.data.title`,
+    );
+  } else if (eventType.startsWith('action.')) {
+    validateCanonicalJournalActionPayload(payload, label);
+  } else if (eventType.startsWith('artifact.')) {
+    asLiteral(required(payload, 'type', label), `${label}.type`, ['artifact']);
+    const data = asRecord(required(payload, 'data', label), `${label}.data`);
+    asResourceID(
+      required(data, 'artifact_id', `${label}.data`),
+      `${label}.data.artifact_id`,
+    );
+    optionalJournalNonEmptyString(data, 'collection_id', `${label}.data`);
+  } else if (eventType.startsWith('verification.')) {
+    asLiteral(required(payload, 'type', label), `${label}.type`, [
+      'verification',
+    ]);
+    const data = asRecord(required(payload, 'data', label), `${label}.data`);
+    ['verification_id', 'title', 'result_summary'].forEach(key =>
+      asNonEmptyString(
+        required(data, key, `${label}.data`),
+        `${label}.data.${key}`,
+      ),
+    );
+  } else if (eventType.startsWith('confirmation.')) {
+    asLiteral(required(payload, 'type', label), `${label}.type`, [
+      'confirmation',
+    ]);
+    const data = asRecord(required(payload, 'data', label), `${label}.data`);
+    ['confirmation_id', 'confirmation_type', 'prompt'].forEach(key =>
+      asNonEmptyString(
+        required(data, key, `${label}.data`),
+        `${label}.data.${key}`,
+      ),
+    );
+    asStringArray(
+      required(data, 'allowed_action_keys', `${label}.data`),
+      `${label}.data.allowed_action_keys`,
+    );
+  }
+  return payload;
+};
+
+export const adaptCanonicalJournalEvent = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalEvent => {
+  const label = 'canonical Journal event';
+  const event = asRecord(value, label);
+  const threadID = asResourceID(
+    required(event, 'thread_id', label),
+    `${label}.thread_id`,
+  );
+  const runID = asResourceID(
+    required(event, 'run_id', label),
+    `${label}.run_id`,
+  );
+  assertExpectedID(threadID, scope.threadId, `${label}.thread_id`);
+  assertExpectedID(runID, scope.runId, `${label}.run_id`);
+  const eventType = asNonEmptyString(
+    required(event, 'event_type', label),
+    `${label}.event_type`,
+  );
+  const payloadVersion = optionalJournalString(event, 'payload_version', label);
+  const sequence = optionalJournalInteger(event, 'sequence', label);
+  const occurredAt = optionalJournalEpoch(event, 'occurred_at', label);
+  const status = Object.prototype.hasOwnProperty.call(event, 'status')
+    ? asLiteral(event.status, `${label}.status`, journalExecutionStatuses)
+    : undefined;
+  const visibility = Object.prototype.hasOwnProperty.call(event, 'visibility')
+    ? asLiteral(event.visibility, `${label}.visibility`, ['user'])
+    : undefined;
+  return {
+    event_id: asResourceID(
+      required(event, 'event_id', label),
+      `${label}.event_id`,
+    ),
+    thread_id: threadID,
+    run_id: runID,
+    event_type: eventType,
+    payload: validateCanonicalJournalPayload(
+      eventType,
+      payloadVersion,
+      required(event, 'payload', label),
+    ),
+    created_at: asEpochMilliseconds(
+      required(event, 'created_at', label),
+      `${label}.created_at`,
+    ),
+    ...(optionalJournalString(event, 'schema_version', label) === undefined
+      ? {}
+      : {
+          schema_version: optionalJournalString(event, 'schema_version', label),
+        }),
+    ...(optionalJournalNonEmptyString(event, 'attempt_id', label) === undefined
+      ? {}
+      : {
+          attempt_id: optionalJournalNonEmptyString(event, 'attempt_id', label),
+        }),
+    ...(sequence === undefined ? {} : { sequence }),
+    ...(optionalJournalNonEmptyString(event, 'idempotency_key', label) ===
+    undefined
+      ? {}
+      : {
+          idempotency_key: optionalJournalNonEmptyString(
+            event,
+            'idempotency_key',
+            label,
+          ),
+        }),
+    ...(optionalJournalString(event, 'parent_event_id', label) === undefined
+      ? {}
+      : {
+          parent_event_id: optionalJournalString(
+            event,
+            'parent_event_id',
+            label,
+          ),
+        }),
+    ...(status === undefined ? {} : { status }),
+    ...(occurredAt === undefined ? {} : { occurred_at: occurredAt }),
+    ...(visibility === undefined ? {} : { visibility }),
+    ...(payloadVersion === undefined
+      ? {}
+      : { payload_version: payloadVersion }),
+    ...(optionalJournalNonEmptyString(event, 'snapshot_id', label) === undefined
+      ? {}
+      : {
+          snapshot_id: optionalJournalNonEmptyString(
+            event,
+            'snapshot_id',
+            label,
+          ),
+        }),
+    ...(optionalJournalString(event, 'trace_id', label) === undefined
+      ? {}
+      : { trace_id: optionalJournalString(event, 'trace_id', label) }),
+  };
+};
+
+export const adaptCanonicalJournalEventPage = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalEventPage => {
+  const label = 'canonical Journal event page';
+  const page = asRecord(value, label);
+  const nextAfterSequence = optionalJournalInteger(
+    page,
+    'next_after_sequence',
+    label,
+  );
+  const latestSequence = optionalJournalInteger(page, 'latest_sequence', label);
+  return {
+    items: asArray(required(page, 'data', label), `${label}.data`).map(item =>
+      adaptCanonicalJournalEvent(item, scope),
+    ),
+    has_more: asBoolean(required(page, 'has_more', label), `${label}.has_more`),
+    ...(optionalJournalString(page, 'next_after_event_id', label) === undefined
+      ? {}
+      : {
+          next_after_event_id: asResourceID(
+            page.next_after_event_id,
+            `${label}.next_after_event_id`,
+          ),
+        }),
+    ...(optionalJournalNonEmptyString(page, 'attempt_id', label) === undefined
+      ? {}
+      : {
+          attempt_id: optionalJournalNonEmptyString(page, 'attempt_id', label),
+        }),
+    ...(latestSequence === undefined
+      ? {}
+      : { latest_sequence: latestSequence }),
+    ...(nextAfterSequence === undefined
+      ? {}
+      : { next_after_sequence: nextAfterSequence }),
+  };
+};
+
+export const adaptCanonicalJournalBootstrap = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalBootstrap => {
+  const label = 'canonical Journal bootstrap';
+  const bootstrap = asRecord(value, label);
+  const enrollmentLabel = `${label}.enrollment`;
+  const enrollment = asRecord(
+    required(bootstrap, 'enrollment', label),
+    enrollmentLabel,
+  );
+  const defaultAttempt = Object.prototype.hasOwnProperty.call(
+    bootstrap,
+    'default_attempt',
+  )
+    ? adaptCanonicalJournalAttempt(
+        bootstrap.default_attempt,
+        scope,
+        `${label}.default_attempt`,
+      )
+    : undefined;
+  return {
+    attempts: asArray(
+      required(bootstrap, 'attempts', label),
+      `${label}.attempts`,
+    ).map((attempt, index) =>
+      adaptCanonicalJournalAttempt(
+        attempt,
+        scope,
+        `${label}.attempts[${index}]`,
+      ),
+    ),
+    default_attempt_id: asString(
+      required(bootstrap, 'default_attempt_id', label),
+      `${label}.default_attempt_id`,
+    ),
+    ...(defaultAttempt === undefined
+      ? {}
+      : { default_attempt: defaultAttempt }),
+    projection_state: asLiteral(
+      required(bootstrap, 'projection_state', label),
+      `${label}.projection_state`,
+      journalProjectionStates,
+    ),
+    latest_sequence: asSafeNonNegativeInteger(
+      required(bootstrap, 'latest_sequence', label),
+      `${label}.latest_sequence`,
+    ),
+    events: adaptCanonicalJournalEventPage(
+      required(bootstrap, 'events', label),
+      scope,
+    ),
+    content_types: asArray(
+      required(bootstrap, 'content_types', label),
+      `${label}.content_types`,
+    ).map((contentType, index) =>
+      asLiteral(
+        contentType,
+        `${label}.content_types[${index}]`,
+        journalContentTypes,
+      ),
+    ),
+    enrollment: {
+      enrolled: asBoolean(
+        required(enrollment, 'enrolled', enrollmentLabel),
+        `${enrollmentLabel}.enrolled`,
+      ),
+      schema_version: asNonEmptyString(
+        required(enrollment, 'schema_version', enrollmentLabel),
+        `${enrollmentLabel}.schema_version`,
+      ),
+      payload_version: asNonEmptyString(
+        required(enrollment, 'payload_version', enrollmentLabel),
+        `${enrollmentLabel}.payload_version`,
+      ),
+      journal_protocol_version: asNonEmptyString(
+        required(enrollment, 'journal_protocol_version', enrollmentLabel),
+        `${enrollmentLabel}.journal_protocol_version`,
+      ),
+      journal_enabled: asBoolean(
+        required(enrollment, 'journal_enabled', enrollmentLabel),
+        `${enrollmentLabel}.journal_enabled`,
+      ),
+      snapshots_enabled: asBoolean(
+        required(enrollment, 'snapshots_enabled', enrollmentLabel),
+        `${enrollmentLabel}.snapshots_enabled`,
+      ),
+    },
+    submit_at: asEpochMilliseconds(
+      required(bootstrap, 'submit_at', label),
+      `${label}.submit_at`,
+    ),
+    server_time: asEpochMilliseconds(
+      required(bootstrap, 'server_time', label),
+      `${label}.server_time`,
+    ),
+    recovery_capability: adaptCanonicalJournalRecoveryCapability(
+      required(bootstrap, 'recovery_capability', label),
+      `${label}.recovery_capability`,
+    ),
+  };
+};
+
+const adaptCanonicalJournalChapter = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalDocumentChapter => {
+  const chapter = asRecord(value, label);
+  return {
+    chapter_id: asNonEmptyString(
+      required(chapter, 'chapter_id', label),
+      `${label}.chapter_id`,
+    ),
+    title: asString(required(chapter, 'title', label), `${label}.title`),
+    level: asSafeNonNegativeInteger(
+      required(chapter, 'level', label),
+      `${label}.level`,
+    ),
+  };
+};
+
+const adaptCanonicalJournalHighlight = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalCodeHighlight => {
+  const highlight = asRecord(value, label);
+  return {
+    start_line: asSafeNonNegativeInteger(
+      required(highlight, 'start_line', label),
+      `${label}.start_line`,
+    ),
+    end_line: asSafeNonNegativeInteger(
+      required(highlight, 'end_line', label),
+      `${label}.end_line`,
+    ),
+    ...(optionalJournalString(highlight, 'kind', label) === undefined
+      ? {}
+      : { kind: optionalJournalString(highlight, 'kind', label) }),
+  };
+};
+
+const adaptCanonicalJournalSkill = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalSkill => {
+  const skill = asRecord(value, label);
+  const outputArtifacts = optionalJournalStringArray(
+    skill,
+    'output_artifacts',
+    label,
+  );
+  return {
+    skill_id: asNonEmptyString(
+      required(skill, 'skill_id', label),
+      `${label}.skill_id`,
+    ),
+    name: asNonEmptyString(required(skill, 'name', label), `${label}.name`),
+    ...['invocation_status', 'input_summary', 'purpose_summary', 'description']
+      .map(key => [key, optionalJournalString(skill, key, label)] as const)
+      .reduce<Record<string, string>>((fields, [key, item]) => {
+        if (item !== undefined) {
+          fields[key] = item;
+        }
+        return fields;
+      }, {}),
+    ...(outputArtifacts === undefined
+      ? {}
+      : { output_artifacts: outputArtifacts }),
+  };
+};
+
+const adaptCanonicalJournalFragment = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalSnapshotFragment => {
+  const fragment = asRecord(value, label);
+  const kind = Object.prototype.hasOwnProperty.call(fragment, 'kind')
+    ? asLiteral(fragment.kind, `${label}.kind`, journalFragmentKinds)
+    : undefined;
+  const chapters = Object.prototype.hasOwnProperty.call(fragment, 'chapters')
+    ? asArray(fragment.chapters, `${label}.chapters`).map((item, index) =>
+        adaptCanonicalJournalChapter(item, `${label}.chapters[${index}]`),
+      )
+    : undefined;
+  const highlights = Object.prototype.hasOwnProperty.call(
+    fragment,
+    'highlights',
+  )
+    ? asArray(fragment.highlights, `${label}.highlights`).map((item, index) =>
+        adaptCanonicalJournalHighlight(item, `${label}.highlights[${index}]`),
+      )
+    : undefined;
+  const skills = Object.prototype.hasOwnProperty.call(fragment, 'skills')
+    ? asArray(fragment.skills, `${label}.skills`).map((item, index) =>
+        adaptCanonicalJournalSkill(item, `${label}.skills[${index}]`),
+      )
+    : undefined;
+  const optionalIntegers = [
+    'byte_start',
+    'byte_end',
+    'size_bytes',
+    'start_line',
+    'end_line',
+    'item_start',
+    'item_end',
+  ] as const;
+  const integerFields = optionalIntegers.reduce<Record<string, number>>(
+    (fields, key) => {
+      const item = optionalJournalInteger(fragment, key, label);
+      if (item !== undefined) {
+        fields[key] = item;
+      }
+      return fields;
+    },
+    {},
+  );
+  const optionalStrings = [
+    'content',
+    'content_hash',
+    'block_id',
+    'stream',
+    'binary_content_base64',
+    'mime_type',
+  ] as const;
+  const stringFields = optionalStrings.reduce<Record<string, string>>(
+    (fields, key) => {
+      const item = optionalJournalString(fragment, key, label);
+      if (item !== undefined) {
+        fields[key] = item;
+      }
+      return fields;
+    },
+    {},
+  );
+  return {
+    fragment_id: asNonEmptyString(
+      required(fragment, 'fragment_id', label),
+      `${label}.fragment_id`,
+    ),
+    fragment_index: asSafeNonNegativeInteger(
+      required(fragment, 'fragment_index', label),
+      `${label}.fragment_index`,
+    ),
+    ...integerFields,
+    ...stringFields,
+    ...(kind === undefined ? {} : { kind }),
+    ...(chapters === undefined ? {} : { chapters }),
+    ...(highlights === undefined ? {} : { highlights }),
+    ...(skills === undefined ? {} : { skills }),
+    ...(optionalJournalStringArray(fragment, 'analysis', label) === undefined
+      ? {}
+      : {
+          analysis: optionalJournalStringArray(fragment, 'analysis', label),
+        }),
+  };
+};
+
+const adaptCanonicalJournalDocumentContent = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalDocumentContent => {
+  const content = asRecord(value, label);
+  const chapters = Object.prototype.hasOwnProperty.call(content, 'chapters')
+    ? asArray(content.chapters, `${label}.chapters`).map((item, index) =>
+        adaptCanonicalJournalChapter(item, `${label}.chapters[${index}]`),
+      )
+    : undefined;
+  const fields = [
+    'format',
+    'content',
+    'source_artifact_id',
+    'token',
+    'active_block',
+    'revision',
+    'sync_status',
+  ] as const;
+  const optional = fields.reduce<Record<string, string>>((result, key) => {
+    const item = optionalJournalString(content, key, label);
+    if (item !== undefined) {
+      result[key] = item;
+    }
+    return result;
+  }, {});
+  return {
+    title: asString(required(content, 'title', label), `${label}.title`),
+    ...optional,
+    ...(chapters === undefined ? {} : { chapters }),
+  };
+};
+
+const adaptCanonicalJournalTerminalContent = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalTerminalContent => {
+  const content = asRecord(value, label);
+  const startedAt = optionalJournalEpoch(content, 'started_at', label);
+  const finishedAt = optionalJournalEpoch(content, 'finished_at', label);
+  const exitCode = optionalJournalInteger(content, 'exit_code', label);
+  const duration = optionalJournalInteger(content, 'duration_ms', label);
+  return {
+    command: asString(required(content, 'command', label), `${label}.command`),
+    ...['output', 'working_directory', 'session_id', 'stdout', 'stderr']
+      .map(key => [key, optionalJournalString(content, key, label)] as const)
+      .reduce<Record<string, string>>((fields, [key, item]) => {
+        if (item !== undefined) {
+          fields[key] = item;
+        }
+        return fields;
+      }, {}),
+    ...(exitCode === undefined ? {} : { exit_code: exitCode }),
+    ...(startedAt === undefined ? {} : { started_at: startedAt }),
+    ...(finishedAt === undefined ? {} : { finished_at: finishedAt }),
+    ...(duration === undefined ? {} : { duration_ms: duration }),
+  };
+};
+
+const adaptCanonicalJournalCodeContent = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalCodeContent => {
+  const content = asRecord(value, label);
+  const startLine = optionalJournalInteger(content, 'start_line', label);
+  const endLine = optionalJournalInteger(content, 'end_line', label);
+  const highlights = Object.prototype.hasOwnProperty.call(content, 'highlights')
+    ? asArray(content.highlights, `${label}.highlights`).map((item, index) =>
+        adaptCanonicalJournalHighlight(item, `${label}.highlights[${index}]`),
+      )
+    : undefined;
+  return {
+    file_path: asString(
+      required(content, 'file_path', label),
+      `${label}.file_path`,
+    ),
+    repository: asString(
+      required(content, 'repository', label),
+      `${label}.repository`,
+    ),
+    revision: asString(
+      required(content, 'revision', label),
+      `${label}.revision`,
+    ),
+    ...['language', 'content', 'diff']
+      .map(key => [key, optionalJournalString(content, key, label)] as const)
+      .reduce<Record<string, string>>((fields, [key, item]) => {
+        if (item !== undefined) {
+          fields[key] = item;
+        }
+        return fields;
+      }, {}),
+    ...(startLine === undefined ? {} : { start_line: startLine }),
+    ...(endLine === undefined ? {} : { end_line: endLine }),
+    ...(highlights === undefined ? {} : { highlights }),
+  };
+};
+
+const adaptCanonicalJournalBrowserContent = (
+  value: unknown,
+  label: string,
+): WorkbenchJournalBrowserContent => {
+  const content = asRecord(value, label);
+  const index = optionalJournalInteger(content, 'index', label);
+  const total = optionalJournalInteger(content, 'total', label);
+  return {
+    capture_id: asNonEmptyString(
+      required(content, 'capture_id', label),
+      `${label}.capture_id`,
+    ),
+    static_snapshot_base64: asString(
+      required(content, 'static_snapshot_base64', label),
+      `${label}.static_snapshot_base64`,
+    ),
+    mime_type: asNonEmptyString(
+      required(content, 'mime_type', label),
+      `${label}.mime_type`,
+    ),
+    redacted: asBoolean(
+      required(content, 'redacted', label),
+      `${label}.redacted`,
+    ),
+    redaction_evidence_id: asNonEmptyString(
+      required(content, 'redaction_evidence_id', label),
+      `${label}.redaction_evidence_id`,
+    ),
+    redaction_policy_version: asNonEmptyString(
+      required(content, 'redaction_policy_version', label),
+      `${label}.redaction_policy_version`,
+    ),
+    ...['url', 'title', 'screenshot_artifact_id', 'thumbnail_base64']
+      .map(key => [key, optionalJournalString(content, key, label)] as const)
+      .reduce<Record<string, string>>((fields, [key, item]) => {
+        if (item !== undefined) {
+          fields[key] = item;
+        }
+        return fields;
+      }, {}),
+    ...(optionalJournalStringArray(content, 'analysis', label) === undefined
+      ? {}
+      : { analysis: optionalJournalStringArray(content, 'analysis', label) }),
+    ...(index === undefined ? {} : { index }),
+    ...(total === undefined ? {} : { total }),
+  };
+};
+
+const adaptCanonicalJournalSnapshotContent = (
+  contentType: WorkbenchJournalContentType,
+  value: unknown,
+  label: string,
+): WorkbenchJournalSnapshot['content'] => {
+  const envelope = asRecord(value, label);
+  const branch = required(envelope, contentType, label);
+  const knownBranches = journalContentTypes.filter(type =>
+    Object.prototype.hasOwnProperty.call(envelope, type),
+  );
+  if (knownBranches.length !== 1) {
+    return responseFailure(label, 'exactly one matching content branch');
+  }
+  switch (contentType) {
+    case 'document':
+      return {
+        document: adaptCanonicalJournalDocumentContent(
+          branch,
+          `${label}.document`,
+        ),
+      };
+    case 'terminal':
+      return {
+        terminal: adaptCanonicalJournalTerminalContent(
+          branch,
+          `${label}.terminal`,
+        ),
+      };
+    case 'code':
+      return {
+        code: adaptCanonicalJournalCodeContent(branch, `${label}.code`),
+      };
+    case 'skill': {
+      const skill = asRecord(branch, `${label}.skill`);
+      return {
+        skill: {
+          skills: asArray(
+            required(skill, 'skills', `${label}.skill`),
+            `${label}.skill.skills`,
+          ).map((item, index) =>
+            adaptCanonicalJournalSkill(item, `${label}.skill.skills[${index}]`),
+          ),
+        },
+      };
+    }
+    case 'browser':
+      return {
+        browser: adaptCanonicalJournalBrowserContent(
+          branch,
+          `${label}.browser`,
+        ),
+      };
+    default:
+      return responseFailure(label, 'a supported content branch');
+  }
+};
+
+export const adaptCanonicalJournalSnapshot = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalSnapshot => {
+  const label = 'canonical Journal snapshot';
+  const snapshot = asRecord(value, label);
+  const contentType = asLiteral(
+    required(snapshot, 'content_type', label),
+    `${label}.content_type`,
+    journalContentTypes,
+  );
+  const status = asLiteral(
+    required(snapshot, 'status', label),
+    `${label}.status`,
+    journalContentStatuses,
+  );
+  const content = Object.prototype.hasOwnProperty.call(snapshot, 'content')
+    ? adaptCanonicalJournalSnapshotContent(
+        contentType,
+        snapshot.content,
+        `${label}.content`,
+      )
+    : undefined;
+  const nextCursor = optionalJournalString(snapshot, 'next_cursor', label);
+  return {
+    content_type: contentType,
+    snapshot_id: asNonEmptyString(
+      required(snapshot, 'snapshot_id', label),
+      `${label}.snapshot_id`,
+    ),
+    event_id: asResourceID(
+      required(snapshot, 'event_id', label),
+      `${label}.event_id`,
+    ),
+    attempt_id: asNonEmptyString(
+      required(snapshot, 'attempt_id', label),
+      `${label}.attempt_id`,
+    ),
+    is_fragmented: asBoolean(
+      required(snapshot, 'is_fragmented', label),
+      `${label}.is_fragmented`,
+    ),
+    status,
+    created_at: asEpochMilliseconds(
+      required(snapshot, 'created_at', label),
+      `${label}.created_at`,
+    ),
+    visibility: asLiteral(
+      required(snapshot, 'visibility', label),
+      `${label}.visibility`,
+      ['user'],
+    ),
+    ...(optionalJournalString(snapshot, 'error_code', label) === undefined
+      ? {}
+      : {
+          error_code: optionalJournalString(snapshot, 'error_code', label),
+        }),
+    fragments: asArray(
+      required(snapshot, 'fragments', label),
+      `${label}.fragments`,
+    ).map((fragment, index) =>
+      adaptCanonicalJournalFragment(fragment, `${label}.fragments[${index}]`),
+    ),
+    has_more: asBoolean(
+      required(snapshot, 'has_more', label),
+      `${label}.has_more`,
+    ),
+    ...(nextCursor === undefined ? {} : { next_cursor: nextCursor }),
+    ...(content === undefined ? {} : { content }),
+  };
+};
+
+export const adaptCanonicalJournalSnapshotAction = (
+  value: unknown,
+): WorkbenchJournalSnapshotActionResult => {
+  const label = 'canonical Journal snapshot action';
+  const action = asRecord(value, label);
+  return {
+    snapshot_id: asNonEmptyString(
+      required(action, 'snapshot_id', label),
+      `${label}.snapshot_id`,
+    ),
+    action: asLiteral(
+      required(action, 'action', label),
+      `${label}.action`,
+      journalSnapshotActions,
+    ),
+    allowed: asBoolean(required(action, 'allowed', label), `${label}.allowed`),
+    audited_at: asEpochMilliseconds(
+      required(action, 'audited_at', label),
+      `${label}.audited_at`,
+    ),
+    ...[
+      'copy_text',
+      'download_url',
+      'download_content_base64',
+      'download_mime_type',
+    ]
+      .map(key => [key, optionalJournalString(action, key, label)] as const)
+      .reduce<Record<string, string>>((fields, [key, item]) => {
+        if (item !== undefined) {
+          fields[key] = item;
+        }
+        return fields;
+      }, {}),
+  };
+};
+
+export const adaptCanonicalJournalRecovery = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalRecoveryResult => {
+  const label = 'canonical Journal recovery';
+  const recovery = asRecord(value, label);
+  return {
+    attempt: adaptCanonicalJournalAttempt(
+      required(recovery, 'attempt', label),
+      scope,
+      `${label}.attempt`,
+    ),
+    accepted: asBoolean(
+      required(recovery, 'accepted', label),
+      `${label}.accepted`,
+    ),
+  };
+};
+
+export const adaptCanonicalJournalSettings = (
+  value: unknown,
+): WorkbenchJournalSettings => {
+  const label = 'canonical Journal settings';
+  const settings = asRecord(value, label);
+  const splitRatio = asFiniteNumber(
+    required(settings, 'split_ratio', label),
+    `${label}.split_ratio`,
+  );
+  if (splitRatio < 0.4 || splitRatio > 0.7) {
+    return responseFailure(`${label}.split_ratio`, 'between 0.4 and 0.7');
+  }
+  const updatedAt = optionalJournalEpoch(settings, 'updated_at', label);
+  return {
+    split_ratio: splitRatio,
+    revision: asNonEmptyString(
+      required(settings, 'revision', label),
+      `${label}.revision`,
+    ),
+    ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+  };
+};
+
+export const adaptCanonicalJournalMetadata = (
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalMetadata => {
+  const label = 'canonical Journal stream metadata';
+  const metadata = asRecord(value, label);
+  const threadID = asResourceID(
+    required(metadata, 'thread_id', label),
+    `${label}.thread_id`,
+  );
+  const runID = asResourceID(
+    required(metadata, 'run_id', label),
+    `${label}.run_id`,
+  );
+  assertExpectedID(threadID, scope.threadId, `${label}.thread_id`);
+  assertExpectedID(runID, scope.runId, `${label}.run_id`);
+  return {
+    thread_id: threadID,
+    run_id: runID,
+    attempt_id: asNonEmptyString(
+      required(metadata, 'attempt_id', label),
+      `${label}.attempt_id`,
+    ),
+    latest_sequence: asSafeNonNegativeInteger(
+      required(metadata, 'latest_sequence', label),
+      `${label}.latest_sequence`,
+    ),
+    submit_at: asEpochMilliseconds(
+      required(metadata, 'submit_at', label),
+      `${label}.submit_at`,
+    ),
+    server_time: asEpochMilliseconds(
+      required(metadata, 'server_time', label),
+      `${label}.server_time`,
+    ),
+    ...(optionalJournalBoolean(metadata, 'journal_enabled', label) === undefined
+      ? {}
+      : {
+          journal_enabled: optionalJournalBoolean(
+            metadata,
+            'journal_enabled',
+            label,
+          ),
+        }),
+    ...(optionalJournalBoolean(metadata, 'snapshots_enabled', label) ===
+    undefined
+      ? {}
+      : {
+          snapshots_enabled: optionalJournalBoolean(
+            metadata,
+            'snapshots_enabled',
+            label,
+          ),
+        }),
+    journal_protocol_version: asNonEmptyString(
+      required(metadata, 'journal_protocol_version', label),
+      `${label}.journal_protocol_version`,
+    ),
+  };
+};
+
+export const adaptCanonicalJournalHeartbeat = (
+  value: unknown,
+): WorkbenchJournalHeartbeat => {
+  const label = 'canonical Journal heartbeat';
+  const heartbeat = asRecord(value, label);
+  return {
+    server_time: asEpochMilliseconds(
+      required(heartbeat, 'server_time', label),
+      `${label}.server_time`,
+    ),
+    attempt_id: asNonEmptyString(
+      required(heartbeat, 'attempt_id', label),
+      `${label}.attempt_id`,
+    ),
+    latest_sequence: asSafeNonNegativeInteger(
+      required(heartbeat, 'latest_sequence', label),
+      `${label}.latest_sequence`,
+    ),
+  };
+};
+
+export const adaptCanonicalJournalControl = (
+  value: unknown,
+): WorkbenchJournalControl => {
+  const label = 'canonical Journal control';
+  const control = asRecord(value, label);
+  const latestSequence = optionalJournalInteger(
+    control,
+    'latest_sequence',
+    label,
+  );
+  const errorCode = Object.prototype.hasOwnProperty.call(control, 'error_code')
+    ? asLiteral(control.error_code, `${label}.error_code`, journalErrorCodes)
+    : undefined;
+  const retryable = optionalJournalBoolean(control, 'retryable', label);
+  return {
+    type: asLiteral(
+      required(control, 'type', label),
+      `${label}.type`,
+      journalControlTypes,
+    ),
+    schema_version: asNonEmptyString(
+      required(control, 'schema_version', label),
+      `${label}.schema_version`,
+    ),
+    journal_protocol_version: asNonEmptyString(
+      required(control, 'journal_protocol_version', label),
+      `${label}.journal_protocol_version`,
+    ),
+    server_time: asEpochMilliseconds(
+      required(control, 'server_time', label),
+      `${label}.server_time`,
+    ),
+    ...(optionalJournalNonEmptyString(control, 'attempt_id', label) ===
+    undefined
+      ? {}
+      : {
+          attempt_id: optionalJournalNonEmptyString(
+            control,
+            'attempt_id',
+            label,
+          ),
+        }),
+    ...(latestSequence === undefined
+      ? {}
+      : { latest_sequence: latestSequence }),
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    ...(retryable === undefined ? {} : { retryable }),
+  };
+};
+
+export const adaptCanonicalJournalStreamWrapper = (
+  kind: 'event' | 'heartbeat' | 'control',
+  value: unknown,
+  scope: AdapterScope,
+): WorkbenchJournalStreamMessage => {
+  const label = `canonical Journal ${kind} frame`;
+  const frame = asRecord(value, label);
+  if (asString(required(frame, 'kind', label), `${label}.kind`) !== kind) {
+    return responseFailure(`${label}.kind`, kind);
+  }
+  if (kind === 'event') {
+    return {
+      kind,
+      event: adaptCanonicalJournalEvent(required(frame, 'event', label), scope),
+    };
+  }
+  if (kind === 'heartbeat') {
+    return {
+      kind,
+      heartbeat: adaptCanonicalJournalHeartbeat(
+        required(frame, 'heartbeat', label),
+      ),
+    };
+  }
+  return {
+    kind,
+    control: adaptCanonicalJournalControl(required(frame, 'control', label)),
+  };
+};
+
+export const adaptCanonicalJournalEnd = (
+  value: unknown,
+): WorkbenchJournalStreamMessage => {
+  const label = 'canonical Journal end frame';
+  const end = asRecord(value, label);
+  return {
+    kind: 'end',
+    attempt_id: asNonEmptyString(
+      required(end, 'attempt_id', label),
+      `${label}.attempt_id`,
+    ),
+    status: asLiteral(
+      required(end, 'status', label),
+      `${label}.status`,
+      journalExecutionStatuses,
+    ),
+    latest_sequence: asSafeNonNegativeInteger(
+      required(end, 'latest_sequence', label),
+      `${label}.latest_sequence`,
+    ),
+  };
+};
+
+export const isWorkbenchJournalSnapshotAction = (
+  value: string,
+): value is WorkbenchJournalSnapshotAction =>
+  journalSnapshotActions.includes(value as WorkbenchJournalSnapshotAction);

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { WorkbenchJournalClient } from './workbench-journal-client';
 import type {
   HumanInteractionResponse,
   WorkbenchArtifact,
@@ -26,6 +27,8 @@ import type {
   WorkbenchArtifactSignedURL,
   WorkbenchGuardrailAuditEvent,
   WorkbenchGuardrailAuditExport,
+  WorkbenchJournalSnapshotAction,
+  WorkbenchJournalStreamMessage,
   WorkbenchMCPRuntimeAuditEvent,
   WorkbenchMemory,
   WorkbenchMemoryAuditEvent,
@@ -221,7 +224,77 @@ export interface SubscribeWorkbenchRunEventsRequest
   onError: (error: Error) => void;
 }
 
+export interface GetWorkbenchRunJournalRequest
+  extends WorkbenchRunRequest,
+    WorkbenchAbortOptions {
+  attempt_id?: string;
+  after_sequence?: number;
+  after_event_id?: string;
+  limit?: number;
+  journal_protocol_version?: string;
+}
+
+export interface ListWorkbenchJournalEventsRequest
+  extends WorkbenchRunRequest,
+    WorkbenchAbortOptions {
+  attempt_id: string;
+  after_sequence?: number;
+  after_event_id?: string;
+  limit?: number;
+}
+
+export interface SubscribeWorkbenchJournalEventsRequest
+  extends WorkbenchRunRequest {
+  attempt_id?: string;
+  after_sequence?: number;
+  after_event_id?: string;
+  journal_protocol_version?: string;
+  signal: AbortSignal;
+  onMessage: (message: WorkbenchJournalStreamMessage) => void;
+  onError: (error: Error) => void;
+}
+
+export interface GetWorkbenchJournalSnapshotRequest
+  extends WorkbenchRunRequest,
+    WorkbenchAbortOptions {
+  snapshot_id: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface AuditWorkbenchJournalSnapshotActionRequest
+  extends WorkbenchRunRequest,
+    WorkbenchAbortOptions {
+  snapshot_id: string;
+  action: WorkbenchJournalSnapshotAction;
+  fragment_id?: string;
+  idempotency_key: string;
+}
+
+export interface RecoverWorkbenchJournalRequest
+  extends WorkbenchRunRequest,
+    WorkbenchAbortOptions {
+  source_attempt_id?: string;
+  action: string;
+  confirmed?: boolean;
+  idempotency_key: string;
+}
+
+export type GetWorkbenchJournalSettingsRequest = WorkbenchAbortOptions;
+
+export interface PatchWorkbenchJournalSettingsRequest
+  extends WorkbenchAbortOptions {
+  split_ratio: number;
+  revision: string;
+}
+
 export interface RunEventSubscription {
+  // eslint-disable-next-line @typescript-eslint/method-signature-style -- Public contract is intentionally exact.
+  close(): void;
+  closed: Promise<void>;
+}
+
+export interface JournalEventSubscription {
   // eslint-disable-next-line @typescript-eslint/method-signature-style -- Public contract is intentionally exact.
   close(): void;
   closed: Promise<void>;
@@ -389,7 +462,7 @@ export interface ListWorkbenchMCPRuntimeAuditEventsRequest
   run_id?: string;
 }
 
-export interface WorkbenchThreadClient {
+export interface WorkbenchThreadClient extends WorkbenchJournalClient {
   readonly contract: 'canonical_v1';
 
   searchThreads: (
@@ -428,7 +501,6 @@ export interface WorkbenchThreadClient {
   subscribeRunEvents: (
     request: SubscribeWorkbenchRunEventsRequest,
   ) => RunEventSubscription;
-
   listUploads: (
     request: ListWorkbenchUploadsRequest,
   ) => Promise<WorkbenchPage<WorkbenchUpload>>;

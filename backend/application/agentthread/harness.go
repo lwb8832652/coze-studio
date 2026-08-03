@@ -21,8 +21,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 const defaultHarnessMaxSteps = 4
@@ -121,25 +125,27 @@ type SkillProvider interface {
 }
 
 type HarnessExecutorOptions struct {
-	MaxSteps       int
-	ModelProvider  ChatModelProvider
-	ToolRegistry   ToolRegistry
-	EventSink      RunEventSink
-	MemoryProvider MemoryProvider
-	SkillProvider  SkillProvider
-	UsageCollector UsageCollector
-	CheckpointSink CheckpointSink
+	MaxSteps               int
+	ModelProvider          ChatModelProvider
+	ToolRegistry           ToolRegistry
+	EventSink              RunEventSink
+	MemoryProvider         MemoryProvider
+	SkillProvider          SkillProvider
+	UsageCollector         UsageCollector
+	CheckpointSink         CheckpointSink
+	JournalContentProducer JournalContentProducer
 }
 
 type HarnessExecutor struct {
-	planner        AgentPlanner
-	runner         AgentStepRunner
-	eventSink      RunEventSink
-	memoryProvider MemoryProvider
-	skillProvider  SkillProvider
-	usageCollector UsageCollector
-	checkpointSink CheckpointSink
-	maxSteps       int
+	planner                AgentPlanner
+	runner                 AgentStepRunner
+	eventSink              RunEventSink
+	memoryProvider         MemoryProvider
+	skillProvider          SkillProvider
+	usageCollector         UsageCollector
+	checkpointSink         CheckpointSink
+	journalContentProducer JournalContentProducer
+	maxSteps               int
 }
 
 func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts HarnessExecutorOptions) *HarnessExecutor {
@@ -155,14 +161,15 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 	}
 
 	return &HarnessExecutor{
-		planner:        planner,
-		runner:         runner,
-		eventSink:      opts.EventSink,
-		memoryProvider: opts.MemoryProvider,
-		skillProvider:  opts.SkillProvider,
-		usageCollector: opts.UsageCollector,
-		checkpointSink: opts.CheckpointSink,
-		maxSteps:       maxSteps,
+		planner:                planner,
+		runner:                 runner,
+		eventSink:              opts.EventSink,
+		memoryProvider:         opts.MemoryProvider,
+		skillProvider:          opts.SkillProvider,
+		usageCollector:         opts.UsageCollector,
+		checkpointSink:         opts.CheckpointSink,
+		journalContentProducer: opts.JournalContentProducer,
+		maxSteps:               maxSteps,
 	}
 }
 
@@ -180,7 +187,8 @@ func NewApplicationHarnessExecutor(app *ApplicationService, skillProviders ...Sk
 		UsageCollector: NewThreadUsageCollectorWithOptions(app, ThreadUsageCollectorOptions{
 			EventSink: eventSink,
 		}),
-		CheckpointSink: NewThreadCheckpointSink(app),
+		CheckpointSink:         NewThreadCheckpointSink(app),
+		JournalContentProducer: app,
 	})
 }
 
@@ -1070,10 +1078,16 @@ func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunS
 }
 
 func (e *HarnessExecutor) emitSkillsLoadedEvent(ctx context.Context, run *RunSummary, skills AgentSkillContext) {
-	emitSkillsLoadedRunEvent(ctx, e.eventSink, run, skills)
+	emitSkillsLoadedRunEvent(ctx, e.eventSink, run, skills, e.journalContentProducer)
 }
 
-func emitSkillsLoadedRunEvent(ctx context.Context, sink RunEventSink, run *RunSummary, skills AgentSkillContext) {
+func emitSkillsLoadedRunEvent(
+	ctx context.Context,
+	sink RunEventSink,
+	run *RunSummary,
+	skills AgentSkillContext,
+	producers ...JournalContentProducer,
+) {
 	if len(skills.Items) == 0 {
 		return
 	}
@@ -1098,6 +1112,32 @@ func emitSkillsLoadedRunEvent(ctx context.Context, sink RunEventSink, run *RunSu
 			"skill_names": names,
 		}),
 	})
+	if len(producers) == 0 || producers[0] == nil {
+		return
+	}
+	identity := append([]string(nil), ids...)
+	sort.Strings(identity)
+	actionID := journalStableProjectionID(run.RunID, "skill", strings.Join(identity, ","))
+	runningVerb, completedVerb := journalActionVerbs("use_skill")
+	summaries := make([]JournalSkillSummary, 0, len(skills.Items))
+	for _, skill := range skills.Items {
+		summaries = append(summaries, JournalSkillSummary{
+			SkillID: strconv.FormatInt(skill.ID, 10),
+			Name:    skill.Name, Description: skill.Description,
+		})
+	}
+	_, _, err := producers[0].ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
+		Run: run, Status: domainentity.JournalContentStatusReady,
+		ContentType: domainentity.JournalSnapshotContentTypeSkill,
+		Action: JournalContentAction{
+			ActionID: actionID, Operation: "use_skill", Target: strings.Join(names, "、"),
+			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
+		},
+		Content: JournalTypedSnapshotContent{Skill: &JournalSkillContent{Skills: summaries}},
+	})
+	if err != nil {
+		logs.CtxWarnf(ctx, "journal skill snapshot unavailable: run_id=%d", run.RunID)
+	}
 }
 
 func (e *HarnessExecutor) emitStepStartedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int) {

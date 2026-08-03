@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 func TestADKCheckpointEnvelopeRoundTrip(t *testing.T) {
@@ -74,6 +76,71 @@ func TestADKParityCheckpointEnvelopeV2RoundTrip(t *testing.T) {
 	require.Equal(t, input, output)
 }
 
+func TestADKJournalCheckpointEnvelopeV3RoundTrip(t *testing.T) {
+	state := newTestADKParityStateTracker(t).Snapshot()
+	input := ADKCheckpointEnvelope{
+		EnvelopeVersion:       3,
+		SchemaVersion:         adkJournalCheckpointSchemaVersion,
+		Runtime:               string(RuntimeModeEinoADK),
+		RuntimeVersion:        "0.9.9",
+		RuntimeKey:            "checkpoint-1",
+		MessageType:           "schema.Message",
+		CheckpointPhase:       ADKCheckpointPhaseRuntime,
+		RuntimeState:          &ADKCheckpointRuntimeState{Checkpoint: []byte{1, 2, 3}},
+		AttemptID:             "att_100",
+		LastCommittedSequence: 7,
+		SideEffectLedger: []ADKSideEffectLedgerReference{{
+			LedgerID: 500, IdempotencyKey: "tool-1", ActionKind: "write_file",
+			ReplayPolicy: "idempotent_write", Status: "succeeded", Version: 3,
+		}},
+		ParityState: &state,
+		RunRevision: 4,
+		CreatedAt:   100,
+	}
+
+	raw, err := input.Marshal()
+	require.NoError(t, err)
+	output, err := UnmarshalADKCheckpointEnvelope(raw)
+	require.NoError(t, err)
+	require.Equal(t, input, output)
+	recovery, err := DecodeADKRecoveryCheckpoint(output)
+	require.NoError(t, err)
+	require.Equal(t, "att_100", recovery.AttemptID)
+	require.Equal(t, uint64(7), recovery.LastCommittedSequence)
+	require.Equal(t, []byte{1, 2, 3}, recovery.RuntimeCheckpoint)
+	require.Len(t, recovery.SideEffectLedger, 1)
+}
+
+func TestADKRecoveryCheckpointFailsClosedForV2AndIncompleteV3(t *testing.T) {
+	state := newTestADKParityStateTracker(t).Snapshot()
+	v2 := ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
+		Checkpoint:      []byte{1},
+		ParityState:     &state,
+	}
+	_, err := DecodeADKRecoveryCheckpoint(v2)
+	require.ErrorIs(t, err, ErrADKCheckpointRecoveryUnsafe)
+
+	incomplete := ADKCheckpointEnvelope{
+		EnvelopeVersion: 3,
+		SchemaVersion:   adkJournalCheckpointSchemaVersion,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
+		RuntimeState:    &ADKCheckpointRuntimeState{Checkpoint: []byte{1}},
+		ParityState:     &state,
+	}
+	_, err = incomplete.Marshal()
+	require.ErrorContains(t, err, "attempt id")
+}
+
 func TestADKParityCheckpointEnvelopeAllowsTerminalSnapshotWithoutRuntimeBytes(t *testing.T) {
 	tracker := newTestADKParityStateTracker(t)
 	require.NoError(t, tracker.SetCompletion(ADKParityCompletion{
@@ -116,7 +183,7 @@ func TestADKCheckpointEnvelopeRejectsInvalidPayloads(t *testing.T) {
 		{
 			name: "unknown envelope version",
 			mutate: func(envelope *ADKCheckpointEnvelope) {
-				envelope.EnvelopeVersion = 3
+				envelope.EnvelopeVersion = 4
 			},
 			errString: "unsupported checkpoint envelope version",
 		},
@@ -234,6 +301,48 @@ func TestADKCheckpointStorePersistsLoadsAndDeletesByRuntimeKey(t *testing.T) {
 	_, exists, err = store.Get(context.Background(), "checkpoint-1")
 	require.NoError(t, err)
 	require.False(t, exists)
+}
+
+func TestADKCheckpointStorePersistsJournalV3WithLedgerState(t *testing.T) {
+	service := &recordingADKCheckpointService{}
+	reader := &recordingADKJournalCheckpointStateReader{
+		attempt: &domainentity.RunAttempt{
+			ID: 100, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+			AttemptID: "att_100", LastCommittedSequence: 7,
+		},
+		ledgers: []*domainentity.SideEffectLedger{{
+			ID: 500, IdempotencyKey: "tool-1", ActionKind: "write_file",
+			ReplayPolicy: domainentity.SideEffectReplayPolicyIdempotentWrite,
+			Status:       domainentity.SideEffectLedgerStatusSucceeded, Version: 3,
+		}},
+	}
+	store, err := NewADKCheckpointStore(
+		service,
+		&RunSummary{RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9},
+		WithADKJournalCheckpointStateReader(reader),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, store.Set(context.Background(), "checkpoint-1", []byte{1, 2, 3}))
+	require.Equal(t, int32(3), service.created.EnvelopeVersion)
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(service.created.ChannelValues))
+	require.NoError(t, err)
+	require.Equal(t, adkJournalCheckpointSchemaVersion, envelope.SchemaVersion)
+	require.Equal(t, "att_100", envelope.AttemptID)
+	require.Equal(t, uint64(7), envelope.LastCommittedSequence)
+	require.Equal(t, []byte{1, 2, 3}, envelope.RuntimeState.Checkpoint)
+	require.Len(t, envelope.SideEffectLedger, 1)
+	require.Equal(t, int64(500), envelope.SideEffectLedger[0].LedgerID)
+	require.Empty(t, envelope.Checkpoint)
+
+	require.NoError(t, store.RecordInterrupts(context.Background(), "checkpoint-1", []ADKInterruptItem{{
+		ID: "approval", Address: "agent:lead;tool:approval", IsRootCause: true,
+	}}))
+	require.Equal(t, int32(3), service.created.EnvelopeVersion)
+	envelope, err = UnmarshalADKCheckpointEnvelope([]byte(service.created.ChannelValues))
+	require.NoError(t, err)
+	require.Equal(t, "att_100", envelope.AttemptID)
+	require.Equal(t, ADKCheckpointPhaseInterrupt, envelope.CheckpointPhase)
 }
 
 func TestADKCheckpointStoreRejectsRuntimeVersionMismatch(t *testing.T) {
@@ -438,6 +547,26 @@ func TestADKCheckpointStoreRejectsTerminalEnvelopeAsResumeBytes(t *testing.T) {
 type recordedADKCheckpointCreate struct {
 	createdID int64
 	request   *CreateCheckpointRequest
+}
+
+type recordingADKJournalCheckpointStateReader struct {
+	attempt *domainentity.RunAttempt
+	ledgers []*domainentity.SideEffectLedger
+}
+
+func (r *recordingADKJournalCheckpointStateReader) GetActiveJournalAttempt(
+	_ context.Context,
+	_ int64,
+) (*domainentity.RunAttempt, error) {
+	return r.attempt, nil
+}
+
+func (r *recordingADKJournalCheckpointStateReader) ListSideEffectLedgers(
+	_ context.Context,
+	_ int64,
+	_ string,
+) ([]*domainentity.SideEffectLedger, error) {
+	return r.ledgers, nil
 }
 
 type recordingADKCheckpointService struct {

@@ -24,6 +24,58 @@ import (
 	"github.com/coze-dev/coze-studio/backend/api/model/base"
 )
 
+const (
+	CanonicalArtifactSourceAgentGenerated = "agent_generated"
+
+	CanonicalArtifactSourceUserUpload = "user_upload"
+
+	CanonicalArtifactSourceToolOutput = "tool_output"
+
+	CanonicalArtifactSourceExternalReference = "external_reference"
+
+	CanonicalArtifactGenerationStatusProcessing = "processing"
+
+	CanonicalArtifactGenerationStatusReady = "ready"
+
+	CanonicalArtifactGenerationStatusFailed = "failed"
+
+	CanonicalArtifactGenerationStatusExpired = "expired"
+
+	CanonicalArtifactGenerationStatusBlocked = "blocked"
+
+	CanonicalArtifactPreviewModeText = "text"
+
+	CanonicalArtifactPreviewModeImage = "image"
+
+	CanonicalArtifactPreviewModePDF = "pdf"
+
+	CanonicalArtifactPreviewModeAudio = "audio"
+
+	CanonicalArtifactPreviewModeVideo = "video"
+
+	CanonicalArtifactPreviewModeMediaCollection = "media_collection"
+
+	CanonicalArtifactPreviewModeDownload = "download"
+
+	CanonicalArtifactPreviewModeUnsupported = "unsupported"
+
+	CanonicalArtifactCapabilityOpen = "open"
+
+	CanonicalArtifactCapabilityPreview = "preview"
+
+	CanonicalArtifactCapabilityDownload = "download"
+
+	CanonicalArtifactCapabilityCopy = "copy"
+)
+
+type CanonicalArtifactSource = string
+
+type CanonicalArtifactGenerationStatus = string
+
+type CanonicalArtifactPreviewMode = string
+
+type CanonicalArtifactCapability = string
+
 type CanonicalProductEmptyResponse struct {
 }
 
@@ -1145,20 +1197,26 @@ func (p *CanonicalUploadFile) String() string {
 }
 
 type CanonicalArtifact struct {
-	ArtifactID   string  `thrift:"artifact_id,1,required" form:"artifact_id,required" json:"artifact_id,required" query:"artifact_id,required"`
-	ThreadID     string  `thrift:"thread_id,2,required" form:"thread_id,required" json:"thread_id,required" query:"thread_id,required"`
-	RunID        string  `thrift:"run_id,3,required" form:"run_id,required" json:"run_id,required" query:"run_id,required"`
-	FileID       string  `thrift:"file_id,4,required" form:"file_id,required" json:"file_id,required" query:"file_id,required"`
-	Title        string  `thrift:"title,5,required" form:"title,required" json:"title,required" query:"title,required"`
-	ArtifactType string  `thrift:"artifact_type,6,required" form:"artifact_type,required" json:"artifact_type,required" query:"artifact_type,required"`
-	VirtualPath  string  `thrift:"virtual_path,7,required" form:"virtual_path,required" json:"virtual_path,required" query:"virtual_path,required"`
-	ContentType  string  `thrift:"content_type,8,required" form:"content_type,required" json:"content_type,required" query:"content_type,required"`
-	SizeBytes    int64   `thrift:"size_bytes,9,required" form:"size_bytes,required" json:"size_bytes,required" query:"size_bytes,required"`
-	PreviewMode  string  `thrift:"preview_mode,10,required" form:"preview_mode,required" json:"preview_mode,required" query:"preview_mode,required"`
-	Metadata     string  `thrift:"metadata,11,required" form:"metadata,required" json:"metadata,required" query:"metadata,required"`
-	CreatedAt    string  `thrift:"created_at,12,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
-	UpdatedAt    string  `thrift:"updated_at,13,required" form:"updated_at,required" json:"updated_at,required" query:"updated_at,required"`
-	DeletedAt    *string `thrift:"deleted_at,14,optional" form:"deleted_at" json:"deleted_at,omitempty" query:"deleted_at"`
+	ArtifactID       string                             `thrift:"artifact_id,1,required" form:"artifact_id,required" json:"artifact_id,required" query:"artifact_id,required"`
+	ThreadID         string                             `thrift:"thread_id,2,required" form:"thread_id,required" json:"thread_id,required" query:"thread_id,required"`
+	RunID            string                             `thrift:"run_id,3,required" form:"run_id,required" json:"run_id,required" query:"run_id,required"`
+	FileID           string                             `thrift:"file_id,4,required" form:"file_id,required" json:"file_id,required" query:"file_id,required"`
+	Title            string                             `thrift:"title,5,required" form:"title,required" json:"title,required" query:"title,required"`
+	ArtifactType     string                             `thrift:"artifact_type,6,required" form:"artifact_type,required" json:"artifact_type,required" query:"artifact_type,required"`
+	VirtualPath      string                             `thrift:"virtual_path,7,required" form:"virtual_path,required" json:"virtual_path,required" query:"virtual_path,required"`
+	ContentType      string                             `thrift:"content_type,8,required" form:"content_type,required" json:"content_type,required" query:"content_type,required"`
+	SizeBytes        int64                              `thrift:"size_bytes,9,required" form:"size_bytes,required" json:"size_bytes,required" query:"size_bytes,required"`
+	PreviewMode      CanonicalArtifactPreviewMode       `thrift:"preview_mode,10,required" form:"preview_mode,required" json:"preview_mode,required" query:"preview_mode,required"`
+	Metadata         string                             `thrift:"metadata,11,required" form:"metadata,required" json:"metadata,required" query:"metadata,required"`
+	CreatedAt        string                             `thrift:"created_at,12,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
+	UpdatedAt        string                             `thrift:"updated_at,13,required" form:"updated_at,required" json:"updated_at,required" query:"updated_at,required"`
+	DeletedAt        *string                            `thrift:"deleted_at,14,optional" form:"deleted_at" json:"deleted_at,omitempty" query:"deleted_at"`
+	Source           *CanonicalArtifactSource           `thrift:"source,15,optional" form:"source" json:"source,omitempty" query:"source"`
+	GenerationStatus *CanonicalArtifactGenerationStatus `thrift:"generation_status,16,optional" form:"generation_status" json:"generation_status,omitempty" query:"generation_status"`
+	Capabilities     []CanonicalArtifactCapability      `thrift:"capabilities,17,optional,list<string>" form:"capabilities" json:"capabilities,omitempty" query:"capabilities"`
+	CollectionID     *string                            `thrift:"collection_id,18,optional" form:"collection_id" json:"collection_id,omitempty" query:"collection_id"`
+	CollectionOrder  *int32                             `thrift:"collection_order,19,optional" form:"collection_order" json:"collection_order,omitempty" query:"collection_order"`
+	IsPrimary        *bool                              `thrift:"is_primary,20,optional" form:"is_primary" json:"is_primary,omitempty" query:"is_primary"`
 }
 
 func NewCanonicalArtifact() *CanonicalArtifact {
@@ -1204,7 +1262,7 @@ func (p *CanonicalArtifact) GetSizeBytes() (v int64) {
 	return p.SizeBytes
 }
 
-func (p *CanonicalArtifact) GetPreviewMode() (v string) {
+func (p *CanonicalArtifact) GetPreviewMode() (v CanonicalArtifactPreviewMode) {
 	return p.PreviewMode
 }
 
@@ -1229,6 +1287,60 @@ func (p *CanonicalArtifact) GetDeletedAt() (v string) {
 	return *p.DeletedAt
 }
 
+var CanonicalArtifact_Source_DEFAULT CanonicalArtifactSource
+
+func (p *CanonicalArtifact) GetSource() (v CanonicalArtifactSource) {
+	if !p.IsSetSource() {
+		return CanonicalArtifact_Source_DEFAULT
+	}
+	return *p.Source
+}
+
+var CanonicalArtifact_GenerationStatus_DEFAULT CanonicalArtifactGenerationStatus
+
+func (p *CanonicalArtifact) GetGenerationStatus() (v CanonicalArtifactGenerationStatus) {
+	if !p.IsSetGenerationStatus() {
+		return CanonicalArtifact_GenerationStatus_DEFAULT
+	}
+	return *p.GenerationStatus
+}
+
+var CanonicalArtifact_Capabilities_DEFAULT []CanonicalArtifactCapability
+
+func (p *CanonicalArtifact) GetCapabilities() (v []CanonicalArtifactCapability) {
+	if !p.IsSetCapabilities() {
+		return CanonicalArtifact_Capabilities_DEFAULT
+	}
+	return p.Capabilities
+}
+
+var CanonicalArtifact_CollectionID_DEFAULT string
+
+func (p *CanonicalArtifact) GetCollectionID() (v string) {
+	if !p.IsSetCollectionID() {
+		return CanonicalArtifact_CollectionID_DEFAULT
+	}
+	return *p.CollectionID
+}
+
+var CanonicalArtifact_CollectionOrder_DEFAULT int32
+
+func (p *CanonicalArtifact) GetCollectionOrder() (v int32) {
+	if !p.IsSetCollectionOrder() {
+		return CanonicalArtifact_CollectionOrder_DEFAULT
+	}
+	return *p.CollectionOrder
+}
+
+var CanonicalArtifact_IsPrimary_DEFAULT bool
+
+func (p *CanonicalArtifact) GetIsPrimary() (v bool) {
+	if !p.IsSetIsPrimary() {
+		return CanonicalArtifact_IsPrimary_DEFAULT
+	}
+	return *p.IsPrimary
+}
+
 var fieldIDToName_CanonicalArtifact = map[int16]string{
 	1:  "artifact_id",
 	2:  "thread_id",
@@ -1244,10 +1356,40 @@ var fieldIDToName_CanonicalArtifact = map[int16]string{
 	12: "created_at",
 	13: "updated_at",
 	14: "deleted_at",
+	15: "source",
+	16: "generation_status",
+	17: "capabilities",
+	18: "collection_id",
+	19: "collection_order",
+	20: "is_primary",
 }
 
 func (p *CanonicalArtifact) IsSetDeletedAt() bool {
 	return p.DeletedAt != nil
+}
+
+func (p *CanonicalArtifact) IsSetSource() bool {
+	return p.Source != nil
+}
+
+func (p *CanonicalArtifact) IsSetGenerationStatus() bool {
+	return p.GenerationStatus != nil
+}
+
+func (p *CanonicalArtifact) IsSetCapabilities() bool {
+	return p.Capabilities != nil
+}
+
+func (p *CanonicalArtifact) IsSetCollectionID() bool {
+	return p.CollectionID != nil
+}
+
+func (p *CanonicalArtifact) IsSetCollectionOrder() bool {
+	return p.CollectionOrder != nil
+}
+
+func (p *CanonicalArtifact) IsSetIsPrimary() bool {
+	return p.IsPrimary != nil
 }
 
 func (p *CanonicalArtifact) Read(iprot thrift.TProtocol) (err error) {
@@ -1402,6 +1544,54 @@ func (p *CanonicalArtifact) Read(iprot thrift.TProtocol) (err error) {
 		case 14:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 15:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField15(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 16:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField16(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 17:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField17(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 18:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField18(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 19:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField19(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 20:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField20(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -1603,7 +1793,7 @@ func (p *CanonicalArtifact) ReadField9(iprot thrift.TProtocol) error {
 }
 func (p *CanonicalArtifact) ReadField10(iprot thrift.TProtocol) error {
 
-	var _field string
+	var _field CanonicalArtifactPreviewMode
 	if v, err := iprot.ReadString(); err != nil {
 		return err
 	} else {
@@ -1654,6 +1844,84 @@ func (p *CanonicalArtifact) ReadField14(iprot thrift.TProtocol) error {
 		_field = &v
 	}
 	p.DeletedAt = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField15(iprot thrift.TProtocol) error {
+
+	var _field *CanonicalArtifactSource
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Source = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField16(iprot thrift.TProtocol) error {
+
+	var _field *CanonicalArtifactGenerationStatus
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.GenerationStatus = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField17(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]CanonicalArtifactCapability, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem CanonicalArtifactCapability
+		if v, err := iprot.ReadString(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Capabilities = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField18(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CollectionID = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField19(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CollectionOrder = _field
+	return nil
+}
+func (p *CanonicalArtifact) ReadField20(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.IsPrimary = _field
 	return nil
 }
 
@@ -1717,6 +1985,30 @@ func (p *CanonicalArtifact) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField14(oprot); err != nil {
 			fieldId = 14
+			goto WriteFieldError
+		}
+		if err = p.writeField15(oprot); err != nil {
+			fieldId = 15
+			goto WriteFieldError
+		}
+		if err = p.writeField16(oprot); err != nil {
+			fieldId = 16
+			goto WriteFieldError
+		}
+		if err = p.writeField17(oprot); err != nil {
+			fieldId = 17
+			goto WriteFieldError
+		}
+		if err = p.writeField18(oprot); err != nil {
+			fieldId = 18
+			goto WriteFieldError
+		}
+		if err = p.writeField19(oprot); err != nil {
+			fieldId = 19
+			goto WriteFieldError
+		}
+		if err = p.writeField20(oprot); err != nil {
+			fieldId = 20
 			goto WriteFieldError
 		}
 	}
@@ -1977,11 +2269,468 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 14 end error: ", p), err)
 }
 
+func (p *CanonicalArtifact) writeField15(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSource() {
+		if err = oprot.WriteFieldBegin("source", thrift.STRING, 15); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Source); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 end error: ", p), err)
+}
+
+func (p *CanonicalArtifact) writeField16(oprot thrift.TProtocol) (err error) {
+	if p.IsSetGenerationStatus() {
+		if err = oprot.WriteFieldBegin("generation_status", thrift.STRING, 16); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.GenerationStatus); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 end error: ", p), err)
+}
+
+func (p *CanonicalArtifact) writeField17(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCapabilities() {
+		if err = oprot.WriteFieldBegin("capabilities", thrift.LIST, 17); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRING, len(p.Capabilities)); err != nil {
+			return err
+		}
+		for _, v := range p.Capabilities {
+			if err := oprot.WriteString(v); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 end error: ", p), err)
+}
+
+func (p *CanonicalArtifact) writeField18(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCollectionID() {
+		if err = oprot.WriteFieldBegin("collection_id", thrift.STRING, 18); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.CollectionID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 18 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 18 end error: ", p), err)
+}
+
+func (p *CanonicalArtifact) writeField19(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCollectionOrder() {
+		if err = oprot.WriteFieldBegin("collection_order", thrift.I32, 19); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.CollectionOrder); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 19 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 19 end error: ", p), err)
+}
+
+func (p *CanonicalArtifact) writeField20(oprot thrift.TProtocol) (err error) {
+	if p.IsSetIsPrimary() {
+		if err = oprot.WriteFieldBegin("is_primary", thrift.BOOL, 20); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.IsPrimary); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 20 end error: ", p), err)
+}
+
 func (p *CanonicalArtifact) String() string {
 	if p == nil {
 		return "<nil>"
 	}
 	return fmt.Sprintf("CanonicalArtifact(%+v)", *p)
+
+}
+
+type CanonicalArtifactCollection struct {
+	CollectionID string   `thrift:"collection_id,1,required" form:"collection_id,required" json:"collection_id,required" query:"collection_id,required"`
+	ArtifactIds  []string `thrift:"artifact_ids,2,required,list<string>" form:"artifact_ids,required" json:"artifact_ids,required" query:"artifact_ids,required"`
+	CurrentIndex *int32   `thrift:"current_index,3,optional" form:"current_index" json:"current_index,omitempty" query:"current_index"`
+	TotalCount   *int32   `thrift:"total_count,4,optional" form:"total_count" json:"total_count,omitempty" query:"total_count"`
+}
+
+func NewCanonicalArtifactCollection() *CanonicalArtifactCollection {
+	return &CanonicalArtifactCollection{}
+}
+
+func (p *CanonicalArtifactCollection) InitDefault() {
+}
+
+func (p *CanonicalArtifactCollection) GetCollectionID() (v string) {
+	return p.CollectionID
+}
+
+func (p *CanonicalArtifactCollection) GetArtifactIds() (v []string) {
+	return p.ArtifactIds
+}
+
+var CanonicalArtifactCollection_CurrentIndex_DEFAULT int32
+
+func (p *CanonicalArtifactCollection) GetCurrentIndex() (v int32) {
+	if !p.IsSetCurrentIndex() {
+		return CanonicalArtifactCollection_CurrentIndex_DEFAULT
+	}
+	return *p.CurrentIndex
+}
+
+var CanonicalArtifactCollection_TotalCount_DEFAULT int32
+
+func (p *CanonicalArtifactCollection) GetTotalCount() (v int32) {
+	if !p.IsSetTotalCount() {
+		return CanonicalArtifactCollection_TotalCount_DEFAULT
+	}
+	return *p.TotalCount
+}
+
+var fieldIDToName_CanonicalArtifactCollection = map[int16]string{
+	1: "collection_id",
+	2: "artifact_ids",
+	3: "current_index",
+	4: "total_count",
+}
+
+func (p *CanonicalArtifactCollection) IsSetCurrentIndex() bool {
+	return p.CurrentIndex != nil
+}
+
+func (p *CanonicalArtifactCollection) IsSetTotalCount() bool {
+	return p.TotalCount != nil
+}
+
+func (p *CanonicalArtifactCollection) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCollectionID bool = false
+	var issetArtifactIds bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCollectionID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetArtifactIds = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCollectionID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetArtifactIds {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CanonicalArtifactCollection[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CanonicalArtifactCollection[fieldId]))
+}
+
+func (p *CanonicalArtifactCollection) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CollectionID = _field
+	return nil
+}
+func (p *CanonicalArtifactCollection) ReadField2(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]string, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem string
+		if v, err := iprot.ReadString(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.ArtifactIds = _field
+	return nil
+}
+func (p *CanonicalArtifactCollection) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CurrentIndex = _field
+	return nil
+}
+func (p *CanonicalArtifactCollection) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.TotalCount = _field
+	return nil
+}
+
+func (p *CanonicalArtifactCollection) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CanonicalArtifactCollection"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("collection_id", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.CollectionID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("artifact_ids", thrift.LIST, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteListBegin(thrift.STRING, len(p.ArtifactIds)); err != nil {
+		return err
+	}
+	for _, v := range p.ArtifactIds {
+		if err := oprot.WriteString(v); err != nil {
+			return err
+		}
+	}
+	if err := oprot.WriteListEnd(); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCurrentIndex() {
+		if err = oprot.WriteFieldBegin("current_index", thrift.I32, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.CurrentIndex); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetTotalCount() {
+		if err = oprot.WriteFieldBegin("total_count", thrift.I32, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.TotalCount); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactCollection) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CanonicalArtifactCollection(%+v)", *p)
 
 }
 
@@ -8145,10 +8894,11 @@ func (p *CanonicalUploadListResponse) String() string {
 }
 
 type CanonicalArtifactListResponse struct {
-	Artifacts  []*CanonicalArtifact `thrift:"artifacts,1,required,list<CanonicalArtifact>" form:"artifacts,required" json:"artifacts,required" query:"artifacts,required"`
-	Total      int64                `thrift:"total,2,required" form:"total,required" json:"total,required" query:"total,required"`
-	HasMore    bool                 `thrift:"has_more,3,required" form:"has_more,required" json:"has_more,required" query:"has_more,required"`
-	NextCursor *string              `thrift:"next_cursor,4,optional" form:"next_cursor" json:"next_cursor,omitempty" query:"next_cursor"`
+	Artifacts   []*CanonicalArtifact           `thrift:"artifacts,1,required,list<CanonicalArtifact>" form:"artifacts,required" json:"artifacts,required" query:"artifacts,required"`
+	Total       int64                          `thrift:"total,2,required" form:"total,required" json:"total,required" query:"total,required"`
+	HasMore     bool                           `thrift:"has_more,3,required" form:"has_more,required" json:"has_more,required" query:"has_more,required"`
+	NextCursor  *string                        `thrift:"next_cursor,4,optional" form:"next_cursor" json:"next_cursor,omitempty" query:"next_cursor"`
+	Collections []*CanonicalArtifactCollection `thrift:"collections,5,optional,list<CanonicalArtifactCollection>" form:"collections" json:"collections,omitempty" query:"collections"`
 }
 
 func NewCanonicalArtifactListResponse() *CanonicalArtifactListResponse {
@@ -8179,15 +8929,29 @@ func (p *CanonicalArtifactListResponse) GetNextCursor() (v string) {
 	return *p.NextCursor
 }
 
+var CanonicalArtifactListResponse_Collections_DEFAULT []*CanonicalArtifactCollection
+
+func (p *CanonicalArtifactListResponse) GetCollections() (v []*CanonicalArtifactCollection) {
+	if !p.IsSetCollections() {
+		return CanonicalArtifactListResponse_Collections_DEFAULT
+	}
+	return p.Collections
+}
+
 var fieldIDToName_CanonicalArtifactListResponse = map[int16]string{
 	1: "artifacts",
 	2: "total",
 	3: "has_more",
 	4: "next_cursor",
+	5: "collections",
 }
 
 func (p *CanonicalArtifactListResponse) IsSetNextCursor() bool {
 	return p.NextCursor != nil
+}
+
+func (p *CanonicalArtifactListResponse) IsSetCollections() bool {
+	return p.Collections != nil
 }
 
 func (p *CanonicalArtifactListResponse) Read(iprot thrift.TProtocol) (err error) {
@@ -8242,6 +9006,14 @@ func (p *CanonicalArtifactListResponse) Read(iprot thrift.TProtocol) (err error)
 		case 4:
 			if fieldTypeId == thrift.STRING {
 				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField5(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -8348,6 +9120,29 @@ func (p *CanonicalArtifactListResponse) ReadField4(iprot thrift.TProtocol) error
 	p.NextCursor = _field
 	return nil
 }
+func (p *CanonicalArtifactListResponse) ReadField5(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*CanonicalArtifactCollection, 0, size)
+	values := make([]CanonicalArtifactCollection, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Collections = _field
+	return nil
+}
 
 func (p *CanonicalArtifactListResponse) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -8369,6 +9164,10 @@ func (p *CanonicalArtifactListResponse) Write(oprot thrift.TProtocol) (err error
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 	}
@@ -8465,6 +9264,33 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *CanonicalArtifactListResponse) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCollections() {
+		if err = oprot.WriteFieldBegin("collections", thrift.LIST, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Collections)); err != nil {
+			return err
+		}
+		for _, v := range p.Collections {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
 func (p *CanonicalArtifactListResponse) String() string {
@@ -11151,11 +11977,11 @@ func (p *CanonicalArtifactContentResponse) String() string {
 }
 
 type CanonicalArtifactSignedURLResponse struct {
-	ArtifactID       string `thrift:"artifact_id,1,required" form:"artifact_id,required" json:"artifact_id,required" query:"artifact_id,required"`
-	URL              string `thrift:"url,2,required" form:"url,required" json:"url,required" query:"url,required"`
-	ExpiresInSeconds int64  `thrift:"expires_in_seconds,3,required" form:"expires_in_seconds,required" json:"expires_in_seconds,required" query:"expires_in_seconds,required"`
-	ContentType      string `thrift:"content_type,4,required" form:"content_type,required" json:"content_type,required" query:"content_type,required"`
-	PreviewMode      string `thrift:"preview_mode,5,required" form:"preview_mode,required" json:"preview_mode,required" query:"preview_mode,required"`
+	ArtifactID       string                       `thrift:"artifact_id,1,required" form:"artifact_id,required" json:"artifact_id,required" query:"artifact_id,required"`
+	URL              string                       `thrift:"url,2,required" form:"url,required" json:"url,required" query:"url,required"`
+	ExpiresInSeconds int64                        `thrift:"expires_in_seconds,3,required" form:"expires_in_seconds,required" json:"expires_in_seconds,required" query:"expires_in_seconds,required"`
+	ContentType      string                       `thrift:"content_type,4,required" form:"content_type,required" json:"content_type,required" query:"content_type,required"`
+	PreviewMode      CanonicalArtifactPreviewMode `thrift:"preview_mode,5,required" form:"preview_mode,required" json:"preview_mode,required" query:"preview_mode,required"`
 }
 
 func NewCanonicalArtifactSignedURLResponse() *CanonicalArtifactSignedURLResponse {
@@ -11181,7 +12007,7 @@ func (p *CanonicalArtifactSignedURLResponse) GetContentType() (v string) {
 	return p.ContentType
 }
 
-func (p *CanonicalArtifactSignedURLResponse) GetPreviewMode() (v string) {
+func (p *CanonicalArtifactSignedURLResponse) GetPreviewMode() (v CanonicalArtifactPreviewMode) {
 	return p.PreviewMode
 }
 
@@ -11363,7 +12189,7 @@ func (p *CanonicalArtifactSignedURLResponse) ReadField4(iprot thrift.TProtocol) 
 }
 func (p *CanonicalArtifactSignedURLResponse) ReadField5(iprot thrift.TProtocol) error {
 
-	var _field string
+	var _field CanonicalArtifactPreviewMode
 	if v, err := iprot.ReadString(); err != nil {
 		return err
 	} else {
@@ -15345,13 +16171,14 @@ func (p *DeleteCanonicalThreadUploadRequest) String() string {
 }
 
 type ListCanonicalThreadArtifactsRequest struct {
-	ThreadID    int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
-	SpaceID     int64      `thrift:"space_id,2,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
-	RunID       *int64     `thrift:"run_id,3,optional" json:"run_id,string,omitempty" query:"run_id"`
-	DeletedOnly *bool      `thrift:"deleted_only,4,optional" json:"deleted_only,omitempty" query:"deleted_only"`
-	Limit       *int32     `thrift:"limit,5,optional" json:"limit,omitempty" query:"limit"`
-	Offset      *int32     `thrift:"offset,6,optional" json:"offset,omitempty" query:"offset"`
-	Base        *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
+	ThreadID     int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
+	SpaceID      int64      `thrift:"space_id,2,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
+	RunID        *int64     `thrift:"run_id,3,optional" json:"run_id,string,omitempty" query:"run_id"`
+	DeletedOnly  *bool      `thrift:"deleted_only,4,optional" json:"deleted_only,omitempty" query:"deleted_only"`
+	Limit        *int32     `thrift:"limit,5,optional" json:"limit,omitempty" query:"limit"`
+	Offset       *int32     `thrift:"offset,6,optional" json:"offset,omitempty" query:"offset"`
+	CollectionID *string    `thrift:"collection_id,7,optional" json:"collection_id,omitempty" query:"collection_id"`
+	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
 func NewListCanonicalThreadArtifactsRequest() *ListCanonicalThreadArtifactsRequest {
@@ -15405,6 +16232,15 @@ func (p *ListCanonicalThreadArtifactsRequest) GetOffset() (v int32) {
 	return *p.Offset
 }
 
+var ListCanonicalThreadArtifactsRequest_CollectionID_DEFAULT string
+
+func (p *ListCanonicalThreadArtifactsRequest) GetCollectionID() (v string) {
+	if !p.IsSetCollectionID() {
+		return ListCanonicalThreadArtifactsRequest_CollectionID_DEFAULT
+	}
+	return *p.CollectionID
+}
+
 var ListCanonicalThreadArtifactsRequest_Base_DEFAULT *base.Base
 
 func (p *ListCanonicalThreadArtifactsRequest) GetBase() (v *base.Base) {
@@ -15421,6 +16257,7 @@ var fieldIDToName_ListCanonicalThreadArtifactsRequest = map[int16]string{
 	4:   "deleted_only",
 	5:   "limit",
 	6:   "offset",
+	7:   "collection_id",
 	255: "Base",
 }
 
@@ -15438,6 +16275,10 @@ func (p *ListCanonicalThreadArtifactsRequest) IsSetLimit() bool {
 
 func (p *ListCanonicalThreadArtifactsRequest) IsSetOffset() bool {
 	return p.Offset != nil
+}
+
+func (p *ListCanonicalThreadArtifactsRequest) IsSetCollectionID() bool {
+	return p.CollectionID != nil
 }
 
 func (p *ListCanonicalThreadArtifactsRequest) IsSetBase() bool {
@@ -15510,6 +16351,14 @@ func (p *ListCanonicalThreadArtifactsRequest) Read(iprot thrift.TProtocol) (err 
 		case 6:
 			if fieldTypeId == thrift.I32 {
 				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -15629,6 +16478,17 @@ func (p *ListCanonicalThreadArtifactsRequest) ReadField6(iprot thrift.TProtocol)
 	p.Offset = _field
 	return nil
 }
+func (p *ListCanonicalThreadArtifactsRequest) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.CollectionID = _field
+	return nil
+}
 func (p *ListCanonicalThreadArtifactsRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -15666,6 +16526,10 @@ func (p *ListCanonicalThreadArtifactsRequest) Write(oprot thrift.TProtocol) (err
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -15800,6 +16664,25 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
+func (p *ListCanonicalThreadArtifactsRequest) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCollectionID() {
+		if err = oprot.WriteFieldBegin("collection_id", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.CollectionID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
 func (p *ListCanonicalThreadArtifactsRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -15824,6 +16707,568 @@ func (p *ListCanonicalThreadArtifactsRequest) String() string {
 		return "<nil>"
 	}
 	return fmt.Sprintf("ListCanonicalThreadArtifactsRequest(%+v)", *p)
+
+}
+
+type CopyCanonicalThreadArtifactLinkRequest struct {
+	ThreadID   int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
+	SpaceID    int64      `thrift:"space_id,2,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
+	ArtifactID int64      `thrift:"artifact_id,3,required" json:"artifact_id,string,required" path:"artifact_id,required"`
+	Base       *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
+}
+
+func NewCopyCanonicalThreadArtifactLinkRequest() *CopyCanonicalThreadArtifactLinkRequest {
+	return &CopyCanonicalThreadArtifactLinkRequest{}
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) InitDefault() {
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) GetThreadID() (v int64) {
+	return p.ThreadID
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) GetArtifactID() (v int64) {
+	return p.ArtifactID
+}
+
+var CopyCanonicalThreadArtifactLinkRequest_Base_DEFAULT *base.Base
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) GetBase() (v *base.Base) {
+	if !p.IsSetBase() {
+		return CopyCanonicalThreadArtifactLinkRequest_Base_DEFAULT
+	}
+	return p.Base
+}
+
+var fieldIDToName_CopyCanonicalThreadArtifactLinkRequest = map[int16]string{
+	1:   "thread_id",
+	2:   "space_id",
+	3:   "artifact_id",
+	255: "Base",
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) IsSetBase() bool {
+	return p.Base != nil
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetThreadID bool = false
+	var issetSpaceID bool = false
+	var issetArtifactID bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetThreadID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetArtifactID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetThreadID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetArtifactID {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CopyCanonicalThreadArtifactLinkRequest[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CopyCanonicalThreadArtifactLinkRequest[fieldId]))
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ThreadID = _field
+	return nil
+}
+func (p *CopyCanonicalThreadArtifactLinkRequest) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
+func (p *CopyCanonicalThreadArtifactLinkRequest) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ArtifactID = _field
+	return nil
+}
+func (p *CopyCanonicalThreadArtifactLinkRequest) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBase()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Base = _field
+	return nil
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CopyCanonicalThreadArtifactLinkRequest"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("thread_id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ThreadID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("artifact_id", thrift.I64, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ArtifactID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) writeField255(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBase() {
+		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Base.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkRequest) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CopyCanonicalThreadArtifactLinkRequest(%+v)", *p)
+
+}
+
+type CopyCanonicalThreadArtifactLinkResponse struct {
+	ArtifactID string `thrift:"artifact_id,1,required" form:"artifact_id,required" json:"artifact_id,required" query:"artifact_id,required"`
+	CopyURL    string `thrift:"copy_url,2,required" form:"copy_url,required" json:"copy_url,required" query:"copy_url,required"`
+	ExpiresAt  string `thrift:"expires_at,3,required" form:"expires_at,required" json:"expires_at,required" query:"expires_at,required"`
+}
+
+func NewCopyCanonicalThreadArtifactLinkResponse() *CopyCanonicalThreadArtifactLinkResponse {
+	return &CopyCanonicalThreadArtifactLinkResponse{}
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) InitDefault() {
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) GetArtifactID() (v string) {
+	return p.ArtifactID
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) GetCopyURL() (v string) {
+	return p.CopyURL
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) GetExpiresAt() (v string) {
+	return p.ExpiresAt
+}
+
+var fieldIDToName_CopyCanonicalThreadArtifactLinkResponse = map[int16]string{
+	1: "artifact_id",
+	2: "copy_url",
+	3: "expires_at",
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetArtifactID bool = false
+	var issetCopyURL bool = false
+	var issetExpiresAt bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetArtifactID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCopyURL = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetExpiresAt = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetArtifactID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetCopyURL {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetExpiresAt {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CopyCanonicalThreadArtifactLinkResponse[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CopyCanonicalThreadArtifactLinkResponse[fieldId]))
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ArtifactID = _field
+	return nil
+}
+func (p *CopyCanonicalThreadArtifactLinkResponse) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CopyURL = _field
+	return nil
+}
+func (p *CopyCanonicalThreadArtifactLinkResponse) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ExpiresAt = _field
+	return nil
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CopyCanonicalThreadArtifactLinkResponse"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("artifact_id", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.ArtifactID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("copy_url", thrift.STRING, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.CopyURL); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("expires_at", thrift.STRING, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.ExpiresAt); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CopyCanonicalThreadArtifactLinkResponse) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CopyCanonicalThreadArtifactLinkResponse(%+v)", *p)
 
 }
 

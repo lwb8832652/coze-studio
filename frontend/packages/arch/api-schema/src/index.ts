@@ -19,6 +19,7 @@ export * as explore from './idl/marketplace/public_api';
 export * as workbench from './idl/workbench/workbench';
 export * as workbenchTask from './idl/workbench/task';
 export * as workbenchThread from './idl/workbench/thread';
+export * as workbenchJournal from './workbench-journal';
 export * as workbenchModel from './idl/workbench/model';
 export * as workbenchSkill from './idl/workbench/skill';
 export * as pluginDevelop from './idl/plugin/plugin_develop';

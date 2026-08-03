@@ -27,6 +27,7 @@ func TestGetOptionsSupportSignedResponseHeaderOverrides(t *testing.T) {
 
 	WithResponseContentDisposition("attachment; filename*=UTF-8''report.html")(&option)
 	WithResponseContentType("text/html; charset=utf-8")(&option)
+	WithResponseCacheControl("private, no-store")(&option)
 
 	require.Equal(
 		t,
@@ -34,4 +35,5 @@ func TestGetOptionsSupportSignedResponseHeaderOverrides(t *testing.T) {
 		option.ResponseContentDisposition,
 	)
 	require.Equal(t, "text/html; charset=utf-8", option.ResponseContentType)
+	require.Equal(t, "private, no-store", option.ResponseCacheControl)
 }

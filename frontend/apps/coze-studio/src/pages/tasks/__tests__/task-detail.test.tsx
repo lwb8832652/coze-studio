@@ -63,6 +63,13 @@ const mockInstallSkillFromArtifact = vi.hoisted(() => vi.fn());
 const mockDeleteTaskThreadArtifact = vi.hoisted(() => vi.fn());
 const mockRestoreTaskThreadArtifact = vi.hoisted(() => vi.fn());
 const mockSubscribeRunEvents = vi.hoisted(() => vi.fn());
+const mockGetRunJournal = vi.hoisted(() => vi.fn());
+const mockListJournalEvents = vi.hoisted(() => vi.fn());
+const mockSubscribeJournalEvents = vi.hoisted(() => vi.fn());
+const mockGetJournalSettings = vi.hoisted(() => vi.fn());
+const mockPatchJournalSettings = vi.hoisted(() => vi.fn());
+const mockGetJournalSnapshot = vi.hoisted(() => vi.fn());
+const mockAuditJournalSnapshotAction = vi.hoisted(() => vi.fn());
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
@@ -200,6 +207,13 @@ vi.mock(
   '../../workbench/thread-client/canonical-thread-client-singleton',
   () => ({
     canonicalThreadClient: {
+      auditJournalSnapshotAction: mockAuditJournalSnapshotAction,
+      getJournalSettings: mockGetJournalSettings,
+      getJournalSnapshot: mockGetJournalSnapshot,
+      getRunJournal: mockGetRunJournal,
+      listJournalEvents: mockListJournalEvents,
+      patchJournalSettings: mockPatchJournalSettings,
+      subscribeJournalEvents: mockSubscribeJournalEvents,
       subscribeRunEvents: mockSubscribeRunEvents,
     },
   }),
@@ -475,6 +489,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozArrowUp: () => <span />,
   IconCozArrowUpFill: () => <span />,
   IconCozArrowBack: () => <span />,
+  IconCozArrowForward: () => <span />,
   IconCozArrowLeft: () => <span />,
   IconCozArrowDown: () => <span />,
   IconCozArrowRight: () => <span />,
@@ -490,8 +505,10 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozCopy: () => <span />,
   IconCozDocument: () => <span />,
   IconCozDownload: () => <span />,
+  IconCozEarth: () => <span />,
   IconCozEdit: () => <span />,
   IconCozEye: () => <span />,
+  IconCozExpand: () => <span />,
   IconCozImport: () => <span />,
   IconCozImage: () => <span />,
   IconCozInfoCircle: () => <span />,
@@ -503,7 +520,9 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozKnowledge: () => <span />,
   IconCozMagnifier: () => <span />,
   IconCozMicrophone: () => <span />,
+  IconCozMinimize: () => <span />,
   IconCozLoading: () => <span />,
+  IconCozOriginalSize: () => <span />,
   IconCozPlus: () => <span />,
   IconCozPlugin: () => <span />,
   IconCozRefresh: () => <span />,
@@ -511,6 +530,9 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozSendFill: () => <span />,
   IconCozSetting: () => <span />,
   IconCozShare: () => <span />,
+  IconCozShell: () => <span />,
+  IconCozSideExpand: () => <span />,
+  IconCozScaling: () => <span />,
   IconCozSkill: () => <span />,
   IconCozStar: () => <span />,
   IconCozStopCircle: () => <span />,
@@ -520,8 +542,14 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozThumbsup: () => <span />,
   IconCozThumbsupFill: () => <span />,
   IconCozUpload: () => <span />,
+  IconCozVerifyFailed: () => <span />,
+  IconCozWarningCircle: () => <span />,
   IconCozWarningCircleFill: () => <span />,
   IconCozWorkflow: () => <span />,
+}));
+
+vi.mock('@coze-arch/bot-monaco-editor', () => ({
+  Editor: ({ value }: { value: string }) => <pre>{value}</pre>,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
@@ -714,6 +742,46 @@ describe('TaskDetailPage', () => {
     mockSubscribeRunEvents.mockImplementation(
       request => new MockRunEventSubscription(request),
     );
+    mockGetRunJournal.mockReset();
+    mockGetRunJournal.mockResolvedValue({
+      attempts: [],
+      content_types: [],
+      default_attempt_id: '',
+      enrollment: {
+        enrolled: false,
+        journal_enabled: false,
+        journal_protocol_version: '1.1',
+        payload_version: '1.0',
+        schema_version: '1.1',
+        snapshots_enabled: false,
+      },
+      events: {
+        has_more: false,
+        items: [],
+        latest_sequence: 0,
+        next_after_sequence: 0,
+      },
+      latest_sequence: 0,
+      projection_state: 'disabled',
+      recovery_capability: {
+        allowed: false,
+        allowed_actions: [],
+        requires_confirmation: false,
+      },
+      server_time: 1_000,
+      submit_at: 1_000,
+    });
+    mockListJournalEvents.mockReset();
+    mockSubscribeJournalEvents.mockReset();
+    mockSubscribeJournalEvents.mockReturnValue({ close: vi.fn() });
+    mockGetJournalSettings.mockReset();
+    mockGetJournalSettings.mockResolvedValue({
+      revision: 'settings-1',
+      split_ratio: 0.4,
+    });
+    mockPatchJournalSettings.mockReset();
+    mockGetJournalSnapshot.mockReset();
+    mockAuditJournalSnapshotAction.mockReset();
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
       thread_id: 'thread-1',
@@ -1331,6 +1399,173 @@ describe('TaskDetailPage', () => {
       root?.unmount();
     });
     container.remove();
+  });
+
+  it('restores the authorized Journal view state after closing and reopening the task panel', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    mockGetRunJournal.mockResolvedValue({
+      attempts: [
+        {
+          attempt_id: 'attempt-1',
+          run_id: 'run-1',
+          status: 'running',
+          projection_state: 'healthy',
+          latest_sequence: 2,
+          created_at: 1_000,
+        },
+      ],
+      content_types: ['document'],
+      default_attempt_id: 'attempt-1',
+      default_attempt: {
+        attempt_id: 'attempt-1',
+        run_id: 'run-1',
+        status: 'running',
+        projection_state: 'healthy',
+        latest_sequence: 2,
+        created_at: 1_000,
+      },
+      enrollment: {
+        enrolled: true,
+        journal_enabled: true,
+        journal_protocol_version: '1.1',
+        payload_version: '1.0',
+        schema_version: '1.1',
+        snapshots_enabled: true,
+      },
+      events: {
+        attempt_id: 'attempt-1',
+        has_more: false,
+        latest_sequence: 2,
+        next_after_sequence: 2,
+        items: [
+          {
+            attempt_id: 'attempt-1',
+            created_at: 1_001,
+            event_id: 'journal-milestone-1',
+            event_type: 'milestone.started',
+            occurred_at: 1_001,
+            payload: {
+              type: 'milestone',
+              data: { milestone_id: 'milestone-1', title: '整理资料' },
+            },
+            run_id: 'run-1',
+            sequence: 1,
+            status: 'running',
+            thread_id: 'thread-1',
+          },
+          {
+            attempt_id: 'attempt-1',
+            created_at: 1_002,
+            event_id: 'journal-action-1',
+            event_type: 'action.terminal',
+            occurred_at: 1_002,
+            payload: {
+              type: 'document',
+              data: {
+                action_id: 'action-1',
+                content_type: 'document',
+                display_verb_completed: '已读取',
+                display_verb_running: '正在读取',
+                milestone_id: 'milestone-1',
+                operation: 'read',
+                target: '需求文档',
+              },
+            },
+            run_id: 'run-1',
+            sequence: 2,
+            snapshot_id: 'snapshot-document-1',
+            status: 'completed',
+            thread_id: 'thread-1',
+          },
+        ],
+      },
+      latest_sequence: 2,
+      projection_state: 'healthy',
+      recovery_capability: {
+        allowed: false,
+        allowed_actions: [],
+        requires_confirmation: false,
+      },
+      server_time: 1_100,
+      submit_at: 1_000,
+    });
+    mockGetJournalSnapshot.mockResolvedValue({
+      attempt_id: 'attempt-1',
+      content_type: 'document',
+      content: {
+        document: {
+          content: '# 需求文档\n\n已授权的历史内容。',
+          title: '需求文档',
+        },
+      },
+      created_at: 1_002,
+      event_id: 'journal-action-1',
+      fragments: [],
+      has_more: false,
+      is_fragmented: false,
+      snapshot_id: 'snapshot-document-1',
+      status: 'ready',
+      visibility: 'user',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(
+        container.querySelector('[data-testid="journal-panel"]'),
+      ).toBeTruthy();
+      const page = container.querySelector<HTMLElement>(
+        '.journal-document-page',
+      );
+      expect(page).toBeTruthy();
+      if (page) {
+        page.scrollTop = 96;
+        page.scrollLeft = 8;
+        act(() => Simulate.scroll(page));
+      }
+
+      await act(async () => {
+        Simulate.click(
+          container.querySelector<HTMLButtonElement>(
+            '[aria-label="关闭执行详情"]',
+          )!,
+        );
+        await Promise.resolve();
+      });
+      expect(
+        container.querySelector('[aria-label="重新打开执行详情"]'),
+      ).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(
+          container.querySelector<HTMLButtonElement>(
+            '[aria-label="重新打开执行详情"]',
+          )!,
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const restored = container.querySelector<HTMLElement>(
+        '.journal-document-page',
+      );
+      expect(restored?.scrollTop).toBe(96);
+      expect(restored?.scrollLeft).toBe(8);
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
   });
 
   it('groups task detail header actions away from the title area', async () => {
@@ -2331,6 +2566,31 @@ describe('TaskDetailPage', () => {
     );
     expect(workspacePrototypeStyles).toContain(
       '.coze-prototype-artifact-resize-handle',
+    );
+  });
+
+  it('keeps the Journal split reachable on medium-width task detail pages', () => {
+    const journalStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/pages/tasks/journal/journal.less'),
+      'utf8',
+    );
+
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 900px\)[\s\S]*?\.coze-prototype-task-detail-page[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?display: flex;/,
+    );
+  });
+
+  it('gives the Journal the full task workspace on compact screens', () => {
+    const journalStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/pages/tasks/journal/journal.less'),
+      'utf8',
+    );
+
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?\.coze-prototype-detail-inner[\s\S]*?display: none;/,
+    );
+    expect(journalStyles).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*?\.coze-prototype-detail-split\[data-journal-open='true'\][\s\S]*?\.journal-panel[\s\S]*?width: 100%;/,
     );
   });
 

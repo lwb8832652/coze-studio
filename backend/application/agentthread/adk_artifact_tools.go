@@ -189,6 +189,7 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 		}
 		resp, err := i.app.WriteOutputFile(ctx, &WriteOutputFileRequest{
 			Run:         call.Run,
+			ToolCallID:  call.CallID,
 			FilePath:    input.FilePath,
 			Content:     string(content),
 			ContentType: input.ContentType,
@@ -203,8 +204,9 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 			return "", fmt.Errorf("present_files arguments are invalid: %w", err)
 		}
 		resp, err := i.app.PresentOutputFiles(ctx, &PresentOutputFilesRequest{
-			Run:       call.Run,
-			FilePaths: input.FilePaths,
+			Run:        call.Run,
+			ToolCallID: call.CallID,
+			FilePaths:  input.FilePaths,
 		})
 		if err != nil {
 			return "", err

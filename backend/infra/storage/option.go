@@ -28,6 +28,7 @@ type GetOption struct {
 	WithTagging                bool
 	ResponseContentDisposition string
 	ResponseContentType        string
+	ResponseCacheControl       string
 }
 
 func WithExpire(expire int64) GetOptFn {
@@ -57,6 +58,12 @@ func WithResponseContentDisposition(v string) GetOptFn {
 func WithResponseContentType(v string) GetOptFn {
 	return func(o *GetOption) {
 		o.ResponseContentType = v
+	}
+}
+
+func WithResponseCacheControl(v string) GetOptFn {
+	return func(o *GetOption) {
+		o.ResponseCacheControl = v
 	}
 }
 

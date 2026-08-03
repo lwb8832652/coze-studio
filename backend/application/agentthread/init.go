@@ -23,6 +23,7 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
 type ServiceComponents struct {
@@ -38,6 +39,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	}
 
 	repo := repository.NewThreadRepository(c.DB)
+	runtimeFileRepo := repository.NewRuntimeFileRepository(c.DB)
+	artifactRepo := repository.NewArtifactRepository(c.DB)
 	guardrailAuditRepo := repository.NewGuardrailAuditRepository(c.DB)
 	mcpRuntimeAuditRepo := repository.NewMCPRuntimeAuditRepository(c.DB)
 	SVC.ThreadSVC = domainservice.NewService(&domainservice.Components{
@@ -49,7 +52,7 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.RuntimeFileSVC = domainservice.NewRuntimeFileService(
 		&domainservice.RuntimeFileComponents{
 			RunReader: repo,
-			FileRepo:  repository.NewRuntimeFileRepository(c.DB),
+			FileRepo:  runtimeFileRepo,
 			IDGen:     c.IDGen,
 		},
 	)
@@ -69,13 +72,31 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	)
 	SVC.ArtifactSVC = domainservice.NewArtifactService(
 		&domainservice.ArtifactComponents{
-			FileReader:   repository.NewRuntimeFileRepository(c.DB),
-			ArtifactRepo: repository.NewArtifactRepository(c.DB),
+			FileReader:   runtimeFileRepo,
+			ArtifactRepo: artifactRepo,
 			IDGen:        c.IDGen,
 		},
 	)
 	SVC.ArtifactObjectStorage = c.ObjectStorage
 	SVC.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(SVC.ThreadSVC)
+	SVC.JournalSnapshotRepository = repo
+	SVC.JournalQueryRepository = repo
+	SVC.JournalProjectionController = repo
+	SVC.JournalRetentionRepository = repo
+	SVC.JournalSnapshotAttemptReader = repo
+	SVC.JournalSnapshotObjectStorage = newJournalSnapshotStorageAdapter(c.ObjectStorage)
+	SVC.JournalSnapshotAuthorizer = NewThreadOwnerJournalSnapshotAuthorizer(
+		SVC.ThreadAuthorizer,
+		SVC.WorkspaceAuthorizer,
+	)
+	SVC.JournalSnapshotRuntimeFileReader = runtimeFileRepo
+	SVC.JournalSnapshotArtifactReader = artifactRepo
+	SVC.JournalSnapshotArtifactCapabilityIssuer = SVC
+	SVC.JournalSnapshotIDGenerator = c.IDGen
+	SVC.JournalRecoveryRepository = repo
+	SVC.JournalRecoveryIDGenerator = c.IDGen
+	SVC.JournalSideEffectRepository = repo
+	SVC.JournalUserSettingsStore = kvstore.New[JournalUserSettingsRecord](c.DB)
 	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
 	SVC.GuardrailAuditRepository = guardrailAuditRepo
 	SVC.GuardrailAuditAuthorizer = NewThreadOwnerGuardrailAuditAuthorizer(SVC.ThreadSVC)

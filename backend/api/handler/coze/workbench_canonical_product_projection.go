@@ -34,20 +34,33 @@ type canonicalProductUpload struct {
 }
 
 type canonicalProductArtifact struct {
-	ArtifactID   string         `json:"artifact_id"`
-	ThreadID     string         `json:"thread_id"`
-	RunID        string         `json:"run_id"`
-	FileID       string         `json:"file_id"`
-	Title        string         `json:"title"`
-	ArtifactType string         `json:"artifact_type"`
-	VirtualPath  string         `json:"virtual_path"`
-	ContentType  string         `json:"content_type"`
-	SizeBytes    int64          `json:"size_bytes"`
-	PreviewMode  string         `json:"preview_mode"`
-	Metadata     map[string]any `json:"metadata"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
-	DeletedAt    string         `json:"deleted_at,omitempty"`
+	ArtifactID       string         `json:"artifact_id"`
+	ThreadID         string         `json:"thread_id"`
+	RunID            string         `json:"run_id"`
+	FileID           string         `json:"file_id"`
+	Title            string         `json:"title"`
+	ArtifactType     string         `json:"artifact_type"`
+	VirtualPath      string         `json:"virtual_path"`
+	ContentType      string         `json:"content_type"`
+	SizeBytes        int64          `json:"size_bytes"`
+	PreviewMode      string         `json:"preview_mode"`
+	Source           string         `json:"source,omitempty"`
+	GenerationStatus string         `json:"generation_status,omitempty"`
+	Capabilities     []string       `json:"capabilities,omitempty"`
+	IsPrimary        bool           `json:"is_primary,omitempty"`
+	CollectionID     string         `json:"collection_id,omitempty"`
+	CollectionOrder  *int32         `json:"collection_order,omitempty"`
+	Metadata         map[string]any `json:"metadata"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
+	DeletedAt        string         `json:"deleted_at,omitempty"`
+}
+
+type canonicalProductArtifactCollection struct {
+	CollectionID string   `json:"collection_id"`
+	ArtifactIDs  []string `json:"artifact_ids"`
+	CurrentIndex *int32   `json:"current_index,omitempty"`
+	TotalCount   int32    `json:"total_count,omitempty"`
 }
 
 type canonicalProductArtifactScanJob struct {
@@ -216,7 +229,28 @@ func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: deletedAt}, nil
+	return &canonicalProductArtifact{
+		ArtifactID:       artifactID,
+		ThreadID:         threadID,
+		RunID:            runID,
+		FileID:           fileID,
+		Title:            canonicalCleanString(public.Title, 512),
+		ArtifactType:     canonicalProductIdentifier(public.ArtifactType),
+		VirtualPath:      canonicalCleanString(public.VirtualPath, 4096),
+		ContentType:      canonicalCleanString(public.ContentType, 128),
+		SizeBytes:        public.SizeBytes,
+		PreviewMode:      canonicalProductIdentifier(string(public.PreviewMode)),
+		Source:           canonicalProductIdentifier(public.Source),
+		GenerationStatus: canonicalProductIdentifier(public.GenerationStatus),
+		Capabilities:     public.Capabilities,
+		IsPrimary:        public.IsPrimary,
+		CollectionID:     canonicalProductIdentifier(public.CollectionID),
+		CollectionOrder:  public.CollectionOrder,
+		Metadata:         canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")),
+		CreatedAt:        createdAt,
+		UpdatedAt:        updatedAt,
+		DeletedAt:        deletedAt,
+	}, nil
 }
 
 func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScanJobSummary) (*canonicalProductArtifactScanJob, error) {

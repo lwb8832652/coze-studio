@@ -110,6 +110,12 @@ export interface WorkbenchArtifact {
   created_at: number;
   updated_at: number;
   deleted_at?: number;
+  source?: string;
+  generation_status?: string;
+  capabilities?: string[];
+  collection_id?: string;
+  collection_order?: number;
+  is_primary?: boolean;
 }
 
 export interface WorkbenchArtifactScanJob {
@@ -330,3 +336,43 @@ export interface WorkbenchGuardrailAuditExport {
   total: number;
   events: WorkbenchGuardrailAuditEvent[];
 }
+
+export type {
+  WorkbenchJournalActionEventData,
+  WorkbenchJournalArtifactEventData,
+  WorkbenchJournalAttempt,
+  WorkbenchJournalBootstrap,
+  WorkbenchJournalBrowserContent,
+  WorkbenchJournalCodeContent,
+  WorkbenchJournalCodeHighlight,
+  WorkbenchJournalConfirmationEventData,
+  WorkbenchJournalContentStatus,
+  WorkbenchJournalContentType,
+  WorkbenchJournalControl,
+  WorkbenchJournalControlType,
+  WorkbenchJournalDocumentChapter,
+  WorkbenchJournalDocumentContent,
+  WorkbenchJournalEnrollment,
+  WorkbenchJournalErrorCode,
+  WorkbenchJournalEvent,
+  WorkbenchJournalEventPage,
+  WorkbenchJournalEventPayload,
+  WorkbenchJournalExecutionStatus,
+  WorkbenchJournalHeartbeat,
+  WorkbenchJournalMetadata,
+  WorkbenchJournalMilestoneEventData,
+  WorkbenchJournalProjectionState,
+  WorkbenchJournalRecoveryCapability,
+  WorkbenchJournalRecoveryResult,
+  WorkbenchJournalSettings,
+  WorkbenchJournalSkill,
+  WorkbenchJournalSkillContent,
+  WorkbenchJournalSnapshot,
+  WorkbenchJournalSnapshotAction,
+  WorkbenchJournalSnapshotActionResult,
+  WorkbenchJournalSnapshotContent,
+  WorkbenchJournalSnapshotFragment,
+  WorkbenchJournalStreamMessage,
+  WorkbenchJournalTerminalContent,
+  WorkbenchJournalVerificationEventData,
+} from './journal-types';

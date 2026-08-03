@@ -31,10 +31,11 @@ import (
 )
 
 type canonicalArtifactListResponse struct {
-	Artifacts  []*canonicalProductArtifact `json:"artifacts"`
-	Total      int64                       `json:"total"`
-	HasMore    bool                        `json:"has_more"`
-	NextCursor *string                     `json:"next_cursor,omitempty"`
+	Artifacts   []*canonicalProductArtifact           `json:"artifacts"`
+	Total       int64                                 `json:"total"`
+	HasMore     bool                                  `json:"has_more"`
+	NextCursor  *string                               `json:"next_cursor,omitempty"`
+	Collections []*canonicalProductArtifactCollection `json:"collections,omitempty"`
 }
 
 type canonicalArtifactSignedURLResponse struct {
@@ -109,6 +110,16 @@ func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
+	collectionID, public := canonicalArtifactCollectionQuery(c)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
+	if collectionID != nil && runID == nil {
+		public = canonicalProductInvalidQuery("run_id")
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	ctx = canonicalProductThreadAccessContext(ctx, spaceID, threadID, 0)
 	if err := authorizeCanonicalProductThreadAccess(ctx, spaceID, threadID, 0); err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -116,13 +127,14 @@ func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 	}
 
 	resp, err := appagentthread.SVC.ListArtifacts(ctx, &appagentthread.ListArtifactsRequest{
-		ThreadID:    threadID,
-		RunID:       runID,
-		DeletedOnly: deletedOnly,
-		SpaceID:     spaceID,
-		ViewerID:    workbenchViewerIDFromCtx(ctx),
-		Page:        page.Page,
-		PageSize:    page.Limit,
+		ThreadID:     threadID,
+		RunID:        runID,
+		CollectionID: collectionID,
+		DeletedOnly:  deletedOnly,
+		SpaceID:      spaceID,
+		ViewerID:     workbenchViewerIDFromCtx(ctx),
+		Page:         page.Page,
+		PageSize:     page.Limit,
 	})
 	if err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
@@ -133,11 +145,17 @@ func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("project canonical artifacts: %w", err))
 		return
 	}
+	collections, err := canonicalProductArtifactCollectionsToAPI(resp.Collections)
+	if err != nil {
+		writeCanonicalApplicationError(ctx, c, fmt.Errorf("project canonical artifact collections: %w", err))
+		return
+	}
 	c.JSON(consts.StatusOK, &canonicalArtifactListResponse{
-		Artifacts:  artifacts,
-		Total:      resp.Total,
-		HasMore:    page.hasMore(resp.Total),
-		NextCursor: page.nextCursor(resp.Total),
+		Artifacts:   artifacts,
+		Total:       resp.Total,
+		HasMore:     page.hasMore(resp.Total),
+		NextCursor:  page.nextCursor(resp.Total),
+		Collections: collections,
 	})
 }
 
@@ -158,27 +176,51 @@ func GetCanonicalThreadArtifactContent(ctx context.Context, c *app.RequestContex
 		return
 	}
 
+	hasRange, rangeStart, rangeEnd, public := canonicalArtifactRange(c)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	resp, err := appagentthread.SVC.ReadArtifactContent(ctx, &appagentthread.ReadArtifactContentRequest{
 		ThreadID:   threadID,
 		ArtifactID: artifactID,
 		Mode:       canonicalArtifactContentMode(c),
 		SpaceID:    spaceID,
 		ViewerID:   workbenchViewerIDFromCtx(ctx),
+		TraceID:    canonicalTraceID(ctx),
+		HasRange:   hasRange,
+		RangeStart: rangeStart,
+		RangeEnd:   rangeEnd,
 	})
 	if err != nil {
 		writeCanonicalArtifactApplicationError(ctx, c, err)
 		return
 	}
-	if resp == nil {
+	if resp == nil || resp.Stream == nil || resp.ContentLength == 0 {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("agent thread application returned empty artifact content"))
 		return
 	}
 	requestLog.LifecycleStage = "read"
-	c.SetStatusCode(consts.StatusOK)
+	statusCode := consts.StatusOK
+	if resp.Partial {
+		statusCode = consts.StatusPartialContent
+		c.Response.Header.Set("Content-Range", fmt.Sprintf(
+			"bytes %d-%d/%d",
+			resp.RangeStart,
+			resp.RangeEnd,
+			resp.TotalSize,
+		))
+	}
+	c.SetStatusCode(statusCode)
 	c.SetContentType(resp.ContentType)
 	c.Response.Header.Set("Content-Disposition", canonicalArtifactContentDisposition(resp.FileName, resp.Attachment))
 	c.Response.Header.Set("X-Content-Type-Options", "nosniff")
-	c.Response.SetBodyRaw(resp.Content)
+	if resp.TotalSize > 0 {
+		c.Response.Header.Set("Accept-Ranges", "bytes")
+	}
+	c.Response.Header.Set("Cache-Control", "private, no-store")
+	c.Response.Header.Set("Referrer-Policy", "no-referrer")
+	c.Response.SetBodyStream(resp.Stream, int(resp.ContentLength))
 }
 
 func canonicalArtifactContentDisposition(fileName string, attachment bool) string {
@@ -221,6 +263,7 @@ func GetCanonicalThreadArtifactSignedURL(ctx context.Context, c *app.RequestCont
 		Mode:       canonicalArtifactContentMode(c),
 		SpaceID:    spaceID,
 		ViewerID:   workbenchViewerIDFromCtx(ctx),
+		TraceID:    canonicalTraceID(ctx),
 		TTLSeconds: ttlSeconds,
 	})
 	if err != nil {
@@ -236,12 +279,57 @@ func GetCanonicalThreadArtifactSignedURL(ctx context.Context, c *app.RequestCont
 		publicArtifactID = strconv.FormatInt(resp.Artifact.ArtifactID, 10)
 	}
 	requestLog.LifecycleStage = "signed"
+	c.Response.Header.Set("Cache-Control", "private, no-store")
+	c.Response.Header.Set("Referrer-Policy", "no-referrer")
 	c.JSON(consts.StatusOK, &canonicalArtifactSignedURLResponse{
 		ArtifactID:       publicArtifactID,
 		URL:              resp.URL,
 		ExpiresInSeconds: resp.ExpiresInSeconds,
 		ContentType:      canonicalCleanString(resp.ContentType, 128),
 		PreviewMode:      canonicalProductIdentifier(string(resp.PreviewMode)),
+	})
+}
+
+// CopyCanonicalThreadArtifactLink issues a short-lived, audited download grant.
+func CopyCanonicalThreadArtifactLink(ctx context.Context, c *app.RequestContext) {
+	requestLog := beginCanonicalRequestLog("artifact.copy_link.create", "/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link")
+	requestLog.ResponseBodyKind = "values"
+	requestLog.ResourceType = "artifact_copy_link"
+	defer completeCanonicalRequestLog(ctx, c, requestLog)
+	threadID, artifactID, spaceID, ok := canonicalArtifactRouteScope(ctx, c, requestLog)
+	if !ok {
+		return
+	}
+	if !requireCanonicalArtifactObjectSigner(ctx, c) {
+		return
+	}
+	resp, err := appagentthread.SVC.CopyArtifactLink(ctx, &appagentthread.CopyArtifactLinkRequest{
+		ThreadID:   threadID,
+		ArtifactID: artifactID,
+		SpaceID:    spaceID,
+		ViewerID:   workbenchViewerIDFromCtx(ctx),
+		TraceID:    canonicalTraceID(ctx),
+	})
+	if err != nil {
+		writeCanonicalArtifactApplicationError(ctx, c, err)
+		return
+	}
+	if resp == nil || strings.TrimSpace(resp.CopyURL) == "" {
+		writeCanonicalApplicationError(ctx, c, fmt.Errorf("agent thread application returned empty artifact copy link"))
+		return
+	}
+	expiresAt, err := canonicalProductRequiredTime(resp.ExpiresAt, "artifact copy link expires_at")
+	if err != nil {
+		writeCanonicalApplicationError(ctx, c, err)
+		return
+	}
+	requestLog.LifecycleStage = "copied"
+	c.Response.Header.Set("Cache-Control", "private, no-store")
+	c.Response.Header.Set("Referrer-Policy", "no-referrer")
+	c.JSON(consts.StatusOK, map[string]string{
+		"artifact_id": strconv.FormatInt(resp.ArtifactID, 10),
+		"copy_url":    resp.CopyURL,
+		"expires_at":  expiresAt,
 	})
 }
 
@@ -587,6 +675,55 @@ func canonicalArtifactContentMode(c *app.RequestContext) appagentthread.Artifact
 	return appagentthread.ArtifactContentModePreview
 }
 
+func canonicalArtifactCollectionQuery(c *app.RequestContext) (*string, *canonicalError) {
+	raw, exists := c.GetQuery("collection_id")
+	if !exists {
+		return nil, nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || canonicalProductIdentifier(raw) != raw {
+		return nil, canonicalProductInvalidQuery("collection_id")
+	}
+	return &raw, nil
+}
+
+func canonicalArtifactRange(
+	c *app.RequestContext,
+) (bool, int64, *int64, *canonicalError) {
+	raw := strings.TrimSpace(string(c.Request.Header.Peek("Range")))
+	if raw == "" {
+		return false, 0, nil, nil
+	}
+	invalid := func() (bool, int64, *int64, *canonicalError) {
+		return false, 0, nil, newCanonicalError(
+			416,
+			"invalid_range",
+			"Requested artifact range is invalid",
+			"invalid_artifact_range",
+			false,
+		)
+	}
+	if !strings.HasPrefix(raw, "bytes=") || strings.Contains(raw, ",") {
+		return invalid()
+	}
+	startRaw, endRaw, ok := strings.Cut(strings.TrimPrefix(raw, "bytes="), "-")
+	if !ok || startRaw == "" {
+		return invalid()
+	}
+	start, err := strconv.ParseInt(startRaw, 10, 64)
+	if err != nil || start < 0 {
+		return invalid()
+	}
+	if endRaw == "" {
+		return true, start, nil, nil
+	}
+	end, err := strconv.ParseInt(endRaw, 10, 64)
+	if err != nil || end < start {
+		return invalid()
+	}
+	return true, start, &end, nil
+}
+
 func canonicalProductArtifactsToAPI(
 	summaries []*appagentthread.ArtifactSummary,
 ) ([]*canonicalProductArtifact, error) {
@@ -601,6 +738,36 @@ func canonicalProductArtifactsToAPI(
 		}
 	}
 	return artifacts, nil
+}
+
+func canonicalProductArtifactCollectionsToAPI(
+	summaries []*appagentthread.ArtifactCollectionSummary,
+) ([]*canonicalProductArtifactCollection, error) {
+	collections := make([]*canonicalProductArtifactCollection, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary == nil {
+			continue
+		}
+		collectionID := canonicalProductIdentifier(summary.CollectionID)
+		if collectionID == "" {
+			return nil, fmt.Errorf("canonical artifact collection requires an id")
+		}
+		artifactIDs := make([]string, 0, len(summary.ArtifactIDs))
+		for _, artifactID := range summary.ArtifactIDs {
+			projected, err := canonicalProductRequiredID(artifactID, "artifact collection member")
+			if err != nil {
+				return nil, err
+			}
+			artifactIDs = append(artifactIDs, projected)
+		}
+		collections = append(collections, &canonicalProductArtifactCollection{
+			CollectionID: collectionID,
+			ArtifactIDs:  artifactIDs,
+			CurrentIndex: summary.CurrentIndex,
+			TotalCount:   summary.TotalCount,
+		})
+	}
+	return collections, nil
 }
 
 func canonicalProductArtifactScanJobsToAPI(
@@ -718,6 +885,22 @@ func writeCanonicalArtifactApplicationError(ctx context.Context, c *app.RequestC
 			"artifact_signed_url_not_supported",
 			false,
 		))
+	case errors.Is(err, appagentthread.ErrArtifactContentRangeInvalid):
+		writeCanonicalError(ctx, c, 416, *newCanonicalError(
+			416,
+			"invalid_range",
+			"Requested artifact range is invalid",
+			"invalid_artifact_range",
+			false,
+		))
+	case errors.Is(err, appagentthread.ErrArtifactTrustedMetadataUnavailable):
+		writeCanonicalError(ctx, c, consts.StatusConflict, *newCanonicalError(
+			consts.StatusConflict,
+			"artifact_content_unavailable",
+			"Artifact content is not ready for delivery",
+			"artifact_trusted_metadata_unavailable",
+			true,
+		))
 	case errors.Is(err, appagentthread.ErrArtifactScanReviewDecisionInvalid):
 		writeCanonicalError(ctx, c, consts.StatusBadRequest, *newCanonicalError(
 			consts.StatusBadRequest,
@@ -739,6 +922,7 @@ func canonicalArtifactDependencyUnavailable(err error) bool {
 	for _, marker := range []string{
 		"agent artifact service is not initialized",
 		"artifact object storage is not configured",
+		"artifact object storage streaming is not configured",
 		"artifact object storage signing is not configured",
 	} {
 		if strings.Contains(message, marker) {

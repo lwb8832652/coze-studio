@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -78,11 +79,23 @@ func TestADKMCPRuntimeExecutorValidatesAndInvokesTransport(t *testing.T) {
 	require.Equal(t, `{"query":"secret docs"}`, transport.call.Arguments)
 	require.True(t, transport.deadlineSet)
 	require.Equal(t, []string{"mcp.tool.started", "mcp.tool.completed"}, events.eventTypes())
+	invocationIDs := make([]string, 0, len(events.events))
 	for _, event := range events.events {
 		require.NotContains(t, event.Payload, "secret docs")
 		require.NotContains(t, event.Payload, "raw-secret")
 		require.NotContains(t, event.Payload, "docs-mcp")
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(event.Payload), &payload))
+		invocationID, _ := payload["invocation_id"].(string)
+		require.NotEmpty(t, invocationID)
+		invocationIDs = append(invocationIDs, invocationID)
 	}
+	require.Equal(t, invocationIDs[0], invocationIDs[1])
+	started, err := ProjectRunEventToJournal(events.events[0])
+	require.NoError(t, err)
+	completed, err := ProjectRunEventToJournal(events.events[1])
+	require.NoError(t, err)
+	require.Equal(t, started.ActionID, completed.ActionID)
 }
 
 func TestADKMCPRuntimeExecutorIgnoresHealthReporterErrors(t *testing.T) {
@@ -733,6 +746,41 @@ func TestADKMCPRuntimeExecutorReportsUnhealthyAfterTransportFailure(
 	require.Equal(t, adkMCPRuntimeTransportStdio, health.reports[0].Transport)
 	require.Equal(t, "transport_failed", health.reports[0].ErrorCode)
 	require.NotContains(t, health.reports[0].ErrorCode, "stdio-secret-token")
+}
+
+func TestADKMCPRuntimeExecutorProjectsTransportTimeoutAsTimedOut(t *testing.T) {
+	events := &recordingRunEventSink{}
+	health := &recordingADKMCPRuntimeHealthReporter{}
+	executor := NewADKMCPRuntimeExecutor(
+		&recordingADKMCPRuntimeServerResolver{
+			server: &toolapi.MCPToolServer{
+				ServerID: 100, SpaceID: 30, Enabled: true, ServerType: "stdio",
+				Config: `{"command":"npx"}`,
+				Tools:  []*toolapi.MCPToolDefinition{{Name: "search-docs"}},
+			},
+		},
+		&recordingADKMCPRuntimeTransport{err: context.DeadlineExceeded},
+		WithADKMCPRuntimeExecutorEventSink(events),
+		WithADKMCPRuntimeExecutorHealthReporter(health),
+	)
+
+	_, err := executor.InvokeADKMCPRuntimeTool(
+		context.Background(),
+		ADKMCPRuntimeToolCall{
+			Run:  &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+			Name: "mcp_100_search_docs", ServerID: 100, ToolName: "search-docs",
+			Arguments: `{}`,
+		},
+	)
+
+	require.Error(t, err)
+	require.Equal(t, []string{"mcp.tool.started", "mcp.tool.failed"}, events.eventTypes())
+	require.Len(t, health.reports, 1)
+	require.Equal(t, "tool_timeout", health.reports[0].ErrorCode)
+	projection, projectErr := ProjectRunEventToJournal(events.events[1])
+	require.NoError(t, projectErr)
+	require.NotNil(t, projection)
+	require.Equal(t, "timed_out", projection.Status)
 }
 
 func TestADKMCPRuntimeExecutorReportsUnhealthyAfterOutputBudgetExceeded(

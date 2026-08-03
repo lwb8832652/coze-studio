@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -95,6 +96,7 @@ func TestArtifactServiceRegistersPendingScanAndEnqueuesJob(t *testing.T) {
 	require.Equal(t, "present_files", metadata["source"])
 	require.Equal(t, "pending", metadata["scan_status"])
 	require.Equal(t, "default", metadata["scan_scanner"])
+	require.Regexp(t, `^[0-9a-f]{16}$`, metadata["scan_revision"])
 	require.NotZero(t, metadata["scan_requested_at"])
 
 	require.NotNil(t, artifacts.scanJob)
@@ -105,7 +107,7 @@ func TestArtifactServiceRegistersPendingScanAndEnqueuesJob(t *testing.T) {
 	require.Equal(t, int64(100), artifacts.scanJob.ArtifactID)
 	require.Equal(t, int64(90), artifacts.scanJob.FileID)
 	require.Equal(t, "default", artifacts.scanJob.Scanner)
-	require.Equal(t, "artifact_scan:100:default", artifacts.scanJob.IdempotencyKey)
+	require.Regexp(t, `^artifact_scan:100:default:[0-9a-f]{16}$`, artifacts.scanJob.IdempotencyKey)
 	require.Equal(t, entity.ArtifactScanJobStatusPending, artifacts.scanJob.Status)
 	require.Equal(t, artifacts.scanJob.CreatedAt, artifacts.scanJob.AvailableAt)
 	require.NotContains(t, artifacts.scanJob.IdempotencyKey, "agent-runtime")
@@ -326,6 +328,67 @@ func TestArtifactServiceUpdatesScanResultPreservingMetadata(t *testing.T) {
 	require.Equal(t, artifacts.updateMetadata, updated.Metadata)
 }
 
+func TestArtifactServicePersistsCompleteTrustedScanResult(t *testing.T) {
+	expected := &entity.AgentArtifact{
+		ID:               100,
+		ThreadID:         10,
+		RunID:            20,
+		JournalRunID:     20,
+		FileID:           90,
+		ContentType:      "application/octet-stream",
+		PreviewMode:      entity.AgentArtifactPreviewModeDownload,
+		GenerationStatus: entity.AgentArtifactGenerationStatusProcessing,
+		Metadata:         `{}`,
+	}
+	artifacts := &recordingArtifactRepository{got: expected}
+	svc := NewArtifactService(&ArtifactComponents{ArtifactRepo: artifacts})
+	req := &UpdateArtifactScanResultRequest{
+		ThreadID:   10,
+		ArtifactID: 100,
+		ScanStatus: "clean",
+		Scanner:    "clamd",
+		ScannedAt:  2000,
+	}
+	setTrustedArtifactScanFieldsForTest(
+		t,
+		req,
+		"audio/mpeg",
+		128,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+
+	updated, ok, err := svc.UpdateArtifactScanResult(context.Background(), req)
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, updated)
+	require.True(t, artifacts.trustedUpdateCalled)
+	require.Equal(t, "audio/mpeg", artifacts.detectedContentType)
+	require.Equal(t, int64(128), artifacts.scannedSizeBytes)
+	require.Equal(t, entity.AgentArtifactPreviewModeAudio, artifacts.trustedPreviewMode)
+	require.Equal(t, entity.AgentArtifactGenerationStatusReady, artifacts.trustedGenerationStatus)
+}
+
+func setTrustedArtifactScanFieldsForTest(
+	t *testing.T,
+	req *UpdateArtifactScanResultRequest,
+	contentType string,
+	sizeBytes int64,
+	contentHash string,
+) {
+	t.Helper()
+	value := reflect.ValueOf(req).Elem()
+	for name, fieldValue := range map[string]any{
+		"DetectedContentType": contentType,
+		"ScannedSizeBytes":    sizeBytes,
+		"ContentHash":         contentHash,
+	} {
+		field := value.FieldByName(name)
+		require.Truef(t, field.IsValid(), "UpdateArtifactScanResultRequest must expose %s", name)
+		field.Set(reflect.ValueOf(fieldValue))
+	}
+}
+
 func TestArtifactServiceRejectsInvalidScanStatusBeforeRepositoryUpdate(t *testing.T) {
 	artifacts := &recordingArtifactRepository{
 		got: &entity.AgentArtifact{
@@ -449,10 +512,11 @@ func TestArtifactServiceCompleteScanJobUpdatesArtifactBeforeTerminal(t *testing.
 		`{"scan_status":"clean","scan_scanner":"default","scan_scanner_version":"1.2.3","scan_reason":"safe","scan_scanned_at":3000}`,
 		artifacts.updateMetadata,
 	)
+	require.Equal(t, entity.AgentArtifactGenerationStatusProcessing, artifacts.updateGenerationStatus)
 	require.Equal(t, int64(3000), artifacts.updateScannedAt)
 }
 
-func TestArtifactServiceFailScanJobDoesNotMutateArtifactMetadata(t *testing.T) {
+func TestArtifactServiceFailScanJobMarksArtifactFailedBeforeTerminal(t *testing.T) {
 	artifacts := &recordingArtifactRepository{
 		scanJob: &entity.ArtifactScanJob{
 			ID:             3001,
@@ -464,6 +528,12 @@ func TestArtifactServiceFailScanJobDoesNotMutateArtifactMetadata(t *testing.T) {
 			WorkerID:       "worker-a",
 			LeaseExpiresAt: 5000,
 		},
+		got: &entity.AgentArtifact{
+			ID:               100,
+			ThreadID:         10,
+			GenerationStatus: entity.AgentArtifactGenerationStatusProcessing,
+			Metadata:         `{"scan_status":"pending"}`,
+		},
 	}
 	svc := NewArtifactService(&ArtifactComponents{ArtifactRepo: artifacts})
 
@@ -473,6 +543,7 @@ func TestArtifactServiceFailScanJobDoesNotMutateArtifactMetadata(t *testing.T) {
 			JobID:     3001,
 			WorkerID:  "worker-a",
 			ErrorText: "scanner unavailable",
+			EndedAt:   3000,
 		},
 	)
 
@@ -482,7 +553,12 @@ func TestArtifactServiceFailScanJobDoesNotMutateArtifactMetadata(t *testing.T) {
 	require.Equal(t, int64(3001), artifacts.failScanJobReq.JobID)
 	require.Equal(t, "worker-a", artifacts.failScanJobReq.WorkerID)
 	require.Equal(t, "scanner unavailable", artifacts.failScanJobReq.ErrorText)
-	require.Empty(t, artifacts.updateMetadata)
+	require.JSONEq(
+		t,
+		`{"scan_status":"failed","scan_scanner":"default","scan_reason":"scanner unavailable","scan_scanned_at":3000}`,
+		artifacts.updateMetadata,
+	)
+	require.Equal(t, entity.AgentArtifactGenerationStatusFailed, artifacts.updateGenerationStatus)
 }
 
 func TestArtifactServiceRetryScanJobDoesNotMutateArtifactMetadata(t *testing.T) {
@@ -641,6 +717,10 @@ func TestArtifactPreviewModeFromContentType(t *testing.T) {
 		{name: "json", contentType: "application/json", want: entity.AgentArtifactPreviewModeText},
 		{name: "png", contentType: "image/png", want: entity.AgentArtifactPreviewModeImage},
 		{name: "pdf", contentType: "application/pdf", want: entity.AgentArtifactPreviewModePDF},
+		{name: "mp3", contentType: "audio/mpeg", want: entity.AgentArtifactPreviewModeAudio},
+		{name: "mp4", contentType: "video/mp4", want: entity.AgentArtifactPreviewModeVideo},
+		{name: "unsupported audio codec", contentType: "audio/flac", want: entity.AgentArtifactPreviewModeDownload},
+		{name: "html download", contentType: "text/html", want: entity.AgentArtifactPreviewModeDownload},
 		{name: "svg download", contentType: "image/svg+xml", want: entity.AgentArtifactPreviewModeDownload},
 		{name: "unknown download", contentType: "application/octet-stream", want: entity.AgentArtifactPreviewModeDownload},
 	}
@@ -783,7 +863,14 @@ type recordingArtifactRepository struct {
 	restoreArtifactID       int64
 	restoredAt              int64
 	updateMetadata          string
+	updateGenerationStatus  entity.AgentArtifactGenerationStatus
 	updateScannedAt         int64
+	trustedUpdateCalled     bool
+	detectedContentType     string
+	scannedSizeBytes        int64
+	contentHash             string
+	trustedPreviewMode      entity.AgentArtifactPreviewMode
+	trustedGenerationStatus entity.AgentArtifactGenerationStatus
 	claimScanJobsReq        repository.ClaimArtifactScanJobsRequest
 	aggregateScanBacklogReq repository.AggregateArtifactScanBacklogRequest
 	completeScanJobReq      repository.CompleteArtifactScanJobRequest
@@ -993,17 +1080,56 @@ func (r *recordingArtifactRepository) UpdateArtifactScanMetadata(
 	threadID int64,
 	artifactID int64,
 	metadata string,
+	generationStatus entity.AgentArtifactGenerationStatus,
 	updatedAt int64,
 ) (*entity.AgentArtifact, bool, error) {
 	r.threadID = threadID
 	r.artifactID = artifactID
 	r.updateMetadata = metadata
+	r.updateGenerationStatus = generationStatus
 	r.updateScannedAt = updatedAt
 	if r.got == nil {
 		return nil, false, nil
 	}
 	cloned := *r.got
 	cloned.Metadata = metadata
+	cloned.GenerationStatus = generationStatus
+	cloned.UpdatedAt = updatedAt
+	return &cloned, true, nil
+}
+
+func (r *recordingArtifactRepository) UpdateArtifactTrustedScanResult(
+	_ context.Context,
+	threadID int64,
+	artifactID int64,
+	metadata string,
+	detectedContentType string,
+	scannedSizeBytes int64,
+	contentHash string,
+	previewMode entity.AgentArtifactPreviewMode,
+	generationStatus entity.AgentArtifactGenerationStatus,
+	updatedAt int64,
+) (*entity.AgentArtifact, bool, error) {
+	r.threadID = threadID
+	r.artifactID = artifactID
+	r.updateMetadata = metadata
+	r.updateScannedAt = updatedAt
+	r.trustedUpdateCalled = true
+	r.detectedContentType = detectedContentType
+	r.scannedSizeBytes = scannedSizeBytes
+	r.contentHash = contentHash
+	r.trustedPreviewMode = previewMode
+	r.trustedGenerationStatus = generationStatus
+	if r.got == nil {
+		return nil, false, nil
+	}
+	cloned := *r.got
+	cloned.Metadata = metadata
+	cloned.DetectedContentType = detectedContentType
+	cloned.ScannedSizeBytes = &scannedSizeBytes
+	cloned.ContentHash = contentHash
+	cloned.PreviewMode = previewMode
+	cloned.GenerationStatus = generationStatus
 	cloned.UpdatedAt = updatedAt
 	return &cloned, true, nil
 }

@@ -303,6 +303,13 @@ func (r *threadRepository) DeleteThreadIfIdle(
 		if len(activeRuns) > 0 {
 			return fmt.Errorf("%w: thread %d", ErrActiveRunExists, req.ThreadID)
 		}
+		activeAttempts, err := lockActiveJournalAttemptsForThread(tx, req.ThreadID)
+		if err != nil {
+			return err
+		}
+		if len(activeAttempts) > 0 {
+			return fmt.Errorf("%w: thread %d has an active Journal attempt", ErrActiveRunExists, req.ThreadID)
+		}
 
 		deleted, err = deleteThreadCascade(tx, req.ThreadID)
 		return err

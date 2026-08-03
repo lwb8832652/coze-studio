@@ -687,20 +687,38 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.events.list", "/api/workbench/threads/:thread_id/runs/:run_id/events")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAgentThreadService(ctx, c) {
+	journalRequested := canonicalJournalEventListRequested(c)
+	if journalRequested {
+		if !requireCanonicalJournalAgentThreadService(ctx, c) {
+			return
+		}
+	} else if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
-	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	var ok bool
+	if journalRequested {
+		ctx, ok = requireCanonicalJournalSpaceAccess(ctx, c)
+	} else {
+		ctx, ok = requireCanonicalSpaceAccess(ctx, c)
+	}
 	if !ok {
 		return
 	}
 	requestLog.ResponseBodyKind = "event_page"
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
-		writeCanonicalError(ctx, c, public.status, *public)
+		if journalRequested {
+			writeCanonicalJournalError(ctx, c, public.status, *public)
+		} else {
+			writeCanonicalError(ctx, c, public.status, *public)
+		}
 		return
 	}
 	requestLog.ThreadID, requestLog.RunID = threadID, runID
+	if journalRequested {
+		listCanonicalRunJournalEvents(ctx, c, requestLog, threadID, runID)
+		return
+	}
 	afterEventID, public := canonicalNonNegativeQueryID(c, "after_event_id")
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)

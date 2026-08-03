@@ -195,9 +195,18 @@ const getToolCalls = (
 
 const getToolResultByCallID = (events: TaskThreadDetailEvent[]) => {
   const resultByCallID = new Map<string, TaskThreadDetailEvent>();
+  const terminalEventTypes = new Set([
+    'tool.completed',
+    'tool.succeeded',
+    'tool.failed',
+    'tool.canceled',
+    'tool.cancelled',
+    'tool.timed_out',
+    'tool.result',
+  ]);
 
   events.forEach(event => {
-    if (!event.event_type?.startsWith('tool.')) {
+    if (!event.event_type || !terminalEventTypes.has(event.event_type)) {
       return;
     }
 
@@ -227,7 +236,22 @@ const createToolCallProjection = ({
 }): ProjectedTaskExecutionEvent => {
   const resultEvent = toolCall.id ? resultByCallID.get(toolCall.id) : undefined;
   const resultPayload = parseJSONObject(resultEvent?.payload);
-  const failed = resultEvent?.event_type === 'tool.failed';
+  const failed = Boolean(
+    resultEvent?.event_type &&
+      [
+        'tool.failed',
+        'tool.canceled',
+        'tool.cancelled',
+        'tool.timed_out',
+      ].includes(resultEvent.event_type),
+  );
+  const terminalFailureDetail =
+    resultEvent?.event_type === 'tool.timed_out'
+      ? '工具调用超时'
+      : resultEvent?.event_type === 'tool.canceled' ||
+          resultEvent?.event_type === 'tool.cancelled'
+        ? '工具调用已取消'
+        : undefined;
   const completed = Boolean(resultEvent && !failed);
   const title = getString(toolCall.args, 'description');
   const detail = getToolPath(toolCall.args);
@@ -246,6 +270,7 @@ const createToolCallProjection = ({
     query,
     title,
     detail,
+    error_message: terminalFailureDetail,
     status: failed ? 'failed' : completed ? 'completed' : 'running',
     runtime: 'Agent',
   });

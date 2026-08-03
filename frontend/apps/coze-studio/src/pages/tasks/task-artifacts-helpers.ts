@@ -299,7 +299,15 @@ export const buildArtifactInlinePreview = ({
 };
 
 export const canPreviewArtifact = (artifact: TaskThreadArtifact) =>
+  artifactSupportsCapability(artifact, 'preview') &&
   Boolean(artifactPreviewFamily(artifact));
+
+export const artifactSupportsCapability = (
+  artifact: TaskThreadArtifact,
+  capability: string,
+) =>
+  artifact.capabilities === undefined ||
+  artifact.capabilities.includes(capability);
 
 export const artifactScanStatus = (artifact: TaskThreadArtifact) => {
   try {

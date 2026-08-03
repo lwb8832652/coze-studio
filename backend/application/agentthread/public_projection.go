@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 const (
@@ -32,8 +34,11 @@ const (
 )
 
 var (
-	publicIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
-	publicSensitivePattern  = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+\S+|bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?:api[_-]?key|access[_-]?token|credential|password)\s*[:=]\s*\S+|(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{4,}|(?:https?|file|s3|oss|cos|minio)://)`)
+	publicIdentifierPattern   = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	publicSensitivePattern    = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+\S+|bearer\s+[A-Za-z0-9._~+/=-]{8,}|["']?(?:api[_-]?key|access[_-]?token|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key|secret[_-]?(?:key|token)|private[_-]?key|credential|password|(?:[a-z0-9][a-z0-9_-]*_)?(?:secret|token))["']?\s*[:=]\s*["']?\S+|(?:^|[^A-Za-z0-9])(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{4,}|(?:https?|file|s3|oss|cos|minio)://)`)
+	publicAbsolutePathPattern = regexp.MustCompile(
+		`(?i)(?:^|[^A-Za-z0-9._-])(?:/(?:[^/\s]+)(?:/[^\s]*)?|[a-z]:\\[^\s]+|\\\\[^\s]+)`,
+	)
 )
 
 type PublicRuntimeError struct {
@@ -145,21 +150,27 @@ type PublicTokenUsage struct {
 }
 
 type PublicArtifact struct {
-	ArtifactID   int64               `json:"artifact_id"`
-	SpaceID      int64               `json:"space_id"`
-	ThreadID     int64               `json:"thread_id"`
-	RunID        int64               `json:"run_id"`
-	FileID       int64               `json:"file_id"`
-	Title        string              `json:"title"`
-	ArtifactType string              `json:"artifact_type"`
-	VirtualPath  string              `json:"virtual_path,omitempty"`
-	ContentType  string              `json:"content_type,omitempty"`
-	SizeBytes    int64               `json:"size_bytes"`
-	PreviewMode  ArtifactPreviewMode `json:"preview_mode"`
-	Metadata     string              `json:"metadata"`
-	CreatedAt    int64               `json:"created_at"`
-	UpdatedAt    int64               `json:"updated_at"`
-	DeletedAt    int64               `json:"deleted_at,omitempty"`
+	ArtifactID       int64               `json:"artifact_id"`
+	SpaceID          int64               `json:"space_id"`
+	ThreadID         int64               `json:"thread_id"`
+	RunID            int64               `json:"run_id"`
+	FileID           int64               `json:"file_id"`
+	Title            string              `json:"title"`
+	ArtifactType     string              `json:"artifact_type"`
+	VirtualPath      string              `json:"virtual_path,omitempty"`
+	ContentType      string              `json:"content_type,omitempty"`
+	SizeBytes        int64               `json:"size_bytes"`
+	PreviewMode      ArtifactPreviewMode `json:"preview_mode"`
+	Source           string              `json:"source,omitempty"`
+	GenerationStatus string              `json:"generation_status,omitempty"`
+	Capabilities     []string            `json:"capabilities,omitempty"`
+	IsPrimary        bool                `json:"is_primary,omitempty"`
+	CollectionID     string              `json:"collection_id,omitempty"`
+	CollectionOrder  *int32              `json:"collection_order,omitempty"`
+	Metadata         string              `json:"metadata"`
+	CreatedAt        int64               `json:"created_at"`
+	UpdatedAt        int64               `json:"updated_at"`
+	DeletedAt        int64               `json:"deleted_at,omitempty"`
 }
 
 func ProjectPublicRun(run *RunSummary) *PublicRun {
@@ -752,21 +763,27 @@ func ProjectPublicArtifact(artifact *ArtifactSummary) *PublicArtifact {
 	}
 
 	return &PublicArtifact{
-		ArtifactID:   artifact.ArtifactID,
-		SpaceID:      artifact.SpaceID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        publicLabel(artifact.Title, maxPublicLabelRunes),
-		ArtifactType: publicIdentifier(artifact.ArtifactType, maxPublicIdentifierRunes),
-		VirtualPath:  publicArtifactVirtualPath(artifact.VirtualPath),
-		ContentType:  publicLabel(artifact.ContentType, maxPublicIdentifierRunes),
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  artifact.PreviewMode,
-		Metadata:     projectPublicArtifactMetadata(artifact.Metadata),
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ArtifactID:       artifact.ArtifactID,
+		SpaceID:          artifact.SpaceID,
+		ThreadID:         artifact.ThreadID,
+		RunID:            artifact.RunID,
+		FileID:           artifact.FileID,
+		Title:            publicLabel(artifact.Title, maxPublicLabelRunes),
+		ArtifactType:     publicIdentifier(artifact.ArtifactType, maxPublicIdentifierRunes),
+		VirtualPath:      publicArtifactVirtualPath(artifact.VirtualPath),
+		ContentType:      publicLabel(artifact.ContentType, maxPublicIdentifierRunes),
+		SizeBytes:        artifact.SizeBytes,
+		PreviewMode:      artifact.PreviewMode,
+		Source:           publicIdentifier(artifact.Source, maxPublicIdentifierRunes),
+		GenerationStatus: publicIdentifier(artifact.GenerationStatus, maxPublicIdentifierRunes),
+		Capabilities:     publicArtifactCapabilities(artifact.Capabilities),
+		IsPrimary:        artifact.IsPrimary,
+		CollectionID:     publicIdentifier(artifact.CollectionID, maxPublicIdentifierRunes),
+		CollectionOrder:  artifact.CollectionOrder,
+		Metadata:         projectPublicArtifactMetadata(artifact.Metadata),
+		CreatedAt:        artifact.CreatedAt,
+		UpdatedAt:        artifact.UpdatedAt,
+		DeletedAt:        artifact.DeletedAt,
 	}
 }
 
@@ -776,6 +793,28 @@ func ProjectPublicArtifacts(artifacts []*ArtifactSummary) []*PublicArtifact {
 		if projected := ProjectPublicArtifact(artifact); projected != nil {
 			result = append(result, projected)
 		}
+	}
+	return result
+}
+
+func publicArtifactCapabilities(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = publicIdentifier(value, maxPublicIdentifierRunes)
+		switch value {
+		case string(domainentity.AgentArtifactCapabilityOpen),
+			string(domainentity.AgentArtifactCapabilityPreview),
+			string(domainentity.AgentArtifactCapabilityDownload),
+			string(domainentity.AgentArtifactCapabilityCopy):
+		default:
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
 	}
 	return result
 }
@@ -839,6 +878,11 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicIdentifier(payload, result, "role")
 		copyPublicIdentifier(payload, result, "tool_name")
 		copyPublicIdentifier(payload, result, "tool_call_id")
+		copyPublicIdentifier(payload, result, "invocation_id")
+		copyPublicIdentifier(payload, result, "step_id")
+		copyPublicIdentifier(payload, result, "plan_task_id")
+		copyPublicIdentifier(payload, result, "progress_revision")
+		copyPublicLabel(payload, result, "journal_target")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicIdentifier(payload, result, "error_code")
 		copyPublicBool(payload, result, "arguments_present")
@@ -866,11 +910,14 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicInt64(payload, result, "attempt")
 	case strings.HasPrefix(eventType, "step."), strings.HasPrefix(eventType, "plan.task."), strings.HasPrefix(eventType, "todo."):
 		copyPublicIdentifier(payload, result, "step_id")
+		copyPublicIdentifier(payload, result, "plan_task_id")
 		copyPublicIdentifier(payload, result, "step_name")
 		copyPublicInt64(payload, result, "step_index")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicLabel(payload, result, "title")
 		copyPublicLabel(payload, result, "name")
+		copyPublicLabel(payload, result, "subject")
+		copyPublicLabel(payload, result, "active_form")
 		copyPublicLabel(payload, result, "description")
 		copyPublicIdentifier(payload, result, "error_code")
 	case strings.HasPrefix(eventType, "node."):
@@ -889,20 +936,36 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		}
 	case strings.HasPrefix(eventType, "subagent."), strings.HasPrefix(eventType, "task."):
 		copyPublicInt64(payload, result, "subagent_run_id")
+		copyPublicInt64(payload, result, "child_run_id")
 		copyPublicInt64(payload, result, "parent_run_id")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicLabel(payload, result, "name")
 		copyPublicLabel(payload, result, "agent_name")
 		copyPublicIdentifier(payload, result, "error_code")
+		if rawSubagent, ok := payload["subagent"].(map[string]any); ok {
+			projected := map[string]any{}
+			copyPublicLabel(rawSubagent, projected, "name")
+			copyPublicIdentifier(rawSubagent, projected, "step_id")
+			if len(projected) > 0 {
+				result["subagent"] = projected
+			}
+		}
 		copyPublicTokenCounts(payload, result)
 	case eventType == "skills.loaded", strings.HasPrefix(eventType, "skill."):
 		copyPublicInt64(payload, result, "count")
+		copyPublicInt64(payload, result, "skill_count")
+		copyPublicStringSlice(payload, result, "skill_ids")
+		copyPublicStringSlice(payload, result, "skill_names")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicSkills(payload, result)
 	case strings.HasPrefix(eventType, "human.interaction."):
 		copyPublicIdentifier(payload, result, "interrupt_id")
+		copyPublicIdentifier(payload, result, "confirmation_id")
 		copyPublicIdentifier(payload, result, "kind")
+		copyPublicIdentifier(payload, result, "confirmation_type")
 		copyPublicIdentifier(payload, result, "status")
+		copyPublicLabel(payload, result, "prompt")
+		copyPublicStringSlice(payload, result, "allowed_action_keys")
 		copyPublicBool(payload, result, "answered")
 		copyPublicBool(payload, result, "approved")
 		copyPublicIdentifier(payload, result, "decision")
@@ -917,6 +980,17 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicIdentifier(payload, result, "preview_mode")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicIdentifier(payload, result, "scan_status")
+		copyPublicIdentifier(payload, result, "collection_id")
+		if artifacts := projectPublicJournalArtifacts(payload["artifacts"]); len(artifacts) > 0 {
+			result["artifacts"] = artifacts
+		}
+	case strings.HasPrefix(eventType, "verification."):
+		copyPublicIdentifier(payload, result, "verification_id")
+		copyPublicLabel(payload, result, "title")
+		copyPublicIdentifier(payload, result, "status")
+		copyPublicIdentifier(payload, result, "error_code")
+		copyPublicLabel(payload, result, "summary")
+		copyPublicLabel(payload, result, "result_summary")
 	case strings.HasPrefix(eventType, "memory."):
 		copyPublicInt64(payload, result, "count")
 		copyPublicIdentifier(payload, result, "scope")
@@ -933,8 +1007,12 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 	case strings.HasPrefix(eventType, "mcp."):
 		copyPublicInt64(payload, result, "server_id")
 		copyPublicIdentifier(payload, result, "tool_name")
+		copyPublicIdentifier(payload, result, "invocation_id")
+		copyPublicIdentifier(payload, result, "progress_revision")
+		copyPublicLabel(payload, result, "journal_target")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicIdentifier(payload, result, "error_code")
+		copyPublicInt64(payload, result, "elapsed_ms")
 		copyPublicInt64(payload, result, "elapsed_millis")
 		copyPublicInt64(payload, result, "output_bytes")
 	default:
@@ -974,6 +1052,25 @@ func projectPublicCheckpointMetadata(raw string) map[string]any {
 	return result
 }
 
+func projectPublicJournalArtifacts(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		source, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		projected := projectPublicCheckpointArtifacts(source)
+		if len(projected) > 0 {
+			result = append(result, projected)
+		}
+	}
+	return result
+}
+
 func projectPublicCheckpointArtifacts(value any) map[string]any {
 	source, ok := value.(map[string]any)
 	if !ok {
@@ -989,6 +1086,12 @@ func projectPublicCheckpointArtifacts(value any) map[string]any {
 			continue
 		}
 		switch key {
+		case "artifact_id", "file_id", "report_id":
+			if id := publicInt64(value); id > 0 {
+				result[key] = id
+			} else if identifier := publicIdentifier(publicString(value), maxPublicIdentifierRunes); identifier != "" {
+				result[key] = identifier
+			}
 		case "size_bytes":
 			if size := publicInt64(value); size >= 0 {
 				result[key] = size
@@ -1366,7 +1469,7 @@ func publicJSON(value any) string {
 
 func publicIdentifier(value string, limit int) string {
 	value = publicCleanString(value, limit)
-	if value == "" || !publicIdentifierPattern.MatchString(value) || publicSensitivePattern.MatchString(value) {
+	if value == "" || !publicIdentifierPattern.MatchString(value) || publicStringIsSensitive(value) {
 		return ""
 	}
 	return value
@@ -1374,10 +1477,14 @@ func publicIdentifier(value string, limit int) string {
 
 func publicLabel(value string, limit int) string {
 	value = publicCleanString(value, limit)
-	if value == "" || publicSensitivePattern.MatchString(value) {
+	if value == "" || publicStringIsSensitive(value) {
 		return ""
 	}
 	return value
+}
+
+func publicStringIsSensitive(value string) bool {
+	return publicSensitivePattern.MatchString(value) || publicAbsolutePathPattern.MatchString(value)
 }
 
 func publicVisibleContent(value any) string {
@@ -1397,7 +1504,13 @@ func publicCleanString(value string, limit int) string {
 		if r < 0x20 && r != '\n' && r != '\t' {
 			return -1
 		}
-		if r == 0x7f {
+		if r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		switch r {
+		case '\u061c', '\u200e', '\u200f',
+			'\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+			'\u2066', '\u2067', '\u2068', '\u2069':
 			return -1
 		}
 		return r

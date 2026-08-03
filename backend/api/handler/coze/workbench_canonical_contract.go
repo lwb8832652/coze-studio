@@ -45,6 +45,7 @@ const (
 
 type canonicalError struct {
 	Detail    string `json:"detail"`
+	ErrorCode string `json:"error_code,omitempty"`
 	Code      string `json:"code"`
 	Retryable bool   `json:"retryable"`
 	TraceID   string `json:"trace_id"`
@@ -261,6 +262,25 @@ func writeCanonicalError(
 	status int,
 	public canonicalError,
 ) {
+	writeCanonicalErrorResponse(ctx, c, status, public, false)
+}
+
+func writeCanonicalJournalError(
+	ctx context.Context,
+	c *app.RequestContext,
+	status int,
+	public canonicalError,
+) {
+	writeCanonicalErrorResponse(ctx, c, status, public, true)
+}
+
+func writeCanonicalErrorResponse(
+	ctx context.Context,
+	c *app.RequestContext,
+	status int,
+	public canonicalError,
+	includeCompatibilityCode bool,
+) {
 	if status < hertzconsts.StatusBadRequest || status > 599 {
 		status = hertzconsts.StatusInternalServerError
 		public = mapCanonicalApplicationError(errors.New("invalid canonical error status"))
@@ -270,6 +290,11 @@ func writeCanonicalError(
 		status = public.status
 	}
 	public.TraceID = canonicalTraceID(ctx)
+	if includeCompatibilityCode {
+		public.ErrorCode = public.Code
+	} else {
+		public.ErrorCode = ""
+	}
 	c.JSON(status, public)
 
 	errorClass := public.errorClass

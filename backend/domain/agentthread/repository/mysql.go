@@ -45,7 +45,7 @@ type threadRepository struct {
 	db *gorm.DB
 }
 
-func NewThreadRepository(db *gorm.DB) ThreadRepository {
+func NewThreadRepository(db *gorm.DB) PersistentRepository {
 	return &threadRepository{db: db}
 }
 
@@ -139,12 +139,184 @@ type runPO struct {
 }
 
 type runEventPO struct {
-	ID        int64          `gorm:"column:id;primaryKey"`
-	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_run_events_thread_created"`
-	RunID     int64          `gorm:"column:run_id;index:idx_agent_run_events_run_created"`
-	EventType string         `gorm:"column:event_type"`
-	Payload   datatypes.JSON `gorm:"column:payload;type:json"`
-	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
+	ID                 int64          `gorm:"column:id;primaryKey"`
+	ThreadID           int64          `gorm:"column:thread_id;index:idx_agent_run_events_thread_created"`
+	RunID              int64          `gorm:"column:run_id;index:idx_agent_run_events_run_created"`
+	JournalRunID       *int64         `gorm:"column:journal_run_id;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:1;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:1;uniqueIndex:uk_agent_run_events_action_phase,priority:1"`
+	AttemptID          *string        `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:2;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:2;uniqueIndex:uk_agent_run_events_action_phase,priority:2"`
+	Sequence           *uint64        `gorm:"column:sequence;uniqueIndex:uk_agent_run_events_attempt_sequence,priority:3"`
+	IdempotencyKey     *string        `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_run_events_attempt_idempotency,priority:3"`
+	ParentEventID      *int64         `gorm:"column:parent_event_id;index:idx_agent_run_events_parent"`
+	SchemaVersion      *string        `gorm:"column:schema_version;size:16"`
+	Status             *string        `gorm:"column:status;size:32"`
+	OccurredAtUnixNano *int64         `gorm:"column:occurred_at_unix_nano"`
+	Visibility         *string        `gorm:"column:visibility;size:16"`
+	PayloadVersion     *string        `gorm:"column:payload_version;size:16"`
+	SnapshotID         *string        `gorm:"column:snapshot_id;size:64"`
+	TraceID            *string        `gorm:"column:trace_id;size:128"`
+	ActionID           *string        `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_run_events_action_phase,priority:3"`
+	Phase              *string        `gorm:"column:phase;size:64;uniqueIndex:uk_agent_run_events_action_phase,priority:4"`
+	Operation          *string        `gorm:"column:operation;size:128"`
+	Target             *string        `gorm:"column:target;size:512"`
+	Milestone          *string        `gorm:"column:milestone;size:191"`
+	EventType          string         `gorm:"column:event_type"`
+	JournalEventType   *string        `gorm:"column:journal_event_type;size:128"`
+	Payload            datatypes.JSON `gorm:"column:payload;type:json"`
+	JournalPayload     datatypes.JSON `gorm:"column:journal_payload;type:json"`
+	CreatedAt          int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
+}
+
+type runAttemptPO struct {
+	ID                     int64   `gorm:"column:id;primaryKey"`
+	ThreadID               int64   `gorm:"column:thread_id;index:idx_agent_run_attempts_thread_created,priority:1"`
+	JournalRunID           int64   `gorm:"column:journal_run_id;uniqueIndex:uk_agent_run_attempts_identity,priority:1;uniqueIndex:uk_agent_run_attempts_ordinal,priority:1;uniqueIndex:uk_agent_run_attempts_active,priority:1;uniqueIndex:uk_agent_run_attempts_recovery_key,priority:1"`
+	ExecutionRunID         int64   `gorm:"column:execution_run_id;uniqueIndex:uk_agent_run_attempts_execution"`
+	AttemptID              string  `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_run_attempts_identity,priority:2"`
+	Ordinal                uint32  `gorm:"column:ordinal;uniqueIndex:uk_agent_run_attempts_ordinal,priority:2"`
+	Status                 string  `gorm:"column:status;size:32"`
+	ActiveSlot             *uint8  `gorm:"column:active_slot;uniqueIndex:uk_agent_run_attempts_active,priority:2"`
+	NextSequence           uint64  `gorm:"column:next_sequence"`
+	LastCommittedSequence  uint64  `gorm:"column:last_committed_sequence"`
+	SourceCheckpointID     *int64  `gorm:"column:source_checkpoint_id"`
+	SourceAttemptID        *string `gorm:"column:source_attempt_id;size:64"`
+	RecoveryIdempotencyKey *string `gorm:"column:recovery_idempotency_key;size:191;uniqueIndex:uk_agent_run_attempts_recovery_key,priority:2"`
+	EnrollmentVersion      string  `gorm:"column:enrollment_version;size:32"`
+	SnapshotsEnabled       bool    `gorm:"column:snapshots_enabled"`
+	ProjectionState        string  `gorm:"column:projection_state;size:16"`
+	ProjectionDegradedAt   *int64  `gorm:"column:projection_degraded_at"`
+	TraceID                *string `gorm:"column:trace_id;size:128"`
+	TerminalEventID        *int64  `gorm:"column:terminal_event_id"`
+	CreatedAt              int64   `gorm:"column:created_at;index:idx_agent_run_attempts_thread_created,priority:2"`
+	UpdatedAt              int64   `gorm:"column:updated_at"`
+	StartedAt              *int64  `gorm:"column:started_at"`
+	EndedAt                *int64  `gorm:"column:ended_at"`
+}
+
+type sideEffectLedgerPO struct {
+	ID                       int64          `gorm:"column:id;primaryKey"`
+	ThreadID                 int64          `gorm:"column:thread_id"`
+	JournalRunID             int64          `gorm:"column:journal_run_id;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:1;uniqueIndex:uk_agent_side_effect_ledger_resolution,priority:1;index:idx_agent_side_effect_ledger_attempt,priority:1"`
+	AttemptID                string         `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:2;index:idx_agent_side_effect_ledger_attempt,priority:2"`
+	IdempotencyKey           string         `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_side_effect_ledger_identity,priority:3"`
+	ActionKind               string         `gorm:"column:action_kind;size:128"`
+	ReplayPolicy             string         `gorm:"column:replay_policy;size:32"`
+	Status                   string         `gorm:"column:status;size:32;index:idx_agent_side_effect_ledger_status,priority:1"`
+	RequestHash              string         `gorm:"column:request_hash;size:64"`
+	RequestSummary           datatypes.JSON `gorm:"column:request_summary;type:json"`
+	ExternalReferenceDigest  *string        `gorm:"column:external_reference_digest;size:64"`
+	ResultSnapshotID         *string        `gorm:"column:result_snapshot_id;size:64"`
+	ResultEventID            *int64         `gorm:"column:result_event_id"`
+	CheckpointID             *int64         `gorm:"column:checkpoint_id"`
+	CompensationKind         *string        `gorm:"column:compensation_kind;size:128"`
+	ResolutionAction         *string        `gorm:"column:resolution_action;size:32"`
+	ResolutionIdempotencyKey *string        `gorm:"column:resolution_idempotency_key;size:191;uniqueIndex:uk_agent_side_effect_ledger_resolution,priority:2"`
+	ResolvedAt               *int64         `gorm:"column:resolved_at"`
+	Version                  uint64         `gorm:"column:version"`
+	PreparedAt               int64          `gorm:"column:prepared_at"`
+	ExecutingAt              *int64         `gorm:"column:executing_at"`
+	SucceededAt              *int64         `gorm:"column:succeeded_at"`
+	FailedAt                 *int64         `gorm:"column:failed_at"`
+	UnknownAt                *int64         `gorm:"column:unknown_at"`
+	CompensatedAt            *int64         `gorm:"column:compensated_at"`
+	CreatedAt                int64          `gorm:"column:created_at;index:idx_agent_side_effect_ledger_attempt,priority:3"`
+	UpdatedAt                int64          `gorm:"column:updated_at;index:idx_agent_side_effect_ledger_status,priority:2"`
+}
+
+type journalSnapshotPO struct {
+	SnapshotID            string  `gorm:"column:snapshot_id;size:64;primaryKey"`
+	SpaceID               int64   `gorm:"column:space_id;index:idx_agent_journal_snapshots_scope,priority:1;index:idx_agent_journal_snapshots_hash_scope,priority:1"`
+	ThreadID              int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshots_scope,priority:2"`
+	RunID                 int64   `gorm:"column:run_id;index:idx_agent_journal_snapshots_scope,priority:3"`
+	JournalRunID          int64   `gorm:"column:journal_run_id;index:idx_agent_journal_snapshots_attempt,priority:1;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:1"`
+	AttemptID             string  `gorm:"column:attempt_id;size:64;index:idx_agent_journal_snapshots_attempt,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:2"`
+	EventID               int64   `gorm:"column:event_id;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:1"`
+	ActionID              string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:3"`
+	Revision              uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshots_event_revision,priority:2;uniqueIndex:uk_agent_journal_snapshots_action_revision,priority:4"`
+	ContentType           string  `gorm:"column:content_type;size:32"`
+	Status                string  `gorm:"column:status;size:32"`
+	IsFragmented          bool    `gorm:"column:is_fragmented"`
+	FragmentCount         uint32  `gorm:"column:fragment_count"`
+	Visibility            string  `gorm:"column:visibility;size:16"`
+	ErrorCode             *string `gorm:"column:error_code;size:64"`
+	MIMEType              string  `gorm:"column:mime_type;size:191"`
+	Encoding              string  `gorm:"column:encoding;size:32"`
+	Compression           string  `gorm:"column:compression;size:32"`
+	ContentJSON           []byte  `gorm:"column:content_json;type:mediumblob"`
+	ObjectKey             *string `gorm:"column:object_key;size:1024"`
+	SummaryJSON           []byte  `gorm:"column:summary_json;type:mediumblob"`
+	SummaryHash           *string `gorm:"column:summary_hash;size:64"`
+	ContentLength         int64   `gorm:"column:content_length"`
+	ContentHash           string  `gorm:"column:content_hash;size:64;index:idx_agent_journal_snapshots_hash_scope,priority:3"`
+	ACLDomain             string  `gorm:"column:acl_domain;size:191;index:idx_agent_journal_snapshots_hash_scope,priority:2"`
+	SourceResourceType    *string `gorm:"column:source_resource_type;size:64"`
+	SourceResourceID      *string `gorm:"column:source_resource_id;size:191"`
+	SourceRevision        *string `gorm:"column:source_revision;size:64"`
+	OriginalObjectKey     *string `gorm:"column:original_object_key;size:1024"`
+	ExpiresAt             int64   `gorm:"column:expires_at"`
+	CleanupState          string  `gorm:"column:cleanup_state;size:32;index:idx_agent_journal_snapshots_cleanup,priority:1"`
+	DeletedAt             *int64  `gorm:"column:deleted_at"`
+	CleanupClaimToken     *string `gorm:"column:cleanup_claim_token;size:64"`
+	CleanupClaimExpiresAt *int64  `gorm:"column:cleanup_claim_expires_at;index:idx_agent_journal_snapshots_claim,priority:2"`
+	CleanupAttemptCount   uint32  `gorm:"column:cleanup_attempt_count"`
+	CleanupLastErrorCode  *string `gorm:"column:cleanup_last_error_code;size:64"`
+	CreatedAt             int64   `gorm:"column:created_at;index:idx_agent_journal_snapshots_attempt,priority:3"`
+}
+
+type journalSnapshotReservationPO struct {
+	SnapshotID            string  `gorm:"column:snapshot_id;size:64;primaryKey"`
+	ReservationToken      string  `gorm:"column:reservation_token;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_token"`
+	SpaceID               int64   `gorm:"column:space_id;index:idx_agent_journal_snapshot_reservations_expiry,priority:1"`
+	ThreadID              int64   `gorm:"column:thread_id"`
+	RunID                 int64   `gorm:"column:run_id"`
+	JournalRunID          int64   `gorm:"column:journal_run_id;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:1"`
+	AttemptID             string  `gorm:"column:attempt_id;size:64;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:2"`
+	ActionID              string  `gorm:"column:action_id;size:191;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:3"`
+	Revision              uint32  `gorm:"column:revision;uniqueIndex:uk_agent_journal_snapshot_reservations_action,priority:4"`
+	EventID               int64   `gorm:"column:event_id"`
+	IdempotencyKey        string  `gorm:"column:idempotency_key;size:191"`
+	ContentHash           string  `gorm:"column:content_hash;size:64"`
+	ACLDomain             string  `gorm:"column:acl_domain;size:191"`
+	StagingPrefix         string  `gorm:"column:staging_prefix;size:1024"`
+	ExpiresAt             int64   `gorm:"column:expires_at;index:idx_agent_journal_snapshot_reservations_expiry,priority:2"`
+	CleanupClaimToken     *string `gorm:"column:cleanup_claim_token;size:64"`
+	CleanupClaimExpiresAt *int64  `gorm:"column:cleanup_claim_expires_at;index:idx_agent_journal_snapshot_reservations_claim,priority:1"`
+	CleanupAttemptCount   uint32  `gorm:"column:cleanup_attempt_count"`
+	CleanupLastErrorCode  *string `gorm:"column:cleanup_last_error_code;size:64"`
+	CreatedAt             int64   `gorm:"column:created_at"`
+}
+
+type journalSnapshotFragmentPO struct {
+	FragmentID    string  `gorm:"column:fragment_id;size:64;primaryKey"`
+	SnapshotID    string  `gorm:"column:snapshot_id;size:64;uniqueIndex:uk_agent_journal_snapshot_fragment_index,priority:1"`
+	FragmentIndex int32   `gorm:"column:fragment_index;uniqueIndex:uk_agent_journal_snapshot_fragment_index,priority:2"`
+	Kind          string  `gorm:"column:kind;size:32"`
+	MetadataJSON  []byte  `gorm:"column:metadata_json;type:blob"`
+	MIMEType      *string `gorm:"column:mime_type;size:191"`
+	InlineContent []byte  `gorm:"column:inline_content;type:blob"`
+	ObjectKey     *string `gorm:"column:object_key;size:1024;index:idx_agent_journal_snapshot_fragments_object"`
+	ByteStart     int64   `gorm:"column:byte_start"`
+	ByteEnd       int64   `gorm:"column:byte_end"`
+	SizeBytes     int64   `gorm:"column:size_bytes"`
+	ContentHash   string  `gorm:"column:content_hash;size:64"`
+	CreatedAt     int64   `gorm:"column:created_at"`
+}
+
+type journalSnapshotAccessAuditPO struct {
+	ID               int64   `gorm:"column:id;primaryKey;autoIncrement"`
+	SpaceID          int64   `gorm:"column:space_id;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:1;index:idx_agent_journal_snapshot_audits_scope,priority:1"`
+	ThreadID         int64   `gorm:"column:thread_id;index:idx_agent_journal_snapshot_audits_scope,priority:2"`
+	RunID            int64   `gorm:"column:run_id;index:idx_agent_journal_snapshot_audits_scope,priority:3"`
+	AttemptID        *string `gorm:"column:attempt_id;size:64"`
+	SnapshotID       string  `gorm:"column:snapshot_id;size:64;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:2"`
+	ContentType      *string `gorm:"column:content_type;size:32"`
+	Action           string  `gorm:"column:action;size:64;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:3"`
+	ActorID          int64   `gorm:"column:actor_id;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:4"`
+	PermissionResult string  `gorm:"column:permission_result;size:32"`
+	IdempotencyKey   string  `gorm:"column:idempotency_key;size:191;uniqueIndex:uk_agent_journal_snapshot_audit_idempotency,priority:5"`
+	TargetHash       string  `gorm:"column:target_hash;size:64"`
+	TraceID          *string `gorm:"column:trace_id;size:128"`
+	CreatedAt        int64   `gorm:"column:created_at;index:idx_agent_journal_snapshot_audits_scope,priority:4"`
+	ObjectKey        string  `gorm:"-"`
 }
 
 type checkpointPO struct {
@@ -263,23 +435,32 @@ type agentFilePO struct {
 }
 
 type agentArtifactPO struct {
-	ID           int64          `gorm:"column:id;primaryKey"`
-	SpaceID      int64          `gorm:"column:space_id"`
-	UserID       int64          `gorm:"column:user_id"`
-	ThreadID     int64          `gorm:"column:thread_id;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_thread_active_created,priority:1"`
-	RunID        int64          `gorm:"column:run_id;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_run_active_created,priority:1"`
-	FileID       int64          `gorm:"column:file_id;uniqueIndex:uk_agent_artifacts_file"`
-	Title        string         `gorm:"column:title"`
-	ArtifactType string         `gorm:"column:artifact_type"`
-	VirtualPath  string         `gorm:"column:virtual_path"`
-	ObjectURI    string         `gorm:"column:object_uri"`
-	ContentType  string         `gorm:"column:content_type"`
-	SizeBytes    int64          `gorm:"column:size_bytes"`
-	PreviewMode  string         `gorm:"column:preview_mode"`
-	Metadata     datatypes.JSON `gorm:"column:metadata;type:json"`
-	CreatedAt    int64          `gorm:"column:created_at;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_thread_active_created,priority:3;index:idx_agent_artifacts_run_active_created,priority:3"`
-	UpdatedAt    int64          `gorm:"column:updated_at"`
-	DeletedAt    int64          `gorm:"column:deleted_at;index:idx_agent_artifacts_thread_active_created,priority:2;index:idx_agent_artifacts_run_active_created,priority:2"`
+	ID                  int64          `gorm:"column:id;primaryKey"`
+	SpaceID             int64          `gorm:"column:space_id"`
+	UserID              int64          `gorm:"column:user_id"`
+	ThreadID            int64          `gorm:"column:thread_id;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_thread_active_created,priority:1;index:idx_agent_artifacts_collection,priority:1"`
+	RunID               int64          `gorm:"column:run_id;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_run_active_created,priority:1"`
+	JournalRunID        *int64         `gorm:"column:journal_run_id;index:idx_agent_artifacts_journal_run_created,priority:1;uniqueIndex:uk_agent_artifacts_primary,priority:1;uniqueIndex:uk_agent_artifacts_collection_order,priority:1;index:idx_agent_artifacts_collection,priority:2"`
+	FileID              int64          `gorm:"column:file_id;uniqueIndex:uk_agent_artifacts_file"`
+	Title               string         `gorm:"column:title"`
+	ArtifactType        string         `gorm:"column:artifact_type"`
+	VirtualPath         string         `gorm:"column:virtual_path"`
+	ObjectURI           string         `gorm:"column:object_uri"`
+	ContentType         string         `gorm:"column:content_type"`
+	SizeBytes           int64          `gorm:"column:size_bytes"`
+	PreviewMode         string         `gorm:"column:preview_mode"`
+	Source              *string        `gorm:"column:source"`
+	GenerationStatus    *string        `gorm:"column:generation_status"`
+	PrimarySlot         *uint8         `gorm:"column:primary_slot;uniqueIndex:uk_agent_artifacts_primary,priority:2"`
+	CollectionID        *string        `gorm:"column:collection_id;uniqueIndex:uk_agent_artifacts_collection_order,priority:2;index:idx_agent_artifacts_collection,priority:3"`
+	CollectionOrder     *int32         `gorm:"column:collection_order;uniqueIndex:uk_agent_artifacts_collection_order,priority:3;index:idx_agent_artifacts_collection,priority:4"`
+	DetectedContentType *string        `gorm:"column:detected_content_type"`
+	ScannedSizeBytes    *int64         `gorm:"column:scanned_size_bytes"`
+	ContentHash         *string        `gorm:"column:content_hash"`
+	Metadata            datatypes.JSON `gorm:"column:metadata;type:json"`
+	CreatedAt           int64          `gorm:"column:created_at;index:idx_agent_artifacts_thread_created;index:idx_agent_artifacts_run_created;index:idx_agent_artifacts_thread_active_created,priority:3;index:idx_agent_artifacts_run_active_created,priority:3;index:idx_agent_artifacts_journal_run_created,priority:2"`
+	UpdatedAt           int64          `gorm:"column:updated_at"`
+	DeletedAt           int64          `gorm:"column:deleted_at;index:idx_agent_artifacts_thread_active_created,priority:2;index:idx_agent_artifacts_run_active_created,priority:2"`
 }
 
 type agentArtifactScanJobPO struct {
@@ -347,6 +528,30 @@ func (runPO) TableName() string {
 
 func (runEventPO) TableName() string {
 	return "agent_run_events"
+}
+
+func (runAttemptPO) TableName() string {
+	return "agent_run_attempts"
+}
+
+func (sideEffectLedgerPO) TableName() string {
+	return "agent_side_effect_ledger"
+}
+
+func (journalSnapshotPO) TableName() string {
+	return "agent_journal_snapshots"
+}
+
+func (journalSnapshotReservationPO) TableName() string {
+	return "agent_journal_snapshot_reservations"
+}
+
+func (journalSnapshotFragmentPO) TableName() string {
+	return "agent_journal_snapshot_fragments"
+}
+
+func (journalSnapshotAccessAuditPO) TableName() string {
+	return "agent_journal_snapshot_access_audits"
 }
 
 func (checkpointPO) TableName() string {
@@ -429,6 +634,10 @@ func (r *threadRepository) CreateThreadBundle(
 	if req.Run.SpaceID != req.Thread.SpaceID || req.Run.CreatorID != req.Thread.CreatorID {
 		return nil, fmt.Errorf("thread bundle run ownership does not match thread")
 	}
+	if req.Attempt != nil && (req.Attempt.ThreadID != req.Thread.ID ||
+		req.Attempt.JournalRunID != req.Run.ID || req.Attempt.ExecutionRunID != req.Run.ID) {
+		return nil, fmt.Errorf("thread bundle journal attempt does not belong to run")
+	}
 
 	now := time.Now().UnixMilli()
 	thread := *req.Thread
@@ -452,6 +661,58 @@ func (r *threadRepository) CreateThreadBundle(
 	if message.CreatedAt == 0 {
 		message.CreatedAt = run.CreatedAt
 	}
+	var attempt *entity.RunAttempt
+	if req.Attempt != nil {
+		normalizedAttempt := *req.Attempt
+		expectedStatus, err := journalAttemptStatusFromRun(run.Status)
+		if err != nil {
+			return nil, err
+		}
+		if normalizedAttempt.Status != expectedStatus || normalizedAttempt.Ordinal != 1 {
+			return nil, fmt.Errorf("thread bundle journal attempt does not match initial run")
+		}
+		normalizedAttempt.EnrollmentVersion = strings.TrimSpace(normalizedAttempt.EnrollmentVersion)
+		if normalizedAttempt.EnrollmentVersion != entity.JournalSchemaVersion {
+			return nil, fmt.Errorf(
+				"%w %q",
+				ErrUnsupportedJournalEnrollmentVersion,
+				normalizedAttempt.EnrollmentVersion,
+			)
+		}
+		if normalizedAttempt.NextSequence == 0 {
+			normalizedAttempt.NextSequence = 1
+		}
+		if normalizedAttempt.NextSequence != 1 || normalizedAttempt.LastCommittedSequence != 0 {
+			return nil, fmt.Errorf("thread bundle journal attempt sequence must start at one")
+		}
+		if normalizedAttempt.ProjectionState == "" {
+			normalizedAttempt.ProjectionState = entity.JournalProjectionStateHealthy
+		}
+		if normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy ||
+			normalizedAttempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy")
+		}
+		activeSlot := uint8(1)
+		normalizedAttempt.ActiveSlot = &activeSlot
+		normalizedAttempt.TerminalEventID = nil
+		normalizedAttempt.EndedAt = nil
+		if normalizedAttempt.CreatedAt == 0 {
+			normalizedAttempt.CreatedAt = run.CreatedAt
+		}
+		if normalizedAttempt.UpdatedAt == 0 {
+			normalizedAttempt.UpdatedAt = normalizedAttempt.CreatedAt
+		}
+		if normalizedAttempt.Status == entity.RunAttemptStatusPending {
+			normalizedAttempt.StartedAt = nil
+		} else if normalizedAttempt.StartedAt == nil {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = normalizedAttempt.CreatedAt
+			}
+			normalizedAttempt.StartedAt = &startedAt
+		}
+		attempt = &normalizedAttempt
+	}
 
 	threadPO, err := threadToPO(&thread)
 	if err != nil {
@@ -467,7 +728,7 @@ func (r *threadRepository) CreateThreadBundle(
 	}
 
 	normalized := CreateThreadBundleRequest{
-		Thread: &thread, Run: &run, Message: &message,
+		Thread: &thread, Run: &run, Message: &message, Attempt: attempt,
 		ValidateIdempotencyReplay: req.ValidateIdempotencyReplay,
 	}
 	var result *CreateThreadBundleResult
@@ -487,11 +748,16 @@ func (r *threadRepository) CreateThreadBundle(
 		if err := tx.Create(runPO).Error; err != nil {
 			return err
 		}
+		if normalized.Attempt != nil {
+			if err := tx.Create(runAttemptToPO(normalized.Attempt)).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(messagePO).Error; err != nil {
 			return err
 		}
 		result = &CreateThreadBundleResult{
-			Thread: &thread, Run: &run, Message: &message, Created: true,
+			Thread: &thread, Run: &run, Message: &message, Attempt: attempt, Created: true,
 		}
 		return nil
 	})
@@ -551,9 +817,30 @@ func findExistingThreadBundle(
 		return nil, false, err
 	}
 
-	return &CreateThreadBundleResult{
+	result := &CreateThreadBundleResult{
 		Thread: thread.toEntity(), Run: run.toEntity(), Message: message.toEntity(),
-	}, true, nil
+	}
+	if req.Attempt == nil {
+		return result, true, nil
+	}
+	var attempt runAttemptPO
+	attemptErr := db.Where("execution_run_id = ?", run.ID).First(&attempt).Error
+	if attemptErr != nil && !errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, attemptErr
+	}
+	if errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, fmt.Errorf(
+			"%w: idempotent thread bundle is missing journal attempt",
+			ErrRunIdempotencyConflict,
+		)
+	}
+	if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+		attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+		return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+	}
+	result.Attempt = attempt.toEntity()
+	return result, true, nil
 }
 
 func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
@@ -651,6 +938,12 @@ func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadReq
 
 	var deleted bool
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, req.ThreadID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
 		var err error
 		deleted, err = deleteThreadCascade(tx, req.ThreadID)
 		return err
@@ -659,6 +952,9 @@ func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadReq
 }
 
 func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
+	if err := tombstoneJournalSnapshotsForThread(tx, threadID, time.Now().UnixMilli()); err != nil {
+		return false, err
+	}
 	runPlanIDs := tx.Model(&agentRunPlanPO{}).
 		Select("run_id").
 		Where("thread_id = ?", threadID)
@@ -681,6 +977,9 @@ func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
 		{model: &memoryPO{}, where: "thread_id = ?"},
 		{model: &checkpointPO{}, where: "thread_id = ?"},
 		{model: &runEventPO{}, where: "thread_id = ?"},
+		{model: &sideEffectLedgerPO{}, where: "thread_id = ?"},
+		{model: &journalSnapshotAccessAuditPO{}, where: "thread_id = ?"},
+		{model: &runAttemptPO{}, where: "thread_id = ?"},
 		{model: &messagePO{}, where: "thread_id = ?"},
 		{model: &runPO{}, where: "thread_id = ?"},
 	}
@@ -695,6 +994,55 @@ func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func tombstoneJournalSnapshotsForThread(tx *gorm.DB, threadID, deletedAt int64) error {
+	if threadID <= 0 || deletedAt <= 0 {
+		return fmt.Errorf("journal snapshot tombstone scope is invalid")
+	}
+	snapshotIDs := tx.Model(&journalSnapshotPO{}).
+		Select("snapshot_id").Where("thread_id = ?", threadID)
+	if err := tx.Where("snapshot_id IN (?) AND object_key IS NULL", snapshotIDs).
+		Delete(&journalSnapshotFragmentPO{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotFragmentPO{}).
+		Where("snapshot_id IN (?)", snapshotIDs).
+		Updates(map[string]any{
+			"metadata_json":  nil,
+			"inline_content": nil,
+		}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotPO{}).
+		Where("thread_id = ?", threadID).
+		Updates(map[string]any{
+			"cleanup_state":            entity.JournalSnapshotCleanupStatePending,
+			"deleted_at":               deletedAt,
+			"cleanup_claim_token":      nil,
+			"cleanup_claim_expires_at": nil,
+			"cleanup_last_error_code":  nil,
+			"content_json":             nil,
+			"summary_json":             nil,
+			"summary_hash":             nil,
+		}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&journalSnapshotReservationPO{}).
+		Where("thread_id = ?", threadID).
+		Updates(map[string]any{
+			"expires_at": gorm.Expr(
+				"CASE WHEN expires_at > ? THEN ? ELSE expires_at END",
+				deletedAt,
+				deletedAt,
+			),
+			"cleanup_claim_token":      nil,
+			"cleanup_claim_expires_at": nil,
+			"cleanup_last_error_code":  nil,
+		}).Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error) {
@@ -883,6 +1231,41 @@ func (r *threadRepository) CreateRunBundle(
 		(req.Event.ThreadID != req.Run.ThreadID || req.Event.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle event does not belong to run")
 	}
+	hasEventJournal := req.EventJournal != nil || req.EventJournalProjectionFailed
+	if hasEventJournal && (req.Event == nil || req.EventJournalSourceRunID <= 0) {
+		return nil, fmt.Errorf("run bundle event journal source is required")
+	}
+	if !hasEventJournal && req.EventJournalSourceRunID != 0 {
+		return nil, fmt.Errorf("run bundle event journal source requires a projection")
+	}
+	if req.EventJournal != nil &&
+		(req.EventJournal.ID != req.Event.ID ||
+			req.EventJournal.ThreadID != req.Event.ThreadID ||
+			req.EventJournal.RunID != req.Event.RunID) {
+		return nil, fmt.Errorf("run bundle event journal does not belong to event")
+	}
+	if req.Attempt != nil &&
+		(req.Attempt.ThreadID != req.Run.ThreadID || req.Attempt.ExecutionRunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle attempt does not belong to execution run")
+	}
+	isRecoveryBundle := isRecoveryRunBundleAttempt(req.Attempt)
+	if req.RecoverySourceLease != nil && !isRecoveryBundle {
+		return nil, fmt.Errorf("run bundle recovery source lease requires a recovery attempt")
+	}
+	if req.Attempt != nil && !isRecoveryBundle && req.Attempt.JournalRunID != req.Run.ID {
+		return nil, fmt.Errorf("initial run bundle attempt does not belong to run")
+	}
+	if isRecoveryBundle &&
+		(req.Attempt.JournalRunID <= 0 || req.Attempt.JournalRunID == req.Run.ID) {
+		return nil, fmt.Errorf("recovery run bundle requires a distinct logical journal run")
+	}
+	if req.Attempt != nil &&
+		(req.Attempt.ID <= 0 || strings.TrimSpace(req.Attempt.AttemptID) == "") {
+		return nil, fmt.Errorf("run bundle internal and public attempt ids are required")
+	}
+	if req.Attempt != nil && !isTopLevelTaskRun(req.Run) {
+		return nil, fmt.Errorf("only a root task run can enroll in journal")
+	}
 
 	now := time.Now().UnixMilli()
 	run := *req.Run
@@ -893,10 +1276,74 @@ func (r *threadRepository) CreateRunBundle(
 		run.UpdatedAt = run.CreatedAt
 	}
 	normalized := CreateRunBundleRequest{
-		Run:                         &run,
-		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
-		ValidateIdempotencyReplay:   req.ValidateIdempotencyReplay,
-		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
+		Run:                          &run,
+		EventJournalSourceRunID:      req.EventJournalSourceRunID,
+		EventJournalProjectionFailed: req.EventJournalProjectionFailed,
+		SkipTopLevelAdmission:        req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay:    req.ValidateIdempotencyReplay,
+		AllocateInterruptedEventIDs:  req.AllocateInterruptedEventIDs,
+	}
+	if req.RecoverySourceLease != nil {
+		sourceLease, err := normalizeRecoverySourceLease(req.RecoverySourceLease)
+		if err != nil {
+			return nil, err
+		}
+		normalized.RecoverySourceLease = sourceLease
+	}
+	if req.Attempt != nil {
+		attempt := *req.Attempt
+		expectedStatus, err := journalAttemptStatusFromRun(run.Status)
+		if err != nil {
+			return nil, err
+		}
+		if attempt.Status != expectedStatus {
+			return nil, fmt.Errorf("journal attempt status does not match run")
+		}
+		if attempt.NextSequence == 0 {
+			attempt.NextSequence = 1
+		}
+		if attempt.NextSequence != 1 || attempt.LastCommittedSequence != 0 {
+			return nil, fmt.Errorf("journal attempt sequence must start at one")
+		}
+		if isRecoveryBundle {
+			if err := validateRecoveryRunBundleInput(&run, &attempt); err != nil {
+				return nil, err
+			}
+		} else {
+			if attempt.Ordinal != 1 {
+				return nil, fmt.Errorf("initial journal attempt ordinal must be one")
+			}
+			attempt.EnrollmentVersion = strings.TrimSpace(attempt.EnrollmentVersion)
+			if attempt.EnrollmentVersion == "" {
+				return nil, fmt.Errorf("initial journal attempt enrollment version is required")
+			}
+		}
+		if attempt.ProjectionState == "" {
+			attempt.ProjectionState = entity.JournalProjectionStateHealthy
+		}
+		if attempt.ProjectionState != entity.JournalProjectionStateHealthy || attempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("initial journal attempt projection must be healthy")
+		}
+		activeSlot := uint8(1)
+		attempt.ActiveSlot = &activeSlot
+		attempt.TerminalEventID = nil
+		attempt.EndedAt = nil
+		if attempt.CreatedAt == 0 {
+			attempt.CreatedAt = run.CreatedAt
+		}
+		if attempt.UpdatedAt == 0 {
+			attempt.UpdatedAt = attempt.CreatedAt
+		}
+		if attempt.Status == entity.RunAttemptStatusPending {
+			attempt.StartedAt = nil
+		} else if attempt.StartedAt == nil {
+			startedAt := run.StartedAt
+			if startedAt <= 0 {
+				startedAt = attempt.CreatedAt
+			}
+			attempt.StartedAt = &startedAt
+		}
+		normalized.Attempt = &attempt
 	}
 	if req.Message != nil {
 		message := *req.Message
@@ -911,6 +1358,16 @@ func (r *threadRepository) CreateRunBundle(
 			event.CreatedAt = run.CreatedAt
 		}
 		normalized.Event = &event
+		if req.EventJournal != nil {
+			journal := *req.EventJournal
+			journal.ID = event.ID
+			journal.ThreadID = event.ThreadID
+			journal.RunID = event.RunID
+			if journal.CreatedAt <= 0 {
+				journal.CreatedAt = event.CreatedAt
+			}
+			normalized.EventJournal = &journal
+		}
 	}
 
 	var result *CreateRunBundleResult
@@ -938,6 +1395,24 @@ func (r *threadRepository) CreateRunBundle(
 		}
 		if found {
 			return nil
+		}
+		if isRecoveryBundle {
+			if err := prepareRecoveryRunBundleAttempt(
+				tx,
+				normalized.Run,
+				normalized.Attempt,
+				normalized.RecoverySourceLease,
+			); err != nil {
+				return err
+			}
+		}
+		if normalized.Attempt != nil &&
+			normalized.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
+			return fmt.Errorf(
+				"%w %q",
+				ErrUnsupportedJournalEnrollmentVersion,
+				normalized.Attempt.EnrollmentVersion,
+			)
 		}
 
 		activeRuns, err := lockActiveTopLevelRuns(tx, normalized.Run, normalized.SkipTopLevelAdmission)
@@ -974,6 +1449,11 @@ func (r *threadRepository) CreateRunBundle(
 		if err := tx.Create(runPO).Error; err != nil {
 			return err
 		}
+		if normalized.Attempt != nil {
+			if err := tx.Create(runAttemptToPO(normalized.Attempt)).Error; err != nil {
+				return err
+			}
+		}
 		if normalized.Message != nil {
 			messagePO, err := messageToPO(normalized.Message)
 			if err != nil {
@@ -988,7 +1468,14 @@ func (r *threadRepository) CreateRunBundle(
 			if err != nil {
 				return err
 			}
-			if err := tx.Create(eventPO).Error; err != nil {
+			if _, err := persistRunEventWithJournalProjectionTx(
+				tx,
+				normalized.Event,
+				eventPO,
+				normalized.EventJournal,
+				normalized.EventJournalProjectionFailed,
+				normalized.EventJournalSourceRunID,
+			); err != nil {
 				return err
 			}
 		}
@@ -1003,7 +1490,7 @@ func (r *threadRepository) CreateRunBundle(
 			return err
 		}
 		result = &CreateRunBundleResult{
-			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event,
+			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event, Attempt: normalized.Attempt,
 			InterruptedRuns: interruptedRuns, InterruptedEvents: interruptedEvents, Created: true,
 		}
 		return nil
@@ -1041,6 +1528,263 @@ func lockThreadForUpdate(tx *gorm.DB, threadID int64) (*threadPO, error) {
 func isTopLevelTaskRun(run *entity.Run) bool {
 	return run != nil && run.ParentRunID == 0 &&
 		(run.RunKind == "" || run.RunKind == entity.RunKindTask)
+}
+
+func isRecoveryRunBundleAttempt(attempt *entity.RunAttempt) bool {
+	return attempt != nil && attempt.RecoveryIdempotencyKey != nil
+}
+
+func validateRecoveryRunBundleInput(run *entity.Run, attempt *entity.RunAttempt) error {
+	if run == nil || attempt == nil || !isTopLevelTaskRun(run) {
+		return fmt.Errorf("journal recovery execution run must be a top-level task")
+	}
+	recoveryKey := strings.TrimSpace(stringFromPtr(attempt.RecoveryIdempotencyKey))
+	if recoveryKey == "" || len(recoveryKey) > 191 {
+		return fmt.Errorf("journal recovery idempotency key is required")
+	}
+	if strings.TrimSpace(run.IdempotencyKey) != recoveryKey {
+		return fmt.Errorf("recovery run and attempt idempotency keys must match")
+	}
+	if attempt.SourceCheckpointID == nil || *attempt.SourceCheckpointID <= 0 ||
+		attempt.SourceAttemptID == nil || strings.TrimSpace(*attempt.SourceAttemptID) == "" {
+		return fmt.Errorf("journal recovery source checkpoint and attempt are required")
+	}
+	if attempt.Ordinal != 0 || strings.TrimSpace(attempt.EnrollmentVersion) != "" ||
+		attempt.ActiveSlot != nil || attempt.StartedAt != nil || attempt.EndedAt != nil ||
+		attempt.TerminalEventID != nil {
+		return fmt.Errorf("journal recovery attempt lifecycle is repository assigned")
+	}
+	if attempt.ProjectionState != "" &&
+		attempt.ProjectionState != entity.JournalProjectionStateHealthy {
+		return fmt.Errorf("journal recovery attempt projection must start healthy")
+	}
+	if attempt.ProjectionDegradedAt != nil {
+		return fmt.Errorf("journal recovery attempt cannot start degraded")
+	}
+	return nil
+}
+
+func prepareRecoveryRunBundleAttempt(
+	tx *gorm.DB,
+	run *entity.Run,
+	attempt *entity.RunAttempt,
+	sourceLease *ReconcileExpiredRunLeaseRequest,
+) error {
+	if tx == nil || run == nil || attempt == nil {
+		return fmt.Errorf("journal recovery bundle is required")
+	}
+
+	var root runPO
+	rootQuery := tx.Where("id = ?", attempt.JournalRunID)
+	if tx.Dialector.Name() != "sqlite" {
+		rootQuery = rootQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := rootQuery.First(&root).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrJournalNotEnrolled
+		}
+		return err
+	}
+	if root.ThreadID != run.ThreadID || root.SpaceID != run.SpaceID ||
+		root.CreatorID != run.CreatorID || root.ParentRunID != 0 ||
+		(root.RunKind != "" && root.RunKind != string(entity.RunKindTask)) {
+		return ErrJournalParentMismatch
+	}
+
+	sourceAttempt, err := lockJournalAttemptByIdentity(
+		tx, attempt.JournalRunID, strings.TrimSpace(*attempt.SourceAttemptID),
+	)
+	if err != nil {
+		return err
+	}
+	if sourceAttempt.ThreadID != run.ThreadID {
+		return ErrJournalParentMismatch
+	}
+	sourceStatus := entity.RunAttemptStatus(sourceAttempt.Status)
+	if !sourceStatus.IsTerminal() && !sourceStatus.IsActive() {
+		return ErrJournalInvalidStateTransition
+	}
+
+	var checkpoint checkpointPO
+	checkpointQuery := tx.Where("id = ?", *attempt.SourceCheckpointID)
+	if tx.Dialector.Name() != "sqlite" {
+		checkpointQuery = checkpointQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := checkpointQuery.First(&checkpoint).Error; err != nil {
+		return err
+	}
+	if checkpoint.ThreadID != run.ThreadID || checkpoint.RunID != sourceAttempt.ExecutionRunID ||
+		checkpoint.RuntimeDeletedAt != 0 {
+		return ErrJournalParentMismatch
+	}
+	if sourceStatus.IsActive() {
+		if sourceLease == nil || sourceLease.RunID != sourceAttempt.ExecutionRunID {
+			return ErrJournalInvalidStateTransition
+		}
+		if err := finalizeExpiredJournalRecoverySource(
+			tx,
+			run,
+			sourceAttempt,
+			sourceLease,
+		); err != nil {
+			return err
+		}
+	} else if sourceLease != nil {
+		return ErrJournalInvalidStateTransition
+	}
+
+	var active runAttemptPO
+	activeQuery := tx.Where(
+		"journal_run_id = ? AND active_slot = ?", attempt.JournalRunID, 1,
+	)
+	if tx.Dialector.Name() != "sqlite" {
+		activeQuery = activeQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := activeQuery.First(&active).Error; err == nil {
+		return ErrActiveJournalAttemptExists
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	var existingKey runAttemptPO
+	key := strings.TrimSpace(*attempt.RecoveryIdempotencyKey)
+	err = tx.Where(
+		"journal_run_id = ? AND recovery_idempotency_key = ?", attempt.JournalRunID, key,
+	).First(&existingKey).Error
+	if err == nil {
+		return ErrRunIdempotencyConflict
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	var maxOrdinal uint32
+	if err := tx.Model(&runAttemptPO{}).
+		Select("COALESCE(MAX(ordinal), 0)").
+		Where("journal_run_id = ?", attempt.JournalRunID).
+		Scan(&maxOrdinal).Error; err != nil {
+		return err
+	}
+
+	attempt.Ordinal = maxOrdinal + 1
+	attempt.EnrollmentVersion = sourceAttempt.EnrollmentVersion
+	attempt.SnapshotsEnabled = sourceAttempt.SnapshotsEnabled
+	attempt.ProjectionState = entity.JournalProjectionStateHealthy
+	attempt.ProjectionDegradedAt = nil
+	attempt.RecoveryIdempotencyKey = &key
+	sourceID := strings.TrimSpace(*attempt.SourceAttemptID)
+	attempt.SourceAttemptID = &sourceID
+	activeSlot := uint8(1)
+	attempt.ActiveSlot = &activeSlot
+	attempt.TerminalEventID = nil
+	attempt.EndedAt = nil
+	attempt.NextSequence = 1
+	attempt.LastCommittedSequence = 0
+	if attempt.CreatedAt <= 0 {
+		attempt.CreatedAt = run.CreatedAt
+	}
+	if attempt.UpdatedAt <= 0 {
+		attempt.UpdatedAt = attempt.CreatedAt
+	}
+	if attempt.Status == entity.RunAttemptStatusPending {
+		attempt.StartedAt = nil
+	} else {
+		startedAt := run.StartedAt
+		if startedAt <= 0 {
+			startedAt = attempt.CreatedAt
+		}
+		attempt.StartedAt = &startedAt
+	}
+	return nil
+}
+
+func normalizeRecoverySourceLease(
+	req *ReconcileExpiredRunLeaseRequest,
+) (*ReconcileExpiredRunLeaseRequest, error) {
+	if req == nil {
+		return nil, nil
+	}
+	if req.RunID <= 0 || strings.TrimSpace(req.LeaseOwner) == "" ||
+		strings.TrimSpace(req.LeaseToken) == "" || req.ExecutionGeneration == 0 {
+		return nil, fmt.Errorf("journal recovery source lease fence is required")
+	}
+	if req.ToStatus != entity.RunStatusFailed {
+		return nil, fmt.Errorf("journal recovery source lease must fail the expired execution")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	event, _, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, now)
+	if err != nil {
+		return nil, err
+	}
+	if req.JournalEvent == nil {
+		return nil, fmt.Errorf("journal recovery source terminal projection is required")
+	}
+	normalized := *req
+	normalized.LeaseOwner = strings.TrimSpace(req.LeaseOwner)
+	normalized.LeaseToken = strings.TrimSpace(req.LeaseToken)
+	normalized.Now = now
+	normalized.ErrorCode = strings.TrimSpace(req.ErrorCode)
+	normalized.ErrorMessage = strings.TrimSpace(req.ErrorMessage)
+	normalized.Event = event
+	journal := *req.JournalEvent
+	normalized.JournalEvent = &journal
+	return &normalized, nil
+}
+
+func finalizeExpiredJournalRecoverySource(
+	tx *gorm.DB,
+	recoveryRun *entity.Run,
+	sourceAttempt *runAttemptPO,
+	req *ReconcileExpiredRunLeaseRequest,
+) error {
+	if tx == nil || recoveryRun == nil || sourceAttempt == nil || req == nil {
+		return fmt.Errorf("journal recovery source transaction is required")
+	}
+	if sourceAttempt.ExecutionRunID != req.RunID || sourceAttempt.ThreadID != recoveryRun.ThreadID ||
+		entity.RunAttemptStatus(sourceAttempt.Status).IsTerminal() {
+		return ErrJournalInvalidStateTransition
+	}
+	event, eventPO, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, req.Now)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		"status":        string(req.ToStatus),
+		"error_code":    req.ErrorCode,
+		"error_message": req.ErrorMessage,
+		"ended_at":      req.Now,
+		"updated_at":    req.Now,
+	}
+	clearRunLeaseUpdates(updates)
+	updated := tx.Model(&runPO{}).
+		Where("id = ?", req.RunID).
+		Where("thread_id = ?", recoveryRun.ThreadID).
+		Where("space_id = ?", recoveryRun.SpaceID).
+		Where("creator_id = ?", recoveryRun.CreatorID).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("lease_owner = ?", req.LeaseOwner).
+		Where("lease_token = ?", req.LeaseToken).
+		Where("execution_generation = ?", req.ExecutionGeneration).
+		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", req.Now).
+		Updates(updates)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return fmt.Errorf(
+			"%w: run %d expired lease cannot be recovered",
+			ErrRunLeaseLost,
+			req.RunID,
+		)
+	}
+	return persistTerminalRunEventWithJournal(
+		tx,
+		event,
+		eventPO,
+		req.JournalEvent,
+		journalAttemptStatusForTerminalRun(req.ToStatus, req.ErrorCode),
+		req.Now,
+	)
 }
 
 func lockActiveTopLevelRuns(tx *gorm.DB, run *entity.Run, skipAdmission bool) ([]runPO, error) {
@@ -1156,7 +1900,7 @@ func interruptActiveTopLevelRuns(
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if err := createBaseRunEvent(tx, eventPO); err != nil {
 			return nil, nil, err
 		}
 		events = append(events, event)
@@ -1243,6 +1987,39 @@ func findExistingRunBundle(
 	}
 
 	result := &CreateRunBundleResult{Run: run.toEntity()}
+	var attempt runAttemptPO
+	attemptErr := db.Where("execution_run_id = ?", run.ID).First(&attempt).Error
+	hasAttempt := attemptErr == nil
+	if attemptErr != nil && !errors.Is(attemptErr, gorm.ErrRecordNotFound) {
+		return nil, false, attemptErr
+	}
+	if req.Attempt == nil && hasAttempt {
+		return nil, false, fmt.Errorf("%w: journal enrollment changed", ErrRunIdempotencyConflict)
+	}
+	if req.Attempt != nil {
+		if !hasAttempt {
+			return nil, false, fmt.Errorf(
+				"%w: idempotent run bundle is missing journal attempt",
+				ErrRunIdempotencyConflict,
+			)
+		}
+		if isRecoveryRunBundleAttempt(req.Attempt) {
+			if attempt.JournalRunID != req.Attempt.JournalRunID ||
+				attempt.ExecutionRunID != run.ID ||
+				strings.TrimSpace(stringFromPtr(attempt.RecoveryIdempotencyKey)) !=
+					strings.TrimSpace(stringFromPtr(req.Attempt.RecoveryIdempotencyKey)) ||
+				!equalInt64Pointers(attempt.SourceCheckpointID, req.Attempt.SourceCheckpointID) ||
+				!equalStringPointers(attempt.SourceAttemptID, req.Attempt.SourceAttemptID) {
+				return nil, false, fmt.Errorf("%w: journal recovery semantics changed", ErrRunIdempotencyConflict)
+			}
+		} else if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+			attempt.RecoveryIdempotencyKey != nil ||
+			attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+			attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+			return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+		}
+		result.Attempt = attempt.toEntity()
+	}
 	if req.Message != nil {
 		var message messagePO
 		err := db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).
@@ -1421,7 +2198,7 @@ func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.Run
 		return err
 	}
 
-	return r.db.WithContext(ctx).Create(po).Error
+	return createBaseRunEvent(r.db.WithContext(ctx), po)
 }
 
 func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
@@ -2542,50 +3319,111 @@ func (r *threadRepository) UpsertArtifact(
 	if err != nil {
 		return nil, false, err
 	}
-
-	result := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(po)
-	if result.Error != nil {
-		return nil, false, result.Error
+	journalRunID := po.RunID
+	if po.JournalRunID != nil && *po.JournalRunID > 0 {
+		journalRunID = *po.JournalRunID
 	}
-	created := result.RowsAffected > 0
-	if !created {
-		updates := map[string]any{
-			"space_id":      po.SpaceID,
-			"user_id":       po.UserID,
-			"thread_id":     po.ThreadID,
-			"run_id":        po.RunID,
-			"title":         po.Title,
-			"artifact_type": po.ArtifactType,
-			"virtual_path":  po.VirtualPath,
-			"object_uri":    po.ObjectURI,
-			"content_type":  po.ContentType,
-			"size_bytes":    po.SizeBytes,
-			"preview_mode":  po.PreviewMode,
-			"metadata":      po.Metadata,
-			"updated_at":    po.UpdatedAt,
-			"deleted_at":    po.DeletedAt,
-		}
-		updateResult := r.db.WithContext(ctx).
-			Model(&agentArtifactPO{}).
-			Where("file_id = ?", po.FileID).
-			Updates(updates)
-		if updateResult.Error != nil {
-			return nil, false, updateResult.Error
-		}
-		if updateResult.RowsAffected == 0 {
-			return nil, false, fmt.Errorf(
-				"artifact upsert lost row for file %d",
-				po.FileID,
-			)
-		}
-	}
+	po.JournalRunID = optionalArtifactInt64(journalRunID)
 
-	stored := &agentArtifactPO{}
-	if err := r.db.WithContext(ctx).
-		Where("file_id = ?", po.FileID).
-		First(stored).Error; err != nil {
+	var stored *agentArtifactPO
+	var created bool
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var attempt runAttemptPO
+		attemptErr := tx.Select("journal_run_id").
+			Where("thread_id = ? AND execution_run_id = ?", po.ThreadID, po.RunID).
+			First(&attempt).Error
+		switch {
+		case attemptErr == nil:
+			journalRunID = attempt.JournalRunID
+			po.JournalRunID = optionalArtifactInt64(journalRunID)
+		case errors.Is(attemptErr, gorm.ErrRecordNotFound):
+		default:
+			return attemptErr
+		}
+
+		if po.PrimarySlot != nil {
+			var lockedArtifacts []agentArtifactPO
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("id").
+				Where("journal_run_id = ?", journalRunID).
+				Order("id ASC").
+				Find(&lockedArtifacts).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&agentArtifactPO{}).
+				Where("journal_run_id = ? AND primary_slot = ? AND file_id <> ?", journalRunID, 1, po.FileID).
+				Updates(map[string]any{
+					"primary_slot": nil,
+					"updated_at":   po.UpdatedAt,
+				}).Error; err != nil {
+				return err
+			}
+		}
+
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(po)
+		if result.Error != nil {
+			return result.Error
+		}
+		created = result.RowsAffected > 0
+		if !created {
+			existing := &agentArtifactPO{}
+			if err := tx.Where("file_id = ?", po.FileID).First(existing).Error; err != nil {
+				return err
+			}
+			updates := map[string]any{
+				"space_id":              po.SpaceID,
+				"user_id":               po.UserID,
+				"thread_id":             po.ThreadID,
+				"run_id":                po.RunID,
+				"journal_run_id":        po.JournalRunID,
+				"title":                 po.Title,
+				"artifact_type":         po.ArtifactType,
+				"virtual_path":          po.VirtualPath,
+				"object_uri":            po.ObjectURI,
+				"content_type":          po.ContentType,
+				"size_bytes":            po.SizeBytes,
+				"preview_mode":          po.PreviewMode,
+				"source":                po.Source,
+				"generation_status":     po.GenerationStatus,
+				"primary_slot":          po.PrimarySlot,
+				"collection_id":         po.CollectionID,
+				"collection_order":      po.CollectionOrder,
+				"detected_content_type": po.DetectedContentType,
+				"scanned_size_bytes":    po.ScannedSizeBytes,
+				"content_hash":          po.ContentHash,
+				"metadata":              po.Metadata,
+				"updated_at":            po.UpdatedAt,
+				"deleted_at":            po.DeletedAt,
+			}
+			if existing.ObjectURI == po.ObjectURI && existing.SizeBytes == po.SizeBytes &&
+				agentArtifactPOHasScanState(existing) &&
+				agentArtifactPOScanRevision(existing) != "" &&
+				agentArtifactPOScanRevision(existing) == agentArtifactPOScanRevision(po) {
+				updates["preview_mode"] = existing.PreviewMode
+				updates["generation_status"] = existing.GenerationStatus
+				updates["detected_content_type"] = existing.DetectedContentType
+				updates["scanned_size_bytes"] = existing.ScannedSizeBytes
+				updates["content_hash"] = existing.ContentHash
+				updates["metadata"] = existing.Metadata
+			}
+			updateResult := tx.Model(&agentArtifactPO{}).
+				Where("file_id = ?", po.FileID).
+				Updates(updates)
+			if updateResult.Error != nil {
+				return updateResult.Error
+			}
+			if updateResult.RowsAffected == 0 {
+				return fmt.Errorf(
+					"artifact upsert lost row for file %d",
+					po.FileID,
+				)
+			}
+		}
+
+		stored = &agentArtifactPO{}
+		return tx.Where("file_id = ?", po.FileID).First(stored).Error
+	})
+	if err != nil {
 		return nil, false, err
 	}
 	return stored.toEntity(), created, nil
@@ -2630,8 +3468,9 @@ func (r *threadRepository) DeleteArtifact(
 		Model(&agentArtifactPO{}).
 		Where("id = ? AND deleted_at = 0", po.ID).
 		Updates(map[string]any{
-			"deleted_at": deletedAt,
-			"updated_at": deletedAt,
+			"deleted_at":   deletedAt,
+			"primary_slot": nil,
+			"updated_at":   deletedAt,
 		})
 	if updateResult.Error != nil {
 		return nil, false, updateResult.Error
@@ -2641,6 +3480,7 @@ func (r *threadRepository) DeleteArtifact(
 	}
 
 	po.DeletedAt = deletedAt
+	po.PrimarySlot = nil
 	po.UpdatedAt = deletedAt
 	return po.toEntity(), true, nil
 }
@@ -2746,19 +3586,24 @@ func (r *threadRepository) UpdateArtifactScanMetadata(
 	threadID int64,
 	artifactID int64,
 	metadata string,
+	generationStatus entity.AgentArtifactGenerationStatus,
 	updatedAt int64,
 ) (*entity.AgentArtifact, bool, error) {
 	metadataJSON, err := requiredJSON("metadata", metadata)
 	if err != nil {
 		return nil, false, err
 	}
+	updates := map[string]any{
+		"metadata":   metadataJSON,
+		"updated_at": updatedAt,
+	}
+	if generationStatus != "" {
+		updates["generation_status"] = generationStatus
+	}
 	updateResult := r.db.WithContext(ctx).
 		Model(&agentArtifactPO{}).
 		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
-		Updates(map[string]any{
-			"metadata":   metadataJSON,
-			"updated_at": updatedAt,
-		})
+		Updates(updates)
 	if updateResult.Error != nil {
 		return nil, false, updateResult.Error
 	}
@@ -2773,6 +3618,51 @@ func (r *threadRepository) UpdateArtifactScanMetadata(
 		return nil, false, err
 	}
 	return po.toEntity(), true, nil
+}
+
+func (r *threadRepository) UpdateArtifactTrustedScanResult(
+	ctx context.Context,
+	threadID int64,
+	artifactID int64,
+	metadata string,
+	detectedContentType string,
+	scannedSizeBytes int64,
+	contentHash string,
+	previewMode entity.AgentArtifactPreviewMode,
+	generationStatus entity.AgentArtifactGenerationStatus,
+	updatedAt int64,
+) (*entity.AgentArtifact, bool, error) {
+	metadataJSON, err := requiredJSON("metadata", metadata)
+	if err != nil {
+		return nil, false, err
+	}
+	detectedContentType = strings.TrimSpace(detectedContentType)
+	contentHash = strings.ToLower(strings.TrimSpace(contentHash))
+	updateResult := r.db.WithContext(ctx).
+		Model(&agentArtifactPO{}).
+		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
+		Updates(map[string]any{
+			"metadata":              metadataJSON,
+			"detected_content_type": optionalArtifactString(detectedContentType),
+			"scanned_size_bytes":    scannedSizeBytes,
+			"content_hash":          optionalArtifactString(contentHash),
+			"preview_mode":          string(previewMode),
+			"generation_status":     string(generationStatus),
+			"updated_at":            updatedAt,
+		})
+	if updateResult.Error != nil {
+		return nil, false, updateResult.Error
+	}
+
+	var po agentArtifactPO
+	if err := r.db.WithContext(ctx).
+		Where("thread_id = ? AND id = ? AND deleted_at = 0", threadID, artifactID).
+		First(&po).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	return po.toEntity(), updateResult.RowsAffected > 0, nil
 }
 
 func (r *threadRepository) CreateOrGetArtifactScanJob(
@@ -3229,7 +4119,22 @@ func (r *threadRepository) ListArtifacts(
 		query = query.Where("deleted_at = 0")
 	}
 	if req.RunID != nil {
-		query = query.Where("run_id = ?", *req.RunID)
+		if req.CollectionID != nil {
+			query = query.Where("journal_run_id = ?", *req.RunID)
+		} else {
+			query = query.Where(
+				"(journal_run_id = ? OR (journal_run_id IS NULL AND run_id = ?))",
+				*req.RunID,
+				*req.RunID,
+			)
+		}
+	}
+	if req.CollectionID != nil {
+		collectionID := strings.TrimSpace(*req.CollectionID)
+		if collectionID == "" {
+			return []*entity.AgentArtifact{}, 0, nil
+		}
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var total int64
@@ -3238,8 +4143,12 @@ func (r *threadRepository) ListArtifacts(
 	}
 
 	pos := make([]*agentArtifactPO, 0)
+	orderBy := "created_at DESC, id DESC"
+	if req.CollectionID != nil {
+		orderBy = "collection_order ASC, id ASC"
+	}
 	if err := query.
-		Order("created_at DESC, id DESC").
+		Order(orderBy).
 		Limit(int(pageSize)).
 		Offset(int((page - 1) * pageSize)).
 		Find(&pos).Error; err != nil {
@@ -4020,7 +4929,14 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 		if event.ThreadID != current.ThreadID {
 			return fmt.Errorf("expired run lease event does not belong to run thread")
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if req.ToStatus == entity.RunStatusFailed {
+			journalStatus := journalAttemptStatusForTerminalRun(req.ToStatus, req.ErrorCode)
+			if err := persistTerminalRunEventWithJournal(
+				tx, event, eventPO, req.JournalEvent, journalStatus, now,
+			); err != nil {
+				return err
+			}
+		} else if err := createBaseRunEvent(tx, eventPO); err != nil {
 			return err
 		}
 		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
@@ -4100,7 +5016,14 @@ func (r *threadRepository) RequestRunCancellation(
 		if updated.RowsAffected == 0 {
 			return fmt.Errorf("%w: run %d cancellation lost execution fence", ErrRunLeaseLost, req.RunID)
 		}
-		if err := tx.Create(eventPO).Error; err != nil {
+		if err := persistTerminalRunEventWithJournal(
+			tx,
+			req.Event,
+			eventPO,
+			req.JournalEvent,
+			entity.RunAttemptStatusCancelled,
+			now,
+		); err != nil {
 			return err
 		}
 		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
@@ -4277,13 +5200,20 @@ func (r *threadRepository) FinalizeRunSuccess(
 				if titleEvent.ThreadID != completed.ThreadID {
 					return fmt.Errorf("run success title event does not belong to run thread")
 				}
-				if err := tx.Create(titleEventPO).Error; err != nil {
+				if err := createBaseRunEvent(tx, titleEventPO); err != nil {
 					return err
 				}
 				result.TitleEvent = titleEvent
 			}
 		}
-		if err := tx.Create(completionEventPO).Error; err != nil {
+		if err := persistTerminalRunEventWithJournal(
+			tx,
+			completionEvent,
+			completionEventPO,
+			req.JournalEvent,
+			entity.RunAttemptStatusCompleted,
+			now,
+		); err != nil {
 			return err
 		}
 		selectedTerminalCheckpoint := terminalCheckpoint
@@ -4420,7 +5350,19 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 		if terminalEvent.ThreadID != current.ThreadID {
 			return fmt.Errorf("terminal run event does not belong to run thread")
 		}
-		if err := tx.Create(terminalEventPO).Error; err != nil {
+		if isTerminalRunStatus(req.To) {
+			journalStatus := journalAttemptStatusForTerminalRun(req.To, req.ErrorCode)
+			if err := persistTerminalRunEventWithJournal(
+				tx,
+				terminalEvent,
+				terminalEventPO,
+				req.JournalEvent,
+				journalStatus,
+				now,
+			); err != nil {
+				return err
+			}
+		} else if err := createBaseRunEvent(tx, terminalEventPO); err != nil {
 			return err
 		}
 		return appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent)
@@ -4721,6 +5663,13 @@ func runEventToPO(event *entity.RunEvent) (*runEventPO, error) {
 		Payload:   payload,
 		CreatedAt: event.CreatedAt,
 	}, nil
+}
+
+func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {
+	if db == nil || po == nil {
+		return fmt.Errorf("base run event is required")
+	}
+	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
 }
 
 func (po *runEventPO) toEntity() *entity.RunEvent {
@@ -5047,47 +5996,177 @@ func agentArtifactToPO(artifact *entity.AgentArtifact) (*agentArtifactPO, error)
 	if err != nil {
 		return nil, err
 	}
+	var primarySlot *uint8
+	if artifact.IsPrimary {
+		value := uint8(1)
+		primarySlot = &value
+	}
+	collectionID := optionalArtifactString(artifact.CollectionID)
+	var collectionOrder *int32
+	if collectionID != nil && artifact.CollectionOrder != nil {
+		value := *artifact.CollectionOrder
+		collectionOrder = &value
+	}
 	return &agentArtifactPO{
-		ID:           artifact.ID,
-		SpaceID:      artifact.SpaceID,
-		UserID:       artifact.UserID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        artifact.Title,
-		ArtifactType: artifact.ArtifactType,
-		VirtualPath:  artifact.VirtualPath,
-		ObjectURI:    artifact.ObjectURI,
-		ContentType:  artifact.ContentType,
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  string(artifact.PreviewMode),
-		Metadata:     metadata,
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ID:                  artifact.ID,
+		SpaceID:             artifact.SpaceID,
+		UserID:              artifact.UserID,
+		ThreadID:            artifact.ThreadID,
+		RunID:               artifact.RunID,
+		JournalRunID:        optionalArtifactInt64(artifact.JournalRunID),
+		FileID:              artifact.FileID,
+		Title:               artifact.Title,
+		ArtifactType:        artifact.ArtifactType,
+		VirtualPath:         artifact.VirtualPath,
+		ObjectURI:           artifact.ObjectURI,
+		ContentType:         artifact.ContentType,
+		SizeBytes:           artifact.SizeBytes,
+		PreviewMode:         string(artifact.PreviewMode),
+		Source:              optionalArtifactString(string(artifact.Source)),
+		GenerationStatus:    optionalArtifactString(string(artifact.GenerationStatus)),
+		PrimarySlot:         primarySlot,
+		CollectionID:        collectionID,
+		CollectionOrder:     collectionOrder,
+		DetectedContentType: optionalArtifactString(artifact.DetectedContentType),
+		ScannedSizeBytes:    cloneArtifactInt64(artifact.ScannedSizeBytes),
+		ContentHash:         optionalArtifactString(artifact.ContentHash),
+		Metadata:            metadata,
+		CreatedAt:           artifact.CreatedAt,
+		UpdatedAt:           artifact.UpdatedAt,
+		DeletedAt:           artifact.DeletedAt,
 	}, nil
 }
 
 func (po *agentArtifactPO) toEntity() *entity.AgentArtifact {
-	return &entity.AgentArtifact{
-		ID:           po.ID,
-		SpaceID:      po.SpaceID,
-		UserID:       po.UserID,
-		ThreadID:     po.ThreadID,
-		RunID:        po.RunID,
-		FileID:       po.FileID,
-		Title:        po.Title,
-		ArtifactType: po.ArtifactType,
-		VirtualPath:  po.VirtualPath,
-		ObjectURI:    po.ObjectURI,
-		ContentType:  po.ContentType,
-		SizeBytes:    po.SizeBytes,
-		PreviewMode:  entity.AgentArtifactPreviewMode(po.PreviewMode),
-		Metadata:     jsonToString(po.Metadata),
-		CreatedAt:    po.CreatedAt,
-		UpdatedAt:    po.UpdatedAt,
-		DeletedAt:    po.DeletedAt,
+	journalRunID := po.RunID
+	if po.JournalRunID != nil && *po.JournalRunID > 0 {
+		journalRunID = *po.JournalRunID
 	}
+	source := entity.AgentArtifactSource(artifactStringValue(po.Source))
+	if source == "" {
+		source = entity.AgentArtifactSourceAgentGenerated
+	}
+	return &entity.AgentArtifact{
+		ID:                  po.ID,
+		SpaceID:             po.SpaceID,
+		UserID:              po.UserID,
+		ThreadID:            po.ThreadID,
+		RunID:               po.RunID,
+		JournalRunID:        journalRunID,
+		FileID:              po.FileID,
+		Title:               po.Title,
+		ArtifactType:        po.ArtifactType,
+		VirtualPath:         po.VirtualPath,
+		ObjectURI:           po.ObjectURI,
+		ContentType:         po.ContentType,
+		SizeBytes:           po.SizeBytes,
+		PreviewMode:         entity.AgentArtifactPreviewMode(po.PreviewMode),
+		Source:              source,
+		GenerationStatus:    agentArtifactGenerationStatusValue(po.GenerationStatus, po.Metadata),
+		IsPrimary:           po.PrimarySlot != nil && *po.PrimarySlot == 1,
+		CollectionID:        artifactStringValue(po.CollectionID),
+		CollectionOrder:     cloneArtifactInt32(po.CollectionOrder),
+		DetectedContentType: artifactStringValue(po.DetectedContentType),
+		ScannedSizeBytes:    cloneArtifactInt64(po.ScannedSizeBytes),
+		ContentHash:         artifactStringValue(po.ContentHash),
+		Metadata:            jsonToString(po.Metadata),
+		CreatedAt:           po.CreatedAt,
+		UpdatedAt:           po.UpdatedAt,
+		DeletedAt:           po.DeletedAt,
+	}
+}
+
+func agentArtifactPOHasScanState(po *agentArtifactPO) bool {
+	if po == nil {
+		return false
+	}
+	if strings.TrimSpace(artifactStringValue(po.GenerationStatus)) != "" ||
+		po.DetectedContentType != nil || po.ScannedSizeBytes != nil || po.ContentHash != nil {
+		return true
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(po.Metadata, &metadata); err != nil {
+		return false
+	}
+	_, exists := metadata["scan_status"]
+	return exists
+}
+
+func agentArtifactPOScanRevision(po *agentArtifactPO) string {
+	if po == nil {
+		return ""
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(po.Metadata, &metadata); err != nil {
+		return ""
+	}
+	revision, _ := metadata["scan_revision"].(string)
+	return strings.TrimSpace(revision)
+}
+
+func agentArtifactGenerationStatusValue(
+	value *string,
+	metadata datatypes.JSON,
+) entity.AgentArtifactGenerationStatus {
+	if status := strings.TrimSpace(artifactStringValue(value)); status != "" {
+		return entity.AgentArtifactGenerationStatus(status)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(metadata, &payload); err != nil {
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
+	scanStatus, _ := payload["scan_status"].(string)
+	if strings.TrimSpace(scanStatus) == "" {
+		scanStatus, _ = payload["scanStatus"].(string)
+	}
+	switch strings.ToLower(strings.TrimSpace(scanStatus)) {
+	case "clean":
+		return entity.AgentArtifactGenerationStatusReady
+	case "blocked", "infected", "quarantined":
+		return entity.AgentArtifactGenerationStatusBlocked
+	case "failed":
+		return entity.AgentArtifactGenerationStatusFailed
+	default:
+		return entity.AgentArtifactGenerationStatusProcessing
+	}
+}
+
+func optionalArtifactString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func optionalArtifactInt64(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func artifactStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func cloneArtifactInt32(value *int32) *int32 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneArtifactInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func artifactScanJobToPO(job *entity.ArtifactScanJob) *agentArtifactScanJobPO {

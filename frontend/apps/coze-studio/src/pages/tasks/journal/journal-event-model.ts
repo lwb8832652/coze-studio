@@ -1,0 +1,397 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type {
+  WorkbenchJournalActionEventData,
+  WorkbenchJournalContentType,
+  WorkbenchJournalEvent,
+  WorkbenchJournalExecutionStatus,
+} from '../../workbench/thread-client';
+
+export type JournalActionKind =
+  | WorkbenchJournalContentType
+  | 'generic'
+  | 'artifact'
+  | 'verification'
+  | 'confirmation';
+
+export interface JournalActionItem {
+  id: string;
+  milestone_id?: string;
+  title: string;
+  kind: JournalActionKind;
+  status: WorkbenchJournalExecutionStatus;
+  event: WorkbenchJournalEvent;
+}
+
+export type JournalTimelineSemanticKind =
+  | 'milestone'
+  | 'action'
+  | 'artifact'
+  | 'verification'
+  | 'confirmation';
+
+export interface JournalTimelineItem extends JournalActionItem {
+  semanticKind: JournalTimelineSemanticKind;
+  aggregateEligible: boolean;
+}
+
+export interface JournalFailureDetails {
+  summary: string;
+  retryable: boolean;
+  ledgerStatus?: string;
+  traceID?: string;
+}
+
+export interface JournalMilestoneItem {
+  id: string;
+  title: string;
+  status: WorkbenchJournalExecutionStatus;
+  event: WorkbenchJournalEvent;
+  actions: JournalActionItem[];
+  atomic: boolean;
+  order: number;
+}
+
+const contentTypes = new Set<WorkbenchJournalContentType>([
+  'document',
+  'terminal',
+  'code',
+  'skill',
+  'browser',
+]);
+
+const terminalStatuses = new Set<WorkbenchJournalExecutionStatus>([
+  'completed',
+  'failed',
+  'cancelled',
+  'timed_out',
+]);
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const asText = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : '';
+
+const asStatus = (
+  status?: WorkbenchJournalExecutionStatus,
+): WorkbenchJournalExecutionStatus => status ?? 'running';
+
+export const journalEventData = (
+  event: WorkbenchJournalEvent,
+): Record<string, unknown> => {
+  const payload = asRecord(event.payload);
+  return asRecord(payload.data);
+};
+
+const journalPayloadType = (event: WorkbenchJournalEvent): string =>
+  asText(asRecord(event.payload).type);
+
+const eventOrder = (event: WorkbenchJournalEvent): number =>
+  event.sequence ?? event.occurred_at ?? event.created_at;
+
+const laterEvent = (
+  current: WorkbenchJournalEvent,
+  candidate: WorkbenchJournalEvent,
+): WorkbenchJournalEvent =>
+  eventOrder(candidate) >= eventOrder(current) ? candidate : current;
+
+const contentTypeFromData = (
+  event: WorkbenchJournalEvent,
+  data: Record<string, unknown>,
+): WorkbenchJournalContentType | undefined => {
+  const explicit = asText(data.content_type);
+  if (contentTypes.has(explicit as WorkbenchJournalContentType)) {
+    return explicit as WorkbenchJournalContentType;
+  }
+  const payloadType = journalPayloadType(event);
+  if (contentTypes.has(payloadType as WorkbenchJournalContentType)) {
+    return payloadType as WorkbenchJournalContentType;
+  }
+
+  const operation = asText(data.operation).toLowerCase();
+  if (operation === 'use_skill') {
+    return 'skill';
+  }
+  if (/browser|browse|search_web|navigate|capture/.test(operation)) {
+    return 'browser';
+  }
+  if (/terminal|shell|command|execute/.test(operation)) {
+    return 'terminal';
+  }
+  if (/code|edit|patch/.test(operation)) {
+    return 'code';
+  }
+  if (/document|read|write/.test(operation)) {
+    return 'document';
+  }
+  return undefined;
+};
+
+const normalizeVerb = (verb: string, target: string): string => {
+  if (!target || verb.includes(target)) {
+    return verb || target;
+  }
+  const conciseVerb = verb.replace(/(?:代码|文档|文件|子任务|技能)$/u, '');
+  return `${conciseVerb || verb} ${target}`.trim();
+};
+
+export const journalActionLabel = (event: WorkbenchJournalEvent): string => {
+  const data = journalEventData(event);
+  const target = asText(data.target);
+  const completed = terminalStatuses.has(asStatus(event.status));
+  const verb = asText(
+    completed ? data.display_verb_completed : data.display_verb_running,
+  );
+  return normalizeVerb(verb, target) || target || '执行操作';
+};
+
+export const journalFailureDetails = (
+  event: WorkbenchJournalEvent,
+): JournalFailureDetails | undefined => {
+  const status = asStatus(event.status);
+  if (status !== 'failed' && status !== 'timed_out') {
+    return undefined;
+  }
+  const data = journalEventData(event);
+  const ledgerStatus = asText(data.ledger_status).toLowerCase();
+  const traceID = asText(event.trace_id);
+  return {
+    summary:
+      asText(data.error_summary) ||
+      asText(data.safe_error_summary) ||
+      asText(data.failure_summary) ||
+      (status === 'timed_out' ? '执行超时' : '执行失败'),
+    retryable: data.retryable === true,
+    ...(ledgerStatus ? { ledgerStatus } : {}),
+    ...(traceID ? { traceID } : {}),
+  };
+};
+
+export const journalEventLabel = (event: WorkbenchJournalEvent): string => {
+  const data = journalEventData(event);
+  if (event.event_type.startsWith('milestone.')) {
+    return asText(data.title) || '执行步骤';
+  }
+  if (event.event_type.startsWith('action.')) {
+    return journalActionLabel(event);
+  }
+  if (event.event_type.startsWith('verification.')) {
+    return asText(data.title) || '验证结果';
+  }
+  if (event.event_type.startsWith('confirmation.')) {
+    return asText(data.prompt) || '等待确认';
+  }
+  if (event.event_type.startsWith('artifact.')) {
+    return asText(data.title) || '生成产物';
+  }
+  return '';
+};
+
+export const journalActionKind = (
+  event: WorkbenchJournalEvent,
+): JournalActionKind => {
+  const data = journalEventData(event);
+  if (event.event_type.startsWith('artifact.')) {
+    return 'artifact';
+  }
+  if (event.event_type.startsWith('verification.')) {
+    return 'verification';
+  }
+  if (event.event_type.startsWith('confirmation.')) {
+    return 'confirmation';
+  }
+  return contentTypeFromData(event, data) ?? 'generic';
+};
+
+const actionIdentity = (event: WorkbenchJournalEvent): string => {
+  const data = journalEventData(event);
+  return (
+    asText(data.action_id) ||
+    asText(data.verification_id) ||
+    asText(data.confirmation_id) ||
+    asText(data.artifact_id) ||
+    event.event_id
+  );
+};
+
+const milestoneIdentity = (event: WorkbenchJournalEvent): string =>
+  asText(journalEventData(event).milestone_id);
+
+const isActionLike = (event: WorkbenchJournalEvent): boolean =>
+  ['action.', 'artifact.', 'verification.', 'confirmation.'].some(prefix =>
+    event.event_type.startsWith(prefix),
+  );
+
+const actionItem = (event: WorkbenchJournalEvent): JournalActionItem => {
+  const data = journalEventData(event);
+  return {
+    id: actionIdentity(event),
+    ...(asText(data.milestone_id)
+      ? { milestone_id: asText(data.milestone_id) }
+      : {}),
+    title: journalEventLabel(event),
+    kind: journalActionKind(event),
+    status: asStatus(event.status),
+    event,
+  };
+};
+
+const timelineSemanticKind = (
+  event: WorkbenchJournalEvent,
+): JournalTimelineSemanticKind => {
+  if (event.event_type.startsWith('artifact.')) {
+    return 'artifact';
+  }
+  if (event.event_type.startsWith('verification.')) {
+    return 'verification';
+  }
+  if (event.event_type.startsWith('confirmation.')) {
+    return 'confirmation';
+  }
+  return 'action';
+};
+
+const timelineActionItem = (item: JournalActionItem): JournalTimelineItem => ({
+  ...item,
+  semanticKind: timelineSemanticKind(item.event),
+  aggregateEligible:
+    item.event.event_type.startsWith('action.') && item.status === 'completed',
+});
+
+const timelineMilestoneItem = (
+  milestone: JournalMilestoneItem,
+): JournalTimelineItem => ({
+  id: `milestone:${milestone.id}`,
+  title: milestone.title,
+  kind: 'generic',
+  status: milestone.status,
+  event: milestone.event,
+  semanticKind: 'milestone',
+  aggregateEligible: false,
+});
+
+export const buildJournalMilestones = (
+  events: WorkbenchJournalEvent[],
+): JournalMilestoneItem[] => {
+  const ordered = [...events].sort((left, right) =>
+    eventOrder(left) === eventOrder(right)
+      ? left.event_id.localeCompare(right.event_id)
+      : eventOrder(left) - eventOrder(right),
+  );
+  const milestones = new Map<string, JournalMilestoneItem>();
+  const actions = new Map<string, JournalActionItem>();
+
+  ordered.forEach(event => {
+    if (event.event_type.startsWith('milestone.')) {
+      const id = milestoneIdentity(event);
+      const title = journalEventLabel(event);
+      if (!id || !title) {
+        return;
+      }
+      const current = milestones.get(id);
+      milestones.set(id, {
+        id,
+        title,
+        status: asStatus(event.status),
+        event: current ? laterEvent(current.event, event) : event,
+        actions: current?.actions ?? [],
+        atomic: false,
+        order: current?.order ?? eventOrder(event),
+      });
+      return;
+    }
+    if (!isActionLike(event)) {
+      return;
+    }
+    const next = actionItem(event);
+    const current = actions.get(next.id);
+    actions.set(
+      next.id,
+      current ? actionItem(laterEvent(current.event, event)) : next,
+    );
+  });
+
+  actions.forEach(item => {
+    if (item.milestone_id && milestones.has(item.milestone_id)) {
+      milestones.get(item.milestone_id)?.actions.push(item);
+      return;
+    }
+    milestones.set(item.id, {
+      id: item.id,
+      title: item.title,
+      status: item.status,
+      event: item.event,
+      actions: [],
+      atomic: true,
+      order: eventOrder(item.event),
+    });
+  });
+
+  return [...milestones.values()]
+    .map(item => ({
+      ...item,
+      atomic: item.actions.length === 0,
+      actions: [...item.actions].sort(
+        (left, right) => eventOrder(left.event) - eventOrder(right.event),
+      ),
+    }))
+    .sort((left, right) => left.order - right.order);
+};
+
+export const buildJournalTimelineItems = (
+  events: WorkbenchJournalEvent[],
+): JournalTimelineItem[] =>
+  buildJournalMilestones(events).flatMap(milestone =>
+    milestone.atomic
+      ? [
+          milestone.event.event_type.startsWith('milestone.')
+            ? timelineMilestoneItem(milestone)
+            : timelineActionItem(actionItem(milestone.event)),
+        ]
+      : [
+          timelineMilestoneItem(milestone),
+          ...milestone.actions.map(timelineActionItem),
+        ],
+  );
+
+export const journalContentTypeForEvent = (
+  event?: WorkbenchJournalEvent,
+): WorkbenchJournalContentType | undefined =>
+  event ? contentTypeFromData(event, journalEventData(event)) : undefined;
+
+export const findJournalEvent = (
+  events: WorkbenchJournalEvent[],
+  eventID?: string,
+): WorkbenchJournalEvent | undefined => {
+  if (!eventID) {
+    return undefined;
+  }
+  const timelineItem = buildJournalTimelineItems(events).find(
+    item => item.event.event_id === eventID || item.id === eventID,
+  );
+  return (
+    timelineItem?.event ?? events.find(event => event.event_id === eventID)
+  );
+};
+
+export const journalActionData = (
+  event: WorkbenchJournalEvent,
+): WorkbenchJournalActionEventData =>
+  journalEventData(event) as unknown as WorkbenchJournalActionEventData;

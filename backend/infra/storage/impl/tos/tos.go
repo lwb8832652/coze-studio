@@ -298,6 +298,9 @@ func (t *tosClient) GetObjectUrl(ctx context.Context, objectKey string, opts ...
 	if opt.ResponseContentType != "" {
 		query["response-content-type"] = opt.ResponseContentType
 	}
+	if opt.ResponseCacheControl != "" {
+		query["response-cache-control"] = opt.ResponseCacheControl
+	}
 	output, err := client.PreSignedURL(&tos.PreSignedURLInput{
 		HTTPMethod: enum.HttpMethodGet,
 		Expires:    expire,

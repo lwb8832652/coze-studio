@@ -37,6 +37,7 @@ import (
 type ADKMiddlewareName string
 
 const (
+	ADKMiddlewareSideEffect             ADKMiddlewareName = "side_effect"
 	ADKMiddlewareSummarization          ADKMiddlewareName = "summarization"
 	ADKMiddlewareReduction              ADKMiddlewareName = "reduction"
 	ADKMiddlewareMemory                 ADKMiddlewareName = "memory"
@@ -58,6 +59,7 @@ const (
 )
 
 var adkMiddlewareOrder = []ADKMiddlewareName{
+	ADKMiddlewareSideEffect,
 	ADKMiddlewareReduction,
 	ADKMiddlewareFilesystem,
 	ADKMiddlewareUploadedFiles,
@@ -110,15 +112,16 @@ type ADKMiddlewareBuilder func(
 ) (adk.ChatModelAgentMiddleware, error)
 
 type ADKMiddlewareAssemblerOptions struct {
-	Builders              map[ADKMiddlewareName]ADKMiddlewareBuilder
-	MemoryProvider        MemoryProvider
-	SkillProvider         SkillProvider
-	GuardrailEnforcer     ADKGuardrailEnforcer
-	TranscriptStore       ADKTranscriptStore
-	MemoryFlushQueue      ADKMemoryFlushQueue
-	EventSink             RunEventSink
-	OffloadBackendFactory ADKOffloadBackendFactory
-	PlanBackendFactory    ADKPlanBackendFactory
+	Builders               map[ADKMiddlewareName]ADKMiddlewareBuilder
+	MemoryProvider         MemoryProvider
+	SkillProvider          SkillProvider
+	GuardrailEnforcer      ADKGuardrailEnforcer
+	TranscriptStore        ADKTranscriptStore
+	MemoryFlushQueue       ADKMemoryFlushQueue
+	EventSink              RunEventSink
+	JournalContentProducer JournalContentProducer
+	OffloadBackendFactory  ADKOffloadBackendFactory
+	PlanBackendFactory     ADKPlanBackendFactory
 }
 
 type ADKMiddlewareAssembler struct {
@@ -280,6 +283,20 @@ func defaultADKMiddlewareBuilder(
 	options ADKMiddlewareAssemblerOptions,
 ) ADKMiddlewareBuilder {
 	switch name {
+	case ADKMiddlewareSideEffect:
+		return func(
+			ctx context.Context,
+			input ADKMiddlewareBuildInput,
+		) (adk.ChatModelAgentMiddleware, error) {
+			coordinator := adkSideEffectBoundaryCoordinatorFromContext(ctx)
+			if coordinator == nil {
+				return nil, errADKMiddlewareNotApplicable
+			}
+			return NewADKSideEffectMiddleware(
+				coordinator,
+				WithADKSideEffectNonReplayableTools(input.SubagentToolNames),
+			), nil
+		}
 	case ADKMiddlewareSummarization:
 		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
 			budget, err := adkContextBudgetFromRun(input.Run)
@@ -520,6 +537,7 @@ func defaultADKMiddlewareBuilder(
 				options.EventSink,
 				input.Run,
 				skillContext,
+				options.JournalContentProducer,
 			)
 			return middleware, nil
 		}

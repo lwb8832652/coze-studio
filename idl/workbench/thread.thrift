@@ -1,6 +1,7 @@
 namespace go workbench.thread_contract
 
 include "../base.thrift"
+include "./journal.thrift"
 include "./thread_product.thrift"
 
 struct CanonicalRouteRequest {
@@ -81,9 +82,12 @@ struct CanonicalMessagePage {
 }
 
 struct CanonicalRunEventPage {
-    1: required string data (api.value_type="any")
+    1: required list<journal.JournalEvent> data
     2: required bool has_more
     3: optional string next_after_event_id
+    4: optional string attempt_id
+    5: optional i64 latest_sequence
+    6: optional i64 next_after_sequence
 }
 
 struct CanonicalThreadListResponse {
@@ -279,6 +283,7 @@ struct ReconnectCanonicalRunStreamRequest {
     5: optional string last_event_id (api.header="Last-Event-ID")
     6: optional list<string> stream_mode (api.query="stream_mode")
     7: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    8: optional string journal_protocol_version (api.query="journal_protocol_version")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -315,6 +320,8 @@ struct ListCanonicalRunEventsRequest {
     4: optional list<string> event_types (api.query="event_types")
     5: optional i32 limit (api.query="limit")
     6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    7: optional string attempt_id (api.query="attempt_id")
+    8: optional i64 after_sequence (api.query="after_sequence")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -376,4 +383,11 @@ service WorkbenchCanonicalThreadService {
     thread_product.CanonicalGuardrailAuditExportResponse ExportCanonicalThreadGuardrailAuditEvents(1: thread_product.ExportCanonicalThreadGuardrailAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/guardrail_audit_events/export")
     thread_product.CanonicalMCPRuntimeAuditEventListResponse ListCanonicalThreadMCPRuntimeAuditEvents(1: thread_product.ListCanonicalThreadMCPRuntimeAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/mcp_runtime_audit_events")
     CanonicalRun RetryCanonicalSubagentRun(1: thread_product.RetryCanonicalSubagentRunRequest req) (api.post="/api/workbench/threads/:thread_id/runs/:run_id/retry")
+    journal.JournalBootstrap GetCanonicalRunJournal(1: journal.GetCanonicalRunJournalRequest req) (api.get="/api/workbench/threads/:thread_id/runs/:run_id/journal")
+    journal.JournalSnapshotEnvelope GetCanonicalRunSnapshot(1: journal.GetCanonicalRunSnapshotRequest req) (api.get="/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id")
+    journal.JournalSnapshotActionAuditResponse AuditCanonicalRunSnapshotAction(1: journal.AuditCanonicalRunSnapshotActionRequest req) (api.post="/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id/actions")
+    journal.RecoverCanonicalRunJournalResponse RecoverCanonicalRunJournal(1: journal.RecoverCanonicalRunJournalRequest req) (api.post="/api/workbench/threads/:thread_id/runs/:run_id/recover")
+    journal.JournalUserSettings GetCanonicalJournalSettings(1: journal.GetCanonicalJournalSettingsRequest req) (api.get="/api/workbench/journal/settings")
+    journal.JournalUserSettings PatchCanonicalJournalSettings(1: journal.PatchCanonicalJournalSettingsRequest req) (api.patch="/api/workbench/journal/settings")
+    thread_product.CopyCanonicalThreadArtifactLinkResponse CopyCanonicalThreadArtifactLink(1: thread_product.CopyCanonicalThreadArtifactLinkRequest req) (api.post="/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link")
 }

@@ -19,9 +19,12 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 )
@@ -196,12 +199,13 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 	call ADKMCPRuntimeToolCall,
 ) (string, error) {
 	startedAt := time.Now()
+	invocationID := uuid.NewString()
 	name := adkMCPRuntimeSafeName(call.Name)
 	run := call.Run
 	transportType := ""
-	e.emitLifecycle(ctx, run, "mcp.tool.started", name, call.ServerID, transportType, "", startedAt, 0)
+	e.emitLifecycle(ctx, run, invocationID, "mcp.tool.started", name, call.ServerID, transportType, "", startedAt, 0)
 	fail := func(code string, message string) (string, error) {
-		e.emitLifecycle(ctx, run, "mcp.tool.failed", name, call.ServerID, transportType, code, startedAt, 0)
+		e.emitLifecycle(ctx, run, invocationID, "mcp.tool.failed", name, call.ServerID, transportType, code, startedAt, 0)
 		return "", fmt.Errorf("%s: %s", message, name)
 	}
 
@@ -264,8 +268,14 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 		},
 	)
 	if err != nil {
-		e.reportHealth(ctx, call.ServerID, server.UpdatedAt, transportType, false, "transport_failed", startedAt)
-		return fail("transport_failed", "mcp runtime transport failed")
+		errorCode := "transport_failed"
+		message := "mcp runtime transport failed"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(transportCtx.Err(), context.DeadlineExceeded) {
+			errorCode = "tool_timeout"
+			message = "mcp runtime tool timed out"
+		}
+		e.reportHealth(ctx, call.ServerID, server.UpdatedAt, transportType, false, errorCode, startedAt)
+		return fail(errorCode, message)
 	}
 	outputBytes := len([]byte(result))
 	if outputBytes > e.maxOutputBytes {
@@ -297,6 +307,7 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 	e.emitLifecycle(
 		ctx,
 		run,
+		invocationID,
 		"mcp.tool.completed",
 		name,
 		call.ServerID,
@@ -339,6 +350,7 @@ func (e *ADKMCPRuntimeExecutor) offloadOutput(
 func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 	ctx context.Context,
 	run *RunSummary,
+	invocationID string,
 	eventType string,
 	name string,
 	serverID int64,
@@ -365,10 +377,11 @@ func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 		return
 	}
 	payload := map[string]any{
-		"schema":     "coze.mcp_runtime_tool.v1",
-		"tool_name":  name,
-		"server_id":  serverID,
-		"elapsed_ms": time.Since(startedAt).Milliseconds(),
+		"schema":        "coze.mcp_runtime_tool.v1",
+		"invocation_id": invocationID,
+		"tool_name":     name,
+		"server_id":     serverID,
+		"elapsed_ms":    time.Since(startedAt).Milliseconds(),
 	}
 	if errorCode != "" {
 		payload["error_code"] = errorCode
