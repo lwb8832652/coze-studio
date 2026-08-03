@@ -417,7 +417,7 @@ check_origin_and_history() {
     die 'expected origin/dev is not an ancestor of target'
 }
 
-run_atlas() {
+run_atlas_status() {
   run_atlas_step validation run --rm \
     -v "$atlas_snapshot_dir/docker/atlas/migrations:/migrations:ro" \
     "$ATLAS_IMAGE" \
@@ -429,7 +429,9 @@ run_atlas() {
     -v "$atlas_snapshot_dir/.github/atlas-dev.hcl:/atlas.hcl:ro" \
     "$ATLAS_IMAGE" \
     migrate status --config file:///atlas.hcl --env dev
+}
 
+run_atlas_apply() {
   run_atlas_step apply run --rm \
     --env-file "$atlas_runtime_env" \
     -v "$atlas_snapshot_dir/docker/atlas/migrations:/migrations:ro" \
@@ -442,9 +444,17 @@ main() {
   local expected_origin_sha
   local target_sha
   local current_branch
+  local publish_mode=release
 
-  [ "$#" -eq 2 ] || \
-    die 'expected exactly two arguments: <expected-origin-dev-sha> <target-dev-sha>'
+  if [ "${1:-}" = --status ]; then
+    [ "$#" -eq 3 ] || \
+      die 'status mode expects: --status <expected-origin-dev-sha> <target-dev-sha>'
+    publish_mode=status
+    shift
+  else
+    [ "$#" -eq 2 ] || \
+      die 'expected exactly two arguments: <expected-origin-dev-sha> <target-dev-sha>'
+  fi
   is_revision "$1" || \
     die 'expected origin/dev SHA must be exactly 40 hexadecimal characters'
   is_revision "$2" || die 'target dev SHA must be exactly 40 hexadecimal characters'
@@ -460,7 +470,14 @@ main() {
   validate_env_file "$ATLAS_ENV_FILE"
   validate_publish_tmp_root
   create_atlas_snapshot "$target_sha"
-  run_atlas
+  run_atlas_status
+  if [ "$publish_mode" = status ]; then
+    check_local_target "$target_sha"
+    check_origin_and_history "$expected_origin_sha" "$target_sha"
+    log "inspected Atlas status for audited dev revision $target_sha; no migration was applied and no push was attempted"
+    return 0
+  fi
+  run_atlas_apply
   check_local_target "$target_sha"
   check_origin_and_history "$expected_origin_sha" "$target_sha"
 

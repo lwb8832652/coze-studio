@@ -936,6 +936,40 @@ test_success() {
   assert_no_secret_output
 }
 
+test_status_only() {
+  setup_case status-only-success
+  run_publish --status "$EXPECTED_ORIGIN" "$TARGET_SHA" || \
+    fail 'valid status-only flow failed'
+
+  assert_count "$COMMAND_LOG" 'docker ' 2 \
+    'status-only flow did not run exactly validate and status'
+  assert_contains "$COMMAND_LOG" \
+    'migrate validate --dir file:///migrations' \
+    'status-only flow did not validate the migration snapshot'
+  assert_contains "$COMMAND_LOG" \
+    'migrate status --config file:///atlas.hcl --env dev' \
+    'status-only flow did not inspect Atlas status'
+  assert_not_contains "$COMMAND_LOG" 'migrate apply' \
+    'status-only flow applied a migration'
+  assert_count "$COMMAND_LOG" 'git fetch --no-tags origin dev' 2 \
+    'status-only flow did not recheck the remote baseline'
+  assert_count "$COMMAND_LOG" 'git push ' 0 \
+    'status-only flow attempted a push'
+  assert_contains "$OUTPUT_LOG" \
+    "inspected Atlas status for audited dev revision $TARGET_SHA; no migration was applied and no push was attempted" \
+    'status-only success message did not state the read-only boundary'
+  assert_stage_diagnostics validate
+  assert_stage_diagnostics status
+  assert_capture_security 2
+  assert_snapshot_security 2
+  assert_snapshot_cleaned
+  assert_closed_child_path
+  assert_no_forbidden_tool_calls
+  assert_git_repo_root
+  assert_sensitive_field_diagnostics
+  assert_no_secret_output
+}
+
 test_nonempty_stdin_is_ignored() {
   setup_case nonempty-stdin-success
   run_publish_with_nonempty_stdin "$EXPECTED_ORIGIN" "$TARGET_SHA" || \
@@ -1225,6 +1259,7 @@ test_unrelated_cwd_uses_repo_root
 test_repository_tmp_roots_are_rejected
 test_snapshot_creation_failures
 test_success
+test_status_only
 test_nonempty_stdin_is_ignored
 test_xtrace_does_not_leak_credentials
 test_linux_stat_mode_detection
