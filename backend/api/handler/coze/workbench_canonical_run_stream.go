@@ -232,21 +232,48 @@ func createCanonicalStreamRun(
 func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.reconnect", "/api/workbench/threads/:thread_id/runs/:run_id/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAgentThreadService(ctx, c) {
+	journalMode, journalProtocolVersion, public := negotiateCanonicalJournalProtocolVersion(
+		canonicalQueryString(c, "journal_protocol_version"),
+	)
+	if public != nil {
+		writeCanonicalJournalError(ctx, c, public.status, *public)
 		return
 	}
-	ctx, ok := requireCanonicalSpaceAccess(ctx, c)
+	journalRequested := journalMode == canonicalJournalProtocolV11
+	if journalRequested {
+		if !requireCanonicalJournalAgentThreadService(ctx, c) {
+			return
+		}
+	} else if !requireCanonicalAgentThreadService(ctx, c) {
+		return
+	}
+	var ok bool
+	if journalRequested {
+		ctx, ok = requireCanonicalJournalSpaceAccess(ctx, c)
+	} else {
+		ctx, ok = requireCanonicalSpaceAccess(ctx, c)
+	}
 	if !ok {
 		return
 	}
 	threadID, runID, public := canonicalRunPathIDs(c)
 	if public != nil {
-		writeCanonicalError(ctx, c, public.status, *public)
+		if journalRequested {
+			writeCanonicalJournalError(ctx, c, public.status, *public)
+		} else {
+			writeCanonicalError(ctx, c, public.status, *public)
+		}
 		return
 	}
 	requestLog.ThreadID, requestLog.RunID = threadID, runID
 	requestLog.ResponseBodyKind = "event_page"
 	requestLog.LocationKind = "run_stream"
+	if journalRequested {
+		reconnectCanonicalJournalStream(
+			ctx, c, requestLog, threadID, runID, journalProtocolVersion,
+		)
+		return
+	}
 
 	afterEventID, public := canonicalReconnectRunEventCursor(c)
 	if public != nil {

@@ -28,6 +28,7 @@ import (
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 const humanInteractionResolvedEventType = "human.interaction.resolved"
@@ -175,6 +176,21 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	if err != nil {
 		return nil, err
 	}
+	journalSource := RunEvent{
+		ThreadID:  req.ThreadID,
+		RunID:     req.SourceRunID,
+		EventType: humanInteractionResolvedEventType,
+		Payload:   encodeRunEventPayload(ctx, resolved),
+	}
+	journalProjection, journalProjectionErr := ProjectRunEventToJournal(journalSource)
+	if journalProjectionErr != nil {
+		logs.CtxWarnf(
+			ctx,
+			"[journal-projection] project resolved interaction failed, run_id=%d err=%v",
+			req.SourceRunID,
+			journalProjectionErr,
+		)
+	}
 
 	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 		Run: domainservice.CreateRunRequest{
@@ -193,7 +209,10 @@ func (s *ApplicationService) ResumeHumanInteraction(
 			Metadata: humanInteractionMessageMetadata(req.SourceRunID, interruptID, response),
 		},
 		Event: &domainservice.CreateRunEventSpec{
-			EventType: humanInteractionResolvedEventType,
+			EventType:               humanInteractionResolvedEventType,
+			JournalSourceRunID:      req.SourceRunID,
+			Journal:                 journalProjectionToDomainRequest(journalSource, journalProjection),
+			JournalProjectionFailed: journalProjectionErr != nil,
 			PayloadBuilder: func(runID int64) string {
 				resolved["resume_run_id"] = runID
 				return encodeRunEventPayload(ctx, resolved)

@@ -20,6 +20,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -389,6 +391,7 @@ func installSkillArtifactTestService(t *testing.T, content []byte) {
 	appagentthread.SVC.ArtifactObjectStorage = &recordingWorkbenchArtifactStorage{
 		objects: map[string][]byte{"object://skill-archive": content},
 	}
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(content))
 	require.NoError(t, db.Exec(`
 		INSERT INTO agent_runs (
 			id, thread_id, parent_run_id, space_id, creator_id, assistant_id,
@@ -403,16 +406,18 @@ func installSkillArtifactTestService(t *testing.T, content []byte) {
 	`).Error)
 	require.NoError(t, db.Exec(`
 		INSERT INTO agent_artifacts (
-			id, space_id, user_id, thread_id, run_id, file_id, title,
+			id, space_id, user_id, thread_id, run_id, journal_run_id, file_id, title,
 			artifact_type, virtual_path, object_uri, content_type, size_bytes,
-			preview_mode, metadata, created_at, updated_at
+			preview_mode, source, generation_status, detected_content_type,
+			scanned_size_bytes, content_hash, metadata, created_at, updated_at
 		) VALUES (
-			100, 1, 2, 10, 20, 90, 'weekly-research.skill',
+			100, 1, 2, 10, 20, 20, 90, 'weekly-research.skill',
 			'skill', '/mnt/user-data/outputs/weekly-research.skill',
 			'object://skill-archive', 'application/zip', ?, 'download',
+			'agent_generated', 'ready', 'application/zip', ?, ?,
 			'{"scan_status":"clean"}', 1000, 1000
 		)
-	`, len(content)).Error)
+	`, len(content), len(content), contentHash).Error)
 }
 
 type skillVersionDomainService struct {

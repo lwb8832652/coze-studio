@@ -21,6 +21,7 @@ interface WorkbenchClientErrorOptions {
   status?: number;
   code: string;
   traceId?: string;
+  retryAfterMs?: number;
   retryable: boolean;
   outcome: WorkbenchClientOutcome;
 }
@@ -29,6 +30,7 @@ export class WorkbenchClientError extends Error {
   readonly status: number | undefined;
   readonly code: string;
   readonly traceId: string | undefined;
+  readonly retryAfterMs: number | undefined;
   readonly retryable: boolean;
   readonly outcome: WorkbenchClientOutcome;
 
@@ -38,6 +40,7 @@ export class WorkbenchClientError extends Error {
     this.status = options.status;
     this.code = options.code;
     this.traceId = options.traceId;
+    this.retryAfterMs = options.retryAfterMs;
     this.retryable = options.retryable;
     this.outcome = options.outcome;
   }
@@ -61,7 +64,7 @@ export interface CanonicalJSONResult<T = unknown> {
 export interface CanonicalJSONRequest {
   fetch?: CanonicalFetch;
   method: string;
-  spaceId: string;
+  spaceId?: string;
   json?: unknown;
   body?: BodyInit;
   idempotencyKey?: string;
@@ -77,11 +80,19 @@ export interface CanonicalBlobResult {
 interface CanonicalErrorBody {
   detail: string;
   code: string;
+  error_code?: string;
   retryable: boolean;
   trace_id: string;
 }
 
 const canonicalErrorKeys = ['code', 'detail', 'retryable', 'trace_id'] as const;
+const canonicalJournalErrorKeys = [
+  'code',
+  'detail',
+  'error_code',
+  'retryable',
+  'trace_id',
+] as const;
 const httpClientErrorStart = 400;
 const httpServerErrorStart = 500;
 const httpServerErrorEnd = 600;
@@ -287,21 +298,32 @@ const parseCanonicalError = (
     );
   }
   const keys = Object.keys(value).sort();
+  const expectedKeys = Object.prototype.hasOwnProperty.call(value, 'error_code')
+    ? canonicalJournalErrorKeys
+    : canonicalErrorKeys;
   if (
-    keys.length !== canonicalErrorKeys.length ||
-    canonicalErrorKeys.some((key, index) => keys[index] !== key)
+    keys.length !== expectedKeys.length ||
+    expectedKeys.some((key, index) => keys[index] !== key)
   ) {
     throw invalidCanonicalResponse(
       'Canonical error response has an unknown shape',
       status,
     );
   }
-  const { detail, code, retryable, trace_id: traceID } = value;
+  const {
+    detail,
+    code,
+    error_code: errorCode,
+    retryable,
+    trace_id: traceID,
+  } = value;
   if (
     typeof detail !== 'string' ||
     detail.trim() === '' ||
     typeof code !== 'string' ||
     code.trim() === '' ||
+    (errorCode !== undefined &&
+      (typeof errorCode !== 'string' || errorCode.trim() === '')) ||
     typeof retryable !== 'boolean' ||
     typeof traceID !== 'string'
   ) {
@@ -310,7 +332,29 @@ const parseCanonicalError = (
       status,
     );
   }
-  return { detail, code, retryable, trace_id: traceID };
+  return {
+    detail,
+    code,
+    ...(typeof errorCode === 'string' ? { error_code: errorCode } : {}),
+    retryable,
+    trace_id: traceID,
+  };
+};
+
+const retryAfterMilliseconds = (response: Response): number | undefined => {
+  const raw = response.headers.get('Retry-After')?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  if (/^\d+$/.test(raw)) {
+    const milliseconds = Number(raw) * 1_000;
+    return Number.isSafeInteger(milliseconds) ? milliseconds : undefined;
+  }
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) {
+    return undefined;
+  }
+  return Math.max(0, Math.round(at - Date.now()));
 };
 
 export const canonicalErrorFromResponse = async (
@@ -321,8 +365,9 @@ export const canonicalErrorFromResponse = async (
   return new WorkbenchClientError({
     message: canonical.detail,
     status: response.status,
-    code: canonical.code,
+    code: canonical.error_code ?? canonical.code,
     traceId: canonical.trace_id,
+    retryAfterMs: retryAfterMilliseconds(response),
     retryable: canonical.retryable,
     outcome: responseOutcome(response.status),
   });
@@ -389,8 +434,8 @@ const fetchCanonicalResponse = async (
   request: CanonicalJSONRequest,
 ): Promise<Response> => {
   const headers: Record<string, string> = {
-    'X-Coze-Space-ID': request.spaceId,
     'x-requested-with': 'XMLHttpRequest',
+    ...(request.spaceId ? { 'X-Coze-Space-ID': request.spaceId } : {}),
   };
   if (request.json !== undefined && request.body !== undefined) {
     throw invalidCanonicalRequest(

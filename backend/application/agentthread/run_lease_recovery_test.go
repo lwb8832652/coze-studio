@@ -144,6 +144,70 @@ func TestRunLeaseRecoveryProcessorAbandonsExpiredRunWithoutCheckpoint(t *testing
 	require.Equal(t, int64(3_000), source.EndedAt)
 }
 
+func TestRunLeaseRecoveryProcessorUsesAtomicJournalRecoveryBundle(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
+	source := expiredRecoveryTestRun(10)
+	source.ThreadID = 42
+	source.SpaceID = 7
+	source.CreatorID = 9
+	source.Status = entity.RunStatusRunning
+	activeSlot := uint8(1)
+	attempt := &entity.RunAttempt{
+		ID: 100, ThreadID: 42, JournalRunID: 10, ExecutionRunID: 10,
+		AttemptID: "att_100", Ordinal: 1, Status: entity.RunAttemptStatusRunning,
+		ActiveSlot: &activeSlot, NextSequence: 5, LastCommittedSequence: 4,
+		EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState:   entity.JournalProjectionStateHealthy,
+	}
+	ledger := journalRecoveryLedger(
+		entity.SideEffectReplayPolicyIdempotentWrite,
+		entity.SideEffectLedgerStatusSucceeded,
+	)
+	repo := &journalRecoveryRepositoryStub{
+		attempts: []*entity.RunAttempt{attempt},
+		ledgers:  map[string][]*entity.SideEffectLedger{"att_100": {ledger}},
+	}
+	threadSVC := &recordingThreadService{
+		gotRun:           source,
+		expiredRunLeases: []*entity.Run{source},
+		checkpoints:      []*entity.Checkpoint{journalRecoveryCheckpoint(t, repo.ledgers["att_100"])},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{ID: 20, ThreadID: 42, SpaceID: 7, CreatorID: 9},
+			Attempt: &entity.RunAttempt{
+				ID: 200, ThreadID: 42, JournalRunID: 10, ExecutionRunID: 20,
+				AttemptID: "att_200", Ordinal: 2, Status: entity.RunAttemptStatusPending,
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{
+		ThreadSVC:                  threadSVC,
+		ThreadAuthorizer:           &recordingThreadAuthorizer{},
+		WorkspaceAuthorizer:        &recordingWorkspaceAuthorizer{},
+		JournalRecoveryRepository:  repo,
+		JournalRecoveryIDGenerator: fixedIDGen{},
+	}
+	processor := NewRunLeaseRecoveryProcessor(
+		app,
+		RunLeaseRecoveryProcessorOptions{Limit: 10, Clock: clock},
+	)
+
+	result, err := processor.RecoverExpiredRunLeases(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, RecoveredRuns: 1}, result)
+	require.Nil(t, threadSVC.createRunReq)
+	require.Nil(t, threadSVC.reconcileExpiredRunLeaseReq)
+	require.NotNil(t, threadSVC.createRunBundleReq)
+	recovery := threadSVC.createRunBundleReq.JournalEnrollment.Recovery
+	require.NotNil(t, recovery)
+	require.Equal(t, "run-recovery:10:10:3", recovery.IdempotencyKey)
+	require.NotNil(t, recovery.ExpiredLease)
+	require.Equal(t, "worker-a", recovery.ExpiredLease.LeaseOwner)
+	require.Equal(t, "lease-10", recovery.ExpiredLease.LeaseToken)
+	require.Equal(t, uint64(3), recovery.ExpiredLease.ExecutionGeneration)
+}
+
 func expiredRecoveryTestRun(id int64) *entity.Run {
 	return &entity.Run{
 		ID:                  id,

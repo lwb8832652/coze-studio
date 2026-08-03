@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 
@@ -73,6 +74,21 @@ func installAgentThreadTestService(t *testing.T) {
 	prevMCPRuntimeAuditAuthorizer := appagentthread.SVC.MCPRuntimeAuditAuthorizer
 	prevArtifactScannerStatus := appagentthread.SVC.ArtifactScannerStatus
 	prevArtifactReviewClock := appagentthread.SVC.ArtifactReviewClock
+	prevJournalSnapshotRepository := appagentthread.SVC.JournalSnapshotRepository
+	prevJournalQueryRepository := appagentthread.SVC.JournalQueryRepository
+	prevJournalSnapshotAttemptReader := appagentthread.SVC.JournalSnapshotAttemptReader
+	prevJournalSnapshotObjectStorage := appagentthread.SVC.JournalSnapshotObjectStorage
+	prevJournalSnapshotAuthorizer := appagentthread.SVC.JournalSnapshotAuthorizer
+	prevJournalSnapshotRuntimeFileReader := appagentthread.SVC.JournalSnapshotRuntimeFileReader
+	prevJournalSnapshotArtifactReader := appagentthread.SVC.JournalSnapshotArtifactReader
+	prevJournalSnapshotArtifactCapabilityIssuer := appagentthread.SVC.JournalSnapshotArtifactCapabilityIssuer
+	prevJournalBrowserRedactionVerifier := appagentthread.SVC.JournalBrowserRedactionVerifier
+	prevJournalSnapshotIDGenerator := appagentthread.SVC.JournalSnapshotIDGenerator
+	prevJournalSnapshotNow := appagentthread.SVC.JournalSnapshotNow
+	prevJournalUserSettingsStore := appagentthread.SVC.JournalUserSettingsStore
+	prevJournalSettingsNow := appagentthread.SVC.JournalSettingsNow
+	prevJournalAdmissionLimiter := appagentthread.SVC.JournalAdmissionLimiter
+	prevJournalAdmissionRequired := appagentthread.SVC.JournalAdmissionRequired
 	t.Cleanup(func() {
 		appagentthread.SVC.ThreadSVC = prevThreadSVC
 		appagentthread.SVC.ThreadAuthorizer = prevThreadAuthorizer
@@ -89,6 +105,21 @@ func installAgentThreadTestService(t *testing.T) {
 		appagentthread.SVC.MCPRuntimeAuditAuthorizer = prevMCPRuntimeAuditAuthorizer
 		appagentthread.SVC.ArtifactScannerStatus = prevArtifactScannerStatus
 		appagentthread.SVC.ArtifactReviewClock = prevArtifactReviewClock
+		appagentthread.SVC.JournalSnapshotRepository = prevJournalSnapshotRepository
+		appagentthread.SVC.JournalQueryRepository = prevJournalQueryRepository
+		appagentthread.SVC.JournalSnapshotAttemptReader = prevJournalSnapshotAttemptReader
+		appagentthread.SVC.JournalSnapshotObjectStorage = prevJournalSnapshotObjectStorage
+		appagentthread.SVC.JournalSnapshotAuthorizer = prevJournalSnapshotAuthorizer
+		appagentthread.SVC.JournalSnapshotRuntimeFileReader = prevJournalSnapshotRuntimeFileReader
+		appagentthread.SVC.JournalSnapshotArtifactReader = prevJournalSnapshotArtifactReader
+		appagentthread.SVC.JournalSnapshotArtifactCapabilityIssuer = prevJournalSnapshotArtifactCapabilityIssuer
+		appagentthread.SVC.JournalBrowserRedactionVerifier = prevJournalBrowserRedactionVerifier
+		appagentthread.SVC.JournalSnapshotIDGenerator = prevJournalSnapshotIDGenerator
+		appagentthread.SVC.JournalSnapshotNow = prevJournalSnapshotNow
+		appagentthread.SVC.JournalUserSettingsStore = prevJournalUserSettingsStore
+		appagentthread.SVC.JournalSettingsNow = prevJournalSettingsNow
+		appagentthread.SVC.JournalAdmissionLimiter = prevJournalAdmissionLimiter
+		appagentthread.SVC.JournalAdmissionRequired = prevJournalAdmissionRequired
 	})
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -207,6 +238,8 @@ func (a *recordingWorkbenchMCPRuntimeAuditAuthorizer) AuthorizeMCPRuntimeAuditAc
 type recordingWorkbenchArtifactStorage struct {
 	objects                map[string][]byte
 	signedURL              string
+	getCalls               int
+	openCalls              int
 	signKey                string
 	signExpire             int64
 	signContentDisposition string
@@ -217,8 +250,17 @@ func (s *recordingWorkbenchArtifactStorage) GetObject(
 	_ context.Context,
 	objectKey string,
 ) ([]byte, error) {
+	s.getCalls++
 	content := s.objects[objectKey]
 	return append([]byte(nil), content...), nil
+}
+
+func (s *recordingWorkbenchArtifactStorage) OpenObjectStream(
+	_ context.Context,
+	objectKey string,
+) (io.ReadCloser, error) {
+	s.openCalls++
+	return io.NopCloser(bytes.NewReader(s.objects[objectKey])), nil
 }
 
 func (s *recordingWorkbenchArtifactStorage) GetObjectUrl(
@@ -384,9 +426,174 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			id integer PRIMARY KEY,
 			thread_id integer,
 			run_id integer,
+			journal_run_id integer,
+			attempt_id text,
+			sequence integer,
+			idempotency_key text,
+			parent_event_id integer,
+			schema_version text,
+			status text,
+			occurred_at_unix_nano integer,
+			visibility text,
+			payload_version text,
+			snapshot_id text,
+			trace_id text,
+			action_id text,
+			phase text,
+			operation text,
+			target text,
+			milestone text,
 			event_type text,
+			journal_event_type text,
 			payload json,
+			journal_payload json,
 			created_at integer
+		);
+		CREATE TABLE agent_run_attempts (
+			id integer PRIMARY KEY,
+			thread_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			execution_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			ordinal integer NOT NULL,
+			status text NOT NULL,
+			active_slot integer,
+			next_sequence integer NOT NULL DEFAULT 1,
+			last_committed_sequence integer NOT NULL DEFAULT 0,
+			source_checkpoint_id integer,
+			source_attempt_id text,
+			recovery_idempotency_key text,
+			enrollment_version text NOT NULL,
+			snapshots_enabled integer NOT NULL DEFAULT 0,
+			projection_state text NOT NULL DEFAULT 'healthy',
+			projection_degraded_at integer,
+			trace_id text,
+			terminal_event_id integer,
+			created_at integer NOT NULL,
+			updated_at integer NOT NULL,
+			started_at integer,
+			ended_at integer
+		);
+		CREATE TABLE agent_side_effect_ledger (
+			id integer PRIMARY KEY,
+			thread_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			idempotency_key text NOT NULL,
+			action_kind text NOT NULL,
+			replay_policy text NOT NULL,
+			status text NOT NULL,
+			request_hash text NOT NULL,
+			request_summary blob,
+			external_reference_digest text,
+			result_snapshot_id text,
+			result_event_id integer,
+			checkpoint_id integer,
+			compensation_kind text,
+			resolution_action text,
+			resolution_idempotency_key text,
+			resolved_at integer,
+			version integer NOT NULL DEFAULT 1,
+			prepared_at integer NOT NULL,
+			executing_at integer,
+			succeeded_at integer,
+			failed_at integer,
+			unknown_at integer,
+			compensated_at integer,
+			created_at integer NOT NULL,
+			updated_at integer NOT NULL
+		);
+		CREATE TABLE agent_journal_snapshots (
+			snapshot_id text PRIMARY KEY,
+			space_id integer NOT NULL,
+			thread_id integer NOT NULL,
+			run_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			event_id integer NOT NULL,
+			action_id text NOT NULL,
+			revision integer NOT NULL,
+			content_type text NOT NULL,
+			status text NOT NULL,
+			is_fragmented integer NOT NULL,
+			fragment_count integer NOT NULL,
+			visibility text NOT NULL,
+			error_code text,
+			mime_type text NOT NULL,
+			encoding text NOT NULL,
+			compression text NOT NULL,
+			content_json blob,
+			object_key text,
+			summary_json blob,
+			summary_hash text,
+			content_length integer NOT NULL,
+			content_hash text NOT NULL,
+			acl_domain text NOT NULL,
+			source_resource_type text,
+			source_resource_id text,
+			source_revision text,
+			original_object_key text,
+			expires_at integer NOT NULL,
+			cleanup_state text NOT NULL,
+			deleted_at integer,
+			cleanup_claim_token text,
+			cleanup_claim_expires_at integer,
+			cleanup_attempt_count integer NOT NULL DEFAULT 0,
+			cleanup_last_error_code text,
+			created_at integer NOT NULL
+		);
+		CREATE TABLE agent_journal_snapshot_reservations (
+			snapshot_id text PRIMARY KEY,
+			reservation_token text NOT NULL,
+			space_id integer NOT NULL,
+			thread_id integer NOT NULL,
+			run_id integer NOT NULL,
+			journal_run_id integer NOT NULL,
+			attempt_id text NOT NULL,
+			action_id text NOT NULL,
+			revision integer NOT NULL,
+			event_id integer NOT NULL,
+			idempotency_key text NOT NULL,
+			content_hash text NOT NULL,
+			acl_domain text NOT NULL,
+			staging_prefix text NOT NULL,
+			expires_at integer NOT NULL,
+			cleanup_claim_token text,
+			cleanup_claim_expires_at integer,
+			cleanup_attempt_count integer NOT NULL DEFAULT 0,
+			cleanup_last_error_code text,
+			created_at integer NOT NULL
+		);
+		CREATE TABLE agent_journal_snapshot_fragments (
+			fragment_id text PRIMARY KEY,
+			snapshot_id text NOT NULL,
+			fragment_index integer NOT NULL,
+			kind text NOT NULL,
+			metadata_json blob,
+			mime_type text,
+			inline_content blob,
+			object_key text,
+			byte_start integer NOT NULL,
+			byte_end integer NOT NULL,
+			size_bytes integer NOT NULL,
+			content_hash text NOT NULL,
+			created_at integer NOT NULL
+		);
+		CREATE TABLE agent_journal_snapshot_access_audits (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			space_id integer NOT NULL,
+			thread_id integer NOT NULL,
+			run_id integer NOT NULL,
+			attempt_id text,
+			snapshot_id text NOT NULL,
+			content_type text,
+			action text NOT NULL,
+			actor_id integer NOT NULL,
+			permission_result text NOT NULL,
+			idempotency_key text NOT NULL,
+			target_hash text NOT NULL,
+			trace_id text,
+			created_at integer NOT NULL
 		);
 		CREATE TABLE agent_checkpoints (
 			id integer PRIMARY KEY,
@@ -516,6 +723,7 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			user_id integer,
 			thread_id integer,
 			run_id integer,
+			journal_run_id integer,
 			file_id integer UNIQUE,
 			title text DEFAULT '',
 			artifact_type text,
@@ -524,10 +732,20 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			content_type text DEFAULT '',
 			size_bytes integer DEFAULT 0,
 			preview_mode text DEFAULT 'download',
+			source text DEFAULT 'agent_generated',
+			generation_status text DEFAULT 'processing',
+			primary_slot integer,
+			collection_id text,
+			collection_order integer,
+			detected_content_type text,
+			scanned_size_bytes integer,
+			content_hash text,
 			metadata json,
 			created_at integer,
 			updated_at integer,
-			deleted_at integer DEFAULT 0
+			deleted_at integer DEFAULT 0,
+			UNIQUE (journal_run_id, primary_slot),
+			UNIQUE (journal_run_id, collection_id, collection_order)
 		);
 		CREATE TABLE agent_artifact_scan_jobs (
 			id integer PRIMARY KEY,

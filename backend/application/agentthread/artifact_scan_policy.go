@@ -116,10 +116,12 @@ func isArtifactScanOutageStatus(status artifactScanStatus) bool {
 }
 
 func isArtifactNonExecutableForScanOutage(artifact *domainentity.AgentArtifact) bool {
-	if artifact == nil {
+	if artifact == nil || strings.TrimSpace(artifact.DetectedContentType) == "" ||
+		artifact.ScannedSizeBytes == nil || *artifact.ScannedSizeBytes <= 0 ||
+		!validApplicationArtifactHash(artifact.ContentHash) {
 		return false
 	}
-	determined := domainservice.DetermineArtifactPreviewMode(artifact.ContentType)
+	determined := domainservice.DetermineArtifactPreviewMode(artifact.DetectedContentType)
 	switch artifact.PreviewMode {
 	case domainentity.AgentArtifactPreviewModeText:
 		return determined == domainentity.AgentArtifactPreviewModeText

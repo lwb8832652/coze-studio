@@ -150,6 +150,38 @@ func TestCreateThreadRunMessageAllocatesBeforePersistence(t *testing.T) {
 	require.Empty(t, repo.threads)
 }
 
+func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(1001)})
+
+	result, err := svc.CreateThreadRunMessage(
+		context.Background(),
+		&CreateThreadRunMessageRequest{
+			Thread: CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "journal task"},
+			Run: CreateRunRequest{
+				RunKind: entity.RunKindTask,
+				Input:   `{"messages":[{"role":"user","content":"start"}]}`,
+				Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+			},
+			Message:       CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+			EnrollJournal: true,
+			JournalEnrollment: &JournalEnrollmentOptions{
+				EnrollmentVersion: entity.JournalSchemaVersion,
+				SnapshotsEnabled:  true,
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, int64(1004), result.Attempt.ID)
+	require.Equal(t, result.Run.ID, result.Attempt.JournalRunID)
+	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
+	require.Equal(t, entity.JournalSchemaVersion, result.Attempt.EnrollmentVersion)
+	require.True(t, result.Attempt.SnapshotsEnabled)
+	require.Len(t, repo.runAttempts[result.Run.ID], 1)
+}
+
 func TestCreateRunBundleBindsMessageAndEventToGeneratedRun(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
@@ -180,6 +212,233 @@ func TestCreateRunBundleBindsMessageAndEventToGeneratedRun(t *testing.T) {
 	require.Equal(t, result.Run.ID, result.Event.RunID)
 	require.JSONEq(t, `{"resume_run_id":2001}`, result.Event.Payload)
 	require.Equal(t, 1, repo.createRunBundleCalls)
+}
+
+func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2101)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued,
+			Input: `{"messages":[]}`, IdempotencyKey: "journal-run",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			EnrollmentVersion: "1.1",
+			SnapshotsEnabled:  true,
+			TraceID:           "trace-enrollment",
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, int64(2101), result.Run.ID)
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, int64(2102), result.Attempt.ID)
+	require.Equal(t, result.Run.ID, result.Attempt.JournalRunID)
+	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
+	require.Equal(t, "att_2102", result.Attempt.AttemptID)
+	require.Equal(t, uint32(1), result.Attempt.Ordinal)
+	require.Equal(t, entity.RunAttemptStatusPending, result.Attempt.Status)
+	require.Equal(t, uint64(1), result.Attempt.NextSequence)
+	require.Zero(t, result.Attempt.LastCommittedSequence)
+	require.Equal(t, "1.1", result.Attempt.EnrollmentVersion)
+	require.True(t, result.Attempt.SnapshotsEnabled)
+	require.Equal(t, entity.JournalProjectionStateHealthy, result.Attempt.ProjectionState)
+	require.NotNil(t, result.Attempt.TraceID)
+	require.Equal(t, "trace-enrollment", *result.Attempt.TraceID)
+}
+
+func TestCreateRunBundleBuildsAtomicExpiredLeaseRecoveryBoundary(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2201)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			IdempotencyKey: "lease-recovery-1", MultitaskStrategy: "reject",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			Recovery: &JournalRecoveryEnrollmentOptions{
+				JournalRunID: 50, SourceCheckpointID: 700,
+				SourceAttemptID: "att_100", IdempotencyKey: "lease-recovery-1",
+				ExpiredLease: &JournalRecoveryExpiredLeaseOptions{
+					RunID: 50, LeaseOwner: "worker-a", LeaseToken: "lease-50",
+					ExecutionGeneration: 3, Now: 2000,
+					ErrorCode:    "run_recovered",
+					ErrorMessage: "execution recovered from a durable checkpoint",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, int64(2201), result.Run.ID)
+	require.Equal(t, int64(2203), result.Attempt.ID)
+	require.NotNil(t, repo.lastCreateRunBundleReq)
+	source := repo.lastCreateRunBundleReq.RecoverySourceLease
+	require.NotNil(t, source)
+	require.Equal(t, int64(50), source.RunID)
+	require.Equal(t, entity.RunStatusFailed, source.ToStatus)
+	require.Equal(t, int64(2202), source.Event.ID)
+	require.Equal(t, "run.failed", source.Event.EventType)
+	require.Contains(t, source.Event.Payload, `"error_code":"run_recovered"`)
+	require.NotNil(t, source.JournalEvent)
+	require.Equal(t, "run.lifecycle", source.JournalEvent.EventType)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), source.JournalEvent.Status)
+}
+
+func TestCreateRunBundleRejectsUnsupportedJournalEnrollmentVersion(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2101)})
+
+	_, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued,
+			Input: `{"messages":[]}`, IdempotencyKey: "journal-unsupported-version",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			EnrollmentVersion: "2.0",
+		},
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Equal(t, 1, repo.createRunBundleCalls)
+}
+
+func TestCreateRunBundleReportsEnrollmentVersionDriftAsIdempotencyConflict(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2101)})
+	request := &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued,
+			Input: `{"messages":[]}`, IdempotencyKey: "journal-version-replay",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			EnrollmentVersion: entity.JournalSchemaVersion,
+		},
+	}
+	_, err := svc.CreateRunBundle(context.Background(), request)
+	require.NoError(t, err)
+
+	request.JournalEnrollment.EnrollmentVersion = "2.0"
+	_, err = svc.CreateRunBundle(context.Background(), request)
+	require.ErrorIs(t, err, repository.ErrRunIdempotencyConflict)
+	require.Equal(t, 2, repo.createRunBundleCalls)
+}
+
+func TestCreateJournalAttemptGeneratesServerIDAndDelegatesRecoveryTaskRun(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusRunning},
+		{ID: 21, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusRunning, StartedAt: 123},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2201)})
+	sourceAttemptID := "att_2102"
+
+	attempt, err := svc.CreateJournalAttempt(context.Background(), &CreateJournalAttemptRequest{
+		JournalRunID: 20, ExecutionRunID: 21,
+		SourceAttemptID: &sourceAttemptID, RecoveryIdempotencyKey: "recovery-1",
+		TraceID: "trace-recovery",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2201), attempt.ID)
+	require.Equal(t, int64(10), attempt.ThreadID)
+	require.Equal(t, int64(20), attempt.JournalRunID)
+	require.Equal(t, int64(21), attempt.ExecutionRunID)
+	require.Equal(t, "att_2201", attempt.AttemptID)
+	require.Equal(t, entity.RunAttemptStatusRunning, attempt.Status)
+	require.Equal(t, "recovery-1", *attempt.RecoveryIdempotencyKey)
+	require.Equal(t, sourceAttemptID, *attempt.SourceAttemptID)
+	require.Equal(t, int64(123), *attempt.StartedAt)
+	require.Equal(t, "trace-recovery", *attempt.TraceID)
+	require.Equal(t, attempt, repo.lastJournalAttempt)
+}
+
+func TestCreateJournalAttemptRejectsSubagentExecution(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusRunning},
+		{ID: 21, ThreadID: 10, ParentRunID: 20, RunKind: entity.RunKindSubagent, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2201)})
+
+	_, err := svc.CreateJournalAttempt(context.Background(), &CreateJournalAttemptRequest{
+		JournalRunID: 20, ExecutionRunID: 21, RecoveryIdempotencyKey: "subagent-recovery",
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Nil(t, repo.lastJournalAttempt)
+}
+
+func TestCreateJournalAttemptMapsTerminalExecutionForRepositoryReplay(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusRunning},
+		{ID: 21, ThreadID: 10, RunKind: entity.RunKindTask, Status: entity.RunStatusSucceeded},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2201)})
+
+	attempt, err := svc.CreateJournalAttempt(context.Background(), &CreateJournalAttemptRequest{
+		JournalRunID: 20, ExecutionRunID: 21, RecoveryIdempotencyKey: "terminal-replay",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunAttemptStatusCompleted, attempt.Status)
+	require.Equal(t, entity.RunAttemptStatusCompleted, repo.lastJournalAttempt.Status)
+}
+
+func TestAppendAndGetJournalEventUseServerOwnedRunThread(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask}}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2301)})
+
+	event, err := svc.AppendJournalEvent(context.Background(), &AppendJournalEventRequest{
+		RunID: 20, Visibility: entity.JournalVisibilityPublic,
+		IdempotencyKey: "service-event", EventType: "message.delta",
+		Payload: `{"type":"test","data":{}}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2301), event.ID)
+	require.Equal(t, int64(10), event.ThreadID)
+	require.Equal(t, event, repo.lastJournalEvent)
+	got, err := svc.GetJournalEvent(context.Background(), event.ID)
+	require.NoError(t, err)
+	require.Equal(t, event, got)
+}
+
+func TestFinalizeJournalAttemptGeneratesEventIDAndDelegatesStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask}}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2401)})
+
+	event, won, err := svc.FinalizeJournalAttempt(context.Background(), &FinalizeJournalAttemptRequest{
+		Status: entity.RunAttemptStatusTimedOut,
+		Event: AppendJournalEventRequest{
+			RunID: 20, IdempotencyKey: "timeout", EventType: "run.lifecycle",
+			Status:  string(entity.RunAttemptStatusTimedOut),
+			Payload: `{"type":"terminal","data":{}}`,
+		},
+		EndedAt: 1234,
+	})
+
+	require.NoError(t, err)
+	require.True(t, won)
+	require.Equal(t, int64(2401), event.ID)
+	require.Equal(t, entity.RunAttemptStatusTimedOut, repo.lastFinalizeJournalReq.Status)
+	require.Equal(t, int64(1234), repo.lastFinalizeJournalReq.EndedAt)
 }
 
 func TestListThreadsNormalizesPaging(t *testing.T) {
@@ -897,6 +1156,9 @@ func TestReconcileExpiredRunLeaseValidatesTargetAndForwardsFence(t *testing.T) {
 	require.Equal(t, int64(2001), repo.lastReconcileExpiredRunLeaseReq.Event.ID)
 	require.Equal(t, "run.failed", repo.lastReconcileExpiredRunLeaseReq.Event.EventType)
 	require.JSONEq(t, `{"status":"failed","error_code":"run_abandoned"}`, repo.lastReconcileExpiredRunLeaseReq.Event.Payload)
+	require.NotNil(t, repo.lastReconcileExpiredRunLeaseReq.JournalEvent)
+	require.Equal(t, "run.lifecycle", repo.lastReconcileExpiredRunLeaseReq.JournalEvent.EventType)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), repo.lastReconcileExpiredRunLeaseReq.JournalEvent.Status)
 }
 
 func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.T) {
@@ -923,6 +1185,8 @@ func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.
 	require.Equal(t, int64(900), repo.lastRequestRunCancellationReq.Event.ID)
 	require.Equal(t, "run.canceled", repo.lastRequestRunCancellationReq.Event.EventType)
 	require.JSONEq(t, `{"status":"canceled"}`, repo.lastRequestRunCancellationReq.Event.Payload)
+	require.NotNil(t, repo.lastRequestRunCancellationReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCancelled), repo.lastRequestRunCancellationReq.JournalEvent.Status)
 }
 
 func TestRequestRunCancellationReturnsCanceledRunWithoutAllocatingEventID(t *testing.T) {
@@ -986,6 +1250,8 @@ func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *tes
 	require.Equal(t, "context.thread_title_updated", result.TitleEvent.EventType)
 	require.Equal(t, int64(302), result.CompletionEvent.ID)
 	require.Equal(t, "run.completed", result.CompletionEvent.EventType)
+	require.NotNil(t, repo.lastFinalizeRunSuccessReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCompleted), repo.lastFinalizeRunSuccessReq.JournalEvent.Status)
 	require.NotNil(t, result.TerminalCheckpoint)
 	require.Equal(t, int64(303), result.TerminalCheckpoint.ID)
 	require.Equal(t, int64(50), result.TerminalCheckpoint.ParentCheckpointID)
@@ -1033,6 +1299,8 @@ func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	require.Equal(t, int64(2001), repo.lastUpdateRunReq.Event.ID)
 	require.Equal(t, "run.completed", repo.lastUpdateRunReq.Event.EventType)
 	require.JSONEq(t, `{"status":"succeeded","worker_id":"worker-a"}`, repo.lastUpdateRunReq.Event.Payload)
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusCompleted), repo.lastUpdateRunReq.JournalEvent.Status)
 }
 
 func TestCompleteRunBindsOutboxIntentToDurableTerminalEvent(t *testing.T) {
@@ -1193,6 +1461,29 @@ func TestFailRunStoresError(t *testing.T) {
 	require.JSONEq(t, `{"status":"failed","worker_id":"worker-a","error_code":"model_error"}`, repo.lastUpdateRunReq.Event.Payload)
 	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "provider secret")
 	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "raw_provider")
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusFailed), repo.lastUpdateRunReq.JournalEvent.Status)
+}
+
+func TestFailRunProjectsStandardTimeoutCodeAsTimedOut(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a"},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.FailRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		ErrorCode: "task_timeout", ErrorMessage: "execution deadline reached",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastUpdateRunReq.JournalEvent)
+	require.Equal(t, string(entity.RunAttemptStatusTimedOut), repo.lastUpdateRunReq.JournalEvent.Status)
+	require.JSONEq(t,
+		`{"type":"terminal","data":{"status":"timed_out"}}`,
+		repo.lastUpdateRunReq.JournalEvent.Payload,
+	)
 }
 
 func TestAppendRunEventCreatesEventFromRun(t *testing.T) {
@@ -2171,11 +2462,18 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 }
 
 type memoryRepo struct {
+	repository.JournalExecutionRepository
 	mu                                 sync.Mutex
 	threads                            map[int64]*entity.Thread
 	messages                           map[int64][]*entity.Message
 	runs                               map[int64][]*entity.Run
 	runEvents                          map[int64][]*entity.RunEvent
+	runAttempts                        map[int64][]*entity.RunAttempt
+	journalEvents                      map[int64]*entity.JournalEvent
+	lastJournalAttempt                 *entity.RunAttempt
+	lastJournalEvent                   *entity.JournalEvent
+	lastCreateRunBundleReq             *repository.CreateRunBundleRequest
+	lastFinalizeJournalReq             repository.FinalizeJournalAttemptRequest
 	checkpoints                        map[int64][]*entity.Checkpoint
 	memories                           map[int64][]*entity.Memory
 	sourceMemory                       *entity.Memory
@@ -2234,12 +2532,18 @@ type memoryRepo struct {
 	createRunBundleCalls               int
 }
 
+var _ repository.Repository = (*memoryRepo)(nil)
+
+var errMemoryJournalSnapshotUnsupported = errors.New("memory journal snapshot repository is not configured")
+
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
 		threads:             make(map[int64]*entity.Thread),
 		messages:            make(map[int64][]*entity.Message),
 		runs:                make(map[int64][]*entity.Run),
 		runEvents:           make(map[int64][]*entity.RunEvent),
+		runAttempts:         make(map[int64][]*entity.RunAttempt),
+		journalEvents:       make(map[int64]*entity.JournalEvent),
 		checkpoints:         make(map[int64][]*entity.Checkpoint),
 		memories:            make(map[int64][]*entity.Memory),
 		transcriptSnapshots: make(map[string]*entity.TranscriptSnapshot),
@@ -2279,6 +2583,7 @@ func (r *memoryRepo) CreateThreadBundle(
 				return &repository.CreateThreadBundleResult{
 					Thread: cloneThread(r.threads[threadID]), Run: cloneRun(run),
 					Message: cloneMessage(r.messages[threadID][0]),
+					Attempt: cloneRunAttemptForServiceTest(firstRunAttempt(r.runAttempts[run.ID])),
 				}, nil
 			}
 		}
@@ -2289,10 +2594,23 @@ func (r *memoryRepo) CreateThreadBundle(
 	r.threads[req.Thread.ID] = cloneThread(req.Thread)
 	r.runs[req.Thread.ID] = append(r.runs[req.Thread.ID], cloneRun(req.Run))
 	r.messages[req.Thread.ID] = append(r.messages[req.Thread.ID], cloneMessage(req.Message))
+	if req.Attempt != nil {
+		r.runAttempts[req.Run.ID] = append(
+			r.runAttempts[req.Run.ID],
+			cloneRunAttemptForServiceTest(req.Attempt),
+		)
+	}
 	return &repository.CreateThreadBundleResult{
 		Thread: cloneThread(req.Thread), Run: cloneRun(req.Run),
-		Message: cloneMessage(req.Message), Created: true,
+		Message: cloneMessage(req.Message), Attempt: cloneRunAttemptForServiceTest(req.Attempt), Created: true,
 	}, nil
+}
+
+func firstRunAttempt(attempts []*entity.RunAttempt) *entity.RunAttempt {
+	if len(attempts) == 0 {
+		return nil
+	}
+	return attempts[0]
 }
 
 func (r *memoryRepo) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
@@ -2490,6 +2808,8 @@ func (r *memoryRepo) CreateRunBundle(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.createRunBundleCalls++
+	requestCopy := req
+	r.lastCreateRunBundleReq = &requestCopy
 	if req.Run == nil {
 		return nil, fmt.Errorf("run is required")
 	}
@@ -2500,6 +2820,21 @@ func (r *memoryRepo) CreateRunBundle(
 					continue
 				}
 				result := &repository.CreateRunBundleResult{Run: cloneRun(run)}
+				existingAttempts := r.runAttempts[run.ID]
+				if req.Attempt == nil && len(existingAttempts) > 0 {
+					return nil, fmt.Errorf("%w: journal enrollment changed", repository.ErrRunIdempotencyConflict)
+				}
+				if req.Attempt != nil {
+					if len(existingAttempts) == 0 {
+						return nil, fmt.Errorf("%w: journal attempt is missing", repository.ErrRunIdempotencyConflict)
+					}
+					existingAttempt := existingAttempts[0]
+					if existingAttempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+						existingAttempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+						return nil, fmt.Errorf("%w: journal enrollment semantics changed", repository.ErrRunIdempotencyConflict)
+					}
+					result.Attempt = cloneRunAttemptForServiceTest(existingAttempt)
+				}
 				if req.Message != nil {
 					for _, message := range r.messages[run.ThreadID] {
 						if message.RunID == run.ID && message.Role == req.Message.Role {
@@ -2526,6 +2861,10 @@ func (r *memoryRepo) CreateRunBundle(
 			}
 		}
 	}
+	if req.Attempt != nil && req.Attempt.RecoveryIdempotencyKey == nil &&
+		req.Attempt.EnrollmentVersion != entity.JournalSchemaVersion {
+		return nil, repository.ErrUnsupportedJournalEnrollmentVersion
+	}
 
 	r.runs[req.Run.ThreadID] = append(r.runs[req.Run.ThreadID], cloneRun(req.Run))
 	if req.Message != nil {
@@ -2534,9 +2873,193 @@ func (r *memoryRepo) CreateRunBundle(
 	if req.Event != nil {
 		r.runEvents[req.Run.ID] = append(r.runEvents[req.Run.ID], cloneRunEvent(req.Event))
 	}
+	if req.Attempt != nil {
+		r.runAttempts[req.Run.ID] = append(r.runAttempts[req.Run.ID], cloneRunAttemptForServiceTest(req.Attempt))
+	}
 	return &repository.CreateRunBundleResult{
-		Run: cloneRun(req.Run), Message: cloneMessage(req.Message), Event: cloneRunEvent(req.Event), Created: true,
+		Run: cloneRun(req.Run), Message: cloneMessage(req.Message), Event: cloneRunEvent(req.Event),
+		Attempt: cloneRunAttemptForServiceTest(req.Attempt), Created: true,
 	}, nil
+}
+
+func cloneRunAttemptForServiceTest(attempt *entity.RunAttempt) *entity.RunAttempt {
+	if attempt == nil {
+		return nil
+	}
+	cloned := *attempt
+	return &cloned
+}
+
+func (r *memoryRepo) CreateJournalAttempt(
+	ctx context.Context,
+	attempt *entity.RunAttempt,
+) (*entity.RunAttempt, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastJournalAttempt = cloneRunAttemptForServiceTest(attempt)
+	r.runAttempts[attempt.JournalRunID] = append(r.runAttempts[attempt.JournalRunID], cloneRunAttemptForServiceTest(attempt))
+	return cloneRunAttemptForServiceTest(attempt), nil
+}
+
+func (r *memoryRepo) GetActiveJournalAttempt(
+	ctx context.Context,
+	runID int64,
+) (*entity.RunAttempt, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	attempts := r.runAttempts[runID]
+	if len(attempts) == 0 {
+		return nil, repository.ErrJournalNotEnrolled
+	}
+	return cloneRunAttemptForServiceTest(attempts[len(attempts)-1]), nil
+}
+
+func (r *memoryRepo) ListJournalAttempts(
+	ctx context.Context,
+	runID int64,
+) ([]*entity.RunAttempt, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	attempts := r.runAttempts[runID]
+	if len(attempts) == 0 {
+		return nil, repository.ErrJournalNotEnrolled
+	}
+	result := make([]*entity.RunAttempt, 0, len(attempts))
+	for _, attempt := range attempts {
+		result = append(result, cloneRunAttemptForServiceTest(attempt))
+	}
+	return result, nil
+}
+
+func (r *memoryRepo) AppendJournalEvent(
+	ctx context.Context,
+	event *entity.JournalEvent,
+) (*entity.JournalEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cloned := cloneJournalEventForServiceTest(event)
+	r.lastJournalEvent = cloned
+	r.journalEvents[event.ID] = cloned
+	return cloneJournalEventForServiceTest(cloned), nil
+}
+
+func (r *memoryRepo) FinalizeJournalAttempt(
+	ctx context.Context,
+	req repository.FinalizeJournalAttemptRequest,
+) (*entity.JournalEvent, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastFinalizeJournalReq = req
+	cloned := cloneJournalEventForServiceTest(req.Event)
+	r.journalEvents[cloned.ID] = cloned
+	return cloneJournalEventForServiceTest(cloned), true, nil
+}
+
+func (r *memoryRepo) GetJournalEvent(
+	ctx context.Context,
+	eventID int64,
+) (*entity.JournalEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	event, ok := r.journalEvents[eventID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return cloneJournalEventForServiceTest(event), nil
+}
+
+func (r *memoryRepo) ListJournalEvents(
+	ctx context.Context,
+	req repository.ListJournalEventsRequest,
+) (*repository.ListJournalEventsResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	events := make([]*entity.JournalEvent, 0)
+	for _, event := range r.journalEvents {
+		if event.JournalRunID != req.RunID || event.AttemptID != req.AttemptID ||
+			event.Visibility == entity.JournalVisibilityInternal || event.Sequence <= req.AfterSequence {
+			continue
+		}
+		events = append(events, cloneJournalEventForServiceTest(event))
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].Sequence < events[j].Sequence })
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+	return &repository.ListJournalEventsResult{Events: events, HasMore: hasMore}, nil
+}
+
+func (r *memoryRepo) GetJournalBootstrap(
+	_ context.Context,
+	_ repository.GetJournalBootstrapRequest,
+) (*repository.GetJournalBootstrapResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) ReserveJournalSnapshot(
+	_ context.Context,
+	_ repository.ReserveJournalSnapshotRequest,
+) (*repository.ReserveJournalSnapshotResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) DeleteExpiredJournalSnapshotReservations(
+	_ context.Context,
+	_ int64,
+	_ int64,
+	_ int,
+) (int64, error) {
+	return 0, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) CreateJournalSnapshot(
+	_ context.Context,
+	_ repository.CreateJournalSnapshotRequest,
+) (*entity.JournalContentSnapshot, *entity.JournalEvent, bool, error) {
+	return nil, nil, false, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) GetJournalSnapshot(
+	_ context.Context,
+	_ repository.GetJournalSnapshotRequest,
+) (*entity.JournalContentSnapshot, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) ListJournalSnapshotFragments(
+	_ context.Context,
+	_ repository.ListJournalSnapshotFragmentsRequest,
+) (*repository.ListJournalSnapshotFragmentsResult, error) {
+	return nil, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) RecordJournalSnapshotAccess(
+	_ context.Context,
+	_ *entity.JournalSnapshotAccessAudit,
+) (*entity.JournalSnapshotAccessAudit, bool, error) {
+	return nil, false, errMemoryJournalSnapshotUnsupported
+}
+
+func (r *memoryRepo) IsJournalSnapshotObjectProtected(
+	_ context.Context,
+	_ int64,
+	_ string,
+	_ int64,
+) (bool, error) {
+	return false, errMemoryJournalSnapshotUnsupported
+}
+
+func cloneJournalEventForServiceTest(event *entity.JournalEvent) *entity.JournalEvent {
+	if event == nil {
+		return nil
+	}
+	cloned := *event
+	return &cloned
 }
 
 func (r *memoryRepo) GetRun(ctx context.Context, id int64) (*entity.Run, error) {

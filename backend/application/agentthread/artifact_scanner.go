@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -95,17 +96,16 @@ type clamdArtifactContentScanner struct {
 }
 
 type httpArtifactScanRequest struct {
-	Schema        string `json:"schema"`
-	Scanner       string `json:"scanner"`
-	SpaceID       int64  `json:"space_id,omitempty"`
-	ThreadID      int64  `json:"thread_id,omitempty"`
-	RunID         int64  `json:"run_id,omitempty"`
-	UserID        int64  `json:"user_id,omitempty"`
-	ArtifactID    int64  `json:"artifact_id,omitempty"`
-	FileID        int64  `json:"file_id,omitempty"`
-	ContentType   string `json:"content_type,omitempty"`
-	SizeBytes     int64  `json:"size_bytes"`
-	ContentBase64 string `json:"content_base64"`
+	Schema      string `json:"schema"`
+	Scanner     string `json:"scanner"`
+	SpaceID     int64  `json:"space_id,omitempty"`
+	ThreadID    int64  `json:"thread_id,omitempty"`
+	RunID       int64  `json:"run_id,omitempty"`
+	UserID      int64  `json:"user_id,omitempty"`
+	ArtifactID  int64  `json:"artifact_id,omitempty"`
+	FileID      int64  `json:"file_id,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	SizeBytes   int64  `json:"size_bytes"`
 }
 
 type httpArtifactScanResponse struct {
@@ -237,34 +237,23 @@ func (s *httpArtifactContentScanner) ScanArtifact(
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("artifact scanner is not configured")
 	}
-	if int64(len(req.Content)) > s.maxBytes {
+	if req.SizeBytes > s.maxBytes || int64(len(req.Content)) > s.maxBytes {
 		return nil, fmt.Errorf("artifact scanner content exceeds max bytes")
 	}
 	scannerName := strings.TrimSpace(req.Scanner)
 	if scannerName == "" {
 		scannerName = defaultApplicationArtifactScanner
 	}
-	payload, err := json.Marshal(httpArtifactScanRequest{
-		Schema:        artifactScannerRequestSchema,
-		Scanner:       scannerName,
-		SpaceID:       req.SpaceID,
-		ThreadID:      req.ThreadID,
-		RunID:         req.RunID,
-		UserID:        req.UserID,
-		ArtifactID:    req.ArtifactID,
-		FileID:        req.FileID,
-		ContentType:   strings.TrimSpace(req.ContentType),
-		SizeBytes:     req.SizeBytes,
-		ContentBase64: base64.StdEncoding.EncodeToString(req.Content),
-	})
+	body, err := newHTTPArtifactScanBody(req, scannerName, s.maxBytes)
 	if err != nil {
 		return nil, err
 	}
+	defer body.Close()
 	httpReq, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
 		s.endpoint,
-		bytes.NewReader(payload),
+		body,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("artifact scanner request is invalid")
@@ -299,6 +288,13 @@ func (s *httpArtifactContentScanner) ScanArtifact(
 	}, nil
 }
 
+func (s *httpArtifactContentScanner) MaxArtifactBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.maxBytes
+}
+
 func (s *clamdArtifactContentScanner) ScanArtifact(
 	ctx context.Context,
 	req ArtifactScanRequest,
@@ -306,7 +302,7 @@ func (s *clamdArtifactContentScanner) ScanArtifact(
 	if s == nil || s.address == "" {
 		return nil, fmt.Errorf("artifact scanner is not configured")
 	}
-	if int64(len(req.Content)) > s.maxBytes {
+	if req.SizeBytes > s.maxBytes || int64(len(req.Content)) > s.maxBytes {
 		return nil, fmt.Errorf("artifact scanner content exceeds max bytes")
 	}
 	scanCtx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -320,7 +316,7 @@ func (s *clamdArtifactContentScanner) ScanArtifact(
 	if deadline, ok := scanCtx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	if err := writeClamdInstream(conn, req.Content); err != nil {
+	if err := writeClamdInstream(conn, artifactScanContentReader(req), s.maxBytes); err != nil {
 		return nil, fmt.Errorf("artifact scanner request failed")
 	}
 	result, err := readClamdScanResult(conn)
@@ -331,28 +327,104 @@ func (s *clamdArtifactContentScanner) ScanArtifact(
 	return result, nil
 }
 
-func writeClamdInstream(w io.Writer, content []byte) error {
+func (s *clamdArtifactContentScanner) MaxArtifactBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.maxBytes
+}
+
+func writeClamdInstream(w io.Writer, content io.Reader, maxBytes int64) error {
+	if content == nil || maxBytes <= 0 {
+		return fmt.Errorf("artifact scanner content is not configured")
+	}
 	if err := writeAll(w, []byte("nINSTREAM\n")); err != nil {
 		return err
 	}
-	for len(content) > 0 {
-		chunkSize := len(content)
-		if chunkSize > clamdScannerChunkBytes {
-			chunkSize = clamdScannerChunkBytes
+	buffer := make([]byte, clamdScannerChunkBytes)
+	var total int64
+	for {
+		chunkSize, readErr := content.Read(buffer)
+		if chunkSize > 0 {
+			total += int64(chunkSize)
+			if total > maxBytes {
+				return fmt.Errorf("artifact scanner content exceeds max bytes")
+			}
+			var size [4]byte
+			binary.BigEndian.PutUint32(size[:], uint32(chunkSize))
+			if err := writeAll(w, size[:]); err != nil {
+				return err
+			}
+			if err := writeAll(w, buffer[:chunkSize]); err != nil {
+				return err
+			}
 		}
-		var size [4]byte
-		binary.BigEndian.PutUint32(size[:], uint32(chunkSize))
-		if err := writeAll(w, size[:]); err != nil {
-			return err
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return readErr
 		}
-		if err := writeAll(w, content[:chunkSize]); err != nil {
-			return err
-		}
-		content = content[chunkSize:]
 	}
 	var zero [4]byte
 
 	return writeAll(w, zero[:])
+}
+
+func artifactScanContentReader(req ArtifactScanRequest) io.Reader {
+	if req.ContentReader != nil {
+		return req.ContentReader
+	}
+	return bytes.NewReader(req.Content)
+}
+
+func newHTTPArtifactScanBody(
+	req ArtifactScanRequest,
+	scannerName string,
+	maxBytes int64,
+) (io.ReadCloser, error) {
+	prefix, err := json.Marshal(httpArtifactScanRequest{
+		Schema:      artifactScannerRequestSchema,
+		Scanner:     scannerName,
+		SpaceID:     req.SpaceID,
+		ThreadID:    req.ThreadID,
+		RunID:       req.RunID,
+		UserID:      req.UserID,
+		ArtifactID:  req.ArtifactID,
+		FileID:      req.FileID,
+		ContentType: strings.TrimSpace(req.ContentType),
+		SizeBytes:   req.SizeBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(prefix) == 0 || prefix[len(prefix)-1] != '}' {
+		return nil, fmt.Errorf("artifact scanner request is invalid")
+	}
+	prefix = append(prefix[:len(prefix)-1], []byte(`,"content_base64":"`)...)
+	reader := artifactScanContentReader(req)
+	pipeReader, pipeWriter := io.Pipe()
+	go func() {
+		if _, err := pipeWriter.Write(prefix); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			return
+		}
+		limited := &io.LimitedReader{R: reader, N: maxBytes + 1}
+		encoder := base64.NewEncoder(base64.StdEncoding, pipeWriter)
+		written, copyErr := io.Copy(encoder, limited)
+		closeErr := encoder.Close()
+		if copyErr == nil {
+			copyErr = closeErr
+		}
+		if copyErr == nil && written > maxBytes {
+			copyErr = fmt.Errorf("artifact scanner content exceeds max bytes")
+		}
+		if copyErr == nil {
+			_, copyErr = pipeWriter.Write([]byte(`"}`))
+		}
+		_ = pipeWriter.CloseWithError(copyErr)
+	}()
+	return pipeReader, nil
 }
 
 func writeAll(w io.Writer, data []byte) error {

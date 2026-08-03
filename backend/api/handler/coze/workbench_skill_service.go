@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 
@@ -96,6 +97,7 @@ func ImportSkill(ctx context.Context, c *app.RequestContext) {
 // InstallSkillFromArtifact .
 // @router /api/workbench/skills/install [POST]
 func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
+	const maxInstallSkillArtifactBytes = int64(10 << 20)
 	var err error
 	var req skillapi.InstallSkillFromArtifactRequest
 	err = c.BindAndValidate(&req)
@@ -126,6 +128,20 @@ func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	}
+	if artifactContent == nil || artifactContent.Stream == nil {
+		internalServerErrorResponse(ctx, c, fmt.Errorf("artifact content stream is unavailable"))
+		return
+	}
+	defer artifactContent.Stream.Close()
+	content, err := io.ReadAll(io.LimitReader(artifactContent.Stream, maxInstallSkillArtifactBytes+1))
+	if err != nil {
+		internalServerErrorResponse(ctx, c, fmt.Errorf("read skill artifact: %w", err))
+		return
+	}
+	if int64(len(content)) > maxInstallSkillArtifactBytes {
+		invalidParamRequestResponse(c, "skill artifact exceeds size limit")
+		return
+	}
 	fileName := strings.TrimSpace(artifactContent.FileName)
 	if !strings.EqualFold(path.Ext(fileName), ".skill") {
 		invalidParamRequestResponse(c, "only .skill artifacts can be installed")
@@ -137,7 +153,7 @@ func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
 		FileName: fileName,
 		Content: fmt.Sprintf(
 			"base64:%s",
-			base64.StdEncoding.EncodeToString(artifactContent.Content),
+			base64.StdEncoding.EncodeToString(content),
 		),
 	}, req.ThreadID)
 	if err != nil {

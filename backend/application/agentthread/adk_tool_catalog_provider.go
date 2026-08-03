@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
 )
@@ -36,6 +37,7 @@ const (
 
 type ADKRuntimeToolCall struct {
 	Run       *RunSummary
+	CallID    string
 	Name      string
 	Arguments string
 }
@@ -210,6 +212,7 @@ func (t *adkRuntimeCatalogTool) InvokableRun(
 
 	return t.definition.Invoker.InvokeADKRuntimeTool(ctx, ADKRuntimeToolCall{
 		Run:       t.run,
+		CallID:    compose.GetToolCallID(ctx),
 		Name:      t.definition.Name,
 		Arguments: strings.TrimSpace(argumentsInJSON),
 	})

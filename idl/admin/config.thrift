@@ -426,6 +426,26 @@ struct SandboxConfig {
     9: i64 memory_limit_mb
 }
 
+struct JournalRuntimeConfiguration {
+    1: bool journal_projection
+    2: bool journal_ui
+    3: bool journal_snapshots
+    4: bool checkpoint_recovery
+    5: i32 journal_projection_rollout_basis_points
+    6: i32 journal_ui_rollout_basis_points
+    7: i32 journal_snapshots_rollout_basis_points
+    8: i32 checkpoint_recovery_rollout_basis_points
+    9: i32 sse_tenant_connection_cap
+    10: i32 sse_cluster_connection_cap
+    11: i32 sse_send_queue_high_watermark
+    12: i32 sse_send_queue_max
+    13: i32 short_request_qps
+    14: i32 short_request_burst
+    15: i32 lease_ttl_seconds
+    16: i64 snapshot_fragment_threshold_bytes
+    17: string config_revision
+}
+
 struct BasicConfiguration {
     1: string admin_emails
     2: bool disable_user_registration
@@ -438,6 +458,7 @@ struct BasicConfiguration {
     9: optional string site_description
     10: optional string site_logo_uri
     11: optional string favicon_uri
+    12: optional JournalRuntimeConfiguration journal_runtime_configuration
 }
 
 struct PluginConfiguration {

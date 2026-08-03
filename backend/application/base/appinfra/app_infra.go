@@ -104,6 +104,11 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init model config failed, err=%w", err)
 	}
+	if redisReadiness, ok := deps.CacheCli.(interface {
+		CheckReadiness(context.Context) error
+	}); ok {
+		config.Base().SetJournalDependencyReadiness(redisReadiness)
+	}
 	if err := appsandbox.ImportLegacySandboxConfigIfEnabled(
 		ctx,
 		config.Base().GetLegacySandboxConfig,

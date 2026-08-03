@@ -279,22 +279,37 @@ func DomainArtifactToSummary(artifact *entity.AgentArtifact) *ArtifactSummary {
 	if artifact == nil {
 		return nil
 	}
+	contentType := legacyArtifactDownloadContentType
+	sizeBytes := int64(0)
+	previewMode := entity.AgentArtifactPreviewModeDownload
+	if trustedContentType, trustedSizeBytes, err := validatedArtifactScanMetadata(artifact); err == nil {
+		contentType = trustedContentType
+		sizeBytes = trustedSizeBytes
+		previewMode = artifact.PreviewMode
+	}
 	return &ArtifactSummary{
-		ArtifactID:   artifact.ID,
-		SpaceID:      artifact.SpaceID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        artifact.Title,
-		ArtifactType: artifact.ArtifactType,
-		VirtualPath:  artifact.VirtualPath,
-		ContentType:  artifact.ContentType,
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  ArtifactPreviewMode(artifact.PreviewMode),
-		Metadata:     artifact.Metadata,
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ArtifactID:       artifact.ID,
+		SpaceID:          artifact.SpaceID,
+		ThreadID:         artifact.ThreadID,
+		RunID:            artifact.RunID,
+		JournalRunID:     artifact.JournalRunID,
+		FileID:           artifact.FileID,
+		Title:            artifact.Title,
+		ArtifactType:     artifact.ArtifactType,
+		VirtualPath:      artifact.VirtualPath,
+		ContentType:      contentType,
+		SizeBytes:        sizeBytes,
+		PreviewMode:      ArtifactPreviewMode(previewMode),
+		Source:           string(artifact.Source),
+		GenerationStatus: string(artifact.GenerationStatus),
+		Capabilities:     artifactPublicCapabilities(artifact),
+		IsPrimary:        artifact.IsPrimary,
+		CollectionID:     artifact.CollectionID,
+		CollectionOrder:  artifact.CollectionOrder,
+		Metadata:         artifact.Metadata,
+		CreatedAt:        artifact.CreatedAt,
+		UpdatedAt:        artifact.UpdatedAt,
+		DeletedAt:        artifact.DeletedAt,
 	}
 }
 

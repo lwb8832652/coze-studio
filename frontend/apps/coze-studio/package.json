@@ -31,6 +31,7 @@
     "@coze-arch/i18n": "workspace:*",
     "@coze-arch/logger": "workspace:*",
     "@coze-arch/web-context": "workspace:*",
+    "@coze-common/virtual-list": "workspace:*",
     "@coze-foundation/account-adapter": "workspace:*",
     "@coze-foundation/account-ui-adapter": "workspace:*",
     "@coze-foundation/foundation-sdk": "workspace:*",

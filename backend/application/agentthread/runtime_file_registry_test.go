@@ -89,9 +89,10 @@ func TestApplicationADKRuntimeFileRegistryResolvesWorkspaceFile(t *testing.T) {
 }
 
 type recordingRuntimeFileService struct {
-	req        *domainservice.RegisterRuntimeFileRequest
-	resolveReq *domainservice.ResolveRuntimeFileRequest
-	resolved   *domainentity.AgentFile
+	req            *domainservice.RegisterRuntimeFileRequest
+	resolveReq     *domainservice.ResolveRuntimeFileRequest
+	resolved       *domainentity.AgentFile
+	resolvedByPath map[string]*domainentity.AgentFile
 }
 
 func (s *recordingRuntimeFileService) RegisterRuntimeFile(
@@ -122,5 +123,8 @@ func (s *recordingRuntimeFileService) ResolveRuntimeFile(
 ) (*domainentity.AgentFile, error) {
 	cloned := *req
 	s.resolveReq = &cloned
+	if resolved := s.resolvedByPath[req.VirtualPath]; resolved != nil {
+		return resolved, nil
+	}
 	return s.resolved, nil
 }

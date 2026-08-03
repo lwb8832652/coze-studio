@@ -25,6 +25,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
@@ -32,16 +33,18 @@ import (
 // The canonical Workbench stream keeps reviewed SDK-compatible event names
 // and payload shapes without exposing a separate compatibility route surface.
 const (
-	canonicalRunStreamEventMetadata = "metadata"
-	canonicalRunStreamEventValues   = "values"
-	canonicalRunStreamEventUpdates  = "updates"
-	canonicalRunStreamEventMessages = "messages"
-	canonicalRunStreamEventEvents   = "events"
-	canonicalRunStreamEventDebug    = "debug"
-	canonicalRunStreamEventCustom   = "custom"
-	canonicalRunStreamEventEnd      = "end"
-	canonicalRunStreamEventError    = "error"
-	canonicalRunStreamPageSize      = int32(200)
+	canonicalRunStreamEventMetadata      = "metadata"
+	canonicalRunStreamEventValues        = "values"
+	canonicalRunStreamEventUpdates       = "updates"
+	canonicalRunStreamEventMessages      = "messages"
+	canonicalRunStreamEventEvents        = "events"
+	canonicalRunStreamEventDebug         = "debug"
+	canonicalRunStreamEventCustom        = "custom"
+	canonicalRunStreamEventEnd           = "end"
+	canonicalRunStreamEventError         = "error"
+	canonicalJournalStreamEventHeartbeat = "heartbeat"
+	canonicalJournalStreamEventControl   = "control"
+	canonicalRunStreamPageSize           = int32(200)
 )
 
 type canonicalRunStreamProtocolWriter interface {
@@ -80,6 +83,148 @@ func writeCanonicalRunStreamMetadata(
 		return false
 	}
 
+	return true
+}
+
+func writeCanonicalJournalStreamMetadata(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	run *appagentthread.RunSummary,
+	bootstrap *appagentthread.JournalBootstrapResult,
+	protocolVersion string,
+) bool {
+	if run == nil || bootstrap == nil || bootstrap.SelectedAttempt == nil {
+		return false
+	}
+	attempt := bootstrap.SelectedAttempt
+	return writeCanonicalJournalStreamPayload(ctx, writer, "", canonicalRunStreamEventMetadata, map[string]any{
+		"run_id":                   strconv.FormatInt(run.RunID, 10),
+		"thread_id":                strconv.FormatInt(run.ThreadID, 10),
+		"status":                   string(attempt.Status),
+		"attempt":                  attempt.Ordinal,
+		"attempt_id":               attempt.AttemptID,
+		"latest_sequence":          bootstrap.LatestSequence,
+		"submit_at":                canonicalRunStreamTime(run.CreatedAt),
+		"server_time":              canonicalRunStreamTime(time.Now().UnixMilli()),
+		"journal_enabled":          bootstrap.JournalEnabled,
+		"snapshots_enabled":        bootstrap.SnapshotsEnabled,
+		"journal_protocol_version": protocolVersion,
+	})
+}
+
+func writeCanonicalJournalStreamEvent(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	event *domainentity.JournalEvent,
+) bool {
+	projected, err := projectCanonicalJournalEventWire(event)
+	if err != nil {
+		writeCanonicalRunStreamError(ctx, writer, err)
+		return false
+	}
+	return writeCanonicalJournalStreamPayload(
+		ctx,
+		writer,
+		projected.EventID,
+		canonicalRunStreamEventEvents,
+		map[string]any{"kind": "event", "event": projected},
+	)
+}
+
+func writeCanonicalJournalStreamHeartbeat(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	attempt *domainentity.RunAttempt,
+	latestSequence uint64,
+) bool {
+	if attempt == nil {
+		return false
+	}
+	return writeCanonicalJournalStreamPayload(
+		ctx,
+		writer,
+		"",
+		canonicalJournalStreamEventHeartbeat,
+		map[string]any{
+			"kind": "heartbeat",
+			"heartbeat": map[string]any{
+				"server_time": canonicalRunStreamTime(time.Now().UnixMilli()),
+				"attempt_id":  attempt.AttemptID, "latest_sequence": latestSequence,
+			},
+		},
+	)
+}
+
+func writeCanonicalJournalStreamControl(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	controlType string,
+	attempt *domainentity.RunAttempt,
+	latestSequence uint64,
+	errorCode string,
+	retryable bool,
+	protocolVersion string,
+) bool {
+	control := map[string]any{
+		"type": controlType, "schema_version": domainentity.JournalSchemaVersion,
+		"journal_protocol_version": protocolVersion,
+		"server_time":              canonicalRunStreamTime(time.Now().UnixMilli()),
+		"latest_sequence":          latestSequence, "retryable": retryable,
+	}
+	if attempt != nil {
+		control["attempt_id"] = attempt.AttemptID
+	}
+	if errorCode != "" {
+		control["error_code"] = errorCode
+	}
+	return writeCanonicalJournalStreamPayload(
+		ctx,
+		writer,
+		"",
+		canonicalJournalStreamEventControl,
+		map[string]any{"kind": "control", "control": control},
+	)
+}
+
+func writeCanonicalJournalStreamEnd(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	attempt *domainentity.RunAttempt,
+	latestSequence uint64,
+) bool {
+	if attempt == nil {
+		return false
+	}
+	return writeCanonicalJournalStreamPayload(ctx, writer, "", canonicalRunStreamEventEnd, map[string]any{
+		"attempt_id": attempt.AttemptID, "status": string(attempt.Status),
+		"latest_sequence": latestSequence, "reason": "terminal_attempt",
+	})
+}
+
+func writeCanonicalJournalStreamPayload(
+	ctx context.Context,
+	writer canonicalRunStreamProtocolWriter,
+	id string,
+	eventType string,
+	payload any,
+) bool {
+	encoded, err := sonic.Marshal(payload)
+	if err != nil {
+		writeCanonicalRunStreamError(ctx, writer, err)
+		return false
+	}
+	if err := writer.WriteEvent(id, eventType, encoded); err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"event_name=workbench.journal.stream.write_failed client_contract=%s stage=%s error_class=%T",
+			canonicalContractVersion,
+			canonicalLogEnum(eventType, canonicalRunStreamEventMetadata, canonicalRunStreamEventEvents,
+				canonicalJournalStreamEventHeartbeat, canonicalJournalStreamEventControl,
+				canonicalRunStreamEventEnd),
+			err,
+		)
+		return false
+	}
 	return true
 }
 

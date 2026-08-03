@@ -22,8 +22,39 @@ const (
 	AgentArtifactPreviewModeText        AgentArtifactPreviewMode = "text"
 	AgentArtifactPreviewModeImage       AgentArtifactPreviewMode = "image"
 	AgentArtifactPreviewModePDF         AgentArtifactPreviewMode = "pdf"
+	AgentArtifactPreviewModeAudio       AgentArtifactPreviewMode = "audio"
+	AgentArtifactPreviewModeVideo       AgentArtifactPreviewMode = "video"
+	AgentArtifactPreviewModeCollection  AgentArtifactPreviewMode = "media_collection"
 	AgentArtifactPreviewModeDownload    AgentArtifactPreviewMode = "download"
 	AgentArtifactPreviewModeUnsupported AgentArtifactPreviewMode = "unsupported"
+)
+
+type AgentArtifactSource string
+
+const (
+	AgentArtifactSourceAgentGenerated    AgentArtifactSource = "agent_generated"
+	AgentArtifactSourceUserUpload        AgentArtifactSource = "user_upload"
+	AgentArtifactSourceToolOutput        AgentArtifactSource = "tool_output"
+	AgentArtifactSourceExternalReference AgentArtifactSource = "external_reference"
+)
+
+type AgentArtifactGenerationStatus string
+
+const (
+	AgentArtifactGenerationStatusProcessing AgentArtifactGenerationStatus = "processing"
+	AgentArtifactGenerationStatusReady      AgentArtifactGenerationStatus = "ready"
+	AgentArtifactGenerationStatusFailed     AgentArtifactGenerationStatus = "failed"
+	AgentArtifactGenerationStatusExpired    AgentArtifactGenerationStatus = "expired"
+	AgentArtifactGenerationStatusBlocked    AgentArtifactGenerationStatus = "blocked"
+)
+
+type AgentArtifactCapability string
+
+const (
+	AgentArtifactCapabilityOpen     AgentArtifactCapability = "open"
+	AgentArtifactCapabilityPreview  AgentArtifactCapability = "preview"
+	AgentArtifactCapabilityDownload AgentArtifactCapability = "download"
+	AgentArtifactCapabilityCopy     AgentArtifactCapability = "copy"
 )
 
 type ArtifactScanJobStatus string
@@ -36,23 +67,32 @@ const (
 )
 
 type AgentArtifact struct {
-	ID           int64
-	SpaceID      int64
-	UserID       int64
-	ThreadID     int64
-	RunID        int64
-	FileID       int64
-	Title        string
-	ArtifactType string
-	VirtualPath  string
-	ObjectURI    string
-	ContentType  string
-	SizeBytes    int64
-	PreviewMode  AgentArtifactPreviewMode
-	Metadata     string
-	CreatedAt    int64
-	UpdatedAt    int64
-	DeletedAt    int64
+	ID                  int64
+	SpaceID             int64
+	UserID              int64
+	ThreadID            int64
+	RunID               int64
+	JournalRunID        int64
+	FileID              int64
+	Title               string
+	ArtifactType        string
+	VirtualPath         string
+	ObjectURI           string
+	ContentType         string
+	SizeBytes           int64
+	PreviewMode         AgentArtifactPreviewMode
+	Source              AgentArtifactSource
+	GenerationStatus    AgentArtifactGenerationStatus
+	IsPrimary           bool
+	CollectionID        string
+	CollectionOrder     *int32
+	DetectedContentType string
+	ScannedSizeBytes    *int64
+	ContentHash         string
+	Metadata            string
+	CreatedAt           int64
+	UpdatedAt           int64
+	DeletedAt           int64
 }
 
 type ArtifactScanJob struct {

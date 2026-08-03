@@ -27,11 +27,14 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 const outputFileWrittenSchema = "coze.output_file_written.v1"
@@ -41,8 +44,37 @@ const maxOutputFileWriteBytes = defaultADKMaxOffloadBytes
 const skillPackageContentType = "application/vnd.coze.skill+zip"
 const maxSkillPackageResources = 64
 const maxSkillPackageResourceBytes = 256 << 10
+const journalOutputCodeRepository = "agent-output"
 
 var skillPackageNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+var journalOutputCodeLanguages = map[string]string{
+	"application/javascript":    "javascript",
+	"application/json":          "json",
+	"application/sql":           "sql",
+	"application/toml":          "toml",
+	"application/typescript":    "typescript",
+	"application/x-javascript":  "javascript",
+	"application/x-python-code": "python",
+	"application/x-sh":          "shell",
+	"application/x-typescript":  "typescript",
+	"application/yaml":          "yaml",
+	"text/css":                  "css",
+	"text/javascript":           "javascript",
+	"text/typescript":           "typescript",
+	"text/x-c":                  "c",
+	"text/x-c++":                "cpp",
+	"text/x-c++src":             "cpp",
+	"text/x-csrc":               "c",
+	"text/x-go":                 "go",
+	"text/x-java-source":        "java",
+	"text/x-python":             "python",
+	"text/x-rust":               "rust",
+	"text/x-shellscript":        "shell",
+	"text/x-sql":                "sql",
+	"text/x-yaml":               "yaml",
+	"text/yaml":                 "yaml",
+}
 
 type ArtifactObjectWriter interface {
 	PutObject(
@@ -63,6 +95,7 @@ func (s *ApplicationService) WriteOutputFile(
 	return s.writeOutputFileBytes(
 		ctx,
 		req.Run,
+		req.ToolCallID,
 		req.FilePath,
 		[]byte(req.Content),
 		req.ContentType,
@@ -72,6 +105,7 @@ func (s *ApplicationService) WriteOutputFile(
 func (s *ApplicationService) writeOutputFileBytes(
 	ctx context.Context,
 	run *RunSummary,
+	toolCallID string,
 	filePath string,
 	content []byte,
 	requestedContentType string,
@@ -137,6 +171,14 @@ func (s *ApplicationService) writeOutputFileBytes(
 	}
 
 	summary := outputFileSummary(file, virtualPath, contentType, int64(len(content)), digest)
+	s.publishJournalOutputSnapshot(
+		ctx,
+		run,
+		toolCallID,
+		summary,
+		objectKey,
+		content,
+	)
 	notice := encodeRunEventPayload(ctx, map[string]any{
 		"schema":       outputFileWrittenSchema,
 		"file_id":      summary.FileID,
@@ -153,6 +195,208 @@ func (s *ApplicationService) writeOutputFileBytes(
 		Created: created,
 		Notice:  notice,
 	}, nil
+}
+
+func (s *ApplicationService) publishJournalOutputSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	originalObjectKey string,
+	content []byte,
+) {
+	if file == nil {
+		return
+	}
+	if language, ok := journalOutputCodeLanguage(file.ContentType); ok {
+		s.publishJournalCodeSnapshot(ctx, run, toolCallID, file, content, language)
+		return
+	}
+	s.publishJournalDocumentSnapshot(ctx, run, toolCallID, file, originalObjectKey, content)
+}
+
+func (s *ApplicationService) publishJournalCodeSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	content []byte,
+	language string,
+) {
+	if s == nil || s.JournalSnapshotAttemptReader == nil ||
+		s.JournalSnapshotRepository == nil || run == nil || file == nil ||
+		len(content) == 0 {
+		return
+	}
+	_, relativePath, err := normalizeOutputVirtualPath(file.VirtualPath)
+	if err != nil {
+		return
+	}
+	visibleContent := strings.TrimSpace(string(content))
+	if visibleContent == "" {
+		return
+	}
+	operation := journalToolOperation("write_file")
+	target := journalToolTarget("write_file", operation)
+	runningVerb, completedVerb := journalActionVerbs(operation)
+	actionID := ""
+	if strings.TrimSpace(toolCallID) != "" {
+		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
+	}
+	_, _, err = s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
+		Run: run, Status: domainentity.JournalContentStatusReady,
+		ContentType: domainentity.JournalSnapshotContentTypeCode,
+		Source: JournalSnapshotSource{
+			ResourceType: "runtime_file",
+			ResourceID:   strconv.FormatInt(file.FileID, 10),
+			Revision:     file.Digest,
+		},
+		Action: JournalContentAction{
+			ActionID:  actionID,
+			Operation: operation, Target: target,
+			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
+		},
+		Content: JournalTypedSnapshotContent{Code: &JournalCodeContent{
+			Repository: journalOutputCodeRepository,
+			Revision:   file.Digest,
+			Path:       relativePath,
+			Language:   language,
+			Content:    visibleContent,
+			StartLine:  1,
+			EndLine:    int32(strings.Count(visibleContent, "\n") + 1),
+		}},
+	})
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal code snapshot unavailable: run_id=%d file_id=%d",
+			run.RunID,
+			file.FileID,
+		)
+	}
+}
+
+func (s *ApplicationService) publishJournalDocumentSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	toolCallID string,
+	file *OutputFileSummary,
+	originalObjectKey string,
+	content []byte,
+) {
+	if s == nil || s.JournalSnapshotAttemptReader == nil ||
+		s.JournalSnapshotRepository == nil || run == nil || file == nil ||
+		len(content) == 0 {
+		return
+	}
+	format, ok := journalOutputDocumentFormat(file.ContentType)
+	if !ok {
+		return
+	}
+	document := &JournalDocumentContent{
+		Token:             "file-" + strconv.FormatInt(file.FileID, 10),
+		Title:             file.FileName,
+		Format:            format,
+		Content:           string(content),
+		Revision:          file.Digest,
+		SyncStatus:        "synced",
+		OriginalObjectKey: originalObjectKey,
+	}
+	if format == "markdown" {
+		document.Chapters = journalMarkdownChapters(document.Content)
+	}
+	operation := journalToolOperation("write_file")
+	target := journalToolTarget("write_file", operation)
+	runningVerb, completedVerb := journalActionVerbs(operation)
+	actionID := ""
+	if strings.TrimSpace(toolCallID) != "" {
+		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
+	}
+	_, _, err := s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
+		Run: run, Status: domainentity.JournalContentStatusReady,
+		ContentType: domainentity.JournalSnapshotContentTypeDocument,
+		Source: JournalSnapshotSource{
+			ResourceType: "runtime_file",
+			ResourceID:   strconv.FormatInt(file.FileID, 10),
+			Revision:     file.Digest,
+		},
+		Action: JournalContentAction{
+			ActionID:  actionID,
+			Operation: operation, Target: target,
+			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
+		},
+		Content: JournalTypedSnapshotContent{Document: document},
+	})
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal document snapshot unavailable: run_id=%d file_id=%d",
+			run.RunID,
+			file.FileID,
+		)
+	}
+}
+
+func journalOutputDocumentFormat(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return "", false
+	}
+	switch strings.ToLower(mediaType) {
+	case "text/markdown":
+		return "markdown", true
+	case "text/plain":
+		return "text", true
+	default:
+		return "", false
+	}
+}
+
+func journalOutputCodeLanguage(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return "", false
+	}
+	language, ok := journalOutputCodeLanguages[strings.ToLower(mediaType)]
+	return language, ok
+}
+
+func journalMarkdownChapters(content string) []JournalDocumentChapter {
+	const maxChapters = 4096
+	lines := strings.Split(content, "\n")
+	chapters := make([]JournalDocumentChapter, 0)
+	inFence := false
+	for lineIndex, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !strings.HasPrefix(line, "#") {
+			continue
+		}
+		level := 0
+		for level < len(line) && level < 6 && line[level] == '#' {
+			level++
+		}
+		if level == 0 || level >= len(line) || line[level] != ' ' {
+			continue
+		}
+		title := strings.TrimSpace(line[level+1:])
+		if title == "" {
+			continue
+		}
+		identity := fmt.Sprintf("%d:%d:%s", lineIndex+1, level, title)
+		chapters = append(chapters, JournalDocumentChapter{
+			ChapterID: "heading-" + journalSnapshotHash([]byte(identity))[:16],
+			Title:     title,
+			Level:     int32(level),
+		})
+		if len(chapters) >= maxChapters {
+			break
+		}
+	}
+	return chapters
 }
 
 func (s *ApplicationService) CreateSkillPackage(
@@ -188,6 +432,7 @@ func (s *ApplicationService) CreateSkillPackage(
 	resp, err := s.writeOutputFileBytes(
 		ctx,
 		req.Run,
+		"",
 		outputPath,
 		archiveBytes,
 		skillPackageContentType,
@@ -326,7 +571,15 @@ func (s *ApplicationService) PresentOutputFiles(
 	resp := &PresentOutputFilesResponse{
 		Artifacts: make([]*ArtifactSummary, 0, len(paths)),
 	}
-	for _, virtualPath := range paths {
+	collectionID := ""
+	if len(paths) > 1 {
+		collectionID = artifactPresentationCollectionID(
+			req.Run.RunID,
+			req.ToolCallID,
+			paths,
+		)
+	}
+	for index, virtualPath := range paths {
 		file, err := s.RuntimeFileSVC.ResolveRuntimeFile(
 			ctx,
 			&domainservice.ResolveRuntimeFileRequest{
@@ -342,16 +595,25 @@ func (s *ApplicationService) PresentOutputFiles(
 		if err := validatePresentableOutputFile(req.Run, file, virtualPath); err != nil {
 			return nil, err
 		}
+		var collectionOrder *int32
+		if collectionID != "" {
+			order := int32(index)
+			collectionOrder = &order
+		}
 		artifact, _, err := s.ArtifactSVC.RegisterArtifact(
 			ctx,
 			&domainservice.RegisterArtifactRequest{
-				SpaceID:      req.Run.SpaceID,
-				ThreadID:     req.Run.ThreadID,
-				RunID:        req.Run.RunID,
-				FileID:       file.ID,
-				Title:        fileTitle(file),
-				ArtifactType: outputArtifactType(file),
-				Metadata:     `{"source":"present_files"}`,
+				SpaceID:         req.Run.SpaceID,
+				ThreadID:        req.Run.ThreadID,
+				RunID:           req.Run.RunID,
+				FileID:          file.ID,
+				Title:           fileTitle(file),
+				ArtifactType:    outputArtifactType(file),
+				Source:          domainentity.AgentArtifactSourceToolOutput,
+				IsPrimary:       index == 0,
+				CollectionID:    collectionID,
+				CollectionOrder: collectionOrder,
+				Metadata:        `{"source":"present_files"}`,
 			},
 		)
 		if err != nil {
@@ -366,9 +628,30 @@ func (s *ApplicationService) PresentOutputFiles(
 	if err := s.emitArtifactPresentedEvent(ctx, req.Run, resp.Artifacts); err != nil {
 		return nil, err
 	}
+	if err := s.emitArtifactPresentedVerification(ctx, req.Run, resp.Artifacts); err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"[journal-projection] append artifact verification failed, run_id=%d err=%v",
+			req.Run.RunID,
+			err,
+		)
+	}
 	resp.Notice = artifactPresentedNotice(ctx, resp.Artifacts)
 
 	return resp, nil
+}
+
+func artifactPresentationCollectionID(
+	runID int64,
+	toolCallID string,
+	paths []string,
+) string {
+	identity := strings.TrimSpace(toolCallID)
+	if identity == "" {
+		identity = strings.Join(paths, "\n")
+	}
+	digest := sha256.Sum256([]byte(strconv.FormatInt(runID, 10) + ":" + identity))
+	return "collection_" + hex.EncodeToString(digest[:16])
 }
 
 func normalizeOutputFilePaths(values []string) ([]string, error) {
@@ -540,9 +823,12 @@ func (s *ApplicationService) emitArtifactPresentedEvent(
 		"artifact_count": len(artifacts),
 		"artifacts":      safeArtifactEventItems(artifacts),
 	}
-	_, err := s.ThreadSVC.AppendRunEvent(
+	if collectionID := sharedArtifactCollectionID(artifacts); collectionID != "" {
+		payload["collection_id"] = collectionID
+	}
+	_, err := s.AppendRunEvent(
 		ctx,
-		&domainservice.AppendRunEventRequest{
+		&AppendRunEventRequest{
 			ThreadID:  run.ThreadID,
 			RunID:     run.RunID,
 			EventType: artifactPresentedEvent,
@@ -552,13 +838,52 @@ func (s *ApplicationService) emitArtifactPresentedEvent(
 	return err
 }
 
+func (s *ApplicationService) emitArtifactPresentedVerification(
+	ctx context.Context,
+	run *RunSummary,
+	artifacts []*ArtifactSummary,
+) error {
+	if run == nil || len(artifacts) == 0 {
+		return nil
+	}
+	artifactIDs := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact != nil && artifact.ArtifactID > 0 {
+			artifactIDs = append(artifactIDs, strconv.FormatInt(artifact.ArtifactID, 10))
+		}
+	}
+	if len(artifactIDs) == 0 {
+		return nil
+	}
+	sort.Strings(artifactIDs)
+	verificationID := journalStableProjectionID(
+		run.RunID,
+		"verification",
+		"presented-artifacts:"+strings.Join(artifactIDs, ","),
+	)
+	payload := map[string]any{
+		"schema":          "coze.journal_verification.v1",
+		"verification_id": verificationID,
+		"title":           "交付物检查",
+		"status":          "completed",
+		"summary":         fmt.Sprintf("已确认 %d 个交付物可用", len(artifactIDs)),
+	}
+	_, err := s.AppendRunEvent(ctx, &AppendRunEventRequest{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: "verification.completed",
+		Payload:   encodeRunEventPayload(ctx, payload),
+	})
+	return err
+}
+
 func safeArtifactEventItems(artifacts []*ArtifactSummary) []map[string]any {
 	result := make([]map[string]any, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		if artifact == nil {
 			continue
 		}
-		result = append(result, map[string]any{
+		item := map[string]any{
 			"artifact_id":   artifact.ArtifactID,
 			"file_id":       artifact.FileID,
 			"title":         artifact.Title,
@@ -567,9 +892,40 @@ func safeArtifactEventItems(artifacts []*ArtifactSummary) []map[string]any {
 			"content_type":  artifact.ContentType,
 			"size_bytes":    artifact.SizeBytes,
 			"preview_mode":  artifact.PreviewMode,
-		})
+			"is_primary":    artifact.IsPrimary,
+		}
+		if collectionID := strings.TrimSpace(artifact.CollectionID); collectionID != "" {
+			item["collection_id"] = collectionID
+		}
+		if artifact.CollectionOrder != nil {
+			item["collection_order"] = *artifact.CollectionOrder
+		}
+		result = append(result, item)
 	}
 	return result
+}
+
+func sharedArtifactCollectionID(artifacts []*ArtifactSummary) string {
+	collectionID := ""
+	artifactCount := 0
+	for _, artifact := range artifacts {
+		if artifact == nil {
+			continue
+		}
+		candidate := strings.TrimSpace(artifact.CollectionID)
+		if candidate == "" {
+			return ""
+		}
+		if collectionID != "" && collectionID != candidate {
+			return ""
+		}
+		collectionID = candidate
+		artifactCount++
+	}
+	if artifactCount == 0 {
+		return ""
+	}
+	return collectionID
 }
 
 func artifactPresentedNotice(ctx context.Context, artifacts []*ArtifactSummary) string {

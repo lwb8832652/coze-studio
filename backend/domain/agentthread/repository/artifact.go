@@ -59,6 +59,19 @@ type ArtifactRepository interface {
 		threadID int64,
 		artifactID int64,
 		metadata string,
+		generationStatus entity.AgentArtifactGenerationStatus,
+		updatedAt int64,
+	) (*entity.AgentArtifact, bool, error)
+	UpdateArtifactTrustedScanResult(
+		ctx context.Context,
+		threadID int64,
+		artifactID int64,
+		metadata string,
+		detectedContentType string,
+		scannedSizeBytes int64,
+		contentHash string,
+		previewMode entity.AgentArtifactPreviewMode,
+		generationStatus entity.AgentArtifactGenerationStatus,
 		updatedAt int64,
 	) (*entity.AgentArtifact, bool, error)
 	CreateOrGetArtifactScanJob(
@@ -104,11 +117,12 @@ type ArtifactRepository interface {
 }
 
 type ListArtifactsRequest struct {
-	ThreadID    int64
-	RunID       *int64
-	DeletedOnly bool
-	Page        int64
-	PageSize    int64
+	ThreadID     int64
+	RunID        *int64
+	CollectionID *string
+	DeletedOnly  bool
+	Page         int64
+	PageSize     int64
 }
 
 type ListDeletedArtifactCleanupCandidatesRequest struct {

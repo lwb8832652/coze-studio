@@ -87,9 +87,20 @@ var canonicalProductRoutes = []routeExpectation{
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/retry"},
 }
 
+var canonicalJournalRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/threads/:thread_id/runs/:run_id/journal"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id/actions"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/recover"},
+	{http.MethodGet, "/api/workbench/journal/settings"},
+	{http.MethodPatch, "/api/workbench/journal/settings"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link"},
+}
+
 func canonicalRouteSnapshot() []routeExpectation {
 	result := append([]routeExpectation{}, canonicalThreadRoutes...)
-	return append(result, canonicalProductRoutes...)
+	result = append(result, canonicalProductRoutes...)
+	return append(result, canonicalJournalRoutes...)
 }
 
 var forbiddenCanonicalThreadRoutes = []routeExpectation{
@@ -221,8 +232,8 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	RegisterCustomRoutes(h)
 
 	t.Run("registers the canonical route surface", func(t *testing.T) {
-		require.Len(t, canonicalRouteSnapshot(), 47)
-		requireExactRouteSnapshot(t, h, "/api/workbench/threads", canonicalRouteSnapshot())
+		require.Len(t, canonicalRouteSnapshot(), 54)
+		requireExactCanonicalRouteSnapshot(t, h, canonicalRouteSnapshot())
 	})
 
 	t.Run("keeps the Scheduled Task route surface", func(t *testing.T) {
@@ -315,6 +326,24 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	})
 }
 
+func requireExactCanonicalRouteSnapshot(
+	t *testing.T,
+	h *server.Hertz,
+	expectedRoutes []routeExpectation,
+) {
+	t.Helper()
+	actualRoutes := make([]routeExpectation, 0, len(expectedRoutes))
+	for _, route := range h.Routes() {
+		if strings.HasPrefix(route.Path, "/api/workbench/threads/") ||
+			route.Path == "/api/workbench/threads" ||
+			route.Path == "/api/workbench/journal/settings" {
+			actualRoutes = append(actualRoutes, routeExpectation{method: route.Method, path: route.Path})
+		}
+	}
+
+	require.Equal(t, sortedRouteExpectations(expectedRoutes), sortedRouteExpectations(actualRoutes))
+}
+
 func requireUnreachableRoute(
 	t *testing.T,
 	h *server.Hertz,
@@ -371,6 +400,7 @@ func concreteRoutePath(path string) string {
 		":artifact_id": "3",
 		":job_id":      "4",
 		":memory_id":   "5",
+		":snapshot_id": "snapshot-6",
 		":filename":    "file.txt",
 	}
 	for parameter, value := range replacements {

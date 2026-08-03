@@ -16,6 +16,8 @@
 
 import * as thread_product from './thread_product';
 export { thread_product };
+import * as journal from './journal';
+export { journal };
 import * as base from './../base';
 export { base };
 import { createAPI } from './../../api/config';
@@ -86,9 +88,12 @@ export interface CanonicalMessagePage {
   next_after_seq?: string,
 }
 export interface CanonicalRunEventPage {
-  data: any,
+  data: journal.JournalEvent[],
   has_more: boolean,
   next_after_event_id?: string,
+  attempt_id?: string,
+  latest_sequence?: number,
+  next_after_sequence?: number,
 }
 export interface CanonicalThreadListResponse {
   body: CanonicalThread[]
@@ -252,6 +257,7 @@ export interface ReconnectCanonicalRunStreamRequest {
   "Last-Event-ID"?: string,
   stream_mode?: string[],
   "X-Coze-Space-ID": string,
+  journal_protocol_version?: string,
 }
 export interface JoinCanonicalRunRequest {
   thread_id: string,
@@ -280,6 +286,8 @@ export interface ListCanonicalRunEventsRequest {
   event_types?: string[],
   limit?: number,
   "X-Coze-Space-ID": string,
+  attempt_id?: string,
+  after_sequence?: number,
 }
 export interface ListCanonicalRunMessagesRequest {
   thread_id: string,
@@ -502,7 +510,7 @@ export const ReconnectCanonicalRunStream = /*#__PURE__*/createAPI<ReconnectCanon
   "reqType": "ReconnectCanonicalRunStreamRequest",
   "reqMapping": {
     "path": ["thread_id", "run_id"],
-    "query": ["after_event_id", "cancel_on_disconnect", "stream_mode"],
+    "query": ["after_event_id", "cancel_on_disconnect", "stream_mode", "journal_protocol_version"],
     "header": ["Last-Event-ID", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalStreamResponse['body']",
@@ -558,7 +566,7 @@ export const ListCanonicalRunEvents = /*#__PURE__*/createAPI<ListCanonicalRunEve
   "reqType": "ListCanonicalRunEventsRequest",
   "reqMapping": {
     "path": ["thread_id", "run_id"],
-    "query": ["after_event_id", "event_types", "limit"],
+    "query": ["after_event_id", "event_types", "limit", "attempt_id", "after_sequence"],
     "header": ["X-Coze-Space-ID"]
   },
   "resType": "CanonicalRunEventPage",
@@ -654,7 +662,7 @@ export const ListCanonicalThreadArtifacts = /*#__PURE__*/createAPI<thread_produc
   "reqMapping": {
     "path": ["thread_id"],
     "header": ["X-Coze-Space-ID"],
-    "query": ["run_id", "deleted_only", "limit", "offset"]
+    "query": ["run_id", "deleted_only", "limit", "offset", "collection_id"]
   },
   "resType": "thread_product.CanonicalArtifactListResponse",
   "schemaRoot": "api://schemas/idl_workbench_thread",
@@ -931,6 +939,97 @@ export const RetryCanonicalSubagentRun = /*#__PURE__*/createAPI<thread_product.R
     "header": ["X-Coze-Space-ID", "Idempotency-Key"]
   },
   "resType": "CanonicalRun",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const GetCanonicalRunJournal = /*#__PURE__*/createAPI<journal.GetCanonicalRunJournalRequest, journal.JournalBootstrap>({
+  "url": "/api/workbench/threads/:thread_id/runs/:run_id/journal",
+  "method": "GET",
+  "name": "GetCanonicalRunJournal",
+  "reqType": "journal.GetCanonicalRunJournalRequest",
+  "reqMapping": {
+    "path": ["thread_id", "run_id"],
+    "header": ["X-Coze-Space-ID"],
+    "query": ["attempt_id", "after_sequence", "limit", "journal_protocol_version", "after_event_id"]
+  },
+  "resType": "journal.JournalBootstrap",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const GetCanonicalRunSnapshot = /*#__PURE__*/createAPI<journal.GetCanonicalRunSnapshotRequest, journal.JournalSnapshotEnvelope>({
+  "url": "/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id",
+  "method": "GET",
+  "name": "GetCanonicalRunSnapshot",
+  "reqType": "journal.GetCanonicalRunSnapshotRequest",
+  "reqMapping": {
+    "path": ["thread_id", "run_id", "snapshot_id"],
+    "header": ["X-Coze-Space-ID"],
+    "query": ["cursor", "limit"]
+  },
+  "resType": "journal.JournalSnapshotEnvelope",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const AuditCanonicalRunSnapshotAction = /*#__PURE__*/createAPI<journal.AuditCanonicalRunSnapshotActionRequest, journal.JournalSnapshotActionAuditResponse>({
+  "url": "/api/workbench/threads/:thread_id/runs/:run_id/snapshots/:snapshot_id/actions",
+  "method": "POST",
+  "name": "AuditCanonicalRunSnapshotAction",
+  "reqType": "journal.AuditCanonicalRunSnapshotActionRequest",
+  "reqMapping": {
+    "path": ["thread_id", "run_id", "snapshot_id"],
+    "header": ["X-Coze-Space-ID", "Idempotency-Key"],
+    "body": ["action", "fragment_id"]
+  },
+  "resType": "journal.JournalSnapshotActionAuditResponse",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const RecoverCanonicalRunJournal = /*#__PURE__*/createAPI<journal.RecoverCanonicalRunJournalRequest, journal.RecoverCanonicalRunJournalResponse>({
+  "url": "/api/workbench/threads/:thread_id/runs/:run_id/recover",
+  "method": "POST",
+  "name": "RecoverCanonicalRunJournal",
+  "reqType": "journal.RecoverCanonicalRunJournalRequest",
+  "reqMapping": {
+    "path": ["thread_id", "run_id"],
+    "header": ["X-Coze-Space-ID", "Idempotency-Key"],
+    "body": ["source_attempt_id", "action", "confirmed"]
+  },
+  "resType": "journal.RecoverCanonicalRunJournalResponse",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const GetCanonicalJournalSettings = /*#__PURE__*/createAPI<journal.GetCanonicalJournalSettingsRequest, journal.JournalUserSettings>({
+  "url": "/api/workbench/journal/settings",
+  "method": "GET",
+  "name": "GetCanonicalJournalSettings",
+  "reqType": "journal.GetCanonicalJournalSettingsRequest",
+  "reqMapping": {},
+  "resType": "journal.JournalUserSettings",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const PatchCanonicalJournalSettings = /*#__PURE__*/createAPI<journal.PatchCanonicalJournalSettingsRequest, journal.JournalUserSettings>({
+  "url": "/api/workbench/journal/settings",
+  "method": "PATCH",
+  "name": "PatchCanonicalJournalSettings",
+  "reqType": "journal.PatchCanonicalJournalSettingsRequest",
+  "reqMapping": {
+    "body": ["split_ratio", "revision"]
+  },
+  "resType": "journal.JournalUserSettings",
+  "schemaRoot": "api://schemas/idl_workbench_thread",
+  "service": "workbenchThread"
+});
+export const CopyCanonicalThreadArtifactLink = /*#__PURE__*/createAPI<thread_product.CopyCanonicalThreadArtifactLinkRequest, thread_product.CopyCanonicalThreadArtifactLinkResponse>({
+  "url": "/api/workbench/threads/:thread_id/artifacts/:artifact_id/copy_link",
+  "method": "POST",
+  "name": "CopyCanonicalThreadArtifactLink",
+  "reqType": "thread_product.CopyCanonicalThreadArtifactLinkRequest",
+  "reqMapping": {
+    "path": ["thread_id", "artifact_id"],
+    "header": ["X-Coze-Space-ID"]
+  },
+  "resType": "thread_product.CopyCanonicalThreadArtifactLinkResponse",
   "schemaRoot": "api://schemas/idl_workbench_thread",
   "service": "workbenchThread"
 });

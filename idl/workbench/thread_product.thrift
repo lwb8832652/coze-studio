@@ -2,6 +2,35 @@ namespace go workbench.thread_product_contract
 
 include "../base.thrift"
 
+typedef string CanonicalArtifactSource (ts.enum="true")
+const CanonicalArtifactSource CanonicalArtifactSource_AgentGenerated = "agent_generated"
+const CanonicalArtifactSource CanonicalArtifactSource_UserUpload = "user_upload"
+const CanonicalArtifactSource CanonicalArtifactSource_ToolOutput = "tool_output"
+const CanonicalArtifactSource CanonicalArtifactSource_ExternalReference = "external_reference"
+
+typedef string CanonicalArtifactGenerationStatus (ts.enum="true")
+const CanonicalArtifactGenerationStatus CanonicalArtifactGenerationStatus_Processing = "processing"
+const CanonicalArtifactGenerationStatus CanonicalArtifactGenerationStatus_Ready = "ready"
+const CanonicalArtifactGenerationStatus CanonicalArtifactGenerationStatus_Failed = "failed"
+const CanonicalArtifactGenerationStatus CanonicalArtifactGenerationStatus_Expired = "expired"
+const CanonicalArtifactGenerationStatus CanonicalArtifactGenerationStatus_Blocked = "blocked"
+
+typedef string CanonicalArtifactPreviewMode (ts.enum="true")
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Text = "text"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Image = "image"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_PDF = "pdf"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Audio = "audio"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Video = "video"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_MediaCollection = "media_collection"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Download = "download"
+const CanonicalArtifactPreviewMode CanonicalArtifactPreviewMode_Unsupported = "unsupported"
+
+typedef string CanonicalArtifactCapability (ts.enum="true")
+const CanonicalArtifactCapability CanonicalArtifactCapability_Open = "open"
+const CanonicalArtifactCapability CanonicalArtifactCapability_Preview = "preview"
+const CanonicalArtifactCapability CanonicalArtifactCapability_Download = "download"
+const CanonicalArtifactCapability CanonicalArtifactCapability_Copy = "copy"
+
 struct CanonicalProductEmptyResponse {
 }
 
@@ -38,11 +67,24 @@ struct CanonicalArtifact {
     7: required string virtual_path
     8: required string content_type
     9: required i64 size_bytes
-    10: required string preview_mode
+    10: required CanonicalArtifactPreviewMode preview_mode
     11: required string metadata (api.value_type="any")
     12: required string created_at
     13: required string updated_at
     14: optional string deleted_at
+    15: optional CanonicalArtifactSource source
+    16: optional CanonicalArtifactGenerationStatus generation_status
+    17: optional list<CanonicalArtifactCapability> capabilities
+    18: optional string collection_id
+    19: optional i32 collection_order
+    20: optional bool is_primary
+}
+
+struct CanonicalArtifactCollection {
+    1: required string collection_id
+    2: required list<string> artifact_ids
+    3: optional i32 current_index
+    4: optional i32 total_count
 }
 
 struct CanonicalArtifactScanJob {
@@ -175,6 +217,7 @@ struct CanonicalArtifactListResponse {
     2: required i64 total
     3: required bool has_more
     4: optional string next_cursor
+    5: optional list<CanonicalArtifactCollection> collections
 }
 
 struct CanonicalArtifactScanJobListResponse {
@@ -239,7 +282,7 @@ struct CanonicalArtifactSignedURLResponse {
     2: required string url
     3: required i64 expires_in_seconds
     4: required string content_type
-    5: required string preview_mode
+    5: required CanonicalArtifactPreviewMode preview_mode
 }
 
 struct CanonicalArtifactRestoreResponse {
@@ -335,7 +378,21 @@ struct ListCanonicalThreadArtifactsRequest {
     4: optional bool deleted_only (api.query="deleted_only")
     5: optional i32 limit (api.query="limit")
     6: optional i32 offset (api.query="offset")
+    7: optional string collection_id (api.query="collection_id")
     255: optional base.Base Base (api.none="true")
+}
+
+struct CopyCanonicalThreadArtifactLinkRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    3: required i64 artifact_id (api.path="artifact_id", agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct CopyCanonicalThreadArtifactLinkResponse {
+    1: required string artifact_id
+    2: required string copy_url
+    3: required string expires_at
 }
 
 struct CanonicalArtifactRouteRequest {

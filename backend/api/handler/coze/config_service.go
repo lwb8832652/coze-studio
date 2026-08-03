@@ -37,9 +37,9 @@ import (
 	bizConf "github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	baseconfig "github.com/coze-dev/coze-studio/backend/bizpkg/config/base"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config/modelmgr"
+	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
-	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
 	"github.com/coze-dev/coze-studio/backend/infra/embedding/impl"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/conv"
@@ -58,17 +58,18 @@ type saveBasicConfigurationRequest struct {
 }
 
 type basicConfigurationPatchPayload struct {
-	AdminEmails             *string                     `json:"admin_emails"`
-	DisableUserRegistration *bool                       `json:"disable_user_registration"`
-	AllowRegistrationEmail  *string                     `json:"allow_registration_email"`
-	PluginConfiguration     *config.PluginConfiguration `json:"plugin_configuration"`
-	ServerHost              *string                     `json:"server_host"`
-	SiteName                *string                     `json:"site_name"`
-	SiteDescription         *string                     `json:"site_description"`
-	SiteLogoURI             *string                     `json:"site_logo_uri"`
-	FaviconURI              *string                     `json:"favicon_uri"`
-	CodeRunnerType          json.RawMessage             `json:"code_runner_type"`
-	SandboxConfig           json.RawMessage             `json:"sandbox_config"`
+	AdminEmails                 *string                             `json:"admin_emails"`
+	DisableUserRegistration     *bool                               `json:"disable_user_registration"`
+	AllowRegistrationEmail      *string                             `json:"allow_registration_email"`
+	PluginConfiguration         *config.PluginConfiguration         `json:"plugin_configuration"`
+	ServerHost                  *string                             `json:"server_host"`
+	SiteName                    *string                             `json:"site_name"`
+	SiteDescription             *string                             `json:"site_description"`
+	SiteLogoURI                 *string                             `json:"site_logo_uri"`
+	FaviconURI                  *string                             `json:"favicon_uri"`
+	JournalRuntimeConfiguration *config.JournalRuntimeConfiguration `json:"journal_runtime_configuration"`
+	CodeRunnerType              json.RawMessage                     `json:"code_runner_type"`
+	SandboxConfig               json.RawMessage                     `json:"sandbox_config"`
 }
 
 // GetBasicConfiguration .
@@ -144,8 +145,9 @@ func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend 
 
 func (p *basicConfigurationPatchPayload) toPatch() baseconfig.BasicConfigurationPatch {
 	patch := baseconfig.BasicConfigurationPatch{
-		DisableUserRegistration: p.DisableUserRegistration,
-		PluginConfiguration:     p.PluginConfiguration,
+		DisableUserRegistration:     p.DisableUserRegistration,
+		PluginConfiguration:         p.PluginConfiguration,
+		JournalRuntimeConfiguration: p.JournalRuntimeConfiguration,
 	}
 	if p.AdminEmails != nil {
 		value := strings.TrimSpace(*p.AdminEmails)

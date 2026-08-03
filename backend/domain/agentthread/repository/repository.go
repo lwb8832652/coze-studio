@@ -26,11 +26,21 @@ import (
 )
 
 var (
-	ErrRunLeaseLost                 = errors.New("agent run lease lost")
-	ErrRunCanceled                  = errors.New("agent run canceled")
-	ErrRunIdempotencyConflict       = entity.ErrRunIdempotencyConflict
-	ErrActiveRunExists              = errors.New("agent thread already has an active run")
-	ErrUnsupportedMultitaskStrategy = errors.New("unsupported multitask strategy")
+	ErrRunLeaseLost                        = errors.New("agent run lease lost")
+	ErrRunCanceled                         = errors.New("agent run canceled")
+	ErrRunIdempotencyConflict              = entity.ErrRunIdempotencyConflict
+	ErrActiveRunExists                     = errors.New("agent thread already has an active run")
+	ErrUnsupportedMultitaskStrategy        = errors.New("unsupported multitask strategy")
+	ErrJournalNotEnrolled                  = errors.New("agent run is not enrolled in journal")
+	ErrActiveJournalAttemptExists          = errors.New("agent run already has an active journal attempt")
+	ErrJournalAttemptTerminal              = errors.New("agent run journal attempt is terminal")
+	ErrJournalParentMismatch               = errors.New("journal parent event belongs to another attempt")
+	ErrJournalActionDrift                  = errors.New("journal action fields changed across phases")
+	ErrJournalTerminalReplayConflict       = errors.New("journal terminal event replays a non-terminal event")
+	ErrJournalUnsafeLegacyEvent            = errors.New("legacy run event is not safe for journal projection")
+	ErrJournalInvalidStateTransition       = errors.New("invalid journal attempt state transition")
+	ErrJournalSequenceAllocation           = errors.New("journal sequence allocation failed")
+	ErrUnsupportedJournalEnrollmentVersion = errors.New("unsupported journal enrollment version")
 )
 
 type ThreadRepository interface {
@@ -113,6 +123,7 @@ type CreateThreadBundleRequest struct {
 	Thread                    *entity.Thread
 	Run                       *entity.Run
 	Message                   *entity.Message
+	Attempt                   *entity.RunAttempt
 	ValidateIdempotencyReplay bool
 }
 
@@ -120,22 +131,29 @@ type CreateThreadBundleResult struct {
 	Thread  *entity.Thread
 	Run     *entity.Run
 	Message *entity.Message
+	Attempt *entity.RunAttempt
 	Created bool
 }
 
 type CreateRunBundleRequest struct {
-	Run                         *entity.Run
-	Message                     *entity.Message
-	Event                       *entity.RunEvent
-	SkipTopLevelAdmission       bool
-	ValidateIdempotencyReplay   bool
-	AllocateInterruptedEventIDs func(count int) ([]int64, error)
+	Run                          *entity.Run
+	Message                      *entity.Message
+	Event                        *entity.RunEvent
+	EventJournalSourceRunID      int64
+	EventJournal                 *entity.JournalEvent
+	EventJournalProjectionFailed bool
+	Attempt                      *entity.RunAttempt
+	RecoverySourceLease          *ReconcileExpiredRunLeaseRequest
+	SkipTopLevelAdmission        bool
+	ValidateIdempotencyReplay    bool
+	AllocateInterruptedEventIDs  func(count int) ([]int64, error)
 }
 
 type CreateRunBundleResult struct {
 	Run               *entity.Run
 	Message           *entity.Message
 	Event             *entity.RunEvent
+	Attempt           *entity.RunAttempt
 	InterruptedRuns   []*entity.Run
 	InterruptedEvents []*entity.RunEvent
 	Created           bool
@@ -369,6 +387,7 @@ type ReconcileExpiredRunLeaseRequest struct {
 	ErrorCode           string
 	ErrorMessage        string
 	Event               *entity.RunEvent
+	JournalEvent        *entity.JournalEvent
 	OutboxIntent        *NotificationOutboxIntent
 }
 
@@ -378,6 +397,7 @@ type RequestRunCancellationRequest struct {
 	ErrorCode    string
 	ErrorMessage string
 	Event        *entity.RunEvent
+	JournalEvent *entity.JournalEvent
 	OutboxIntent *NotificationOutboxIntent
 }
 
@@ -396,6 +416,7 @@ type FinalizeRunSuccessRequest struct {
 	Message                           *entity.Message
 	TitleEvent                        *entity.RunEvent
 	CompletionEvent                   *entity.RunEvent
+	JournalEvent                      *entity.JournalEvent
 	TerminalCheckpoint                *entity.Checkpoint
 	TerminalCheckpointOnTitleConflict *entity.Checkpoint
 	ExpectedThreadTitle               string
@@ -425,6 +446,7 @@ type UpdateRunStatusRequest struct {
 	ErrorMessage          string
 	EventPayload          string
 	Event                 *entity.RunEvent
+	JournalEvent          *entity.JournalEvent
 	EventAlreadyPersisted bool
 	OutboxIntent          *NotificationOutboxIntent
 }

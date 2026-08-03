@@ -1,0 +1,18 @@
+ALTER TABLE `agent_run_events`
+  ADD COLUMN `journal_run_id` bigint DEFAULT NULL AFTER `run_id`,
+  ADD COLUMN `attempt_id` varchar(64) DEFAULT NULL AFTER `journal_run_id`,
+  ADD COLUMN `sequence` bigint unsigned DEFAULT NULL AFTER `attempt_id`,
+  ADD COLUMN `idempotency_key` varchar(191) DEFAULT NULL AFTER `sequence`,
+  ADD COLUMN `parent_event_id` bigint DEFAULT NULL AFTER `idempotency_key`,
+  ADD COLUMN `schema_version` varchar(16) DEFAULT NULL AFTER `parent_event_id`,
+  ADD COLUMN `status` varchar(32) DEFAULT NULL AFTER `schema_version`,
+  ADD COLUMN `occurred_at_unix_nano` bigint DEFAULT NULL AFTER `status`,
+  ADD COLUMN `visibility` varchar(16) DEFAULT NULL AFTER `occurred_at_unix_nano`,
+  ADD COLUMN `payload_version` varchar(16) DEFAULT NULL AFTER `visibility`,
+  ADD COLUMN `snapshot_id` varchar(64) DEFAULT NULL AFTER `payload_version`,
+  ADD COLUMN `trace_id` varchar(128) DEFAULT NULL AFTER `snapshot_id`,
+  ADD COLUMN `action_id` varchar(191) DEFAULT NULL AFTER `trace_id`,
+  ADD COLUMN `phase` varchar(64) DEFAULT NULL AFTER `action_id`,
+  ADD COLUMN `operation` varchar(128) DEFAULT NULL AFTER `phase`,
+  ADD COLUMN `target` varchar(512) DEFAULT NULL AFTER `operation`,
+  ADD COLUMN `milestone` varchar(191) DEFAULT NULL AFTER `target`;

@@ -19,23 +19,31 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
 
 const (
-	adkCheckpointEnvelopeLegacyVersion = 1
-	adkCheckpointEnvelopeVersion       = 2
-	adkCheckpointRuntimeVersion        = "0.9.9"
-	adkCheckpointMessageType           = "schema.Message"
-	adkCheckpointNamespace             = "eino.adk"
-	defaultADKCheckpointMaxBytes       = 32 << 20
-	maxADKCheckpointKeyBytes           = 255
+	adkCheckpointEnvelopeLegacyVersion  = 1
+	adkCheckpointEnvelopeVersion        = 2
+	adkJournalCheckpointEnvelopeVersion = 3
+	adkJournalCheckpointSchemaVersion   = "coze.adk.checkpoint.v3"
+	adkCheckpointRuntimeVersion         = "0.9.9"
+	adkCheckpointMessageType            = "schema.Message"
+	adkCheckpointNamespace              = "eino.adk"
+	defaultADKCheckpointMaxBytes        = 32 << 20
+	maxADKCheckpointKeyBytes            = 255
 )
+
+var ErrADKCheckpointRecoveryUnsafe = errors.New("checkpoint is not safe for journal recovery")
 
 type ADKCheckpointPhase string
 
@@ -46,18 +54,47 @@ const (
 )
 
 type ADKCheckpointEnvelope struct {
-	EnvelopeVersion int                         `json:"envelope_version"`
-	Runtime         string                      `json:"runtime"`
-	RuntimeVersion  string                      `json:"runtime_version"`
-	RuntimeKey      string                      `json:"runtime_key"`
-	MessageType     string                      `json:"message_type"`
-	CheckpointPhase ADKCheckpointPhase          `json:"checkpoint_phase,omitempty"`
-	Checkpoint      []byte                      `json:"checkpoint_bytes"`
-	ParityState     *ADKParityState             `json:"parity_state,omitempty"`
-	Interrupts      map[string]ADKInterruptItem `json:"interrupts,omitempty"`
-	RunRevision     int64                       `json:"run_revision"`
-	CreatedAt       int64                       `json:"created_at"`
-	Migration       map[string]string           `json:"migration,omitempty"`
+	EnvelopeVersion       int                            `json:"envelope_version"`
+	SchemaVersion         string                         `json:"schema_version"`
+	Runtime               string                         `json:"runtime"`
+	RuntimeVersion        string                         `json:"runtime_version"`
+	RuntimeKey            string                         `json:"runtime_key"`
+	MessageType           string                         `json:"message_type"`
+	CheckpointPhase       ADKCheckpointPhase             `json:"checkpoint_phase,omitempty"`
+	Checkpoint            []byte                         `json:"checkpoint_bytes,omitempty"`
+	RuntimeState          *ADKCheckpointRuntimeState     `json:"runtime_state,omitempty"`
+	AttemptID             string                         `json:"attempt_id"`
+	LastCommittedSequence uint64                         `json:"last_committed_sequence"`
+	SideEffectLedger      []ADKSideEffectLedgerReference `json:"side_effect_ledger"`
+	ParityState           *ADKParityState                `json:"parity_state,omitempty"`
+	Interrupts            map[string]ADKInterruptItem    `json:"interrupts,omitempty"`
+	RunRevision           int64                          `json:"run_revision"`
+	CreatedAt             int64                          `json:"created_at"`
+	Migration             map[string]string              `json:"migration,omitempty"`
+}
+
+type ADKCheckpointRuntimeState struct {
+	Checkpoint []byte `json:"checkpoint_bytes"`
+}
+
+type ADKSideEffectLedgerReference struct {
+	LedgerID                 int64  `json:"ledger_id"`
+	IdempotencyKey           string `json:"idempotency_key"`
+	ActionKind               string `json:"action_kind"`
+	ReplayPolicy             string `json:"replay_policy"`
+	Status                   string `json:"status"`
+	Version                  uint64 `json:"version"`
+	ResultEventID            int64  `json:"result_event_id,omitempty"`
+	ResultSnapshotID         string `json:"result_snapshot_id,omitempty"`
+	ResolutionAction         string `json:"resolution_action,omitempty"`
+	ResolutionIdempotencyKey string `json:"resolution_idempotency_key,omitempty"`
+}
+
+type ADKRecoveryCheckpoint struct {
+	AttemptID             string
+	LastCommittedSequence uint64
+	RuntimeCheckpoint     []byte
+	SideEffectLedger      []ADKSideEffectLedgerReference
 }
 
 func (e ADKCheckpointEnvelope) Marshal() ([]byte, error) {
@@ -105,7 +142,8 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 		return fmt.Errorf("maximum checkpoint size must be positive")
 	}
 	if envelope.EnvelopeVersion != adkCheckpointEnvelopeLegacyVersion &&
-		envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion {
+		envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion &&
+		envelope.EnvelopeVersion != adkJournalCheckpointEnvelopeVersion {
 		return fmt.Errorf("unsupported checkpoint envelope version: %d", envelope.EnvelopeVersion)
 	}
 	if strings.TrimSpace(envelope.Runtime) != string(RuntimeModeEinoADK) {
@@ -120,10 +158,32 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	if envelope.MessageType != adkCheckpointMessageType {
 		return fmt.Errorf("unsupported checkpoint message type: %s", envelope.MessageType)
 	}
-	if len(envelope.Checkpoint) > maxCheckpointBytes {
+	checkpointBytes := envelope.Checkpoint
+	if envelope.EnvelopeVersion == adkJournalCheckpointEnvelopeVersion {
+		if strings.TrimSpace(envelope.SchemaVersion) != adkJournalCheckpointSchemaVersion {
+			return fmt.Errorf("unsupported journal checkpoint schema version: %s", envelope.SchemaVersion)
+		}
+		if strings.TrimSpace(envelope.AttemptID) == "" {
+			return fmt.Errorf("journal checkpoint attempt id is required")
+		}
+		if envelope.RuntimeState == nil {
+			return fmt.Errorf("journal checkpoint runtime state is required")
+		}
+		if len(envelope.Checkpoint) != 0 {
+			return fmt.Errorf("journal checkpoint cannot contain legacy checkpoint bytes")
+		}
+		if envelope.SideEffectLedger == nil {
+			return fmt.Errorf("journal checkpoint side effect ledger is required")
+		}
+		if err := validateADKSideEffectLedgerReferences(envelope.SideEffectLedger); err != nil {
+			return err
+		}
+		checkpointBytes = envelope.RuntimeState.Checkpoint
+	}
+	if len(checkpointBytes) > maxCheckpointBytes {
 		return fmt.Errorf(
 			"checkpoint exceeds maximum size: got %d bytes, maximum is %d",
-			len(envelope.Checkpoint),
+			len(checkpointBytes),
 			maxCheckpointBytes,
 		)
 	}
@@ -144,7 +204,7 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	}
 	switch envelope.CheckpointPhase {
 	case ADKCheckpointPhaseRuntime, ADKCheckpointPhaseInterrupt:
-		if len(envelope.Checkpoint) == 0 {
+		if len(checkpointBytes) == 0 {
 			return fmt.Errorf("checkpoint bytes are required for %s phase", envelope.CheckpointPhase)
 		}
 	case ADKCheckpointPhaseTerminal:
@@ -156,6 +216,69 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	}
 
 	return nil
+}
+
+func validateADKSideEffectLedgerReferences(refs []ADKSideEffectLedgerReference) error {
+	seenIDs := make(map[int64]struct{}, len(refs))
+	seenKeys := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		key := strings.TrimSpace(ref.IdempotencyKey)
+		if ref.LedgerID <= 0 || key == "" || strings.TrimSpace(ref.ActionKind) == "" ||
+			ref.Version == 0 || ref.ResultEventID < 0 {
+			return fmt.Errorf("journal checkpoint side effect ledger reference is incomplete")
+		}
+		switch strings.TrimSpace(ref.ReplayPolicy) {
+		case "read_only", "idempotent_write", "non_replayable":
+		default:
+			return fmt.Errorf("journal checkpoint side effect replay policy is invalid")
+		}
+		switch strings.TrimSpace(ref.Status) {
+		case "prepared", "executing", "succeeded", "failed", "unknown", "compensated":
+		default:
+			return fmt.Errorf("journal checkpoint side effect status is invalid")
+		}
+		resolutionAction := strings.TrimSpace(ref.ResolutionAction)
+		resolutionKey := strings.TrimSpace(ref.ResolutionIdempotencyKey)
+		if (resolutionAction == "") != (resolutionKey == "") {
+			return fmt.Errorf("journal checkpoint side effect resolution is incomplete")
+		}
+		if resolutionAction != "" {
+			switch resolutionAction {
+			case "mark_succeeded", "skip", "retry":
+			default:
+				return fmt.Errorf("journal checkpoint side effect resolution is invalid")
+			}
+		}
+		if _, exists := seenIDs[ref.LedgerID]; exists {
+			return fmt.Errorf("journal checkpoint side effect ledger id is duplicated")
+		}
+		if _, exists := seenKeys[key]; exists {
+			return fmt.Errorf("journal checkpoint side effect idempotency key is duplicated")
+		}
+		seenIDs[ref.LedgerID] = struct{}{}
+		seenKeys[key] = struct{}{}
+	}
+	return nil
+}
+
+func DecodeADKRecoveryCheckpoint(
+	envelope ADKCheckpointEnvelope,
+) (*ADKRecoveryCheckpoint, error) {
+	if envelope.EnvelopeVersion != adkJournalCheckpointEnvelopeVersion {
+		return nil, ErrADKCheckpointRecoveryUnsafe
+	}
+	if err := validateADKCheckpointEnvelope(envelope, defaultADKCheckpointMaxBytes); err != nil {
+		return nil, err
+	}
+	if envelope.CheckpointPhase == ADKCheckpointPhaseTerminal {
+		return nil, ErrADKCheckpointRecoveryUnsafe
+	}
+	return &ADKRecoveryCheckpoint{
+		AttemptID:             envelope.AttemptID,
+		LastCommittedSequence: envelope.LastCommittedSequence,
+		RuntimeCheckpoint:     append([]byte(nil), envelope.RuntimeState.Checkpoint...),
+		SideEffectLedger:      append([]ADKSideEffectLedgerReference(nil), envelope.SideEffectLedger...),
+	}, nil
 }
 
 type ADKCheckpointService interface {
@@ -197,6 +320,15 @@ type ADKCheckpointStore struct {
 	parityMu           sync.Mutex
 	parityTracker      *ADKParityStateTracker
 	parityParentID     int64
+	journalStateReader ADKJournalCheckpointStateReader
+	sideEffectRepo     ADKSideEffectRepository
+	sideEffectIDGen    ADKSideEffectIDGenerator
+	sideEffectBoundary *ADKSideEffectBoundaryCoordinator
+}
+
+type ADKJournalCheckpointStateReader interface {
+	GetActiveJournalAttempt(context.Context, int64) (*domainentity.RunAttempt, error)
+	ListSideEffectLedgers(context.Context, int64, string) ([]*domainentity.SideEffectLedger, error)
 }
 
 type ADKCheckpointStoreOption func(*ADKCheckpointStore) error
@@ -246,6 +378,32 @@ func WithADKCheckpointRuntimeVersion(version string) ADKCheckpointStoreOption {
 	}
 }
 
+func WithADKJournalCheckpointStateReader(
+	reader ADKJournalCheckpointStateReader,
+) ADKCheckpointStoreOption {
+	return func(store *ADKCheckpointStore) error {
+		if reader == nil {
+			return fmt.Errorf("journal checkpoint state reader is required")
+		}
+		store.journalStateReader = reader
+		return nil
+	}
+}
+
+func WithADKSideEffectBoundary(
+	repo ADKSideEffectRepository,
+	idGen ADKSideEffectIDGenerator,
+) ADKCheckpointStoreOption {
+	return func(store *ADKCheckpointStore) error {
+		if repo == nil || idGen == nil {
+			return fmt.Errorf("journal side effect repository and id generator are required")
+		}
+		store.sideEffectRepo = repo
+		store.sideEffectIDGen = idGen
+		return nil
+	}
+}
+
 func NewADKCheckpointStore(
 	service ADKCheckpointService,
 	run *RunSummary,
@@ -281,8 +439,28 @@ func NewADKCheckpointStore(
 			return nil, err
 		}
 	}
+	if (store.sideEffectRepo == nil) != (store.sideEffectIDGen == nil) {
+		return nil, fmt.Errorf("journal side effect boundary dependencies are incomplete")
+	}
+	if store.sideEffectRepo != nil {
+		coordinator, err := NewADKSideEffectBoundaryCoordinator(
+			run, store.sideEffectRepo, store.sideEffectIDGen,
+			WithADKSideEffectClock(store.now),
+		)
+		if err != nil {
+			return nil, err
+		}
+		store.sideEffectBoundary = coordinator
+	}
 
 	return store, nil
+}
+
+func (s *ADKCheckpointStore) SideEffectBoundaryCoordinator() *ADKSideEffectBoundaryCoordinator {
+	if s == nil {
+		return nil
+	}
+	return s.sideEffectBoundary
 }
 
 func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, checkpoint []byte) error {
@@ -319,6 +497,20 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		parentCheckpointID = latest.Checkpoint.CheckpointID
 	}
 	parityState := tracker.Snapshot()
+	boundaryInput := ADKSideEffectCheckpointInput{
+		RuntimeKey: checkpointID, RuntimeState: append([]byte(nil), checkpoint...),
+		ParityState: &parityState, ParentCheckpointID: parentCheckpointID,
+		RunRevision: s.runRevision, RuntimeVersion: s.runtimeVersion,
+	}
+	if s.sideEffectBoundary != nil {
+		_, committed, err := s.sideEffectBoundary.CommitCheckpoint(ctx, boundaryInput)
+		if err != nil {
+			return fmt.Errorf("commit eino side effect checkpoint boundary: %w", err)
+		}
+		if committed {
+			return nil
+		}
+	}
 
 	envelope := ADKCheckpointEnvelope{
 		EnvelopeVersion: adkCheckpointEnvelopeVersion,
@@ -332,6 +524,21 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		RunRevision:     s.runRevision,
 		CreatedAt:       s.now(),
 	}
+	if s.journalStateReader != nil {
+		attempt, ledgers, enrolled, err := s.loadJournalCheckpointState(ctx)
+		if err != nil {
+			return err
+		}
+		if enrolled {
+			envelope.EnvelopeVersion = adkJournalCheckpointEnvelopeVersion
+			envelope.SchemaVersion = adkJournalCheckpointSchemaVersion
+			envelope.Checkpoint = nil
+			envelope.RuntimeState = &ADKCheckpointRuntimeState{Checkpoint: checkpoint}
+			envelope.AttemptID = attempt.AttemptID
+			envelope.LastCommittedSequence = attempt.LastCommittedSequence
+			envelope.SideEffectLedger = adkSideEffectLedgerReferences(ledgers)
+		}
+	}
 	raw, err := marshalADKCheckpointEnvelope(envelope, s.maxCheckpointBytes)
 	if err != nil {
 		return err
@@ -340,7 +547,7 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		"runtime":          string(RuntimeModeEinoADK),
 		"runtime_version":  s.runtimeVersion,
 		"runtime_key":      checkpointID,
-		"envelope_version": adkCheckpointEnvelopeVersion,
+		"envelope_version": envelope.EnvelopeVersion,
 		"message_type":     adkCheckpointMessageType,
 		"checkpoint_phase": ADKCheckpointPhaseRuntime,
 	})
@@ -355,7 +562,7 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		CheckpointNS:       adkCheckpointNamespace,
 		RuntimeType:        string(RuntimeModeEinoADK),
 		RuntimeKey:         checkpointID,
-		EnvelopeVersion:    adkCheckpointEnvelopeVersion,
+		EnvelopeVersion:    int32(envelope.EnvelopeVersion),
 		ChannelValues:      string(raw),
 		ChannelVersions:    `{}`,
 		PendingSends:       `[]`,
@@ -367,8 +574,66 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 	if resp == nil || resp.Checkpoint == nil {
 		return fmt.Errorf("persist eino checkpoint returned empty response")
 	}
+	if s.sideEffectBoundary != nil {
+		s.sideEffectBoundary.RememberCheckpoint(
+			boundaryInput,
+			resp.Checkpoint.CheckpointID,
+		)
+	}
 
 	return nil
+}
+
+func (s *ADKCheckpointStore) loadJournalCheckpointState(
+	ctx context.Context,
+) (*domainentity.RunAttempt, []*domainentity.SideEffectLedger, bool, error) {
+	attempt, err := s.journalStateReader.GetActiveJournalAttempt(ctx, s.run.RunID)
+	if errors.Is(err, domainrepo.ErrJournalNotEnrolled) {
+		return nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("load active journal checkpoint attempt: %w", err)
+	}
+	if attempt == nil || attempt.ThreadID != s.run.ThreadID ||
+		attempt.ExecutionRunID != s.run.RunID || strings.TrimSpace(attempt.AttemptID) == "" {
+		return nil, nil, false, fmt.Errorf("active journal checkpoint attempt does not belong to run")
+	}
+	ledgers, err := s.journalStateReader.ListSideEffectLedgers(
+		ctx, attempt.JournalRunID, attempt.AttemptID,
+	)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("load journal checkpoint side effect ledger: %w", err)
+	}
+	for _, ledger := range ledgers {
+		if ledger == nil {
+			return nil, nil, false, fmt.Errorf("journal checkpoint side effect ledger is incomplete")
+		}
+	}
+	return attempt, ledgers, true, nil
+}
+
+func adkSideEffectLedgerReferences(
+	ledgers []*domainentity.SideEffectLedger,
+) []ADKSideEffectLedgerReference {
+	refs := make([]ADKSideEffectLedgerReference, 0, len(ledgers))
+	for _, ledger := range ledgers {
+		if ledger == nil {
+			continue
+		}
+		ref := ADKSideEffectLedgerReference{
+			LedgerID: ledger.ID, IdempotencyKey: ledger.IdempotencyKey,
+			ActionKind: ledger.ActionKind, ReplayPolicy: string(ledger.ReplayPolicy),
+			Status: string(ledger.Status), Version: ledger.Version,
+			ResultSnapshotID:         ledger.ResultSnapshotID,
+			ResolutionAction:         string(ledger.ResolutionAction),
+			ResolutionIdempotencyKey: ledger.ResolutionIdempotencyKey,
+		}
+		if ledger.ResultEventID != nil {
+			ref.ResultEventID = *ledger.ResultEventID
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 func (s *ADKCheckpointStore) Get(ctx context.Context, checkpointID string) ([]byte, bool, error) {
@@ -418,12 +683,15 @@ func (s *ADKCheckpointStore) Get(ctx context.Context, checkpointID string) ([]by
 		int(checkpoint.EnvelopeVersion) != envelope.EnvelopeVersion {
 		return nil, false, fmt.Errorf("checkpoint envelope version does not match indexed version")
 	}
-	if envelope.EnvelopeVersion == adkCheckpointEnvelopeVersion &&
+	if envelope.EnvelopeVersion != adkCheckpointEnvelopeLegacyVersion &&
 		envelope.CheckpointPhase == ADKCheckpointPhaseTerminal {
 		return nil, false, fmt.Errorf("terminal checkpoint is not resumable")
 	}
-
-	return envelope.Checkpoint, true, nil
+	runtimeCheckpoint := envelope.Checkpoint
+	if envelope.EnvelopeVersion == adkJournalCheckpointEnvelopeVersion {
+		runtimeCheckpoint = envelope.RuntimeState.Checkpoint
+	}
+	return runtimeCheckpoint, true, nil
 }
 
 func (s *ADKCheckpointStore) Delete(ctx context.Context, checkpointID string) error {
@@ -515,7 +783,9 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 	if len(envelope.Interrupts) == 0 {
 		return fmt.Errorf("eino interrupt targets are missing stable identities")
 	}
-	envelope.EnvelopeVersion = adkCheckpointEnvelopeVersion
+	if envelope.EnvelopeVersion == adkCheckpointEnvelopeLegacyVersion {
+		envelope.EnvelopeVersion = adkCheckpointEnvelopeVersion
+	}
 	envelope.CheckpointPhase = ADKCheckpointPhaseInterrupt
 	parityState := tracker.Snapshot()
 	envelope.ParityState = &parityState
@@ -531,11 +801,13 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 		CheckpointNS:       adkCheckpointNamespace,
 		RuntimeType:        string(RuntimeModeEinoADK),
 		RuntimeKey:         checkpointID,
-		EnvelopeVersion:    adkCheckpointEnvelopeVersion,
+		EnvelopeVersion:    int32(envelope.EnvelopeVersion),
 		ChannelValues:      string(raw),
 		ChannelVersions:    `{}`,
 		PendingSends:       `[]`,
-		Metadata:           adkCheckpointMetadataJSON(s.runtimeVersion, checkpointID, ADKCheckpointPhaseInterrupt),
+		Metadata: adkCheckpointMetadataJSONVersion(
+			s.runtimeVersion, checkpointID, ADKCheckpointPhaseInterrupt, envelope.EnvelopeVersion,
+		),
 	})
 	if err != nil {
 		return fmt.Errorf("persist eino interrupt targets: %w", err)
@@ -634,11 +906,22 @@ func adkCheckpointMetadataJSON(
 	runtimeKey string,
 	phase ADKCheckpointPhase,
 ) string {
+	return adkCheckpointMetadataJSONVersion(
+		runtimeVersion, runtimeKey, phase, adkCheckpointEnvelopeVersion,
+	)
+}
+
+func adkCheckpointMetadataJSONVersion(
+	runtimeVersion string,
+	runtimeKey string,
+	phase ADKCheckpointPhase,
+	envelopeVersion int,
+) string {
 	raw, err := json.Marshal(map[string]any{
 		"runtime":          string(RuntimeModeEinoADK),
 		"runtime_version":  runtimeVersion,
 		"runtime_key":      runtimeKey,
-		"envelope_version": adkCheckpointEnvelopeVersion,
+		"envelope_version": envelopeVersion,
 		"message_type":     adkCheckpointMessageType,
 		"checkpoint_phase": phase,
 	})

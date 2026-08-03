@@ -889,6 +889,12 @@ func StartArtifactScanWorkerFromEnvWithStatus(
 
 		return nil, status
 	}
+	if _, ok := app.ArtifactObjectStorage.(ArtifactObjectStreamStorage); !ok {
+		status.Reason = "artifact object storage streaming is not configured"
+		logs.CtxWarnf(ctx, "[artifact-scan-worker] enabled but artifact object storage streaming is not configured")
+
+		return nil, status
+	}
 	status.ScannerStatus = app.ArtifactScannerStatus
 	if app.ArtifactScanner == nil {
 		status.Reason = "artifact scanner is not configured"
@@ -901,6 +907,13 @@ func StartArtifactScanWorkerFromEnvWithStatus(
 		} else {
 			logs.CtxWarnf(ctx, "[artifact-scan-worker] enabled but artifact scanner is not configured")
 		}
+
+		return nil, status
+	}
+	limits, ok := app.ArtifactScanner.(ArtifactContentScannerLimits)
+	if !ok || limits.MaxArtifactBytes() <= 0 {
+		status.Reason = "artifact scanner limits are not configured"
+		logs.CtxWarnf(ctx, "[artifact-scan-worker] enabled but artifact scanner limits are not configured")
 
 		return nil, status
 	}
