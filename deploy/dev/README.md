@@ -23,17 +23,24 @@
 为 GitHub Actions 创建只允许向这两个仓库拉取、推送和更新标签的账号。为服务器
 创建独立的只读拉取账号，不要复用 Actions 推送账号。
 
-在 GitHub 仓库中配置：
+在 GitHub 仓库中创建 `ACR` 和 `BAOTA` 两个 Environment。Workflow 会把镜像
+作业绑定到 `ACR`，把 webhook 作业绑定到 `BAOTA`；Environment secret 只有这样
+才能进入对应作业。需要全自动发布时，不要为这两个 Environment 配置 required
+reviewers；可用 deployment branch rule 只允许 `dev`。
 
-| 类型 | 名称 | 用途 |
-| --- | --- | --- |
-| Variable | `ACR_REGISTRY` | ACR registry 主机名 |
-| Variable | `ACR_NAMESPACE` | 两个镜像仓库所在命名空间 |
-| Secret | `ACR_USERNAME` | Actions 推送账号 |
-| Secret | `ACR_PASSWORD` | Actions 推送凭据 |
-| Secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
-| Secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
-| Variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
+| 范围 | 类型 | 名称 | 用途 |
+| --- | --- | --- | --- |
+| `ACR` Environment | Variable | `ACR_REGISTRY` | ACR registry 主机名 |
+| `ACR` Environment | Variable | `ACR_NAMESPACE` | 两个镜像仓库所在命名空间 |
+| `ACR` Environment | Secret | `ACR_USERNAME` | Actions 推送账号 |
+| `ACR` Environment | Secret | `ACR_PASSWORD` | Actions 推送凭据 |
+| `BAOTA` Environment | Secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
+| `BAOTA` Environment | Secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
+| Repository 或 `BAOTA` Environment | Variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
+
+`ACR_REGISTRY` 和 `ACR_NAMESPACE` 也可以保留为 Repository variables；同名的
+`ACR` Environment variables 会在 ACR 作业中优先使用。不要把 ACR 或 BAOTA 的
+secret 只建在未被作业引用的其他 Environment 中。
 
 Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。GitHub 不保存数据库
 credential，也不连接 dev MySQL；服务器同样不安装或运行 Atlas。不要配置旧的

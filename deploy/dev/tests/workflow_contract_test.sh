@@ -82,6 +82,15 @@ assert_contract(jobs.keys.sort == expected_jobs.sort, 'workflow jobs must match 
 assert_contract(!jobs.key?('migration-hold'), 'manual migration-hold job must be removed')
 assert_contract(!jobs.key?('migrate'), 'remote migrate job must be removed')
 
+%w[preflight build-server build-web verify-images promote].each do |job_name|
+  assert_contract(jobs.fetch(job_name)['environment'] == 'ACR',
+                  "#{job_name} must bind the ACR environment secrets")
+end
+assert_contract(jobs.fetch('deploy')['environment'] == 'BAOTA',
+                'deploy must bind the BAOTA environment secrets')
+assert_contract(!jobs.fetch('deployment-blocked').key?('environment'),
+                'deployment-blocked must not bind an environment')
+
 preflight = jobs.fetch('preflight')
 expected_preflight_outputs = {
   'target_sha' => '${{ steps.resolve.outputs.target_sha }}',

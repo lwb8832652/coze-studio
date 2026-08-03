@@ -21,6 +21,7 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    environment: ACR
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
       migration_changed: ${{ steps.resolve.outputs.migration_changed }}
@@ -192,6 +193,7 @@ jobs:
 
   build-server:
     runs-on: ubuntu-latest
+    environment: ACR
     needs: preflight
     if: ${{ github.event_name == 'push' }}
     steps:
@@ -223,6 +225,7 @@ jobs:
 
   build-web:
     runs-on: ubuntu-latest
+    environment: ACR
     needs: preflight
     if: ${{ github.event_name == 'push' }}
     steps:
@@ -274,6 +277,7 @@ jobs:
 
   verify-images:
     runs-on: ubuntu-latest
+    environment: ACR
     timeout-minutes: 15
     needs: [preflight, build-server, build-web]
     if: >-
@@ -319,6 +323,7 @@ jobs:
 
   promote:
     runs-on: ubuntu-latest
+    environment: ACR
     timeout-minutes: 10
     needs: [preflight, build-server, build-web, verify-images]
     outputs:
@@ -371,6 +376,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
+    environment: BAOTA
     timeout-minutes: 15
     needs: promote
     if: ${{ needs.promote.result == 'success' }}
