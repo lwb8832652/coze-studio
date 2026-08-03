@@ -140,6 +140,17 @@ plans/specs 只能按需追溯，不能用于推断当前合同。
 用户确认只对报告中的分支、SHA、文件范围和验证结果有效；提交发生变化后必须
 重新审计。不得把“确认合入本地 dev”解释为远程推送授权。
 
+远程 `dev` 发布禁止 Codex 直接执行 `git push origin dev`。第二次审计确认同时
+授权报告逐项列出的本地 Atlas forward apply 与同一 exact SHA 的非 force push；
+确认后只能调用：
+
+```bash
+deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
+
+脚本 push 成功后立即结束，后续镜像构建、晋级和宝塔部署由 GitHub Actions 与
+服务器完成。详细授权和停止条件见上述 runbook。
+
 ## 项目结构
 
 - 前端主应用：`frontend/apps/coze-studio`

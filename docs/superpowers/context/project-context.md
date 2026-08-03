@@ -62,47 +62,38 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ### dev 预发布部署
 
-推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
-不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
-服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
-revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
+dev migration 在远程 push 前由维护者本机执行。第二次集成审计先固定
+`origin/dev` 基准、本地 `dev` 目标、ACR 当前两张 `:dev` 镜像的一致 revision 和
+实际部署区间，逐项审阅区间内 migration、数据库副作用及旧应用兼容性，并取得
+只读 `migrate status` 证据。报告给出两个具体的 40 位 SHA；用户第二次明确确认后，
+Codex 只能把这两个 SHA 交给 `deploy/dev/publish-dev.sh`。
 
-Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线；自动迁移启用
-前，远程 dev schema 和 Atlas revision 历史必须与 migration 目录一致。Preflight
-分开输出 `migration_changed` 与 `deployment_blocked`。可验证的 push 若确有
-migration，会在不可变镜像验证后自动执行 Atlas；基线、Git 关系或 diff 无法证明
-时 fail closed，`deployment-blocked` job 明确失败。
+`publish-dev.sh` 固定使用
+`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`。
+脚本从 exact target SHA 创建受限快照，依次 validate、status、forward apply；随后
+重新检查干净工作区、目标 HEAD，并通过第二次 fetch 的 `FETCH_HEAD` 核对远程基准，
+最后只做 exact-SHA 非 force push。Atlas 输出经脱敏后回放。Push 成功后脚本立即
+退出，不等待 Actions、不 dispatch，也不调用宝塔。
 
-第二次集成审计必须先从 ACR 取得两张当前 `:dev` 镜像的合法且一致 OCI revision，
-再审计 `<deployed-revision>..<target-sha>` 内的全部 migration；首次部署使用已验证的
-push `before`。推送授权只覆盖报告逐项列出的 migration、数据库副作用和 exact SHA。
-Git 对象、祖先关系、diff、旧应用兼容性或 schema/revision 基线无法证明时，不得请求
-推送确认。一次性 Atlas baseline 会写 revision，版本参数是 migration 文件名的时间戳
-而非 Git SHA，必须依据 `migrate status` 和 schema 证据另行获得数据库变更授权。
+Atlas migration credential 只存在于仓库外、非 symlink、模式严格为 `600` 的本地
+env 文件；GitHub 不持有该 credential，也不连接数据库。预发布服务器仍通过
+`app.env` 持有应用运行时 DSN，但不持有 migration credential，也不安装或运行 Atlas。
+dev MySQL 不支持 TLS 时允许使用无 TLS 连接，但公共网络会暴露 credential 和 schema
+流量；必须限制来源 IP 或网络路径，并使用专用最小权限 migration 账号，禁止 root。
+可以提供私网或 TLS 时优先迁移到更安全的连接方式。
 
-`ATLAS_URL` 与可选 `ATLAS_CA_PEM` 只允许配置为 GitHub Actions Repository Secret。
-Workflow 要求 `mysql://` URL 含唯一 `tls=true`；使用私有 CA 时，URL 还必须精确声明
-`ssl-ca=/atlas-ca.pem`。CA 以 `600` 临时文件只读挂入 Atlas 容器并在退出时删除；
-Secret 与 URL 不匹配会在 Docker 前失败。DSN 和 PEM 不进入 shell source、命令参数
-或日志。
+远程 push 后，GitHub Actions 只执行
+`preflight -> build-server/build-web -> verify-images -> promote -> deploy`：构建并验证
+两个 exact-SHA 不可变镜像，晋级两张 `:dev` 标签，再调用宝塔 webhook。Workflow
+和服务器继续核对前后端 OCI revision，服务器在记录成功前还会确认两个运行容器的
+实际 image ID 一致。`workflow_dispatch` 只重放已有不可变镜像，可处理区间内含
+migration 的已推送 target，但不迁移数据库，也不执行 down migration。
 
-Atlas validate/apply 固定使用
-`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`；
-该版本支持 MySQL `ssl-ca`，不得退回 `0.35.0` 或改用可变 tag。
-
-`migrate` 保持使用 `ubuntu-latest`。标准 GitHub-hosted runner 出口范围多且变化，
-不能用整段 GitHub 地址或 `0.0.0.0/0` 代替受控网络和实际连通性验证；稳定白名单需要
-已配置的 self-hosted runner 或 larger runner 静态出口，并在修改 `runs-on` 前另行
-审计。每次第二次集成审计必须记录本轮目标端点的 TLS 探测；端点不支持 SSL 时，
-云侧启用 SSL、实例重启、CA 下载核验和 Secret 更新是含 migration 推送前的独立
-授权前提，本 workflow 不执行这些外部变更。
-
-`workflow_dispatch` 不执行 Atlas 或 down migration，只允许重试当前 revision、
-回滚到其祖先，或前向重放不含 migration 的后代；前向含 migration、关系不可证明
-或双 revision 异常时阻断。Migration 失败先经单独授权的 `migrate status` 和状态
-证据区分瞬态与确定性故障；只有瞬态故障才在同一 run 重跑，确定性 migration 修复
-后重新审计，数据库修复另行授权。部分晋级仍在同一 run 重跑；双标签已晋级而部署
-失败时可 dispatch 同一 SHA。Forward migration 必须兼容暂时继续运行的旧应用。
+第二次确认只授权报告中的 forward apply、exact push，以及该 push 触发的镜像和
+宝塔副作用。Baseline、repair、backfill、down migration、数据库重试、生产发布和
+配置变更都要单独授权。Apply 成功后若远程竞态或 push 失败，schema 可能领先于
+远程代码；禁止 force 或直接 push，必须重新审计并取得新确认。Forward migration
+必须兼容暂时继续运行的旧应用。
 
 该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
 Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚

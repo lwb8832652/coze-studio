@@ -1,5 +1,9 @@
 # Dev 自动 Atlas Migration 设计
 
+> **已于 2026-08-03 被取代。** 当前设计见
+> [`2026-08-03-dev-local-atlas-before-push-design.md`](./2026-08-03-dev-local-atlas-before-push-design.md)。
+> 下文仅保留历史，不得作为当前操作指引。
+
 ## 1. 背景与目标
 
 本设计实施前，`dev` 发布工作流会从已晋级的前后端 `:dev` 镜像 revision 比较到

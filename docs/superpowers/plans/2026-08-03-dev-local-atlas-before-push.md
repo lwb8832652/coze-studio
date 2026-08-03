@@ -6,6 +6,8 @@
 
 **Architecture:** `deploy/dev/publish-dev.sh` owns the local validate/status/apply/push transaction and consumes a mode-`600` env file outside the repository. `.github/workflows/deploy-dev.yml` keeps image-baseline checks and immutable image verification, removes the remote migration job, and promotes/deploys after verification for both push and eligible dispatch runs. `AGENTS.md`, the integration runbook, and the dev deployment README make the local command the only Codex entry for pushing `dev`.
 
+**Security update (2026-08-03):** The same script exposes `--status` for the read-only second-audit evidence. It reuses exact-SHA snapshots and redacted output capture, and never applies or pushes.
+
 **Tech Stack:** Bash, Ruby YAML contract tests, Git, Docker, Atlas Community `v1.2.3`, GitHub Actions, ACR, Baota WebHook.
 
 ---
@@ -95,32 +97,10 @@ Expected: nonzero with `publish dev test failure: publish-dev.sh is missing`.
 
 - [ ] **Step 3: Implement the minimal publishing script**
 
-Use this public interface and fixed paths:
-
-```bash
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-MIGRATIONS_DIR=$REPO_ROOT/docker/atlas/migrations
-ATLAS_CONFIG=$REPO_ROOT/.github/atlas-dev.hcl
-ATLAS_ENV_FILE=${ATLAS_ENV_FILE:-${HOME:?HOME is required}/.config/coze-studio/dev-atlas.env}
-ATLAS_IMAGE='arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'
-GIT_BIN=${GIT_BIN:-git}
-DOCKER_BIN=${DOCKER_BIN:-docker}
-```
-
-Add helpers with these responsibilities:
-
-```bash
-is_revision() { [[ "${1:-}" =~ ^[0-9a-fA-F]{40}$ ]]; }
-normalize_revision() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
-git_cmd() { "$GIT_BIN" "$@"; }
-docker_cmd() { "$DOCKER_BIN" "$@"; }
-error() { printf '[publish-dev] error: %s\n' "$*" >&2; }
-log() { printf '[publish-dev] %s\n' "$*"; }
-```
+Use Bash with `set -Eeuo pipefail`, `set +x`, and `umask 077`. Resolve and enter the physical
+repository root before any Git command. The default env path remains
+`~/.config/coze-studio/dev-atlas.env`; the Atlas image must be the full pinned reference shown in
+this plan, never an installed binary or mutable tag.
 
 `main` must accept exactly `EXPECTED_ORIGIN_DEV_SHA TARGET_DEV_SHA`, normalize both, and
 perform this sequence:
@@ -128,10 +108,10 @@ perform this sequence:
 ```bash
 current_branch=$(git_cmd symbolic-ref --quiet --short HEAD)
 [ "$current_branch" = dev ]
-[ -z "$(git_cmd status --porcelain)" ]
+[ -z "$(git_cmd status --porcelain --untracked-files=all)" ]
 [ "$(normalize_revision "$(git_cmd rev-parse HEAD)")" = "$target_sha" ]
 git_cmd fetch --no-tags origin dev
-[ "$(normalize_revision "$(git_cmd rev-parse refs/remotes/origin/dev)")" = "$expected_origin_sha" ]
+[ "$(normalize_revision "$(git_cmd rev-parse FETCH_HEAD)")" = "$expected_origin_sha" ]
 git_cmd cat-file -e "${target_sha}^{commit}"
 git_cmd merge-base --is-ancestor "$expected_origin_sha" "$target_sha"
 ```
@@ -143,28 +123,16 @@ allow blank lines and `#` comments, require exactly one nonempty
 line,
 and reject every other key. Never print the parsed value.
 
-Run Atlas in this exact order:
+Create a mode-`700` temporary directory outside the repository. Use `git archive` on the exact
+target SHA to extract only `docker/atlas/migrations` and `.github/atlas-dev.hcl` into that
+directory. Write the parsed URL to a mode-`600` runtime env file inside the snapshot; Docker must
+never receive the original credential file or mount the live worktree.
 
-```bash
-docker_cmd run --rm \
-  -v "$MIGRATIONS_DIR:/migrations:ro" \
-  "$ATLAS_IMAGE" \
-  migrate validate --dir file:///migrations
-
-docker_cmd run --rm \
-  --env-file "$atlas_env_file" \
-  -v "$MIGRATIONS_DIR:/migrations:ro" \
-  -v "$ATLAS_CONFIG:/atlas.hcl:ro" \
-  "$ATLAS_IMAGE" \
-  migrate status --config file:///atlas.hcl --env dev
-
-docker_cmd run --rm \
-  --env-file "$atlas_env_file" \
-  -v "$MIGRATIONS_DIR:/migrations:ro" \
-  -v "$ATLAS_CONFIG:/atlas.hcl:ro" \
-  "$ATLAS_IMAGE" \
-  migrate apply --config file:///atlas.hcl --env dev
-```
+Run validate, status, then apply against that one immutable snapshot. Capture each stage's combined
+output in a separate mode-`600` file outside the repository, redact the full URL, userinfo,
+password, URI authorities, and password/secret/token/key fields before replaying it, then delete
+the capture. Clean the snapshot on success, failure, or signal. `--status` runs only validate and
+status through the same capture path.
 
 After apply, repeat the clean-worktree, HEAD, fetch, remote-SHA, commit-object, and ancestor
 checks. Push only the authorized object:
@@ -173,6 +141,10 @@ checks. Push only the authorized object:
 git_cmd push origin "$target_sha:refs/heads/dev"
 log "pushed audited dev revision $target_sha; GitHub and Baota own all remaining steps"
 ```
+
+Add `--status EXPECTED_ORIGIN_DEV_SHA TARGET_DEV_SHA` as a read-only mode. It must run the same
+preconditions, snapshot, validate, status, output redaction, and final local/remote recheck, then
+exit without `migrate apply` or `git push`.
 
 The script must not contain `gh`, `curl`, a GitHub API URL, `workflow_dispatch`, `--force`,
 `--force-with-lease`, or a literal database URL.
@@ -476,6 +448,13 @@ From merged local `dev`, rerun every test, ACR revision lookup, migration-range 
 directory validation, local env-file presence/mode check without reading its value, and remote
 race check. Report `AUDITED_ORIGIN_DEV_SHA` and `AUDITED_TARGET_DEV_SHA` with their concrete
 40-hex values as the only permitted arguments. Stop for the second explicit confirmation.
+
+Obtain the read-only status evidence before that confirmation with:
+
+```bash
+deploy/dev/publish-dev.sh --status \
+  "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
 
 - [ ] **Step 4: Execute the one local release command**
 

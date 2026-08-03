@@ -58,6 +58,16 @@ forward migration 必须兼容当前仍在运行的旧应用；push 失败后禁
 publish-dev.sh <expected-origin-dev-sha> <target-dev-sha>
 ```
 
+第二次确认前的只读状态审计使用同一入口：
+
+```text
+publish-dev.sh --status <expected-origin-dev-sha> <target-dev-sha>
+```
+
+`--status` 复用下述 Git、env、快照和输出脱敏检查，只执行 validate/status，随后再次
+核对本地与远程 SHA 并退出；它不执行 apply 或 push。这样 Atlas 连接错误也不会绕过
+脚本的安全输出捕获。
+
 脚本按以下顺序执行：
 
 1. 要求当前分支为 `dev`、工作区干净且 `HEAD` 等于 `target-dev-sha`。
@@ -68,7 +78,8 @@ publish-dev.sh <expected-origin-dev-sha> <target-dev-sha>
 4. 使用仓库固定的 Atlas Docker digest 对 migration 目录执行 `migrate validate`。
 5. 对 dev 数据库执行 `migrate status`；状态不可读取、revision 不一致或需要 baseline
    时失败关闭，不执行 apply。
-6. 执行 `migrate apply`。没有待执行 migration 时由 Atlas 正常 no-op。
+6. 正式发布模式执行 `migrate apply`。没有待执行 migration 时由 Atlas 正常 no-op；
+   `--status` 模式在本步前退出。
 7. 再次 fetch 并核对远程基准、目标 SHA 和工作区，缩小 apply 与 push 之间的竞态
    窗口。
 8. 使用精确 refspec 推送 `target-dev-sha` 到 `refs/heads/dev`，禁止 force push。
@@ -138,6 +149,8 @@ GitHub 无法证明某次手工 `git push` 之前是否执行过本地脚本。�
 
 - Shell 契约测试使用 fake `git`、`docker` 和隔离环境文件，覆盖分支、SHA、工作区、
   远程竞态、权限、validate/status/apply 失败和精确 push refspec。
+- 测试证明 `--status` 只运行 validate/status，复用脱敏输出，并在再次核对远程基准后
+  退出，不调用 apply 或 push。
 - 测试必须证明 migration 失败时不会调用 push，push 成功后不会调用 GitHub API、
   `gh`、curl 或宝塔。
 - Workflow 契约测试验证 job 集合、依赖、push/dispatch 条件、无 Atlas Secret、无

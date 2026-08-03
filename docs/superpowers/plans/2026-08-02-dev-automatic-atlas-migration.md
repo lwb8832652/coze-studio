@@ -1,5 +1,9 @@
 # Dev Automatic Atlas Migration Implementation Plan
 
+> **已于 2026-08-03 被取代。** 当前实现计划见
+> [`2026-08-03-dev-local-atlas-before-push.md`](./2026-08-03-dev-local-atlas-before-push.md)。
+> 下文仅保留历史，不得作为当前操作指引。
+
 > **Compatibility update (2026-08-03):** Private CA review showed that Atlas 0.35.0 does not consume the MySQL `ssl-ca` parameter. The current implementation therefore pins Atlas 1.2.3 by full tag and manifest digest.
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
