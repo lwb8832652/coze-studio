@@ -60,6 +60,10 @@ type ServiceComponents struct {
 }
 
 func InitService(ctx context.Context, s *ServiceComponents) (*SearchApplicationService, error) {
+	if err := ensureSearchIndices(ctx, s.ESClient); err != nil {
+		return nil, fmt.Errorf("ensure search indices failed, err=%w", err)
+	}
+
 	searchDomainSVC := search.NewDomainService(ctx, s.ESClient)
 
 	SearchSVC.DomainSVC = searchDomainSVC

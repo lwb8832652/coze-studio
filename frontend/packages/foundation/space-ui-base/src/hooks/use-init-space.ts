@@ -18,41 +18,27 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
 import { useShallow } from 'zustand/react/shallow';
+import { useSpaceStore } from '@coze-foundation/space-store';
 import { REPORT_EVENTS as ReportEventNames } from '@coze-arch/report-events';
 import { useErrorHandler, reporter } from '@coze-arch/logger';
 import { I18n } from '@coze-arch/i18n';
 import { Toast } from '@coze-arch/coze-design';
 import { CustomError } from '@coze-arch/bot-error';
-import { localStorageService } from '@coze-foundation/local-storage';
-import { useSpaceStore } from '@coze-foundation/space-store';
 
-const getFallbackWorkspaceURL = async (
-  fallbackSpaceID: string,
-  fallbackSpaceMenu: string,
-  checkSpaceID: (id: string) => boolean,
-) => {
-  const targetSpaceId =
-    (await localStorageService.getValueSync('workspace-spaceId')) ??
-    fallbackSpaceID;
-  const targetSpaceSubMenu =
-    (await localStorageService.getValueSync('workspace-subMenu')) ??
-    fallbackSpaceMenu;
-
-  if (targetSpaceId && checkSpaceID(targetSpaceId)) {
-    return `/space/${targetSpaceId}/${targetSpaceSubMenu}`;
-  }
-
-  return `/space/${fallbackSpaceID}/${targetSpaceSubMenu}`;
-};
+import { getFallbackWorkspaceURL } from './space-landing';
 
 export const useInitSpace = ({
   spaceId,
   fetchSpacesWithSpaceId,
   isReady,
+  fallbackSpaceMenu = 'develop',
+  restoreLastSubMenu = true,
 }: {
   spaceId?: string;
   fetchSpacesWithSpaceId?: (spaceId: string) => Promise<unknown>;
   isReady?: boolean;
+  fallbackSpaceMenu?: string;
+  restoreLastSubMenu?: boolean;
 } = {}) => {
   const [isError, setIsError] = useState<boolean>(false);
   const navigate = useNavigate();
@@ -65,7 +51,7 @@ export const useInitSpace = ({
           space: store.space,
           spaceListLoading: store.loading,
           spaceList: store.spaceList,
-        } as const),
+        }) as const,
     ),
   );
 
@@ -77,7 +63,7 @@ export const useInitSpace = ({
           return;
         }
 
-        // If spaceId is not specified, jump to the project development subroute under the space of the backseat
+        // Without a space ID, resolve the product's configured workspace landing route.
         if (!spaceId) {
           // Pull space list
           await useSpaceStore.getState().fetchSpaces(true);
@@ -95,11 +81,12 @@ export const useInitSpace = ({
             Toast.warning(I18n.t('enterprise_workspace_default_tips2_toast'));
           } else {
             // Get the jump URL of the back cover.
-            const targetURL = await getFallbackWorkspaceURL(
+            const targetURL = await getFallbackWorkspaceURL({
               fallbackSpaceID,
-              'develop',
               checkSpaceID,
-            );
+              fallbackSpaceMenu,
+              restoreLastSubMenu,
+            });
             // jump
             navigate(targetURL);
           }
@@ -139,7 +126,7 @@ export const useInitSpace = ({
         );
       }
     })(spaceId);
-  }, [spaceId, isReady]);
+  }, [fallbackSpaceMenu, isReady, restoreLastSubMenu, spaceId]);
 
   return { loading: !space.id, isError, spaceListLoading, spaceList };
 };

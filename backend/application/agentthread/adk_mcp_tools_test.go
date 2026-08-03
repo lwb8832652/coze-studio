@@ -18,12 +18,14 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/stretchr/testify/require"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 )
 
 func TestADKMCPRuntimeToolCatalogDisabledByDefault(t *testing.T) {
@@ -53,6 +55,42 @@ func TestADKMCPRuntimeToolCatalogDisabledByDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, definitions)
 	require.Zero(t, registry.listCalls)
+}
+
+func TestADKMCPRuntimeToolCatalogTreatsDisabledServiceAsUnavailable(t *testing.T) {
+	registry := &recordingADKMCPToolRegistry{err: appmcptool.ErrMCPDisabled}
+	catalog := NewADKMCPRuntimeToolCatalog(registry)
+
+	definitions, err := catalog.LoadADKRuntimeTools(
+		context.Background(),
+		&RunSummary{
+			RunID:   20,
+			SpaceID: 30,
+			Config:  `{"mcp_tools":{"enabled":true}}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Empty(t, definitions)
+	require.Equal(t, 1, registry.listCalls)
+}
+
+func TestADKMCPRuntimeToolCatalogPreservesRegistryFailures(t *testing.T) {
+	registryErr := errors.New("registry unavailable")
+	registry := &recordingADKMCPToolRegistry{err: registryErr}
+	catalog := NewADKMCPRuntimeToolCatalog(registry)
+
+	definitions, err := catalog.LoadADKRuntimeTools(
+		context.Background(),
+		&RunSummary{
+			RunID:   20,
+			SpaceID: 30,
+			Config:  `{"mcp_tools":{"enabled":true}}`,
+		},
+	)
+
+	require.ErrorIs(t, err, registryErr)
+	require.Empty(t, definitions)
 }
 
 func TestADKMCPRuntimeToolCatalogLoadsDeferredMetadataOnlyAndFailsClosed(
@@ -353,6 +391,7 @@ func TestDefaultADKToolProviderCanWireMCPExecutor(t *testing.T) {
 
 type recordingADKMCPToolRegistry struct {
 	entries   []*toolapi.MCPToolRegistryEntry
+	err       error
 	spaceID   int64
 	listCalls int
 }
@@ -363,6 +402,9 @@ func (r *recordingADKMCPToolRegistry) ListMCPToolRegistryEntriesForRuntime(
 ) ([]*toolapi.MCPToolRegistryEntry, error) {
 	r.spaceID = spaceID
 	r.listCalls++
+	if r.err != nil {
+		return nil, r.err
+	}
 	return r.entries, nil
 }
 

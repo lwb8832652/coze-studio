@@ -63,6 +63,8 @@ COPY backend/infra/coderunner/impl/script/sandbox.py /app/sandbox.py
 # Copy static resources
 # COPY backend/static /app/resources/static/
 COPY backend/conf /app/resources/conf/
+COPY docker/volumes/minio/default_icon /app/resources/storage/default_icon
+COPY docker/volumes/minio/official_plugin_icon /app/resources/storage/official_plugin_icon
 COPY docker/.env.example /app/.env
 # COPY docker/.env.ve /app/.env
 # COPY docker/cert.pem /app/cert.pem
@@ -81,5 +83,6 @@ EXPOSE 8888
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV APP_REVISION=$GIT_REVISION
+ENV COZE_BUNDLED_STORAGE_ASSET_DIR=/app/resources/storage
 
 CMD ["/app/opencoze"]

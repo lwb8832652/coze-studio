@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -84,6 +85,18 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 		return nil, fmt.Errorf("init object storage failed, err=%w", err)
 	}
 	deps.OSS = storageRuntime.Storage
+	if assetRoot := strings.TrimSpace(os.Getenv(applicationobjectstorage.BundledStorageAssetDirEnv)); assetRoot != "" {
+		assetResult, syncErr := applicationobjectstorage.EnsureBundledAssets(ctx, deps.OSS, assetRoot)
+		if syncErr != nil {
+			return nil, fmt.Errorf("sync bundled object storage assets failed, err=%w", syncErr)
+		}
+		logs.CtxInfof(
+			ctx,
+			"bundled object storage assets verified, checked=%d uploaded=%d",
+			assetResult.Checked,
+			assetResult.Uploaded,
+		)
+	}
 	applicationobjectstorage.SetDefaultService(applicationobjectstorage.NewService(applicationobjectstorage.ServiceComponents{
 		Repository: storageconfig.NewMySQLRepository(deps.DB),
 		Codec:      storageBootstrapper.Codec,

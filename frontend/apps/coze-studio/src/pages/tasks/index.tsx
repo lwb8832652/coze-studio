@@ -34,9 +34,15 @@ import {
 } from './task-thread-events';
 import { getTaskThreadDisplayTitle } from './task-display-title';
 import { listTaskThreads } from './service';
-import { formatUpdatedTime, type TaskStatusFilter } from './helpers';
+import {
+  formatTaskListTime,
+  formatUpdatedTime,
+  type TaskStatusFilter,
+} from './helpers';
 
 type TaskThread = WorkbenchThread;
+
+const RELATIVE_TIME_REFRESH_INTERVAL_MS = 60_000;
 
 const getTaskThreadDescription = (task: TaskThread) =>
   task.last_user_message || task.last_agent_message || task.title;
@@ -151,26 +157,12 @@ const getStatusPillClassName = (status: string) => {
   };
 };
 
-interface TasksHeaderProps {
-  loading: boolean;
-  spaceId?: string;
-  onRefresh: () => void;
-}
-
-const TasksHeader = ({ loading, spaceId, onRefresh }: TasksHeaderProps) => (
+const TasksHeader = () => (
   <div className="newx-page-heading">
     <h1 className="coze-prototype-page-title">全部任务</h1>
     <p className="coze-prototype-page-subtitle">
       这里收纳您当前工作空间内的全部任务
     </p>
-    <button
-      type="button"
-      className="sr-only"
-      disabled={loading || !spaceId}
-      onClick={onRefresh}
-    >
-      刷新
-    </button>
   </div>
 );
 
@@ -239,7 +231,7 @@ const TasksToolbar = ({
 
 interface TaskRowProps {
   favorite: boolean;
-  spaceId?: string;
+  now: number;
   task: TaskThread;
   onNavigate: (task: TaskThread) => void;
   onToggleFavorite: (taskId: string) => void;
@@ -247,6 +239,7 @@ interface TaskRowProps {
 
 const TaskRow = ({
   favorite,
+  now,
   task,
   onNavigate,
   onToggleFavorite,
@@ -294,9 +287,17 @@ const TaskRow = ({
           />
           {getTaskThreadStatusText(task.status)}
         </span>
-        <span className="coze-prototype-muted w-[60px] text-right">
-          {formatUpdatedTime(task.updated_at)}
-        </span>
+        <time
+          className="coze-prototype-muted coze-prototype-task-time"
+          dateTime={
+            task.updated_at
+              ? new Date(task.updated_at).toISOString()
+              : undefined
+          }
+          title={formatUpdatedTime(task.updated_at)}
+        >
+          {formatTaskListTime(task.updated_at, now)}
+        </time>
         <button
           type="button"
           className="coze-prototype-more-button"
@@ -314,7 +315,7 @@ const TaskRow = ({
 interface TaskListProps {
   favoriteTaskIds: string[];
   loading: boolean;
-  spaceId?: string;
+  now: number;
   tasks: TaskThread[];
   totalTasks: number;
   onNavigate: (task: TaskThread) => void;
@@ -324,7 +325,7 @@ interface TaskListProps {
 const TaskList = ({
   favoriteTaskIds,
   loading,
-  spaceId,
+  now,
   tasks,
   totalTasks,
   onNavigate,
@@ -344,7 +345,7 @@ const TaskList = ({
         <TaskRow
           key={task.thread_id}
           favorite={favoriteTaskIds.includes(task.thread_id)}
-          spaceId={spaceId}
+          now={now}
           task={task}
           onNavigate={onNavigate}
           onToggleFavorite={onToggleFavorite}
@@ -364,6 +365,7 @@ const TasksPage = () => {
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('all');
   const [view, setView] = useState<'all' | 'favorite'>('all');
   const [favoriteTaskIds, setFavoriteTaskIds] = useState<string[]>([]);
+  const [now, setNow] = useState(() => Date.now());
 
   const filteredTasks = filterTaskThreads(tasks, keyword, statusFilter);
   const visibleTasks =
@@ -392,6 +394,15 @@ const TasksPage = () => {
   useEffect(() => {
     void loadTasks();
   }, [space_id]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setNow(Date.now()),
+      RELATIVE_TIME_REFRESH_INTERVAL_MS,
+    );
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!space_id) {
@@ -441,11 +452,7 @@ const TasksPage = () => {
     <main className="coze-prototype-page newx-menu-page newx-tasks-page-shell">
       <WorkspacePageTopBar />
       <section className="coze-prototype-page-inner">
-        <TasksHeader
-          loading={loading}
-          spaceId={space_id}
-          onRefresh={loadTasks}
-        />
+        <TasksHeader />
         <TasksToolbar
           keyword={keyword}
           statusFilter={statusFilter}
@@ -464,7 +471,7 @@ const TasksPage = () => {
         <TaskList
           favoriteTaskIds={favoriteTaskIds}
           loading={loading}
-          spaceId={space_id}
+          now={now}
           tasks={visibleTasks}
           totalTasks={tasks.length}
           onNavigate={handleNavigate}

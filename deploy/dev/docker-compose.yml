@@ -43,6 +43,11 @@ services:
     environment:
       COZE_MQ_TYPE: nsq
       MQ_NAME_SERVER: nsqd:4150
+      AGENT_THREAD_RUNTIME_DEFAULT: eino_adk
+      AGENT_THREAD_EINO_ADK_ENABLED: "true"
+      AGENT_THREAD_WORKER_ENABLED: "true"
+      AGENT_THREAD_RESUME_WORKER_ENABLED: "true"
+      AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED: "true"
     expose:
       - "8888"
     volumes:

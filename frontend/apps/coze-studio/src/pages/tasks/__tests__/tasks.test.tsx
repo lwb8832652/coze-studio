@@ -76,6 +76,7 @@ import TasksPage from '../index';
 import {
   canCancelTask,
   filterTasks,
+  formatTaskListTime,
   formatUpdatedTime,
   getTaskThreadEventDisplay,
   getTaskInputText,
@@ -132,10 +133,16 @@ describe('TasksPage helpers', () => {
     ).toBeTruthy();
     expect(container.textContent).toContain('已收藏');
     expect(container.textContent).toContain('批量操作');
+    expect(container.textContent).not.toContain('刷新');
     expect(container.textContent).toContain('生成周报');
     expect(container.textContent).toContain('整理项目进展');
     expect(container.textContent).toContain('运行中');
     expect(container.textContent).not.toContain('{"message":"整理项目进展"}');
+    const updatedAt = container.querySelector('time.coze-prototype-task-time');
+    expect(updatedAt?.textContent).toBe(formatTaskListTime(1717000300000));
+    expect(updatedAt?.getAttribute('datetime')).toBe(
+      new Date(1717000300000).toISOString(),
+    );
     expect(mockListTaskThreads).toHaveBeenCalledWith({ space_id: 'space-1' });
 
     const openButton = container.querySelector(
@@ -388,6 +395,19 @@ describe('TasksPage helpers', () => {
     expect(formatUpdatedTime(timestamp)).toBe(
       new Date(timestamp).toLocaleString(),
     );
+  });
+
+  it('formats task list timestamps as concise relative time', () => {
+    const now = new Date(2026, 7, 3, 20, 0, 0).getTime();
+    const minute = 60_000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+
+    expect(formatTaskListTime(now - 18 * minute, now)).toBe('18分钟前');
+    expect(formatTaskListTime(now - 6 * hour, now)).toBe('6小时前');
+    expect(formatTaskListTime(now - 4 * day, now)).toBe('4天前');
+    expect(formatTaskListTime(now - 60 * day, now)).toBe('2个月前');
+    expect(formatTaskListTime(0, now)).toBe('-');
   });
 
   it('allows canceling created tasks', () => {

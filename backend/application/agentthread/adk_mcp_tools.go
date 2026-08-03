@@ -19,10 +19,12 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 )
 
 type ADKMCPToolRegistry interface {
@@ -96,6 +98,9 @@ func (c *ADKMCPRuntimeToolCatalog) LoadADKRuntimeTools(
 
 	entries, err := c.registry.ListMCPToolRegistryEntriesForRuntime(ctx, run.SpaceID)
 	if err != nil {
+		if errors.Is(err, appmcptool.ErrMCPDisabled) {
+			return nil, nil
+		}
 		return nil, err
 	}
 

@@ -177,6 +177,9 @@ done
 
 backend_final_stage=$(final_stage "$backend_dockerfile")
 printf '%s\n' "$backend_final_stage" | grep -Eiq '^ENV[[:space:]]+APP_REVISION=\$GIT_REVISION([[:space:]]|$)' || fail 'backend final runtime stage must set APP_REVISION from GIT_REVISION'
+printf '%s\n' "$backend_final_stage" | grep -Eq '^COPY[[:space:]]+docker/volumes/minio/default_icon[[:space:]]+/app/resources/storage/default_icon/?$' || fail 'backend image must include bundled default icons'
+printf '%s\n' "$backend_final_stage" | grep -Eq '^COPY[[:space:]]+docker/volumes/minio/official_plugin_icon[[:space:]]+/app/resources/storage/official_plugin_icon/?$' || fail 'backend image must include bundled official plugin icons'
+printf '%s\n' "$backend_final_stage" | grep -Eq '^ENV[[:space:]]+COZE_BUNDLED_STORAGE_ASSET_DIR=/app/resources/storage([[:space:]]|$)' || fail 'backend image must enable bundled storage asset synchronization'
 assert_sqlite_musl_compatibility "$backend_go_mod"
 
 require_line "$frontend_dockerfile" 'COPY[[:space:]]+deploy/dev/nginx/nginx\.conf[[:space:]]+/etc/nginx/nginx\.conf' 'frontend Dockerfile must copy deployment nginx.conf'
