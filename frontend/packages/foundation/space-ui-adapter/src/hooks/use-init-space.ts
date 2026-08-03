@@ -22,4 +22,6 @@ export const useInitSpace = (spaceId?: string) =>
     spaceId,
     fetchSpacesWithSpaceId: _ => useSpaceStore.getState().fetchSpaces(true),
     isReady: true,
+    fallbackSpaceMenu: 'chats/new',
+    restoreLastSubMenu: false,
   });

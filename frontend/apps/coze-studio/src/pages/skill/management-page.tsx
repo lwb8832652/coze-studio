@@ -472,6 +472,7 @@ const SkillListPage = ({ spaceID }: { spaceID: string }) => {
         <div className="skill-hero-actions">
           <Button
             className="skill-secondary-button"
+            color="secondary"
             onClick={() => importInputRef.current?.click()}
             disabled={submitting}
           >
@@ -479,13 +480,14 @@ const SkillListPage = ({ spaceID }: { spaceID: string }) => {
           </Button>
           <Button
             className="skill-secondary-button"
+            color="secondary"
             onClick={() =>
               navigate(`/space/${spaceID}/chats/new`, {
                 state: createSkillCreationNavigationState(),
               })
             }
           >
-            使用 AI 创建
+            自动创建
           </Button>
           <Button
             className="skill-primary-button"
@@ -529,13 +531,6 @@ const SkillListPage = ({ spaceID }: { spaceID: string }) => {
           <option value="enabled">已启用</option>
           <option value="disabled">已停用</option>
         </select>
-        <button
-          className="skill-refresh-button"
-          type="button"
-          onClick={() => void loadSkills()}
-        >
-          刷新
-        </button>
         <span className="skill-result-count">
           共 {filteredSkills.length} 个技能
         </span>

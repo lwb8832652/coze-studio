@@ -301,6 +301,50 @@ export const formatUpdatedTime = (timestamp: number) => {
   return new Date(timestamp).toLocaleString();
 };
 
+const MILLISECONDS_PER_MINUTE = 60_000;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const DAYS_PER_MONTH = 30;
+const DAYS_PER_YEAR = 365;
+
+export const formatTaskListTime = (
+  timestamp: number,
+  now: number = Date.now(),
+) => {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '-';
+  }
+
+  const minute = MILLISECONDS_PER_MINUTE;
+  const hour = MINUTES_PER_HOUR * minute;
+  const day = HOURS_PER_DAY * hour;
+  const elapsed = Math.max(0, now - timestamp);
+
+  if (elapsed < minute) {
+    return '刚刚';
+  }
+
+  if (elapsed < hour) {
+    return `${Math.floor(elapsed / minute)}分钟前`;
+  }
+
+  if (elapsed < day) {
+    return `${Math.floor(elapsed / hour)}小时前`;
+  }
+
+  const elapsedDays = Math.floor(elapsed / day);
+
+  if (elapsedDays < DAYS_PER_MONTH) {
+    return `${elapsedDays}天前`;
+  }
+
+  if (elapsedDays < DAYS_PER_YEAR) {
+    return `${Math.max(1, Math.floor(elapsedDays / DAYS_PER_MONTH))}个月前`;
+  }
+
+  return `${Math.max(1, Math.floor(elapsedDays / DAYS_PER_YEAR))}年前`;
+};
+
 export const filterTasks = (
   tasks: TaskThreadDetailModel[],
   keyword: string,

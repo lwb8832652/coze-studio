@@ -255,9 +255,17 @@ sudo chmod 600 app.env
 文件；后台配置能力合入后，按该能力的加密存储合同执行，不把 secret 回显到页面。
 
 Compose 固定向后端注入 `COZE_MQ_TYPE=nsq` 和 `MQ_NAME_SERVER=nsqd:4150`，
-不要在 `app.env` 重复配置消息队列。`REDIS_DB` 可省略，默认使用逻辑库 `0`；
+并启用 Eino ADK 的运行、恢复和租约回收 Worker；不要在 `app.env` 重复配置这些
+部署拓扑开关。`REDIS_DB` 可省略，默认使用逻辑库 `0`；
 显式值必须是非负十进制整数。Redis Cluster 或只支持 DB 0 的云实例必须保持
 `REDIS_DB=0`。
+
+后端镜像携带仓库内置的默认图标与官方插件图标。服务启动时会检查对象存储并只
+上传缺失文件，不覆盖已经存在的同名对象；检查或上传失败时启动失败，避免向前端
+返回实际为 404 的签名地址。
+
+服务启动时还会幂等检查项目搜索所需的 `project_draft` 和
+`coze_resource` 索引，仅在缺失时使用不依赖可选 Elasticsearch 插件的映射创建。
 
 `VECTOR_STORE_TYPE` 及 provider 专属变量可以全部省略。此时 Elasticsearch
 全文检索继续工作，语义向量检索关闭；显式配置 `milvus`、`vikingdb` 或

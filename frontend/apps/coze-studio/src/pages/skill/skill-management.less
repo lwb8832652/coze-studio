@@ -71,7 +71,10 @@
 }
 
 .skill-secondary-button {
-  background: rgb(255 255 255 / 88%) !important;
+  white-space: nowrap;
+  background: rgb(255 255 255 / 88%);
+  border: 1px solid var(--skill-line);
+  box-shadow: none;
 }
 
 .skill-toolbar {
@@ -110,26 +113,6 @@
 
 .skill-search {
   width: min(420px, 42vw);
-}
-
-.skill-refresh-button {
-  cursor: pointer;
-
-  flex: none;
-
-  height: 32px;
-  padding: 0 12px;
-
-  color: #4b5563;
-  white-space: nowrap;
-
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-}
-
-.skill-refresh-button:hover {
-  background: #f0f2f5;
 }
 
 .skill-result-count {

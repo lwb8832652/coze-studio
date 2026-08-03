@@ -609,6 +609,7 @@ var NodeTypeMetas = map[NodeType]*NodeTypeMeta{
 		Category:     "",             // Not found in cate_list
 		Desc:         "comment_desc", // Placeholder from JSON
 		Color:        "",
+		IconURI:      "default_icon/workflow_icon/icon-comment.svg",
 		SupportBatch: false, // supportBatch: 1
 		EnUSName:     "Comment",
 	},

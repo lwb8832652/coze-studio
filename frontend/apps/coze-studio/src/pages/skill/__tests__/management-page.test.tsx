@@ -78,14 +78,21 @@ vi.mock('@coze-arch/coze-design', () => {
   return {
     Button: ({
       children,
+      color,
       disabled,
       onClick,
     }: {
       children?: ReactNode;
+      color?: string;
       disabled?: boolean;
       onClick?: () => void;
     }) => (
-      <button type="button" disabled={disabled} onClick={onClick}>
+      <button
+        type="button"
+        data-color={color}
+        disabled={disabled}
+        onClick={onClick}
+      >
         {children}
       </button>
     ),
@@ -249,11 +256,21 @@ describe('Nuwax parity skill management', () => {
     await renderPage();
 
     expect(container.textContent).toContain('周报助手');
-    expect(container.textContent).toContain('使用 AI 创建');
+    expect(container.textContent).toContain('导入技能');
+    expect(container.textContent).toContain('自动创建');
     expect(container.textContent).toContain('手动创建');
+    expect(container.textContent).not.toContain('使用 AI 创建');
+    expect(container.textContent).not.toContain('刷新');
     expect(container.textContent).toContain('每周五汇总项目进展');
     expect(container.textContent).toContain('2026');
     expect(container.textContent).not.toContain('58461');
+
+    for (const label of ['导入技能', '自动创建']) {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        item => item.textContent === label,
+      );
+      expect(button?.dataset.color).toBe('secondary');
+    }
   });
 
   it('opens AI skill creation in the shared workbench home', async () => {
@@ -261,9 +278,7 @@ describe('Nuwax parity skill management', () => {
 
     const createWithAIButton = Array.from(
       container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent === '使用 AI 创建',
-    ) as HTMLButtonElement;
+    ).find(button => button.textContent === '自动创建') as HTMLButtonElement;
 
     act(() => {
       createWithAIButton.click();
