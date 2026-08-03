@@ -218,7 +218,8 @@ export no_proxy="localhost,127.0.0.1,::1"
 ## Atlas CLI
 
 本仓库使用 Atlas Community `v1.2.3`，并固定不可变镜像 digest。该版本包含 MySQL
-`ssl-ca` 能力，本地 hash/validate 与 dev workflow 使用同一镜像：
+`ssl-ca` 能力；本地 hash/validate 与 `deploy/dev/publish-dev.sh` 使用同一镜像。
+GitHub Actions 不运行 Atlas，也不持有 migration credential：
 
 ```bash
 ATLAS_IMAGE='arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'
