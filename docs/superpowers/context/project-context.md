@@ -62,14 +62,38 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ### dev 预发布部署
 
-推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
-不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
-服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
-revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
+dev migration 在远程 push 前由维护者本机执行。第二次集成审计先固定
+`origin/dev` 基准、本地 `dev` 目标、ACR 当前两张 `:dev` 镜像的一致 revision 和
+实际部署区间，逐项审阅区间内 migration、数据库副作用及旧应用兼容性，并取得
+只读 `migrate status` 证据。报告给出两个具体的 40 位 SHA；用户第二次明确确认后，
+Codex 只能把这两个 SHA 交给 `deploy/dev/publish-dev.sh`。
 
-Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
-不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员
-完成远程 Atlas apply 后，使用同一完整 SHA 手工恢复 workflow。
+`publish-dev.sh` 固定使用
+`arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`。
+脚本从 exact target SHA 创建受限快照，依次 validate、status、forward apply；随后
+重新检查干净工作区、目标 HEAD，并通过第二次 fetch 的 `FETCH_HEAD` 核对远程基准，
+最后只做 exact-SHA 非 force push。Atlas 输出经脱敏后回放。Push 成功后脚本立即
+退出，不等待 Actions、不 dispatch，也不调用宝塔。
+
+Atlas migration credential 只存在于仓库外、非 symlink、模式严格为 `600` 的本地
+env 文件；GitHub 不持有该 credential，也不连接数据库。预发布服务器仍通过
+`app.env` 持有应用运行时 DSN，但不持有 migration credential，也不安装或运行 Atlas。
+dev MySQL 不支持 TLS 时允许使用无 TLS 连接，但公共网络会暴露 credential 和 schema
+流量；必须限制来源 IP 或网络路径，并使用专用最小权限 migration 账号，禁止 root。
+可以提供私网或 TLS 时优先迁移到更安全的连接方式。
+
+远程 push 后，GitHub Actions 只执行
+`preflight -> build-server/build-web -> verify-images -> promote -> deploy`：构建并验证
+两个 exact-SHA 不可变镜像，晋级两张 `:dev` 标签，再调用宝塔 webhook。Workflow
+和服务器继续核对前后端 OCI revision，服务器在记录成功前还会确认两个运行容器的
+实际 image ID 一致。`workflow_dispatch` 只重放已有不可变镜像，可处理区间内含
+migration 的已推送 target，但不迁移数据库，也不执行 down migration。
+
+第二次确认只授权报告中的 forward apply、exact push，以及该 push 触发的镜像和
+宝塔副作用。Baseline、repair、backfill、down migration、数据库重试、生产发布和
+配置变更都要单独授权。Apply 成功后若远程竞态或 push 失败，schema 可能领先于
+远程代码；禁止 force 或直接 push，必须重新审计并取得新确认。Forward migration
+必须兼容暂时继续运行的旧应用。
 
 该服务器运行两个应用容器和一个持久化的单节点 `nsqd`；MySQL、Elasticsearch、
 Redis 和对象存储均为远程服务。NSQ 只在 Compose 网络中可见，业务发布与回滚

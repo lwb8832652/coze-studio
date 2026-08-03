@@ -23,20 +23,80 @@
 为 GitHub Actions 创建只允许向这两个仓库拉取、推送和更新标签的账号。为服务器
 创建独立的只读拉取账号，不要复用 Actions 推送账号。
 
-在 GitHub 仓库中配置：
+在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中配置以下
+Repository variables 和 Repository secrets。Workflow 不绑定 GitHub Environment；
+只建在 Environment 中的同名配置不会进入作业。
 
 | 类型 | 名称 | 用途 |
 | --- | --- | --- |
-| Variable | `ACR_REGISTRY` | ACR registry 主机名 |
-| Variable | `ACR_NAMESPACE` | 两个镜像仓库所在命名空间 |
-| Secret | `ACR_USERNAME` | Actions 推送账号 |
-| Secret | `ACR_PASSWORD` | Actions 推送凭据 |
-| Secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
-| Secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
-| Variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
+| Repository variable | `ACR_REGISTRY` | ACR registry 主机名 |
+| Repository variable | `ACR_NAMESPACE` | 两个镜像仓库所在命名空间 |
+| Repository secret | `ACR_USERNAME` | Actions 推送账号 |
+| Repository secret | `ACR_PASSWORD` | Actions 推送凭据 |
+| Repository secret | `BAOTA_WEBHOOK_URL` | 宝塔预发布 webhook 地址 |
+| Repository secret，可选 | `BAOTA_WEBHOOK_TOKEN` | webhook 请求头凭据 |
+| Repository variable，可选 | `BAOTA_WEBHOOK_PINNED_PUBKEY` | 宝塔自签名证书的 curl SHA-256 公钥指纹 |
 
-Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。不要配置 SSH 私钥、数据库
-连接串或 `app.env` 内容。
+Workflow 的 `GITHUB_TOKEN` 只需要 `contents: read`。GitHub 不保存数据库
+credential，也不连接 dev MySQL；服务器同样不安装或运行 Atlas。不要配置旧的
+`ATLAS_URL`、`ATLAS_CA_PEM` GitHub Secret，也不要把 `app.env` 内容放进 GitHub。
+
+## 本地 Atlas 发布配置
+
+dev migration 在推送 `origin/dev` 前由维护者本机运行。默认 credential 文件是：
+
+```text
+~/.config/coze-studio/dev-atlas.env
+```
+
+文件只允许注释、空行和下面这一条配置。这里是占位值，仓库和文档中不得出现真实
+账号、主机或密码：
+
+```text
+ATLAS_URL=mysql://MIGRATION_USER:URL_ENCODED_PASSWORD@DEV_MYSQL_HOST:PORT/DEV_DATABASE
+```
+
+先创建受限目录和文件，再填写占位行中的实际值：
+
+```bash
+mkdir -p "$HOME/.config/coze-studio"
+chmod 700 "$HOME/.config/coze-studio"
+if [ ! -e "$HOME/.config/coze-studio/dev-atlas.env" ]; then
+  install -m 600 /dev/null "$HOME/.config/coze-studio/dev-atlas.env"
+fi
+chmod 600 "$HOME/.config/coze-studio/dev-atlas.env"
+```
+
+该文件必须是仓库外的普通文件，不能是 symlink，模式必须严格为 `600`。如用
+`ATLAS_ENV_FILE` 覆盖默认路径，仍遵守相同约束。密码中的 `@`、`:`、`/`、`+`、`=`
+等 URL 保留字符必须编码。使用只对目标 dev schema 拥有 migration 所需权限的专用
+账号，禁止使用 root 或云数据库管理账号。
+
+当前 dev 数据库允许使用无 TLS 的 MySQL URL。这会让公网链路上的数据库 credential
+和 schema 流量缺少传输保护，所以必须用安全组、数据库白名单或私网限制来源，不能
+开放 `0.0.0.0/0`。数据库支持私网或 TLS 后，应单独审计并切换连接方式。
+
+本机只需要 Docker，不依赖系统中安装的 Atlas，尤其不能用本机 Atlas `0.35.0`
+替代项目版本。`publish-dev.sh` 对 validate、status、apply 固定使用：
+
+```text
+arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e
+```
+
+脚本通过受限临时文件把 URL 注入容器，并对 Atlas 输出做 credential 脱敏；不要把
+env 文件内容复制到命令行、日志或工单。
+
+第二次集成审计在用户确认前使用只读模式取得状态证据：
+
+```bash
+: "${AUDITED_ORIGIN_DEV_SHA:?set from the second audit evidence}"
+: "${AUDITED_TARGET_DEV_SHA:?set from the second audit evidence}"
+deploy/dev/publish-dev.sh --status \
+  "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
+
+该模式只执行 validate/status 和前后两次 SHA 核对，不 apply、不 push。不要用裸
+`docker run ... migrate status` 替代它，否则错误输出可能绕过脚本的脱敏处理。
 
 优先为宝塔 webhook 配置与域名匹配、受公共 CA 信任的证书，此时不要设置
 `BAOTA_WEBHOOK_PINNED_PUBKEY`。如果必须使用宝塔自签名证书，生成并核对当前服务端
@@ -259,56 +319,103 @@ location / {
 
 ## 发布流程
 
+第二次集成审计报告必须先固定以下内容：
+
+- 当前 `origin/dev` 的 40 位 `AUDITED_ORIGIN_DEV_SHA`；
+- 本地 `dev` 的 40 位 `AUDITED_TARGET_DEV_SHA`；
+- ACR 两张当前 `:dev` 镜像 revision、`comparison_base` 和实际部署区间；
+- 区间内全部 migration、SQL 副作用、锁风险、不可逆操作和旧应用兼容性；
+- 本地 Atlas env 文件的路径与安全检查，以及只读 `migrate status` 结果。
+
+用户第二次确认后，只运行一次：
+
+```bash
+: "${AUDITED_ORIGIN_DEV_SHA:?set from the second audit report}"
+: "${AUDITED_TARGET_DEV_SHA:?set from the second audit report}"
+deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
+
+脚本要求当前分支为 `dev`、工作区干净、HEAD 等于目标 SHA，并要求远程基准未变化。
+它从 exact target SHA 创建临时快照，依次执行 Atlas validate、status、forward apply，
+再次核对本地和远程状态后，以 exact refspec 非 force push。Migration 失败时不会 push；
+push 成功后脚本立即结束，不轮询 Actions、不 dispatch，也不访问宝塔。
+
+远程 push 后的成功路径固定为：
+
+```text
+preflight -> build-server/build-web -> verify-images -> promote -> deploy
+```
+
+`build-server` 与 `build-web` 并行。`preflight` 仍检查当前双 `:dev` revision、Git
+祖先关系和 migration 诊断；无法证明基线时由 `deployment-blocked` 明确失败。GitHub
+不连接数据库，也没有 `migration-hold` 或 `migrate` job。镜像验证成功后才晋级两张
+`:dev` 标签并调用宝塔 webhook。
+
+### Atlas revision 异常
+
+数据库已有 schema，但 Atlas revision 缺失、checksum 不一致或需要 baseline 时，
+`publish-dev.sh` 必须停止。Baseline、repair、数据 backfill 和 down migration 都是
+独立数据库变更，不能由第二次发布确认代替。`--baseline` 的参数来自 migration 文件
+名中的版本时间戳，不是 Git SHA；只有在 schema 证据完整并取得单独授权后才能执行。
+
 ### 首次部署
 
-首次自动启动前，确认远程数据库 schema 已经与 push 前的 `dev` 代码一致。随后：
+首次没有两张 `:dev` manifest 时，第二次审计使用已验证的 push `before` 作为
+`comparison_base`，并审阅到目标 SHA 的完整 migration 区间。数据库必须已有可信的
+Atlas revision 基线；需要 baseline 时先停止发布并单独处理。
 
-1. 推送不含 `docker/atlas/migrations/**` 变化的目标提交到 `origin/dev`。
-2. Actions 确认两张 `:dev` manifest 都不存在后，以 push 前 SHA 检查本次迁移
-   变化，并构建、推送 `coze-server:dev-<full-sha>` 和
-   `coze-web:dev-<full-sha>`。
-3. Workflow 验证两张不可变镜像和 OCI revision，自动晋级两个 `:dev` 标签，再
-   调用宝塔 webhook，无需手工运行 workflow。
-4. 检查 Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
+本地发布脚本先完成 migration 和 push。Actions 确认两张 manifest 都明确不存在后，
+构建并推送 `coze-server:dev-<full-sha>`、`coze-web:dev-<full-sha>`；
+`verify-images` 核对 OCI revision，随后晋级双 `:dev` 标签并调用宝塔。最后观察
+Actions、`/healthz` 和 `/opt/coze-dev/deployments/current.env`。
 
-如果首次 push 包含迁移，workflow 仍会进入 migration hold。先备份并手工执行
-Atlas，再使用同一完整 SHA 运行 `workflow_dispatch`。只有一张 `:dev` 缺失、
-registry 认证失败、超时或其他拉取错误也会保持 hold，不会被当作首次自动启动。
+只有一张 `:dev` manifest 缺失、registry 认证失败、镜像 inspect 失败或 push
+`before` 无法验证时，不进入首次启动路径。不可变镜像可能仍会构建，但
+`deployment-blocked` 会明确失败，`:dev` 标签和运行服务不变。数据库 migration 已在
+push 前完成，不能把远程失败理解为数据库回滚。
 
 ### 日常发布
 
-没有 migration 变化时，push workflow 从当前两张 `:dev` 的一致 revision 比较到
-目标 SHA。两个不可变镜像构建成功后，workflow 先拉取并确认两张镜像的 OCI
-revision 都等于目标 SHA，再依次晋级两个 `:dev` 标签并调用 webhook。服务器再次
-校验双 revision，共同更新两个服务，并在记录成功前核对两个容器实际运行的
-image ID 都是本次候选值。
+每次日常发布都重新执行两阶段审计，并从本次 ACR revision 到目标 SHA 审阅完整
+migration 区间。第二次确认只覆盖报告列出的 forward apply、两个 exact SHA 和该
+push 的远程副作用。部署基线或远程 `dev` 变化后，确认立即失效。
 
-### Migration hold
+进入 `dev` 的 forward migration 必须兼容发布前应用。Apply 成功后，镜像构建、晋级
+或宝塔部署仍可能失败，旧代码会在远程恢复完成前继续访问已经迁移的 schema。
 
-只要当前已晋级 SHA 到目标 SHA 之间包含 `docker/atlas/migrations` 变化，workflow
-就只构建不可变镜像，不更新 `:dev`，也不调用 webhook。A 被 hold 后，即使又推送
-不含 migration 的 B，比较区间仍从旧的已晋级 SHA 到 B，因此 B 继续 hold。
+### `workflow_dispatch` 边界
 
-在目标 SHA 的受控 checkout 中先校验 migration：
+`workflow_dispatch` 只重放已经构建、仍位于 `origin/dev` 历史中的完整 SHA；它不
+重新构建镜像，也不执行 Atlas、数据库重试或 down migration。Preflight 先要求当前
+两张 `:dev` revision 存在且一致，再按以下关系处理：
 
-```bash
-docker run --rm \
-  -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate validate --dir file:///migrations
-```
+| 目标 SHA 与当前 `dev` revision 的关系 | 结果 |
+| --- | --- |
+| 两者相同 | 允许重试已经晋级版本的部署 |
+| 目标 SHA 是当前 revision 的祖先 | 允许应用镜像回滚，不执行 down migration |
+| 目标 SHA 是当前 revision 的后代 | 允许前向重放；区间含 migration 只作为诊断，因为数据库应已在原 push 前迁移 |
+| 关系无法证明，或当前双 revision 异常 | 阻断并由 `deployment-blocked` 明确失败 |
 
-备份远程数据库并确认维护窗口后，由授权运维人员手工 apply：
+允许的 dispatch 仍会验证两张 `dev-<full-sha>` 不可变镜像及其 OCI revision，之后
+才晋级双标签并调用 webhook。是否执行 dispatch 仍需按集成手册另行确认。
 
-```bash
-docker run --rm \
-  -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-  arigaio/atlas:0.35.0-community-alpine \
-  migrate apply --dir file:///migrations --url "$ATLAS_URL"
-```
+### 失败与重试
 
-`ATLAS_URL` 只存在于受控运维环境。apply 成功后，用同一目标 SHA 执行
-`workflow_dispatch`。Workflow 和服务器脚本都不会自动执行数据库 migration。
+- 本地 validate、status 或 apply 失败时不 push，也不自动重试。Checksum、SQL、数据、
+  schema drift、baseline 或部分执行问题必须先取证；修 schema、repair、backfill 和
+  任何再次 apply 都要单独授权。
+- Apply 成功后若远程基准变化或 push 失败，schema 可能领先于远程代码。禁止 direct
+  push 和 force push，保留结果并从第一次审计重新开始；下次 Atlas no-op 也不能替代
+  新确认。
+- Push 成功后的 build、verify、promote 或 deploy 失败时，本地流程已经结束。先报告
+  Actions、ACR 和宝塔证据，不自动运行 migration、dispatch、API、curl 或服务器命令。
+- `promote` 只晋级一张标签时，仍在同一个 Actions run 使用 `Re-run failed jobs`
+  完成双标签晋级；执行重跑前必须单独确认，部分晋级会因双 revision 不一致而阻断
+  dispatch。
+- 两张 `:dev` 标签都已晋级，但 `deploy` 的 webhook 或服务器部署失败时，可以对
+  同一 SHA 运行 `workflow_dispatch`。该操作须单独确认，只重新验证、晋级和部署。
+- `deploy` job 的超时是 15 分钟。curl 连接超时为 10 秒，总请求窗口为 840 秒；
+  超时或非成功响应都会让 job 失败。
 
 ## 回滚
 

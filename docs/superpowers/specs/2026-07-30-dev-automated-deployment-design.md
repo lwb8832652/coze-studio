@@ -1,5 +1,12 @@
 # Dev 自动镜像发布与宝塔部署设计
 
+> **状态：数据库迁移部分已被取代。** 本文保留 2026-07-30 的历史背景。其中关于
+> 手工 Atlas、`migration-hold`、迁移后的 `workflow_dispatch` 和推送授权范围的
+> 描述已由
+> [`2026-08-03-dev-local-atlas-before-push-design.md`](./2026-08-03-dev-local-atlas-before-push-design.md)
+> 取代；2026-08-02 的 GitHub Atlas 方案也只保留为历史，
+> 不能作为当前迁移、重试或审计操作依据。
+
 ## 1. 目标
 
 远程 `dev` 更新后，由 GitHub Actions 构建前后端镜像并推送到阿里云 ACR。
