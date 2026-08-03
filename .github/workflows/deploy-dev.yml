@@ -128,7 +128,8 @@ jobs:
                       else
                         diff_status=$?
                         if [ "$diff_status" -eq 1 ]; then
-                          echo "forward dispatch contains migrations; blocking deployment" >&2
+                          migration_changed=true
+                          deployment_blocked=false
                         else
                           echo "forward dispatch migration diff failed; blocking deployment" >&2
                         fi
@@ -316,10 +317,12 @@ jobs:
             fi
           done
 
-  migrate:
+  promote:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [preflight, verify-images]
+    needs: [preflight, build-server, build-web, verify-images]
+    outputs:
+      target_sha: ${{ needs.preflight.outputs.target_sha }}
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
@@ -328,125 +331,7 @@ jobs:
         needs.preflight.outputs.migration_changed == 'true' ||
         needs.preflight.outputs.migration_changed == 'false'
       ) &&
-      needs.verify-images.result == 'success'
-    steps:
-      - name: Check out migration target
-        if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.target_sha }}
-
-      - name: Validate and apply Atlas migrations
-        if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
-        shell: bash
-        env:
-          ATLAS_URL: ${{ secrets.ATLAS_URL }}
-          ATLAS_CA_PEM: ${{ secrets.ATLAS_CA_PEM }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ATLAS_URL:-}" ]; then
-            echo "ATLAS_URL secret is required for dev migrations" >&2
-            exit 1
-          fi
-
-          atlas_url_without_fragment=${ATLAS_URL%%#*}
-          if [[ "$atlas_url_without_fragment" != mysql://* ]]; then
-            echo "ATLAS_URL must use the mysql:// scheme" >&2
-            exit 1
-          fi
-          if [[ "$atlas_url_without_fragment" != *\?* ]]; then
-            echo "ATLAS_URL must include exactly one tls=true query parameter" >&2
-            exit 1
-          fi
-
-          atlas_query=${atlas_url_without_fragment#*\?}
-          tls_parameter_count=0
-          tls_parameter_value=
-          ssl_ca_parameter_count=0
-          ssl_ca_parameter_value=
-          IFS='&' read -r -a atlas_query_parameters <<< "$atlas_query"
-          for atlas_query_parameter in "${atlas_query_parameters[@]}"; do
-            atlas_query_key=${atlas_query_parameter%%=*}
-            if [[ "$atlas_query_parameter" == *=* ]]; then
-              atlas_query_value=${atlas_query_parameter#*=}
-            else
-              atlas_query_value=
-            fi
-            case "$atlas_query_key" in
-              tls)
-                tls_parameter_count=$((tls_parameter_count + 1))
-                tls_parameter_value=$atlas_query_value
-                ;;
-              ssl-ca)
-                ssl_ca_parameter_count=$((ssl_ca_parameter_count + 1))
-                ssl_ca_parameter_value=$atlas_query_value
-                ;;
-            esac
-          done
-
-          if [ "$tls_parameter_count" -ne 1 ] || [ "$tls_parameter_value" != true ]; then
-            echo "ATLAS_URL must include exactly one tls=true query parameter" >&2
-            exit 1
-          fi
-          if [ -n "${ATLAS_CA_PEM:-}" ]; then
-            if [ "$ssl_ca_parameter_count" -ne 1 ] ||
-              [ "$ssl_ca_parameter_value" != /atlas-ca.pem ]; then
-              echo "ATLAS_CA_PEM requires ATLAS_URL ssl-ca=/atlas-ca.pem" >&2
-              exit 1
-            fi
-          elif [ "$ssl_ca_parameter_count" -ne 0 ]; then
-            echo "ATLAS_URL ssl-ca requires the ATLAS_CA_PEM secret" >&2
-            exit 1
-          fi
-
-          atlas_ca_file=
-          atlas_apply_args=(run --rm --env ATLAS_URL)
-          cleanup_atlas_ca() {
-            if [ -n "$atlas_ca_file" ]; then
-              rm -f -- "$atlas_ca_file"
-            fi
-          }
-          trap cleanup_atlas_ca EXIT
-
-          if [ -n "${ATLAS_CA_PEM:-}" ]; then
-            if [ -z "${RUNNER_TEMP:-}" ] || [ ! -d "$RUNNER_TEMP" ]; then
-              echo "RUNNER_TEMP is required for the Atlas CA file" >&2
-              exit 1
-            fi
-            atlas_ca_file=$RUNNER_TEMP/atlas-ca.pem
-            rm -f -- "$atlas_ca_file"
-            (umask 077 && printf '%s' "$ATLAS_CA_PEM" > "$atlas_ca_file")
-            chmod 600 "$atlas_ca_file"
-            atlas_apply_args+=(-v "$atlas_ca_file:/atlas-ca.pem:ro")
-          fi
-
-          docker run --rm \
-            -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
-            migrate validate --dir file:///migrations
-          docker "${atlas_apply_args[@]}" \
-            -v "$PWD/docker/atlas/migrations:/migrations:ro" \
-            -v "$PWD/.github/atlas-dev.hcl:/atlas.hcl:ro" \
-            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
-            migrate apply --config file:///atlas.hcl --env dev
-
-      - name: Record migration no-op
-        if: ${{ needs.preflight.outputs.migration_changed == 'false' }}
-        shell: bash
-        run: echo "No Atlas migration is required for ${{ needs.preflight.outputs.target_sha }}"
-
-  promote:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [preflight, build-server, build-web, verify-images, migrate]
-    outputs:
-      target_sha: ${{ needs.preflight.outputs.target_sha }}
-    if: >-
-      always() &&
-      needs.preflight.result == 'success' &&
-      needs.preflight.outputs.deployment_blocked == 'false' &&
       needs.verify-images.result == 'success' &&
-      needs.migrate.result == 'success' &&
       (
         (
           github.event_name == 'push' &&
