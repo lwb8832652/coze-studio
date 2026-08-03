@@ -170,7 +170,61 @@ git rev-list --left-right --count origin/dev...dev
 只有获得明确恢复授权后，才能将本地 `dev` 重新对齐新的 `origin/dev`，随后回到
 需求分支重新执行第一次审计。
 
-### 4. 第二次报告和确认
+### 4. 固定实际部署区间和 migration 授权
+
+第二次报告前，使用已审计的只读 ACR 凭据分别拉取当前
+`coze-server:dev`、`coze-web:dev`，读取
+`org.opencontainers.image.revision`。两个 revision 必须都是合法的 40 位完整 SHA，
+并且完全一致。不能使用本地缓存标签代替本次 ACR 读取。
+
+若两张 `:dev` manifest 都明确不存在，只有在首次部署条件已经验证时，才能把远程
+竞态检查固定的 push `before` 作为比较基线。只有一张 manifest 缺失、ACR 认证或
+网络错误、revision 缺失或不一致时立即停止，不得请求推送确认。
+
+把一致的 `<deployed-revision>`，或首次部署的 `<verified-push-before>`，记为
+`comparison_base`；把本地 `dev` 完整 SHA 记为 `target_sha`。然后验证实际部署区间：
+
+```bash
+git cat-file -e "${comparison_base}^{commit}"
+git cat-file -e "${target_sha}^{commit}"
+git merge-base --is-ancestor "$comparison_base" "$target_sha"
+git diff --name-status "$comparison_base" "$target_sha" -- docker/atlas/migrations
+```
+
+记录每条命令的退出状态。Git 对象、祖先关系或 diff 任一项无法取得可信结果时，
+禁止进入确认阶段。Migration 清单必须来自
+`<deployed-revision>..<target-sha>`；首次部署来自
+`<verified-push-before>..<target-sha>`。不得只列 `origin/dev...dev` 中新增的文件，
+也不得漏掉区间内修改、删除或较早提交引入的 migration。
+
+对区间内每个待执行 migration 逐项审阅 SQL，报告数据库对象、数据、锁和可逆性等
+forward apply 副作用，并给出旧应用在镜像晋级前继续访问迁移后 schema 的兼容性
+证据。授权只覆盖清单中的文件和副作用。数据库 schema、已执行 migration 与 Atlas
+revision 必须有一致性证据；需要 baseline 时停止常规审计，baseline 写 revision 的
+操作另行申请数据库变更授权，`--baseline` 使用 migration 文件名的版本时间戳而非
+Git SHA。
+
+区间含 migration 时，还要核对以下 Secret 合同，不读取或记录 Secret 值：
+
+| Repository Secret | 要求 |
+| --- | --- |
+| `ATLAS_URL` | 必须是 `mysql://` URL，且 query 中有唯一的 `tls=true` |
+| `ATLAS_CA_PEM`（可选） | 配置私有 CA 时必须同时让 URL 精确声明 `ssl-ca=/atlas-ca.pem`；无 Secret 时 URL 不得声明 `ssl-ca` |
+
+每次第二次审计都必须对本轮目标 dev MySQL 端点重新执行 TLS 探测，并把结果写入
+报告，不能复用历史任务的瞬时结论。若端点不支持 SSL，云侧启用 SSL、实例重启窗口、
+CA 下载核验和 Secret 更新必须先取得独立授权；这些外部配置完成并验证前，不得请求
+包含 migration 的推送确认。
+
+`migrate` 当前实际配置必须仍是 `runs-on: ubuntu-latest`。第二次报告记录 workflow
+runner label、本次连通性验证所用的实际 Actions run/runner，以及 dev 数据库受控
+网络策略的验证结果。标准 GitHub-hosted runner 出口范围多且变化，不建议把整段
+GitHub 地址加入数据库白名单，`0.0.0.0/0` 不能作为连通性证据。需要稳定白名单时，
+只能评估已经配置的 self-hosted runner 或具有静态出口 IP 的 larger runner，并在
+修改 `runs-on` 前另做安全审计。无 migration 时明确记录本次 workflow 不连接数据库；
+有 migration 但无法从实际 runner 安全连通 dev 数据库时停止审计。
+
+### 5. 第二次报告和确认
 
 报告必须列出合并前后 SHA、最终提交范围、重新运行的全部验证、工具影响分析、
 远程竞态检查和剩余风险。
@@ -178,15 +232,25 @@ git rev-list --left-right --count origin/dev...dev
 仓库启用 dev 自动发布后，第二次报告还必须明确列出：
 
 - 目标远程分支 `origin/dev` 和待推送的完整目标 SHA；
-- 目标 SHA 的文件范围、验证结果以及是否包含数据库 migration；
+- 从 ACR 读取的两张当前 `:dev` OCI revision、合法性和一致性证据；首次部署则列出
+  两张 manifest 均不存在的证据和已验证 push `before`；
+- 实际比较区间、Git 对象和祖先关系，以及该区间内 workflow 会识别的全部 migration；
+  没有 migration 时也要明确写出；
+- 每个待执行 migration 对远程 dev 数据库的 forward apply 副作用，以及与发布前旧
+  应用兼容的证据；
+- Atlas Secret 合同、远程 Atlas revision 与 schema 一致性；报告不得包含 Secret、
+  DSN 或 CA 内容；
+- 当前 `ubuntu-latest` 配置、本次实际 runner 和连通性验证；不得把全网开放作为证据；
 - 推送将触发的 ACR 前后端镜像构建、不可变标签、`dev` 标签晋级条件；
 - 宝塔 webhook 对 dev/预发布服务器的自动更新副作用；
-- migration push 只构建不可变镜像并进入 hold，不会自动 apply、晋级或部署。
+- workflow 对该 SHA 的 job 顺序，以及 migration 存在时自动 validate/apply、失败时
+  不晋级、不部署的行为。
 
 报告后停止。用户第二次明确确认只授权报告中 exact SHA 的 `origin/dev` 推送，
-以及该次 workflow 按报告条件产生的 ACR 和宝塔预发布副作用。该确认不授权生产
-发布、Atlas 或其他数据库 apply、数据库备份、down migration、人工回滚及其他
-服务器操作。
+以及该 push 触发的 dev Atlas forward apply、ACR 双镜像晋级和宝塔预发布部署。
+授权范围只包含报告逐项列出的 migration 和数据库副作用，不延伸到其他 SHA。
+该确认不授权生产发布、down migration、手工数据库操作、备份策略或配置变更、
+人工回滚及其他服务器操作。
 
 若 `origin/dev` 在任一审计或等待确认期间变化，当前确认失效。回到需求分支吸收
 新基准，并从第一次审计重新执行，不能只补一次远程竞态检查后继续推送。
@@ -206,7 +270,19 @@ git rev-parse dev
 开始。
 
 推送成功后找到该目标 SHA 对应的 `Publish and deploy dev images` Actions run，
-记录 run URL 和最终状态。无 migration 的发布应核对两张不可变镜像、两个 `dev`
-标签、宝塔调用及服务 revision；migration hold 应核对两张不可变镜像已构建、
-`dev` 标签未晋级且 webhook 未调用。这个核验不授权重跑 workflow、手工 dispatch、
-数据库操作或服务器修复；出现失败时先报告，再取得对应操作的单独授权。
+记录 run URL 和最终状态，并按顺序核对 `preflight`、两项 build、`verify-images`、
+`migrate`、`promote` 和 `deploy`。有 migration 时确认 `migrate` 已 validate/apply；
+无 migration 时确认它以 no-op 成功。随后核对两张 `:dev` 标签、宝塔调用、服务
+revision，并确认日志未回显 `ATLAS_URL` 的 DSN 值。Preflight 阻断时应看到
+`deployment-blocked` 明确失败，数据库、晋级和部署 job 均未继续。
+
+任何失败都先报告，不自动 dispatch、手工改库或修服务器。`migrate` 失败后，先取得
+单独授权，在不泄露 DSN 的前提下检查 `atlas migrate status`、Actions 日志和数据库
+状态，区分网络瞬断与 checksum、SQL、数据、schema drift 或部分执行。只有证据确认
+为可重试的瞬态故障，才可在同一个 Actions run 使用 `Re-run failed jobs`；确定性
+失败必须修 migration 后重新审计，数据库修复必须单独授权。
+
+`promote` 部分晋级时，获得恢复授权后仍在同一个 run 重跑失败 job，不得用 dispatch
+绕过双 revision 不一致。两张标签已经晋级而 `deploy` 失败时，获得授权后可以
+dispatch 同一 SHA 重试部署。初始推送确认不自动授权 status 检查、重试、数据库修复
+或服务器操作。

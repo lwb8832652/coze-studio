@@ -109,7 +109,8 @@ plans/specs 只能按需追溯，不能用于推断当前合同。
 - 前端至少运行相关 Vitest；高风险改动补 typecheck、lint 和构建。
 - 后端运行相关 Go package 测试；Mockey 测试按仓库方式加
   `-gcflags="all=-l -N"`。
-- 迁移使用 Atlas Community `v0.35.0` 校验 hash 和 validate。
+- 迁移使用 Atlas Community `v1.2.3` 校验 hash 和 validate；Docker 命令固定为
+  `arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e`。
 - 页面验收默认使用 Codex in-app browser，记录 URL、账号/空间、可见状态、
   核心交互和控制台错误。
 - 结论必须基于本轮新鲜命令输出；未运行的验证必须明确说明。

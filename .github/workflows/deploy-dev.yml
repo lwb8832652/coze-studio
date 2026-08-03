@@ -24,6 +24,7 @@ jobs:
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
       migration_changed: ${{ steps.resolve.outputs.migration_changed }}
+      deployment_blocked: ${{ steps.resolve.outputs.deployment_blocked }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@v7
@@ -31,7 +32,6 @@ jobs:
           fetch-depth: 0
 
       - name: Log in to ACR for deployed revision lookup
-        if: ${{ github.event_name == 'push' }}
         uses: docker/login-action@v4
         with:
           registry: ${{ vars.ACR_REGISTRY }}
@@ -59,83 +59,135 @@ jobs:
               echo "target_sha must be a full 40-character hexadecimal SHA" >&2
               exit 1
             fi
+          else
+            target_sha=$GITHUB_SHA
+          fi
 
+          target_sha=$(printf '%s' "$target_sha" | tr '[:upper:]' '[:lower:]')
+          migration_changed=false
+          deployment_blocked=true
+          comparison_ready=false
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             git fetch --no-tags origin dev
             if ! git merge-base --is-ancestor "$target_sha" refs/remotes/origin/dev; then
               echo "target_sha is not in the origin/dev history" >&2
               exit 1
             fi
-            migration_changed=false
+            comparison_ready=true
           else
-            target_sha=$GITHUB_SHA
             before=$BEFORE_SHA
             zero_sha=0000000000000000000000000000000000000000
-            migration_changed=true
 
             if [[ "$before" =~ ^[0-9a-fA-F]{40}$ ]] &&
               [ "$before" != "$zero_sha" ] &&
               git cat-file -e "${before}^{commit}" 2>/dev/null &&
               git cat-file -e "${target_sha}^{commit}" 2>/dev/null &&
               git merge-base --is-ancestor "$before" "$target_sha"; then
-              server_pull_error=$(mktemp)
-              web_pull_error=$(mktemp)
-              trap 'rm -f -- "$server_pull_error" "$web_pull_error"' EXIT
-
-              server_pull_status=0
-              web_pull_status=0
-              docker pull "$SERVER_DEV_IMAGE" >/dev/null 2>"$server_pull_error" || server_pull_status=$?
-              docker pull "$WEB_DEV_IMAGE" >/dev/null 2>"$web_pull_error" || web_pull_status=$?
-
-              if [ "$server_pull_status" -eq 0 ] && [ "$web_pull_status" -eq 0 ]; then
-                server_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SERVER_DEV_IMAGE" 2>/dev/null || true)
-                web_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WEB_DEV_IMAGE" 2>/dev/null || true)
-                server_deployed_revision=$(printf '%s' "$server_deployed_revision" | tr '[:upper:]' '[:lower:]')
-                web_deployed_revision=$(printf '%s' "$web_deployed_revision" | tr '[:upper:]' '[:lower:]')
-
-                if [[ "$server_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
-                  [[ "$web_deployed_revision" =~ ^[0-9a-fA-F]{40}$ ]] &&
-                  [ "$server_deployed_revision" = "$web_deployed_revision" ]; then
-                  deployed_revision=$server_deployed_revision
-                  if git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
-                    git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
-                    if git diff --quiet "$deployed_revision" "$target_sha" -- docker/atlas/migrations; then
-                      migration_changed=false
-                    else
-                      diff_status=$?
-                      if [ "$diff_status" -ne 1 ]; then
-                        echo "migration diff failed; holding deployment" >&2
-                      fi
-                    fi
-                  else
-                    echo "deployed revision is unavailable from target history; holding deployment" >&2
-                  fi
-                else
-                  echo "deployed server and web revisions are missing or inconsistent; holding deployment" >&2
-                fi
-              elif [ "$server_pull_status" -ne 0 ] &&
-                [ "$web_pull_status" -ne 0 ] &&
-                manifest_is_missing "$server_pull_error" &&
-                manifest_is_missing "$web_pull_error"; then
-                if git diff --quiet "$before" "$target_sha" -- docker/atlas/migrations; then
-                  migration_changed=false
-                  echo "current dev image manifests are absent; allowing bootstrap deployment"
-                else
-                  diff_status=$?
-                  if [ "$diff_status" -ne 1 ]; then
-                    echo "bootstrap migration diff failed; holding deployment" >&2
-                  fi
-                fi
-              else
-                echo "current dev images could not be verified; holding deployment" >&2
-              fi
+              comparison_ready=true
             else
-              echo "migration comparison base is unavailable; holding deployment" >&2
+              echo "migration comparison base is unavailable; blocking deployment" >&2
             fi
           fi
 
-          target_sha=$(printf '%s' "$target_sha" | tr '[:upper:]' '[:lower:]')
+          if [ "$comparison_ready" = true ]; then
+            server_pull_error=$(mktemp)
+            web_pull_error=$(mktemp)
+            trap 'rm -f -- "$server_pull_error" "$web_pull_error"' EXIT
+
+            server_pull_status=0
+            web_pull_status=0
+            docker pull "$SERVER_DEV_IMAGE" >/dev/null 2>"$server_pull_error" || server_pull_status=$?
+            docker pull "$WEB_DEV_IMAGE" >/dev/null 2>"$web_pull_error" || web_pull_status=$?
+
+            if [ "$server_pull_status" -eq 0 ] && [ "$web_pull_status" -eq 0 ]; then
+              server_inspect_status=0
+              web_inspect_status=0
+              server_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SERVER_DEV_IMAGE" 2>/dev/null) || server_inspect_status=$?
+              web_deployed_revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WEB_DEV_IMAGE" 2>/dev/null) || web_inspect_status=$?
+
+              if [ "$server_inspect_status" -eq 0 ] && [ "$web_inspect_status" -eq 0 ]; then
+                server_deployed_revision=$(printf '%s' "$server_deployed_revision" | tr '[:upper:]' '[:lower:]')
+                web_deployed_revision=$(printf '%s' "$web_deployed_revision" | tr '[:upper:]' '[:lower:]')
+
+                if [[ "$server_deployed_revision" =~ ^[0-9a-f]{40}$ ]] &&
+                  [[ "$web_deployed_revision" =~ ^[0-9a-f]{40}$ ]] &&
+                  [ "$server_deployed_revision" = "$web_deployed_revision" ]; then
+                  deployed_revision=$server_deployed_revision
+                  if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+                    if ! git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null ||
+                      ! git cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+                      echo "dispatch revision objects are unavailable; blocking deployment" >&2
+                    elif [ "$deployed_revision" = "$target_sha" ]; then
+                      deployment_blocked=false
+                    elif git merge-base --is-ancestor "$target_sha" "$deployed_revision"; then
+                      deployment_blocked=false
+                    elif git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
+                      if git diff --quiet "$deployed_revision" "$target_sha" -- docker/atlas/migrations; then
+                        deployment_blocked=false
+                      else
+                        diff_status=$?
+                        if [ "$diff_status" -eq 1 ]; then
+                          echo "forward dispatch contains migrations; blocking deployment" >&2
+                        else
+                          echo "forward dispatch migration diff failed; blocking deployment" >&2
+                        fi
+                      fi
+                    else
+                      echo "dispatch revision relationship is unavailable; blocking deployment" >&2
+                    fi
+                  elif git cat-file -e "${deployed_revision}^{commit}" 2>/dev/null &&
+                    git merge-base --is-ancestor "$deployed_revision" "$target_sha"; then
+                    comparison_base=$deployed_revision
+                    if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
+                      migration_changed=false
+                      deployment_blocked=false
+                    else
+                      diff_status=$?
+                      if [ "$diff_status" -eq 1 ]; then
+                        migration_changed=true
+                        deployment_blocked=false
+                      else
+                        echo "migration diff failed; blocking deployment" >&2
+                      fi
+                    fi
+                  else
+                    echo "deployed revision is unavailable from target history; blocking deployment" >&2
+                  fi
+                else
+                  echo "deployed server and web revisions are missing or inconsistent; blocking deployment" >&2
+                fi
+              else
+                echo "deployed server or web image inspection failed; blocking deployment" >&2
+              fi
+            elif [ "$GITHUB_EVENT_NAME" = "push" ] &&
+              [ "$server_pull_status" -ne 0 ] &&
+              [ "$web_pull_status" -ne 0 ] &&
+              manifest_is_missing "$server_pull_error" &&
+              manifest_is_missing "$web_pull_error"; then
+              comparison_base=$before
+              if git diff --quiet "$comparison_base" "$target_sha" -- docker/atlas/migrations; then
+                migration_changed=false
+                deployment_blocked=false
+                echo "current dev image manifests are absent; allowing bootstrap deployment"
+              else
+                diff_status=$?
+                if [ "$diff_status" -eq 1 ]; then
+                  migration_changed=true
+                  deployment_blocked=false
+                  echo "current dev image manifests are absent; allowing bootstrap deployment"
+                else
+                  echo "bootstrap migration diff failed; blocking deployment" >&2
+                fi
+              fi
+            else
+              echo "current dev images could not be verified; blocking deployment" >&2
+            fi
+          fi
+
           printf 'target_sha=%s\n' "$target_sha" >> "$GITHUB_OUTPUT"
           printf 'migration_changed=%s\n' "$migration_changed" >> "$GITHUB_OUTPUT"
+          printf 'deployment_blocked=%s\n' "$deployment_blocked" >> "$GITHUB_OUTPUT"
 
   build-server:
     runs-on: ubuntu-latest
@@ -199,30 +251,34 @@ jobs:
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
 
-  migration-hold:
-    runs-on: ubuntu-latest
-    needs: [preflight, build-server, build-web]
-    if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
-    steps:
-      - name: Record manual migration hold
-        shell: bash
-        run: |
-          target_sha="${{ needs.preflight.outputs.target_sha }}"
-          {
-            echo "## Dev deployment held for migrations"
-            echo
-            echo "- Target SHA: \`$target_sha\`"
-            echo "- Apply pending Atlas migrations manually on the remote dev environment."
-            echo "- Then run this workflow with workflow_dispatch and target_sha set to the same SHA."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  verify-images:
+  deployment-blocked:
     runs-on: ubuntu-latest
     needs: [preflight, build-server, build-web]
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
-      needs.preflight.outputs.migration_changed != 'true' &&
+      (
+        needs.preflight.outputs.deployment_blocked != 'false' ||
+        (
+          needs.preflight.outputs.migration_changed != 'true' &&
+          needs.preflight.outputs.migration_changed != 'false'
+        )
+      )
+    steps:
+      - name: Fail blocked or invalid preflight state
+        shell: bash
+        run: |
+          echo "Deployment blocked by preflight state validation" >&2
+          exit 1
+
+  verify-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [preflight, build-server, build-web]
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.deployment_blocked == 'false' &&
       (
         (
           github.event_name == 'push' &&
@@ -260,27 +316,147 @@ jobs:
             fi
           done
 
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [preflight, verify-images]
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.deployment_blocked == 'false' &&
+      (
+        needs.preflight.outputs.migration_changed == 'true' ||
+        needs.preflight.outputs.migration_changed == 'false'
+      ) &&
+      needs.verify-images.result == 'success'
+    steps:
+      - name: Check out migration target
+        if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+
+      - name: Validate and apply Atlas migrations
+        if: ${{ github.event_name == 'push' && needs.preflight.outputs.migration_changed == 'true' }}
+        shell: bash
+        env:
+          ATLAS_URL: ${{ secrets.ATLAS_URL }}
+          ATLAS_CA_PEM: ${{ secrets.ATLAS_CA_PEM }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ATLAS_URL:-}" ]; then
+            echo "ATLAS_URL secret is required for dev migrations" >&2
+            exit 1
+          fi
+
+          atlas_url_without_fragment=${ATLAS_URL%%#*}
+          if [[ "$atlas_url_without_fragment" != mysql://* ]]; then
+            echo "ATLAS_URL must use the mysql:// scheme" >&2
+            exit 1
+          fi
+          if [[ "$atlas_url_without_fragment" != *\?* ]]; then
+            echo "ATLAS_URL must include exactly one tls=true query parameter" >&2
+            exit 1
+          fi
+
+          atlas_query=${atlas_url_without_fragment#*\?}
+          tls_parameter_count=0
+          tls_parameter_value=
+          ssl_ca_parameter_count=0
+          ssl_ca_parameter_value=
+          IFS='&' read -r -a atlas_query_parameters <<< "$atlas_query"
+          for atlas_query_parameter in "${atlas_query_parameters[@]}"; do
+            atlas_query_key=${atlas_query_parameter%%=*}
+            if [[ "$atlas_query_parameter" == *=* ]]; then
+              atlas_query_value=${atlas_query_parameter#*=}
+            else
+              atlas_query_value=
+            fi
+            case "$atlas_query_key" in
+              tls)
+                tls_parameter_count=$((tls_parameter_count + 1))
+                tls_parameter_value=$atlas_query_value
+                ;;
+              ssl-ca)
+                ssl_ca_parameter_count=$((ssl_ca_parameter_count + 1))
+                ssl_ca_parameter_value=$atlas_query_value
+                ;;
+            esac
+          done
+
+          if [ "$tls_parameter_count" -ne 1 ] || [ "$tls_parameter_value" != true ]; then
+            echo "ATLAS_URL must include exactly one tls=true query parameter" >&2
+            exit 1
+          fi
+          if [ -n "${ATLAS_CA_PEM:-}" ]; then
+            if [ "$ssl_ca_parameter_count" -ne 1 ] ||
+              [ "$ssl_ca_parameter_value" != /atlas-ca.pem ]; then
+              echo "ATLAS_CA_PEM requires ATLAS_URL ssl-ca=/atlas-ca.pem" >&2
+              exit 1
+            fi
+          elif [ "$ssl_ca_parameter_count" -ne 0 ]; then
+            echo "ATLAS_URL ssl-ca requires the ATLAS_CA_PEM secret" >&2
+            exit 1
+          fi
+
+          atlas_ca_file=
+          atlas_apply_args=(run --rm --env ATLAS_URL)
+          cleanup_atlas_ca() {
+            if [ -n "$atlas_ca_file" ]; then
+              rm -f -- "$atlas_ca_file"
+            fi
+          }
+          trap cleanup_atlas_ca EXIT
+
+          if [ -n "${ATLAS_CA_PEM:-}" ]; then
+            if [ -z "${RUNNER_TEMP:-}" ] || [ ! -d "$RUNNER_TEMP" ]; then
+              echo "RUNNER_TEMP is required for the Atlas CA file" >&2
+              exit 1
+            fi
+            atlas_ca_file=$RUNNER_TEMP/atlas-ca.pem
+            rm -f -- "$atlas_ca_file"
+            (umask 077 && printf '%s' "$ATLAS_CA_PEM" > "$atlas_ca_file")
+            chmod 600 "$atlas_ca_file"
+            atlas_apply_args+=(-v "$atlas_ca_file:/atlas-ca.pem:ro")
+          fi
+
+          docker run --rm \
+            -v "$PWD/docker/atlas/migrations:/migrations:ro" \
+            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
+            migrate validate --dir file:///migrations
+          docker "${atlas_apply_args[@]}" \
+            -v "$PWD/docker/atlas/migrations:/migrations:ro" \
+            -v "$PWD/.github/atlas-dev.hcl:/atlas.hcl:ro" \
+            arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
+            migrate apply --config file:///atlas.hcl --env dev
+
+      - name: Record migration no-op
+        if: ${{ needs.preflight.outputs.migration_changed == 'false' }}
+        shell: bash
+        run: echo "No Atlas migration is required for ${{ needs.preflight.outputs.target_sha }}"
+
   promote:
     runs-on: ubuntu-latest
-    needs: [preflight, build-server, build-web, verify-images]
+    timeout-minutes: 10
+    needs: [preflight, build-server, build-web, verify-images, migrate]
     outputs:
       target_sha: ${{ needs.preflight.outputs.target_sha }}
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
-      needs.preflight.outputs.migration_changed != 'true' &&
+      needs.preflight.outputs.deployment_blocked == 'false' &&
+      needs.verify-images.result == 'success' &&
+      needs.migrate.result == 'success' &&
       (
         (
           github.event_name == 'push' &&
           needs.build-server.result == 'success' &&
-          needs.build-web.result == 'success' &&
-          needs.verify-images.result == 'success'
+          needs.build-web.result == 'success'
         ) ||
         (
           github.event_name == 'workflow_dispatch' &&
           needs.build-server.result == 'skipped' &&
-          needs.build-web.result == 'skipped' &&
-          needs.verify-images.result == 'success'
+          needs.build-web.result == 'skipped'
         )
       )
     steps:
@@ -310,6 +486,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: promote
     if: ${{ needs.promote.result == 'success' }}
     env:
@@ -326,6 +503,8 @@ jobs:
             --fail-with-body
             --silent
             --show-error
+            --connect-timeout 10
+            --max-time 840
             --request POST
             --header 'Content-Type: application/json'
           )
