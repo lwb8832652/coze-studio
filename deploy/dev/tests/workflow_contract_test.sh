@@ -83,13 +83,16 @@ assert_contract(!jobs.key?('migration-hold'), 'manual migration-hold job must be
 assert_contract(!jobs.key?('migrate'), 'remote migrate job must be removed')
 
 %w[preflight build-server build-web verify-images promote].each do |job_name|
-  assert_contract(jobs.fetch(job_name)['environment'] == 'ACR',
-                  "#{job_name} must bind the ACR environment secrets")
+  job = jobs.fetch(job_name)
+  assert_contract(!job.key?('environment'),
+                  "#{job_name} must use repository-level Actions configuration")
+  text = job_text(job)
+  %w[secrets.ACR_USERNAME secrets.ACR_PASSWORD vars.ACR_REGISTRY vars.ACR_NAMESPACE].each do |token|
+    assert_contract(text.include?(token), "#{job_name} must read repository-level #{token}")
+  end
 end
-assert_contract(jobs.fetch('deploy')['environment'] == 'BAOTA',
-                'deploy must bind the BAOTA environment secrets')
-assert_contract(!jobs.fetch('deployment-blocked').key?('environment'),
-                'deployment-blocked must not bind an environment')
+assert_contract(jobs.values.none? { |job| job.key?('environment') },
+                'workflow jobs must not bind GitHub Environments')
 
 preflight = jobs.fetch('preflight')
 expected_preflight_outputs = {
@@ -289,7 +292,8 @@ deploy = jobs.fetch('deploy')
 assert_contract(needs(deploy) == ['promote'], 'deploy must need promote only')
 assert_contract(deploy['timeout-minutes'] == 15, 'deploy timeout must be 15 minutes')
 deploy_text = job_text(deploy)
-%w[curl --fail-with-body BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN BAOTA_WEBHOOK_PINNED_PUBKEY
+%w[curl --fail-with-body secrets.BAOTA_WEBHOOK_URL secrets.BAOTA_WEBHOOK_TOKEN
+   vars.BAOTA_WEBHOOK_PINNED_PUBKEY BAOTA_WEBHOOK_URL BAOTA_WEBHOOK_TOKEN BAOTA_WEBHOOK_PINNED_PUBKEY
    needs.promote.outputs.target_sha --pinnedpubkey --insecure --connect-timeout --max-time].each do |token|
   assert_contract(deploy_text.include?(token), "deploy webhook is missing #{token}")
 end
