@@ -90,6 +90,7 @@ render_config() {
     WEB_IMAGE_TAG="$web_tag" \
     WEB_BIND_IP="$bind_ip" \
     WEB_PORT="$web_port" \
+    OCEANBASE_PASSWORD=sentinel-oceanbase-password \
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config 2>&1) || {
     fail "docker compose config failed: $config_output"
   }
@@ -105,6 +106,10 @@ require_text "$env_source" '^SERVER_IMAGE_TAG=dev$' '.env.example must default t
 require_text "$env_source" '^WEB_IMAGE_TAG=dev$' '.env.example must default the web tag to dev'
 require_text "$env_source" '^WEB_BIND_IP=0\.0\.0\.0$' '.env.example must default the web bind IP to all interfaces'
 require_text "$env_source" '^WEB_PORT=8888$' '.env.example must default the web port to 8888'
+require_text "$env_source" '^OCEANBASE_PASSWORD=$' '.env.example must leave the OceanBase password blank'
+require_text "$env_source" '^OCEANBASE_DATAFILE_SIZE=1G$' '.env.example must define the OceanBase datafile size'
+require_text "$env_source" '^OCEANBASE_MEM_LIMIT=2g$' '.env.example must define the OceanBase memory limit'
+require_text "$env_source" '^OCEANBASE_CPUS=1\.00$' '.env.example must define the OceanBase CPU limit'
 require_text "$env_source" '^DEPLOY_HEALTH_TIMEOUT_SECONDS=120$' '.env.example must define the deployment health timeout'
 env_web_settings_order=$(printf '%s\n' "$env_source" | awk '
   /^WEB_BIND_IP=/ {print "WEB_BIND_IP"}
@@ -113,12 +118,28 @@ env_web_settings_order=$(printf '%s\n' "$env_source" | awk '
 ')
 require_exact_text "$env_web_settings_order" $'WEB_BIND_IP\nWEB_PORT\nDEPLOY_HEALTH_TIMEOUT_SECONDS' 'web bind defaults must precede the deployment health timeout'
 services=$(printf '%s\n' "$compose_source" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
-require_exact_text "$services" $'nsqd\ncoze-server\ncoze-web' 'services must be exactly nsqd, coze-server, then coze-web'
+require_exact_text "$services" $'oceanbase\nnsqd\ncoze-server\ncoze-web' 'services must be exactly oceanbase, nsqd, coze-server, then coze-web'
+oceanbase_config=$(service_block "$config" oceanbase)
 nsqd_config=$(service_block "$config" nsqd)
 server_config=$(service_block "$config" coze-server)
 web_config=$(service_block "$config" coze-web)
+oceanbase_source=$(service_block "$compose_source" oceanbase)
 nsqd_source=$(service_block "$compose_source" nsqd)
 web_source=$(service_block "$compose_source" coze-web)
+
+require_text "$oceanbase_config" '^    image: oceanbase/oceanbase-ce:latest$' 'OceanBase image must use the CE image'
+require_text "$oceanbase_config" '^      MODE: SLIM$' 'OceanBase must use slim mode'
+require_text "$oceanbase_config" '^      OB_DATAFILE_SIZE: 1G$' 'OceanBase datafile size must default to 1G'
+require_text "$oceanbase_config" '^      OB_SYS_PASSWORD: sentinel-oceanbase-password$' 'OceanBase system password must come from deploy.env'
+require_text "$oceanbase_config" '^      OB_TENANT_PASSWORD: sentinel-oceanbase-password$' 'OceanBase tenant password must come from deploy.env'
+require_text "$oceanbase_config" '^    mem_limit: "2147483648"$' 'OceanBase memory must default to 2g'
+require_text "$oceanbase_config" '^    cpus: 1$' 'OceanBase CPU must default to 1 core'
+require_text "$oceanbase_config" '^        source: oceanbase-ob$' 'OceanBase data must use a named volume'
+require_text "$oceanbase_config" '^        source: oceanbase-cluster$' 'OceanBase cluster metadata must use a named volume'
+require_text "$oceanbase_config" '^        - CMD-SHELL$' 'OceanBase healthcheck must execute through a shell'
+require_text "$oceanbase_source" 'obclient -h127\.0\.0\.1 -P2881 -uroot@test -p\$\$\{OB_TENANT_PASSWORD\}' 'OceanBase healthcheck must verify tenant connectivity'
+require_text "$oceanbase_config" '^    restart: unless-stopped$' 'OceanBase must restart unless stopped'
+require_text "$oceanbase_config" '^    pull_policy: missing$' 'OceanBase must pull only when its image is missing'
 
 require_text "$nsqd_config" '^    image: nsqio/nsq:v1\.3\.0$' 'nsqd image must be pinned to v1.3.0'
 nsqd_command=$(printf '%s\n' "$nsqd_config" | awk '
@@ -153,16 +174,23 @@ require_text "$nsqd_source" '^    cpus: 0\.50$' 'nsqd CPU must be limited to 0.5
 require_text "$nsqd_config" '^    pids_limit: 128$' 'nsqd process count must be limited to 128'
 require_text "$compose_source" '^x-logging: &default-logging$' 'compose must define the shared logging anchor'
 logging_alias_count=$(printf '%s\n' "$compose_source" | awk '$0 == "    logging: *default-logging" {count++} END {print count + 0}')
-require_exact_text "$logging_alias_count" '3' 'all three services must use the shared logging anchor'
+require_exact_text "$logging_alias_count" '4' 'all four services must use the shared logging anchor'
 
 require_text "$server_config" 'image: registry\.example\.aliyuncs\.com/example/coze-server:dev' 'coze-server image must use the dev tag by default'
 require_text "$server_config" '^      COZE_MQ_TYPE: nsq$' 'coze-server must use the NSQ message queue'
 require_text "$server_config" '^      MQ_NAME_SERVER: nsqd:4150$' 'coze-server must connect to the local nsqd service'
+require_text "$server_config" '^      VECTOR_STORE_TYPE: oceanbase$' 'coze-server must use OceanBase for vector storage'
+require_text "$server_config" '^      OCEANBASE_HOST: oceanbase$' 'coze-server must connect to the local OceanBase service'
+require_text "$server_config" '^      OCEANBASE_PORT: "2881"$' 'coze-server must use the OceanBase SQL port'
+require_text "$server_config" '^      OCEANBASE_USER: root@test$' 'coze-server must use the OceanBase tenant user by default'
+require_text "$server_config" '^      OCEANBASE_DATABASE: test$' 'coze-server must use the OceanBase test database by default'
+require_text "$server_config" '^      OCEANBASE_PASSWORD: sentinel-oceanbase-password$' 'coze-server must receive the OceanBase password from deploy.env'
 require_text "$server_config" '^      AGENT_THREAD_RUNTIME_DEFAULT: eino_adk$' 'coze-server must use the Eino ADK runtime'
 require_text "$server_config" '^      AGENT_THREAD_EINO_ADK_ENABLED: "true"$' 'coze-server must enable the Eino ADK runtime'
 require_text "$server_config" '^      AGENT_THREAD_WORKER_ENABLED: "true"$' 'coze-server must enable the run worker'
 require_text "$server_config" '^      AGENT_THREAD_RESUME_WORKER_ENABLED: "true"$' 'coze-server must enable the resume worker'
 require_text "$server_config" '^      AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED: "true"$' 'coze-server must enable lease recovery'
+require_text "$server_config" '^      oceanbase:$' 'coze-server must depend on OceanBase'
 require_text "$server_config" '^      nsqd:$' 'coze-server must depend on nsqd'
 require_text "$server_config" '^        condition: service_healthy$' 'coze-server must wait for healthy nsqd'
 require_text "$server_config" '^        restart: true$' 'coze-server must restart when nsqd is explicitly restarted'
@@ -193,7 +221,7 @@ require_text "$web_config" 'target: 80' 'coze-web must target container port 80'
 require_text "$web_config" 'published: "8888"' 'coze-web must publish host port 8888'
 require_text "$web_config" 'restart: unless-stopped' 'coze-web must restart unless stopped'
 
-for service_config in "$nsqd_config" "$server_config" "$web_config"; do
+for service_config in "$oceanbase_config" "$nsqd_config" "$server_config" "$web_config"; do
   require_text "$service_config" '^    logging:$' 'every service must configure logging'
   require_text "$service_config" '^      driver: json-file$' 'every service must use the json-file log driver'
   require_text "$service_config" '^        max-file: "3"$' 'every service must retain three log files'
@@ -216,7 +244,7 @@ volumes=$(printf '%s\n' "$config" | awk '
   in_volumes && /^[^[:space:]]/ {exit}
   in_volumes && /^  [^[:space:]]/ {sub(/^  /, ""); sub(/:$/, ""); print}
 ')
-require_exact_text "$volumes" 'nsq-data' 'nsq-data must be the only top-level volume'
+require_exact_text "$volumes" $'nsq-data\noceanbase-cluster\noceanbase-ob' 'OceanBase and nsq-data must be the only top-level volumes'
 
 override_config=$(render_config canary canary)
 require_text "$(service_block "$override_config" coze-server)" 'image: .*/coze-server:canary' 'SERVER_IMAGE_TAG must override the backend tag'
