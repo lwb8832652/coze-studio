@@ -71,7 +71,7 @@ only the white portal silhouette.
 ```bash
 git add frontend/apps/coze-studio/assets/brand/newx-site-logo.svg \
   frontend/apps/coze-studio/assets/brand/newx-favicon.svg
-git commit -m "assets: add NewX brand vectors"
+git commit -m "feat: add NewX brand vectors"
 ```
 
 ### Task 2: Export and validate the PNG upload artifacts
@@ -132,7 +132,7 @@ remains separated from the green background without isolated accent pixels.
 ```bash
 git add frontend/apps/coze-studio/assets/brand/newx-site-logo.png \
   frontend/apps/coze-studio/assets/brand/newx-favicon.png
-git commit -m "assets: add NewX brand upload images"
+git commit -m "feat: add NewX brand upload images"
 ```
 
 ### Task 3: Activate the assets through system configuration
