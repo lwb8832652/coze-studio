@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useCommonConfigStore } from '@coze-foundation/global-store';
 
+import { verifySiteAssetPreview } from './site-asset-preview';
 import { uploadAdminSiteAsset } from './service';
 import type {
   AdminBasicConfig,
@@ -208,6 +209,13 @@ export const SystemSettingsSection = ({
     setUploadingAsset(kind);
     try {
       const asset = await uploadAdminSiteAsset(kind, file);
+      try {
+        await verifySiteAssetPreview(asset.url);
+      } catch (error) {
+        void error;
+        setValidationMessage('上传资源不可访问，请重试或检查对象存储');
+        return;
+      }
       if (kind === 'logo') {
         setSiteLogoURI(asset.uri);
         setSiteLogoPreview(asset.url);
@@ -329,12 +337,14 @@ export const SystemSettingsSection = ({
                 title: '站点 Logo',
                 hint: 'PNG、JPEG 或 WebP，32-2048px，最大 2MB',
                 preview: siteLogoPreview,
+                configured: Boolean(siteLogoURI.trim()),
               },
               {
                 kind: 'favicon' as const,
                 title: '浏览器地址栏图标',
                 hint: '正方形 PNG、JPEG 或 WebP，16-512px，最大 512KB',
                 preview: faviconPreview,
+                configured: Boolean(faviconURI.trim()),
               },
             ].map(asset => (
               <div
@@ -348,9 +358,22 @@ export const SystemSettingsSection = ({
                 <div className="coze-prototype-site-settings-asset-body">
                   <div className="coze-prototype-site-settings-preview">
                     {asset.preview ? (
-                      <img alt={asset.title} src={asset.preview} />
+                      <img
+                        alt={asset.title}
+                        src={asset.preview}
+                        onError={() => {
+                          if (asset.kind === 'logo') {
+                            setSiteLogoPreview('');
+                          } else {
+                            setFaviconPreview('');
+                          }
+                          setValidationMessage('资源不可用，请重新上传');
+                        }}
+                      />
                     ) : (
-                      <span>未配置</span>
+                      <span>
+                        {asset.configured ? '资源不可用，请重新上传' : '未配置'}
+                      </span>
                     )}
                   </div>
                   <div className="coze-prototype-site-settings-asset-actions">
@@ -371,9 +394,11 @@ export const SystemSettingsSection = ({
                         ? '上传中...'
                         : asset.preview
                           ? '替换'
-                          : '上传'}
+                          : asset.configured
+                            ? '重新上传'
+                            : '上传'}
                     </label>
-                    {asset.preview ? (
+                    {asset.configured ? (
                       <button
                         className="coze-prototype-site-settings-remove"
                         type="button"
