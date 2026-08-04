@@ -81,7 +81,7 @@ const readInitialLocale = (): AuthLocale => {
 
 // Login and registration intentionally share one stateful form so switching
 // modes preserves the user's input and validation state.
-// eslint-disable-next-line @coze-arch/max-line-per-function, complexity -- Both modes intentionally share one stateful form.
+// eslint-disable-next-line @coze-arch/max-line-per-function, complexity -- Shared auth form.
 export const LoginPage: FC = () => {
   const siteConfig = useCommonConfigStore(state => state.siteConfig);
   const [mode, setMode] = useState<AuthMode>('login');
