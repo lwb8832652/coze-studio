@@ -21,12 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
-
-	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
-	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 const defaultHarnessMaxSteps = 4
@@ -1078,7 +1074,7 @@ func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunS
 }
 
 func (e *HarnessExecutor) emitSkillsLoadedEvent(ctx context.Context, run *RunSummary, skills AgentSkillContext) {
-	emitSkillsLoadedRunEvent(ctx, e.eventSink, run, skills, e.journalContentProducer)
+	emitSkillsLoadedRunEvent(ctx, e.eventSink, run, skills)
 }
 
 func emitSkillsLoadedRunEvent(
@@ -1086,7 +1082,6 @@ func emitSkillsLoadedRunEvent(
 	sink RunEventSink,
 	run *RunSummary,
 	skills AgentSkillContext,
-	producers ...JournalContentProducer,
 ) {
 	if len(skills.Items) == 0 {
 		return
@@ -1112,32 +1107,6 @@ func emitSkillsLoadedRunEvent(
 			"skill_names": names,
 		}),
 	})
-	if len(producers) == 0 || producers[0] == nil {
-		return
-	}
-	identity := append([]string(nil), ids...)
-	sort.Strings(identity)
-	actionID := journalStableProjectionID(run.RunID, "skill", strings.Join(identity, ","))
-	runningVerb, completedVerb := journalActionVerbs("use_skill")
-	summaries := make([]JournalSkillSummary, 0, len(skills.Items))
-	for _, skill := range skills.Items {
-		summaries = append(summaries, JournalSkillSummary{
-			SkillID: strconv.FormatInt(skill.ID, 10),
-			Name:    skill.Name, Description: skill.Description,
-		})
-	}
-	_, _, err := producers[0].ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
-		Run: run, Status: domainentity.JournalContentStatusReady,
-		ContentType: domainentity.JournalSnapshotContentTypeSkill,
-		Action: JournalContentAction{
-			ActionID: actionID, Operation: "use_skill", Target: strings.Join(names, "、"),
-			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
-		},
-		Content: JournalTypedSnapshotContent{Skill: &JournalSkillContent{Skills: summaries}},
-	})
-	if err != nil {
-		logs.CtxWarnf(ctx, "journal skill snapshot unavailable: run_id=%d", run.RunID)
-	}
 }
 
 func (e *HarnessExecutor) emitStepStartedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int) {

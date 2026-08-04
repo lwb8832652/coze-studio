@@ -76,6 +76,7 @@ type adkMessagePayload struct {
 	ToolCalls            []schema.ToolCall               `json:"tool_calls,omitempty"`
 	ToolName             string                          `json:"tool_name,omitempty"`
 	ToolCallID           string                          `json:"tool_call_id,omitempty"`
+	PlanTaskID           string                          `json:"plan_task_id,omitempty"`
 	ToolError            *ADKToolErrorPayload            `json:"tool_error,omitempty"`
 	Media                []adkMediaPayload               `json:"media,omitempty"`
 	Usage                *adkUsagePayload                `json:"usage,omitempty"`
@@ -133,6 +134,7 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 			if err != nil {
 				return nil, fmt.Errorf("map partial agent message: %w", err)
 			}
+			attachADKJournalPlanTask(ctx, &partial)
 			payload["partial_message"] = partial
 			mapped.Usage = usage
 			mapped.FinalText = finalText
@@ -196,6 +198,7 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 			mapped.Payload = encoded
 			return mapped, nil
 		}
+		attachADKJournalPlanTask(ctx, &payload)
 
 		mapped.EventType = "message.completed"
 		if payload.Role == schema.Tool {
@@ -238,6 +241,26 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 	mapped.Payload = encoded
 
 	return mapped, nil
+}
+
+func attachADKJournalPlanTask(ctx context.Context, payload *adkMessagePayload) {
+	if payload == nil {
+		return
+	}
+	switch payload.Role {
+	case schema.Assistant:
+		payload.PlanTaskID = activeADKPlanTaskIDFromContext(ctx)
+		toolCallIDs := make([]string, 0, len(payload.ToolCalls))
+		for _, call := range payload.ToolCalls {
+			toolCallIDs = append(toolCallIDs, call.ID)
+		}
+		bindADKJournalToolPlanTasks(ctx, toolCallIDs, payload.PlanTaskID)
+	case schema.Tool:
+		payload.PlanTaskID = boundADKJournalToolPlanTaskIDFromContext(
+			ctx,
+			payload.ToolCallID,
+		)
+	}
 }
 
 func mapADKSummarizationAction(

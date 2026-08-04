@@ -102,6 +102,73 @@ func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) 
 	require.Contains(t, eventSink.events[2].Payload, `"content":"final answer"`)
 }
 
+func TestADKExecutorAssociatesToolEventsWithActivePlanTask(t *testing.T) {
+	eventSink := &recordingRunEventSink{}
+	checkpointService := &recordingADKCheckpointService{}
+	agent := &scriptedADKAgent{
+		run: func(ctx context.Context) []*adk.AgentEvent {
+			tracker := adkParityStateTrackerFromContext(ctx)
+			require.NotNil(t, tracker)
+			require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+				ID: "1", Title: "Write report", Status: "in_progress",
+			}}))
+			return []*adk.AgentEvent{
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("", []schema.ToolCall{{
+							ID: "call-write",
+							Function: schema.FunctionCall{
+								Name:      adkWriteFileToolName,
+								Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+							},
+						}}),
+						Role: schema.Assistant,
+					}},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: &schema.Message{
+							Role: schema.Tool, Content: `{"ok":true}`,
+							ToolCallID: "call-write",
+						},
+						Role: schema.Tool, ToolName: adkWriteFileToolName,
+					}},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("report ready", nil),
+						Role:    schema.Assistant,
+					}},
+				},
+			}
+		},
+	}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		eventSink,
+		func(run *RunSummary) (adk.CheckPointStore, error) {
+			return NewADKCheckpointStore(checkpointService, run)
+		},
+		nil,
+	)
+	run := &RunSummary{
+		RunID: 29, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+		Input: `{"messages":[{"role":"user","content":"write report"}]}`,
+	}
+
+	_, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Len(t, eventSink.events, 3)
+	require.Contains(t, eventSink.events[0].Payload, `"plan_task_id":"1"`)
+	require.Contains(t, eventSink.events[1].Payload, `"plan_task_id":"1"`)
+}
+
 func TestADKExecutorSeedsAndReturnsDurableParityState(t *testing.T) {
 	checkpointService := &recordingADKCheckpointService{}
 	run := &RunSummary{

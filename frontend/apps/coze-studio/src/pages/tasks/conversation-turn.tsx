@@ -84,39 +84,60 @@ export const TaskUserTurn = ({
 interface TaskAssistantTurnShellProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
   createdAt?: number;
+  hideHeader?: boolean;
+  journalMode?: boolean;
   subtitle: string;
 }
 
 export const TaskAssistantTurnShell = forwardRef<
   HTMLElement,
   TaskAssistantTurnShellProps
->(({ children, className = '', createdAt, subtitle, ...rest }, ref) => {
-  const siteName = useCommonConfigStore(state => state.siteConfig.siteName);
-  const timestamp = formatTimestamp(createdAt);
-  const dateTime = formatDateTime(createdAt);
+>(
+  (
+    {
+      children,
+      className = '',
+      createdAt,
+      hideHeader = false,
+      journalMode = false,
+      subtitle,
+      ...rest
+    },
+    ref,
+  ) => {
+    const siteName = useCommonConfigStore(state => state.siteConfig.siteName);
+    const timestamp = formatTimestamp(createdAt);
+    const dateTime = formatDateTime(createdAt);
 
-  return (
-    <article
-      {...rest}
-      ref={ref}
-      className={`coze-prototype-assistant-turn coze-prototype-assistant-turn-shell ${className}`.trim()}
-      tabIndex={-1}
-    >
-      <header className="coze-prototype-assistant-turn-header">
-        <WorkspaceMark variant="assistant" />
-        <span className="coze-prototype-assistant-identity">
-          <span>
-            <strong>{siteName}</strong>
-            <span> · {subtitle}</span>
-          </span>
-          {timestamp ? <time dateTime={dateTime}>{timestamp}</time> : null}
-        </span>
-      </header>
-      {children ? (
-        <div className="coze-prototype-assistant-turn-body">{children}</div>
-      ) : null}
-    </article>
-  );
-});
+    return (
+      <article
+        {...rest}
+        ref={ref}
+        className={`coze-prototype-assistant-turn coze-prototype-assistant-turn-shell ${
+          journalMode ? 'coze-prototype-assistant-turn-journal' : ''
+        } ${className}`.trim()}
+        tabIndex={-1}
+      >
+        {hideHeader ? null : (
+          <header className="coze-prototype-assistant-turn-header">
+            <WorkspaceMark variant="assistant" />
+            <span className="coze-prototype-assistant-identity">
+              <span>
+                <strong>{siteName}</strong>
+                {journalMode ? null : <span> · {subtitle}</span>}
+              </span>
+              {!journalMode && timestamp ? (
+                <time dateTime={dateTime}>{timestamp}</time>
+              ) : null}
+            </span>
+          </header>
+        )}
+        {children ? (
+          <div className="coze-prototype-assistant-turn-body">{children}</div>
+        ) : null}
+      </article>
+    );
+  },
+);
 
 TaskAssistantTurnShell.displayName = 'TaskAssistantTurnShell';

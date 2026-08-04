@@ -174,8 +174,9 @@ type ADKParityCompletion struct {
 }
 
 type ADKParityStateTracker struct {
-	mu    sync.RWMutex
-	state ADKParityState
+	mu                   sync.RWMutex
+	state                ADKParityState
+	journalToolPlanTasks map[string]string
 }
 
 type adkParityStateContextKey struct{}
@@ -201,6 +202,60 @@ func adkParityStateTrackerFromContext(ctx context.Context) *ADKParityStateTracke
 	return tracker
 }
 
+func activeADKPlanTaskIDFromContext(ctx context.Context) string {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	if tracker == nil {
+		return ""
+	}
+	activeID := ""
+	for _, todo := range tracker.Snapshot().Todos {
+		if strings.ToLower(strings.TrimSpace(todo.Status)) != "in_progress" {
+			continue
+		}
+		if activeID != "" {
+			return ""
+		}
+		activeID = strings.TrimSpace(todo.ID)
+	}
+	return activeID
+}
+
+func bindADKJournalToolPlanTasks(
+	ctx context.Context,
+	toolCallIDs []string,
+	planTaskID string,
+) {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	planTaskID = strings.TrimSpace(planTaskID)
+	if tracker == nil || planTaskID == "" {
+		return
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.journalToolPlanTasks == nil {
+		tracker.journalToolPlanTasks = make(map[string]string)
+	}
+	for _, toolCallID := range toolCallIDs {
+		if toolCallID = strings.TrimSpace(toolCallID); toolCallID != "" {
+			tracker.journalToolPlanTasks[toolCallID] = planTaskID
+		}
+	}
+}
+
+func boundADKJournalToolPlanTaskIDFromContext(
+	ctx context.Context,
+	toolCallID string,
+) string {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if tracker == nil || toolCallID == "" {
+		return ""
+	}
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	return tracker.journalToolPlanTasks[toolCallID]
+}
+
 func NewADKParityStateTracker(
 	run *RunSummary,
 	seed *ADKParityState,
@@ -209,20 +264,23 @@ func NewADKParityStateTracker(
 		return nil, fmt.Errorf("eino adk parity state requires run ownership")
 	}
 	workspace := newADKParityWorkspace(run.SpaceID, run.ThreadID)
-	tracker := &ADKParityStateTracker{state: ADKParityState{
-		SchemaVersion: adkParityStateSchemaVersion,
-		SpaceID:       run.SpaceID,
-		ThreadID:      run.ThreadID,
-		LastRunID:     run.RunID,
-		Messages:      []ADKParityMessage{},
-		Todos:         []ADKParityTodo{},
-		Workspace:     workspace,
-		Uploads:       []ADKParityUpload{},
-		Artifacts:     []ADKParityArtifact{},
-		ViewedImages:  map[string]ADKParityViewedImage{},
-		ActiveSkills:  []ADKParitySkill{},
-		Interrupts:    []ADKParityInterrupt{},
-	}}
+	tracker := &ADKParityStateTracker{
+		journalToolPlanTasks: make(map[string]string),
+		state: ADKParityState{
+			SchemaVersion: adkParityStateSchemaVersion,
+			SpaceID:       run.SpaceID,
+			ThreadID:      run.ThreadID,
+			LastRunID:     run.RunID,
+			Messages:      []ADKParityMessage{},
+			Todos:         []ADKParityTodo{},
+			Workspace:     workspace,
+			Uploads:       []ADKParityUpload{},
+			Artifacts:     []ADKParityArtifact{},
+			ViewedImages:  map[string]ADKParityViewedImage{},
+			ActiveSkills:  []ADKParitySkill{},
+			Interrupts:    []ADKParityInterrupt{},
+		},
+	}
 	if seed == nil {
 		return tracker, nil
 	}

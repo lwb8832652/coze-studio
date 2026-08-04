@@ -147,6 +147,44 @@ func TestPublicRunEventRedactsKnownPayload(t *testing.T) {
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
 }
 
+func TestPublicRunEventDoesNotDeriveJournalTargetsFromToolArguments(t *testing.T) {
+	event := &RunEventSummary{
+		EventID:   1,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "message.completed",
+		Payload: `{
+			"role":"assistant",
+			"tool_calls":[
+				{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/workspace/requirements.md\"}"}},
+				{"id":"call-2","function":{"name":"edit_file","arguments":"{\"file_path\":\"frontend/src/journal-event-model.ts\"}"}},
+				{"id":"call-3","function":{"name":"web_search","arguments":"{\"query\":\"private roadmap\"}"}},
+				{"id":"call-4","function":{"name":"read_file","arguments":"{\"path\":\"https://internal.example/report.md\"}"}}
+			]
+		}`,
+		CreatedAt: 4,
+	}
+
+	got := ProjectPublicRunEvent(event)
+	require.NotNil(t, got)
+	require.JSONEq(t, `{
+		"redacted":true,
+		"role":"assistant",
+		"tool_calls":[
+			{"id":"call-1","name":"read_file","arguments_present":true},
+			{"id":"call-2","name":"edit_file","arguments_present":true},
+			{"id":"call-3","name":"web_search","arguments_present":true},
+			{"id":"call-4","name":"read_file","arguments_present":true}
+		]
+	}`, got.Payload)
+	require.NotContains(t, got.Payload, "/private/workspace")
+	require.NotContains(t, got.Payload, "frontend/src")
+	require.NotContains(t, got.Payload, "private roadmap")
+	require.NotContains(t, got.Payload, "internal.example")
+	require.NotContains(t, got.Payload, "requirements.md")
+	require.NotContains(t, got.Payload, "journal-event-model.ts")
+}
+
 func TestPublicRunInterruptedKeepsOnlyResumableHumanInteractionMetadata(t *testing.T) {
 	prompt := `{
 		"schema":"coze.human_interaction.v1",
@@ -261,6 +299,50 @@ func TestPublicRunEventKeepsApprovedVisibleMessageContent(t *testing.T) {
 	require.NotNil(t, got)
 	require.JSONEq(t, `{"redacted":true,"role":"assistant","content":"这是用户可见回答"}`, got.Payload)
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
+func TestPublicRunEventKeepsOnlyApprovedExecutionIntro(t *testing.T) {
+	got := ProjectPublicRunEvent(&RunEventSummary{
+		EventID:   1,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "plan.task.created",
+		Payload: `{
+			"plan_task_id":"1",
+			"subject":"核验执行链路",
+			"status":"pending",
+			"execution_intro":"收到。我会先核验执行链路，再完成实现与验证。",
+			"metadata":{"private_note":"` + publicProjectionSensitiveSentinel + `"},
+			"provider_body":"` + publicProjectionSensitiveSentinel + `"
+		}`,
+		CreatedAt: 4,
+	})
+
+	require.NotNil(t, got)
+	require.JSONEq(t, `{
+		"plan_task_id":"1",
+		"subject":"核验执行链路",
+		"status":"pending",
+		"execution_intro":"收到。我会先核验执行链路，再完成实现与验证。"
+	}`, got.Payload)
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+
+	sensitive := ProjectPublicRunEvent(&RunEventSummary{
+		EventID:   2,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "plan.task.created",
+		Payload: `{
+			"plan_task_id":"1",
+			"subject":"核验执行链路",
+			"status":"pending",
+			"execution_intro":"正在读取 /Users/alice/private/report.md"
+		}`,
+		CreatedAt: 5,
+	})
+	require.NotNil(t, sensitive)
+	require.NotContains(t, sensitive.Payload, "execution_intro")
+	require.NotContains(t, sensitive.Payload, "/Users/alice/private/report.md")
 }
 
 func TestPublicRunEventKeepsApprovedStreamingContent(t *testing.T) {

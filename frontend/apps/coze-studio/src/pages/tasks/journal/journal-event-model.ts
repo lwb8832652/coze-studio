@@ -32,6 +32,7 @@ export interface JournalActionItem {
   id: string;
   milestone_id?: string;
   title: string;
+  detail: string;
   kind: JournalActionKind;
   status: WorkbenchJournalExecutionStatus;
   event: WorkbenchJournalEvent;
@@ -155,11 +156,59 @@ const normalizeVerb = (verb: string, target: string): string => {
 export const journalActionLabel = (event: WorkbenchJournalEvent): string => {
   const data = journalEventData(event);
   const target = asText(data.target);
-  const completed = terminalStatuses.has(asStatus(event.status));
-  const verb = asText(
-    completed ? data.display_verb_completed : data.display_verb_running,
-  );
+  const status = asStatus(event.status);
+  const runningVerb = asText(data.display_verb_running);
+  const completedVerb = asText(data.display_verb_completed);
+  const actionStem =
+    completedVerb.replace(/^已/u, '') ||
+    runningVerb.replace(/^正在/u, '') ||
+    '执行';
+  const verb = (() => {
+    switch (status) {
+      case 'completed':
+        return completedVerb;
+      case 'failed':
+        return `${actionStem}失败`;
+      case 'timed_out':
+        return `${actionStem}超时`;
+      case 'cancelled':
+        return `已取消${actionStem}`;
+      default:
+        return runningVerb;
+    }
+  })();
   return normalizeVerb(verb, target) || target || '执行操作';
+};
+
+const journalActionTitles = new Map<string, string>([
+  ['read', '读取相关内容'],
+  ['inspect', '查看相关内容'],
+  ['use_skill', '使用任务技能'],
+  ['search', '检索相关资料'],
+  ['browse', '访问相关页面'],
+  ['execute', '运行相关操作'],
+  ['verify', '校验执行结果'],
+  ['create', '创建相关内容'],
+  ['write', '写入相关内容'],
+  ['edit', '更新相关内容'],
+  ['generate', '生成相关内容'],
+  ['upload', '上传相关文件'],
+  ['download', '下载相关文件'],
+  ['process', '处理相关内容'],
+]);
+
+const journalActionTitle = (event: WorkbenchJournalEvent): string => {
+  const data = journalEventData(event);
+  const explicit = asText(data.title);
+  if (explicit) {
+    return explicit;
+  }
+  const controlled = journalActionTitles.get(asText(data.operation));
+  if (controlled) {
+    return controlled;
+  }
+  const target = asText(data.target);
+  return target || '执行操作';
 };
 
 export const journalFailureDetails = (
@@ -241,15 +290,71 @@ const isActionLike = (event: WorkbenchJournalEvent): boolean =>
 
 const actionItem = (event: WorkbenchJournalEvent): JournalActionItem => {
   const data = journalEventData(event);
+  const runtimeAction = event.event_type.startsWith('action.');
+  const semanticLabel = journalEventLabel(event);
   return {
     id: actionIdentity(event),
     ...(asText(data.milestone_id)
       ? { milestone_id: asText(data.milestone_id) }
       : {}),
-    title: journalEventLabel(event),
+    title: runtimeAction
+      ? journalActionTitle(event)
+      : semanticLabel || journalActionTitle(event),
+    detail: runtimeAction
+      ? journalActionLabel(event)
+      : semanticLabel || journalActionLabel(event),
     kind: journalActionKind(event),
     status: asStatus(event.status),
     event,
+  };
+};
+
+const genericActionTargets = new Set([
+  '内容',
+  '文件',
+  '文档',
+  '命令',
+  '网页',
+  '相关资料',
+  '执行结果',
+  '技能',
+]);
+
+const mergeActionItem = (
+  current: JournalActionItem,
+  candidate: JournalActionItem,
+): JournalActionItem => {
+  const latest =
+    laterEvent(current.event, candidate.event) === candidate.event
+      ? candidate
+      : current;
+  const earlier = latest === candidate ? current : candidate;
+  const latestData = journalEventData(latest.event);
+  const latestTarget = asText(latestData.target);
+  const earlierTarget = asText(journalEventData(earlier.event).target);
+  const merged = {
+    ...latest,
+    ...(!latest.milestone_id && earlier.milestone_id
+      ? { milestone_id: earlier.milestone_id }
+      : {}),
+  };
+  if (
+    !genericActionTargets.has(latestTarget) ||
+    !earlierTarget ||
+    genericActionTargets.has(earlierTarget)
+  ) {
+    return merged;
+  }
+  const completed = terminalStatuses.has(latest.status);
+  const verb = asText(
+    completed
+      ? latestData.display_verb_completed
+      : latestData.display_verb_running,
+  );
+  return {
+    ...merged,
+    title: earlier.title,
+    detail: normalizeVerb(verb, earlierTarget) || earlier.detail,
   };
 };
 
@@ -270,6 +375,7 @@ const timelineSemanticKind = (
 
 const timelineActionItem = (item: JournalActionItem): JournalTimelineItem => ({
   ...item,
+  title: item.detail,
   semanticKind: timelineSemanticKind(item.event),
   aggregateEligible:
     item.event.event_type.startsWith('action.') && item.status === 'completed',
@@ -280,6 +386,7 @@ const timelineMilestoneItem = (
 ): JournalTimelineItem => ({
   id: `milestone:${milestone.id}`,
   title: milestone.title,
+  detail: milestone.title,
   kind: 'generic',
   status: milestone.status,
   event: milestone.event,
@@ -322,10 +429,7 @@ export const buildJournalMilestones = (
     }
     const next = actionItem(event);
     const current = actions.get(next.id);
-    actions.set(
-      next.id,
-      current ? actionItem(laterEvent(current.event, event)) : next,
-    );
+    actions.set(next.id, current ? mergeActionItem(current, next) : next);
   });
 
   actions.forEach(item => {
@@ -335,7 +439,7 @@ export const buildJournalMilestones = (
     }
     milestones.set(item.id, {
       id: item.id,
-      title: item.title,
+      title: item.detail,
       status: item.status,
       event: item.event,
       actions: [],
@@ -353,6 +457,34 @@ export const buildJournalMilestones = (
       ),
     }))
     .sort((left, right) => left.order - right.order);
+};
+
+export const journalExecutionIntro = (
+  events: WorkbenchJournalEvent[],
+): string => {
+  const ordered = [...events].sort((left, right) =>
+    eventOrder(left) === eventOrder(right)
+      ? left.event_id.localeCompare(right.event_id)
+      : eventOrder(left) - eventOrder(right),
+  );
+  const explicit = ordered.find(
+    event =>
+      event.event_type === 'journal.intro' &&
+      asText(journalEventData(event).text),
+  );
+  if (explicit) {
+    return asText(journalEventData(explicit).text);
+  }
+  for (const event of ordered) {
+    if (!event.event_type.startsWith('milestone.')) {
+      continue;
+    }
+    const intro = asText(journalEventData(event).execution_intro);
+    if (intro) {
+      return intro;
+    }
+  }
+  return '';
 };
 
 export const buildJournalTimelineItems = (

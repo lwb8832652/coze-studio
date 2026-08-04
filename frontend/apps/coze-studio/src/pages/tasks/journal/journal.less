@@ -17,8 +17,20 @@
 .journal-conversation-flow {
   display: grid;
   gap: 8px;
+
   width: 100%;
+  min-width: 0;
   margin: 12px 0 4px;
+}
+
+.journal-execution-intro {
+  max-width: 680px;
+  margin: 0 0 5px;
+
+  font-size: 11px;
+  line-height: 1.65;
+  color: #303640;
+  overflow-wrap: anywhere;
 }
 
 .journal-conversation-virtualized {
@@ -70,17 +82,17 @@
 
   width: auto;
   max-width: 100%;
-  min-height: 30px;
+  min-height: 28px;
   padding: 0 8px;
 
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   color: #4f5762;
   text-align: left;
 
   background: #f8f9fa;
   border: 1px solid #dfe2e6;
-  border-radius: 4px;
+  border-radius: 3px;
 
   &:hover,
   &:focus-visible {
@@ -101,14 +113,14 @@
   flex: none;
   place-items: center;
 
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 
   color: #159455;
 
   svg {
-    width: 13px;
-    height: 13px;
+    width: 12px;
+    height: 12px;
   }
 }
 
@@ -145,59 +157,97 @@
 
   width: calc(100% - 8px);
   margin-left: 8px;
-  padding: 4px 0 2px 18px;
+  padding: 3px 0 2px 19px;
 
   border-left: 1px solid #dfe2e6;
 }
 
 .journal-action-row {
-  display: grid;
-  gap: 2px;
-
-  width: min(100%, 720px);
-  min-height: 34px;
-  margin: 2px 0;
-  padding: 6px 8px;
-
-  font-size: 11px;
-  color: #39414c;
-  text-align: left;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 5px 0 7px;
 
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-
-  &:hover,
-  &:focus-within,
-  &[data-selected='true'] {
-    background: #f8faff;
-    border-color: #cbd6ef;
-  }
+  border: 0;
 
   &[data-status='failed'],
   &[data-status='timed_out'] {
     color: #c8343d;
-    background: #fff7f7;
-    border-color: #f0c9cc;
+  }
+
+  &:hover .journal-action-detail,
+  &:focus-within .journal-action-detail,
+  &[data-selected='true'] .journal-action-detail {
+    background: #f8faff;
+    border-color: #cbd6ef;
   }
 }
 
 .journal-action-main {
   cursor: pointer;
 
-  display: flex;
-  gap: 7px;
-  align-items: center;
+  display: block;
 
+  width: 100%;
   min-width: 0;
   padding: 0;
 
-  font: inherit;
-  color: inherit;
   text-align: left;
 
   background: transparent;
   border: 0;
+}
+
+.journal-action-title {
+  overflow: hidden;
+  display: block;
+
+  min-width: 0;
+
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #303741;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-action-row[data-selected='true'] .journal-action-title {
+  font-weight: 600;
+  color: #2d3540;
+}
+
+.journal-action-detail {
+  overflow: hidden;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+
+  width: min(100%, 720px);
+  min-height: 28px;
+  margin-top: 6px;
+  padding: 5px 8px;
+
+  font-size: 10px;
+  color: #59616d;
+
+  background: #fafafa;
+  border: 1px solid #e2e4e7;
+  border-radius: 2px;
+}
+
+.journal-action-detail[data-status='running'] {
+  color: #315bc0;
+  background: #f7f9ff;
+  border-color: #cbd6ef;
+}
+
+.journal-action-detail[data-status='failed'],
+.journal-action-detail[data-status='timed_out'] {
+  color: #b42318;
+  background: #fff7f6;
+  border-color: #efc7c3;
 }
 
 .journal-action-icon {
@@ -205,14 +255,14 @@
   flex: none;
   place-items: center;
 
-  width: 17px;
-  height: 17px;
+  width: 12px;
+  height: 12px;
 
   color: #59616d;
 
   svg {
-    width: 15px;
-    height: 15px;
+    width: 11px;
+    height: 11px;
   }
 }
 
@@ -236,7 +286,7 @@
   color: #0f766e;
 }
 
-.journal-action-copy {
+.journal-action-detail-copy {
   overflow: hidden;
   flex: 1;
 
@@ -752,7 +802,11 @@
   min-height: 0;
   padding: 18px;
 
-  font: 11px/1.7 SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font:
+    11px/1.7 SFMono-Regular,
+    Consolas,
+    'Liberation Mono',
+    monospace;
   color: #d9e2ee;
 
   background: #1e232b;

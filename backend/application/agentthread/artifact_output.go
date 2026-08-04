@@ -237,12 +237,13 @@ func (s *ApplicationService) publishJournalCodeSnapshot(
 		return
 	}
 	operation := journalToolOperation("write_file")
-	target := journalToolTarget("write_file", operation)
+	target := relativePath
 	runningVerb, completedVerb := journalActionVerbs(operation)
 	actionID := ""
 	if strings.TrimSpace(toolCallID) != "" {
 		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
 	}
+	milestoneID := journalOutputMilestoneID(ctx, run.RunID, toolCallID)
 	_, _, err = s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeCode,
@@ -252,7 +253,7 @@ func (s *ApplicationService) publishJournalCodeSnapshot(
 			Revision:     file.Digest,
 		},
 		Action: JournalContentAction{
-			ActionID:  actionID,
+			ActionID: actionID, MilestoneID: milestoneID,
 			Operation: operation, Target: target,
 			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
 		},
@@ -306,12 +307,13 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 		document.Chapters = journalMarkdownChapters(document.Content)
 	}
 	operation := journalToolOperation("write_file")
-	target := journalToolTarget("write_file", operation)
+	target := file.FileName
 	runningVerb, completedVerb := journalActionVerbs(operation)
 	actionID := ""
 	if strings.TrimSpace(toolCallID) != "" {
 		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
 	}
+	milestoneID := journalOutputMilestoneID(ctx, run.RunID, toolCallID)
 	_, _, err := s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeDocument,
@@ -321,7 +323,7 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 			Revision:     file.Digest,
 		},
 		Action: JournalContentAction{
-			ActionID:  actionID,
+			ActionID: actionID, MilestoneID: milestoneID,
 			Operation: operation, Target: target,
 			DisplayVerbRunning: runningVerb, DisplayVerbCompleted: completedVerb,
 		},
@@ -335,6 +337,21 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 			file.FileID,
 		)
 	}
+}
+
+func journalOutputMilestoneID(
+	ctx context.Context,
+	runID int64,
+	toolCallID string,
+) string {
+	planTaskID := boundADKJournalToolPlanTaskIDFromContext(ctx, toolCallID)
+	if planTaskID == "" {
+		planTaskID = activeADKPlanTaskIDFromContext(ctx)
+	}
+	if planTaskID == "" {
+		return ""
+	}
+	return journalStableProjectionID(runID, "milestone", planTaskID)
 }
 
 func journalOutputDocumentFormat(contentType string) (string, bool) {

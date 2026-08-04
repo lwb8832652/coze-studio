@@ -32,9 +32,11 @@ import (
 )
 
 const (
-	adkPlanBaseDir         = "/plans"
-	adkPlanHighWatermark   = ".highwatermark"
-	maxADKPlanContentBytes = 32 * 1024
+	adkPlanBaseDir                   = "/plans"
+	adkPlanHighWatermark             = ".highwatermark"
+	adkPlanExecutionIntroMetadataKey = "execution_intro"
+	maxADKPlanContentBytes           = 32 * 1024
+	maxADKPlanExecutionIntroRunes    = 280
 )
 
 type ADKPlanScope struct {
@@ -418,26 +420,103 @@ func (b *ADKPlanBackend) emitMutation(
 			return fmt.Errorf("record eino adk parity todos: %w", err)
 		}
 	}
+	payload := map[string]any{
+		"plan_scope_run_id": b.scope.ScopeRunID,
+		"plan_task_id":      mutation.Task.ID,
+		"subject":           mutation.Task.Subject,
+		"status":            mutation.Task.Status,
+		"active_form":       mutation.Task.ActiveForm,
+		"owner":             mutation.Task.Owner,
+		"blocks":            mutation.Task.Blocks,
+		"blocked_by":        mutation.Task.BlockedBy,
+		"revision":          mutation.Snapshot.Revision,
+		"active_count":      activeCount,
+		"completed_count":   completedCount,
+		"total_count":       activeCount,
+	}
+	if intro, explicit := adkPlanExecutionIntro(mutation.Snapshot); intro != "" {
+		status := strings.ToLower(strings.TrimSpace(mutation.Task.Status))
+		if explicit || (status != "pending" && status != "planned") {
+			payload[adkPlanExecutionIntroMetadataKey] = intro
+		}
+	}
 	emitRunEvent(ctx, b.eventSink, RunEvent{
 		ThreadID:  b.scope.ThreadID,
 		RunID:     b.scope.ActiveRunID,
 		EventType: eventType,
-		Payload: encodeRunEventPayload(ctx, map[string]any{
-			"plan_scope_run_id": b.scope.ScopeRunID,
-			"plan_task_id":      mutation.Task.ID,
-			"subject":           mutation.Task.Subject,
-			"status":            mutation.Task.Status,
-			"active_form":       mutation.Task.ActiveForm,
-			"owner":             mutation.Task.Owner,
-			"blocks":            mutation.Task.Blocks,
-			"blocked_by":        mutation.Task.BlockedBy,
-			"revision":          mutation.Snapshot.Revision,
-			"active_count":      activeCount,
-			"completed_count":   completedCount,
-			"total_count":       activeCount,
-		}),
+		Payload:   encodeRunEventPayload(ctx, payload),
 	})
 	return nil
+}
+
+func adkPlanExecutionIntro(snapshot *ADKPlanSnapshot) (string, bool) {
+	if snapshot == nil {
+		return "", false
+	}
+	tasks := make([]*ADKPlanTask, 0, len(snapshot.Tasks))
+	for _, task := range snapshot.Tasks {
+		if task != nil && task.Active {
+			tasks = append(tasks, task)
+		}
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].TaskID < tasks[j].TaskID })
+	for _, task := range tasks {
+		if task.Metadata == nil {
+			continue
+		}
+		intro, _ := task.Metadata[adkPlanExecutionIntroMetadataKey].(string)
+		if intro = publicLabel(intro, maxADKPlanExecutionIntroRunes); intro != "" {
+			return intro, true
+		}
+	}
+
+	subjects := make([]string, 0, len(tasks))
+	seen := map[string]struct{}{}
+	containsHan := false
+	for _, task := range tasks {
+		subject := publicLabel(task.Subject, maxPublicLabelRunes)
+		subject = strings.TrimRightFunc(subject, func(r rune) bool {
+			return unicode.IsSpace(r) || strings.ContainsRune("。！？.!?;；", r)
+		})
+		if subject == "" {
+			continue
+		}
+		if _, exists := seen[subject]; exists {
+			continue
+		}
+		seen[subject] = struct{}{}
+		subjects = append(subjects, subject)
+		if strings.IndexFunc(subject, func(r rune) bool {
+			return unicode.Is(unicode.Han, r)
+		}) >= 0 {
+			containsHan = true
+		}
+	}
+	if len(subjects) == 0 {
+		return "", false
+	}
+
+	var intro string
+	if containsHan {
+		switch len(subjects) {
+		case 1:
+			intro = fmt.Sprintf("收到。我会先完成“%s”，验证结果后向你交付。", subjects[0])
+		case 2:
+			intro = fmt.Sprintf("收到。我会先完成“%s”，再完成“%s”，验证结果后向你交付。", subjects[0], subjects[1])
+		default:
+			intro = fmt.Sprintf("收到。我会先完成“%s”，再推进“%s”，最后完成“%s”。", subjects[0], subjects[1], subjects[len(subjects)-1])
+		}
+	} else {
+		switch len(subjects) {
+		case 1:
+			intro = fmt.Sprintf("Understood. I'll complete %q, verify the result, and then deliver it.", subjects[0])
+		case 2:
+			intro = fmt.Sprintf("Understood. I'll complete %q, then %q, verify the result, and deliver it.", subjects[0], subjects[1])
+		default:
+			intro = fmt.Sprintf("Understood. I'll complete %q, then %q, and finish with %q.", subjects[0], subjects[1], subjects[len(subjects)-1])
+		}
+	}
+	return publicLabel(intro, maxADKPlanExecutionIntroRunes), false
 }
 
 func adkParityTodosFromPlanSnapshot(snapshot *ADKPlanSnapshot) []ADKParityTodo {

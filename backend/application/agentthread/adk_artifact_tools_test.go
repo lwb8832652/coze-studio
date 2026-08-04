@@ -113,7 +113,7 @@ func TestApplicationWriteOutputFilePublishesTypedDocumentSnapshot(t *testing.T) 
 		require.NotNil(t, snapshotEvent)
 		require.Equal(t, projection.ActionID, snapshotEvent.ActionID)
 		require.Equal(t, projection.Operation, snapshotEvent.Operation)
-		require.Equal(t, projection.Target, snapshotEvent.Target)
+		require.Equal(t, "report.md", snapshotEvent.Target)
 		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
 		require.Equal(t, "99", snapshot.SourceResourceID)
 		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)
@@ -151,6 +151,9 @@ func TestApplicationWriteOutputFilePublishesTypedCodeSnapshot(t *testing.T) {
 	require.Len(t, repo.snapshots, 1)
 	for _, snapshot := range repo.snapshots {
 		require.Equal(t, domainentity.JournalSnapshotContentTypeCode, snapshot.ContentType)
+		snapshotEvent := repo.events[snapshot.EventID]
+		require.NotNil(t, snapshotEvent)
+		require.Equal(t, "src/main.go", snapshotEvent.Target)
 		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
 		require.Equal(t, "99", snapshot.SourceResourceID)
 		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)

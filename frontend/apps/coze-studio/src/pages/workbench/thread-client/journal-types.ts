@@ -69,6 +69,7 @@ export type WorkbenchJournalErrorCode =
 export interface WorkbenchJournalMilestoneEventData {
   milestone_id: string;
   title: string;
+  execution_intro?: string;
 }
 
 export interface WorkbenchJournalActionEventData {

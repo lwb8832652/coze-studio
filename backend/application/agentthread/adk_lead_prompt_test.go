@@ -107,6 +107,47 @@ func TestADKLeadPromptProjectsConditionalCapabilitySections(t *testing.T) {
 	}
 }
 
+func TestADKLeadPromptDefinesJournalPlanExecutionContract(t *testing.T) {
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"pro"}`)
+	require.NoError(t, err)
+
+	prompt, err := NewDefaultADKLeadPromptComposer().Compose(
+		ADKLeadPromptComposeInput{RuntimeConfig: runtimeConfig},
+	)
+
+	require.NoError(t, err)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Before the first execution tool call, create the major steps",
+	)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Set exactly one major step to in_progress before its child operations",
+	)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Direct answers that use no execution tools do not need a plan",
+	)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Do not combine a plan status change and its child operations",
+	)
+	for _, expected := range []string{
+		"Create every major step with status pending before activating any step",
+		"metadata.execution_intro",
+		"lowest-ID major step",
+		"one or two concise public sentences",
+		"Match the user's language",
+		"hidden reasoning, raw tool arguments, raw tool results, credentials, or internal paths",
+	} {
+		require.Contains(t, prompt.Instruction, expected)
+	}
+}
+
 func TestADKLeadPromptAppendsEscapedBoundedOverlays(t *testing.T) {
 	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"pro"}`)
 	require.NoError(t, err)

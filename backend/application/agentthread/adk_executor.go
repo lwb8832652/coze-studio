@@ -331,12 +331,16 @@ func (e *ADKExecutor) consumeEvents(
 
 	finalText := ""
 	var interrupted *RunInterruptedError
+	mappingCtx := ctx
+	if parityTracker != nil {
+		mappingCtx = withADKParityStateTracker(mappingCtx, parityTracker)
+	}
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
-		mapped, err := MapADKEvent(ctx, run.ThreadID, run.RunID, event)
+		mapped, err := MapADKEvent(mappingCtx, run.ThreadID, run.RunID, event)
 		if err != nil {
 			return nil, err
 		}

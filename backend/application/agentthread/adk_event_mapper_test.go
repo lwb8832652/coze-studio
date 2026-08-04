@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -319,6 +320,63 @@ func TestMapADKEventMapsToolResult(t *testing.T) {
 		"tool_name":"calculator",
 		"tool_call_id":"call-1"
 	}`, mapped.Payload)
+}
+
+func TestMapADKEventAssociatesToolMessagesWithSingleActivePlanTask(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "2", Title: "核验项目事实", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	mapped, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-1", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(mapped.Payload), &payload))
+	require.Equal(t, "2", payload["plan_task_id"])
+	startedProjection, err := ProjectRunEventToJournal(mapped.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, startedProjection)
+
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{
+		{ID: "2", Title: "核验项目事实", Status: "completed"},
+		{ID: "3", Title: "整理验收结论", Status: "in_progress"},
+	}))
+	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "call-1", Content: "done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(terminal.Payload), &payload))
+	require.Equal(t, "2", payload["plan_task_id"])
+	terminalProjection, err := ProjectRunEventToJournal(terminal.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, terminalProjection)
+	require.Equal(t, startedProjection.ActionID, terminalProjection.ActionID)
+	require.Equal(t, startedProjection.Operation, terminalProjection.Operation)
+	require.Equal(t, startedProjection.Target, terminalProjection.Target)
+	require.Equal(t, startedProjection.Milestone, terminalProjection.Milestone)
 }
 
 func TestMapADKEventMapsNormalizedToolError(t *testing.T) {

@@ -27,6 +27,10 @@ import {
 import { JournalTimeline } from '../journal-timeline';
 import { JournalPanel, JournalRestoreButton } from '../journal-panel';
 import { JournalConversationFlow } from '../journal-conversation-flow';
+import {
+  buildJournalTimelineItems,
+  journalActionLabel,
+} from '../journal-event-model';
 import { WorkbenchClientError } from '../../../workbench/thread-client/canonical-fetch';
 import type {
   WorkbenchArtifact,
@@ -611,12 +615,241 @@ describe('accepted Journal production UI contract', () => {
     ).toBeNull();
     expect(container.textContent).not.toContain('EXECUTION JOURNAL');
     expect(container.textContent).not.toContain('Journal');
+    expect(container.querySelector('.journal-execution-intro')).toBeNull();
 
     const completedHeader = container.querySelector<HTMLButtonElement>(
       '[data-milestone-id="milestone-1"] .journal-milestone-header',
     );
     act(() => completedHeader?.click());
     expect(container.textContent).toContain('已读取 需求文档');
+    const completedAction = container.querySelector(
+      '[data-milestone-id="milestone-1"] .journal-action-row',
+    );
+    expect(
+      completedAction?.querySelector('.journal-action-title')?.textContent,
+    ).toBe('读取相关内容');
+    expect(
+      completedAction?.querySelector('.journal-action-detail-copy')
+        ?.textContent,
+    ).toBe('已读取 需求文档');
+    expect(
+      completedAction?.querySelector(
+        '.journal-action-title .journal-action-icon',
+      ),
+    ).toBeNull();
+    expect(
+      completedAction?.querySelector(
+        '.journal-action-detail .journal-action-icon',
+      ),
+    ).not.toBeNull();
+  });
+
+  it('renders the persisted execution intro exactly once before the first milestone', () => {
+    const introEvent = baseEvent({
+      eventId: 'event-intro',
+      eventType: 'journal.intro',
+      sequence: 1,
+      status: 'running',
+      type: 'intro',
+      data: {
+        text: '收到。我会先核验执行链路，再完成实现与验证。',
+      },
+    });
+    const firstMilestone = milestone({
+      eventId: 'event-first-milestone',
+      milestoneId: 'milestone-first',
+      sequence: 2,
+      status: 'running',
+      title: '核验执行链路',
+    });
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={[introEvent, firstMilestone]}
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    const intro = container.querySelector('.journal-execution-intro');
+    const milestoneNode = container.querySelector('.journal-milestone');
+    expect(intro?.textContent).toBe(
+      '收到。我会先核验执行链路，再完成实现与验证。',
+    );
+    expect(container.querySelectorAll('.journal-execution-intro')).toHaveLength(
+      1,
+    );
+    expect(
+      Boolean(
+        intro &&
+          milestoneNode &&
+          intro.compareDocumentPosition(milestoneNode) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+  });
+
+  it('uses the first visible milestone intro as a fallback', () => {
+    const firstMilestone = milestone({
+      eventId: 'event-fallback-milestone',
+      milestoneId: 'milestone-fallback',
+      sequence: 1,
+      status: 'running',
+      title: '核验执行链路',
+    });
+    firstMilestone.payload = {
+      ...firstMilestone.payload,
+      data: {
+        ...(firstMilestone.payload.data as Record<string, unknown>),
+        execution_intro: '收到。我会按完整计划推进，并在验证后交付结果。',
+      },
+    };
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={[firstMilestone]}
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector('.journal-execution-intro')?.textContent,
+    ).toBe('收到。我会按完整计划推进，并在验证后交付结果。');
+  });
+
+  it('keeps a safe concrete target when the terminal event is generic', () => {
+    const lifecycleEvents = [
+      milestone({
+        eventId: 'target-milestone',
+        milestoneId: 'target-milestone',
+        sequence: 1,
+        status: 'running',
+        title: '读取项目事实',
+      }),
+      action({
+        actionId: 'target-action',
+        contentType: 'document',
+        eventId: 'target-started',
+        milestoneId: 'target-milestone',
+        sequence: 2,
+        status: 'running',
+        target: 'requirements.md',
+      }),
+      action({
+        actionId: 'target-action',
+        contentType: 'document',
+        eventId: 'target-completed',
+        milestoneId: 'target-milestone',
+        sequence: 3,
+        status: 'completed',
+        target: '文件',
+      }),
+    ];
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={lifecycleEvents}
+          selectedEventId="target-completed"
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector('.journal-action-detail-copy')?.textContent,
+    ).toBe('已读取 requirements.md');
+  });
+
+  it('preserves the started milestone when a terminal lifecycle event omits it', () => {
+    const lifecycleEvents = [
+      milestone({
+        eventId: 'lifecycle-milestone',
+        milestoneId: 'lifecycle-milestone',
+        sequence: 1,
+        status: 'running',
+        title: '读取项目事实',
+      }),
+      action({
+        actionId: 'lifecycle-action',
+        contentType: 'document',
+        eventId: 'lifecycle-started',
+        milestoneId: 'lifecycle-milestone',
+        sequence: 2,
+        status: 'running',
+        target: '文件',
+      }),
+      action({
+        actionId: 'lifecycle-action',
+        contentType: 'document',
+        eventId: 'lifecycle-completed',
+        sequence: 3,
+        status: 'completed',
+        target: '文件',
+      }),
+    ];
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={lifecycleEvents}
+          selectedEventId="lifecycle-completed"
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector('[data-milestone-id="lifecycle-milestone"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-milestone-id="lifecycle-action"]'),
+    ).toBeNull();
+  });
+
+  it('uses failure-aware action copy instead of completed verbs', () => {
+    expect(journalActionLabel(failedAction())).toBe('执行失败 构建验证');
+  });
+
+  it('keeps semantic titles for artifact, verification, and confirmation timeline nodes', () => {
+    const semanticEvents = [
+      artifactEvent({
+        artifactId: 'artifact-report',
+        eventId: 'artifact-report-event',
+        sequence: 1,
+        title: 'Journal 验收报告',
+      }),
+      baseEvent({
+        eventId: 'verification-event',
+        eventType: 'verification.terminal',
+        sequence: 2,
+        status: 'completed',
+        type: 'verification',
+        data: {
+          verification_id: 'verification-1',
+          title: '浏览器验收',
+          result_summary: '全部通过',
+        },
+      }),
+      baseEvent({
+        eventId: 'confirmation-event',
+        eventType: 'confirmation.requested',
+        sequence: 3,
+        status: 'pending',
+        type: 'confirmation',
+        data: {
+          confirmation_id: 'confirmation-1',
+          prompt: '确认继续发布吗',
+        },
+      }),
+    ];
+
+    expect(
+      buildJournalTimelineItems(semanticEvents).map(item => item.title),
+    ).toEqual(['Journal 验收报告', '浏览器验收', '确认继续发布吗']);
   });
 
   it('bounds the rendered DOM for a long expanded milestone', () => {
@@ -885,9 +1118,7 @@ describe('accepted Journal production UI contract', () => {
       />
     );
     act(() => root.render(renderPanel()));
-    const page = container.querySelector<HTMLElement>(
-      '.journal-document-page',
-    );
+    const page = container.querySelector<HTMLElement>('.journal-document-page');
     if (page) {
       page.scrollTop = 140;
       page.scrollLeft = 6;
@@ -1037,9 +1268,9 @@ describe('accepted Journal production UI contract', () => {
 
     act(() => root.render(renderTimeline('historical')));
     await act(async () => vi.advanceTimersByTimeAsync(500));
-    expect(
-      container.querySelector('[aria-live="polite"]')?.textContent,
-    ).toBe('');
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      '',
+    );
   });
 
   it('shows an Attempt selector only when recovery history exists', () => {
@@ -1462,9 +1693,10 @@ describe('accepted Journal production UI contract', () => {
       );
       await Promise.resolve();
     });
-    const firstCollectionButtons = container.querySelectorAll<HTMLButtonElement>(
-      '.journal-media-collection-list > button',
-    );
+    const firstCollectionButtons =
+      container.querySelectorAll<HTMLButtonElement>(
+        '.journal-media-collection-list > button',
+      );
     await act(async () => {
       firstCollectionButtons[1].click();
       await Promise.resolve();

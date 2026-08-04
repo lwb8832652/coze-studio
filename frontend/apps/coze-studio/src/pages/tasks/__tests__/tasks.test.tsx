@@ -1013,7 +1013,7 @@ describe('TasksPage helpers', () => {
     expect(projected.at(-1)?.display.title).toBe('使用 “skill-creator” 技能');
   });
 
-  it('renders skill catalog events as available-skill directory steps', () => {
+  it('keeps the available-skill catalog out of visible execution steps', () => {
     const events = [
       {
         id: 'event-skills-loaded',
@@ -1030,14 +1030,10 @@ describe('TasksPage helpers', () => {
 
     const projected = projectTaskExecutionEvents(events);
 
-    expect(projected[0].display.title).toBe('可用技能目录 22 个');
-    expect(projected[0].display.detail).toBe(
-      'skill-creator、report-writer、slides-maker',
-    );
-    expect(projected[0].display.title).not.toContain('加载');
+    expect(projected).toHaveLength(0);
   });
 
-  it('renders single skill catalog events without implying full content preload', () => {
+  it('does not turn a direct answer skill catalog into an execution step', () => {
     const events = [
       {
         id: 'event-skills-loaded',
@@ -1064,11 +1060,38 @@ describe('TasksPage helpers', () => {
 
     const projected = projectTaskExecutionEvents(events);
 
-    expect(projected[0].display.title).toBe('可用技能 “skill-creator”');
-    expect(projected[0].display.status).toBe('completed');
-    expect(projected[0].display.kind).toBe('step');
-    expect(projected[0].display.title).not.toContain('skill_names');
-    expect(projected[0].display.title).not.toContain('加载');
+    expect(projected).toHaveLength(0);
+  });
+
+  it('keeps opaque runtime metadata out of direct-answer execution steps', () => {
+    const events = [
+      {
+        id: 'event-provider-capability',
+        task_id: 'task-1',
+        event_type: 'provider.capability_downgraded',
+        payload: JSON.stringify({
+          capabilities: ['reasoning'],
+          schema: 'coze.provider_capability_downgrade.v1',
+        }),
+        created_at: 4,
+      },
+      {
+        id: 'event-model-started',
+        task_id: 'task-1',
+        event_type: 'model.started',
+        payload: '{}',
+        created_at: 5,
+      },
+      {
+        id: 'event-model-completed',
+        task_id: 'task-1',
+        event_type: 'model.completed',
+        payload: '{}',
+        created_at: 6,
+      },
+    ];
+
+    expect(projectTaskExecutionEvents(events)).toHaveLength(0);
   });
 
   it('extracts latest pending clarification prompt', () => {
