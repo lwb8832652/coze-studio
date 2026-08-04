@@ -8,6 +8,33 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
+  oceanbase:
+    image: oceanbase/oceanbase-ce:latest
+    pull_policy: missing
+    restart: unless-stopped
+    environment:
+      MODE: SLIM
+      OB_DATAFILE_SIZE: ${OCEANBASE_DATAFILE_SIZE:-1G}
+      OB_SYS_PASSWORD: ${OCEANBASE_PASSWORD:?OCEANBASE_PASSWORD is required}
+      OB_TENANT_PASSWORD: ${OCEANBASE_PASSWORD:?OCEANBASE_PASSWORD is required}
+      OB_CLUSTER_NAME: ${OCEANBASE_CLUSTER_NAME:-cozeAi}
+    mem_limit: ${OCEANBASE_MEM_LIMIT:-2g}
+    cpus: ${OCEANBASE_CPUS:-1.00}
+    volumes:
+      - oceanbase-ob:/root/ob
+      - oceanbase-cluster:/root/.obd/cluster
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - obclient -h127.0.0.1 -P2881 -uroot@test -p$${OB_TENANT_PASSWORD} -e "SELECT 1;"
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    networks:
+      - coze-dev
+    logging: *default-logging
+
   nsqd:
     image: nsqio/nsq:v1.3.0
     pull_policy: missing
@@ -43,6 +70,12 @@ services:
     environment:
       COZE_MQ_TYPE: nsq
       MQ_NAME_SERVER: nsqd:4150
+      VECTOR_STORE_TYPE: oceanbase
+      OCEANBASE_HOST: oceanbase
+      OCEANBASE_PORT: "2881"
+      OCEANBASE_USER: ${OCEANBASE_USER:-root@test}
+      OCEANBASE_DATABASE: ${OCEANBASE_DATABASE:-test}
+      OCEANBASE_PASSWORD: ${OCEANBASE_PASSWORD:?OCEANBASE_PASSWORD is required}
       AGENT_THREAD_RUNTIME_DEFAULT: eino_adk
       AGENT_THREAD_EINO_ADK_ENABLED: "true"
       AGENT_THREAD_WORKER_ENABLED: "true"
@@ -70,6 +103,9 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
+      oceanbase:
+        condition: service_healthy
+        restart: true
       nsqd:
         condition: service_healthy
         restart: true
@@ -107,4 +143,6 @@ networks:
     driver: bridge
 
 volumes:
+  oceanbase-ob:
+  oceanbase-cluster:
   nsq-data:
