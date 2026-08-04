@@ -610,9 +610,16 @@ const getConversationMessageState = (
         : latestIndex,
     -1,
   );
+  const latestAssistantCount = transcript.filter(
+    (message, index) =>
+      message.role === 'assistant' &&
+      index > latestUserIndex &&
+      (!latestRunID || normalizeThreadRunID(message.run_id) === latestRunID),
+  ).length;
 
   return {
     latestAssistantIndex,
+    latestAssistantCount,
     hasLatestAssistantMessage: latestRunID
       ? transcript.some(
           message =>
@@ -770,7 +777,7 @@ const TaskThreadConversation = ({
   const hasCanonicalJournalIntro = Boolean(
     journalExecutionIntro(journalEvents),
   );
-  const { hasLatestAssistantMessage, latestAssistantIndex } =
+  const { hasLatestAssistantMessage, latestAssistantCount, latestAssistantIndex } =
     getConversationMessageState(transcript, latestRunID);
   let latestEventsRendered = false;
   let journalFlowRendered = false;
@@ -812,7 +819,10 @@ const TaskThreadConversation = ({
     const isJournalIntroMessage =
       shouldRenderJournalFlow &&
       Boolean(message.content) &&
-      index < latestAssistantIndex;
+      (index < latestAssistantIndex ||
+        (hasCanonicalJournalIntro &&
+          latestAssistantCount === 1 &&
+          latestRunIsActive));
     const journalIntroVisible =
       isJournalIntroMessage && !hasCanonicalJournalIntro;
     const messageArtifacts = isJournalIntroMessage

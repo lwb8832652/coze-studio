@@ -347,6 +347,7 @@ func (e *ADKExecutor) consumeEvents(
 		if err := e.eventSink.EmitRunEvent(ctx, mapped.RunEvent); err != nil {
 			return nil, fmt.Errorf("persist eino adk event %s: %w", mapped.EventType, err)
 		}
+		releaseADKJournalToolPlanTask(mappingCtx, mapped.TerminalToolCallID)
 		if mapped.Usage != nil && usageBridge != nil {
 			if err := usageBridge.RecordEvent(ctx, *mapped.Usage); err != nil {
 				return nil, fmt.Errorf("record eino adk token usage: %w", err)

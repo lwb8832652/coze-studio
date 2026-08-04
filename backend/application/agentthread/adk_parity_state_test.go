@@ -204,6 +204,21 @@ func TestADKParityStateRejectsUnsafeOrOversizedValues(t *testing.T) {
 	require.ErrorContains(t, err, "revision")
 }
 
+func TestADKParityStateClearsJournalToolBindingsForANewRun(t *testing.T) {
+	initial := newTestADKParityStateTracker(t)
+	require.NoError(t, initial.ReplaceJournalToolPlanTasks(map[string]string{
+		"call-previous": "todo-previous",
+	}))
+	seed := initial.Snapshot()
+
+	next, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 2, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	}, &seed)
+
+	require.NoError(t, err)
+	require.Empty(t, next.Snapshot().JournalToolPlanTasks)
+}
+
 func TestADKParityStateRejectsCumulativeCollectionOverflow(t *testing.T) {
 	t.Run("uploads", func(t *testing.T) {
 		tracker := newTestADKParityStateTracker(t)

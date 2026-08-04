@@ -225,35 +225,68 @@ func bindADKJournalToolPlanTasks(
 	ctx context.Context,
 	toolCallIDs []string,
 	planTaskID string,
-) {
+) bool {
+	if len(toolCallIDs) == 0 {
+		return true
+	}
 	tracker := adkParityStateTrackerFromContext(ctx)
 	planTaskID = strings.TrimSpace(planTaskID)
-	if tracker == nil || planTaskID == "" {
+	if tracker == nil ||
+		!isADKParityLabel(planTaskID, maxADKParityLabelRunes) {
+		return false
+	}
+	next := make(map[string]string, len(toolCallIDs))
+	for _, toolCallID := range toolCallIDs {
+		toolCallID = strings.TrimSpace(toolCallID)
+		if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+			return false
+		}
+		next[toolCallID] = planTaskID
+	}
+	if len(next) > maxADKParityJournalBindings {
+		return false
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	additional := 0
+	for toolCallID, nextPlanTaskID := range next {
+		currentPlanTaskID, exists := tracker.state.JournalToolPlanTasks[toolCallID]
+		if exists && currentPlanTaskID != nextPlanTaskID {
+			return false
+		}
+		if !exists {
+			additional++
+		}
+	}
+	if len(tracker.state.JournalToolPlanTasks)+additional > maxADKParityJournalBindings {
+		return false
+	}
+	if tracker.state.JournalToolPlanTasks == nil {
+		tracker.state.JournalToolPlanTasks = make(map[string]string, len(next))
+	}
+	if additional > 0 {
+		for toolCallID, nextPlanTaskID := range next {
+			tracker.state.JournalToolPlanTasks[toolCallID] = nextPlanTaskID
+		}
+		tracker.state.Revision++
+	}
+	return true
+}
+
+func releaseADKJournalToolPlanTask(ctx context.Context, toolCallID string) {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if tracker == nil ||
+		!isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
 		return
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	if tracker.state.JournalToolPlanTasks == nil {
-		tracker.state.JournalToolPlanTasks = make(map[string]string)
+	if _, exists := tracker.state.JournalToolPlanTasks[toolCallID]; !exists {
+		return
 	}
-	changed := false
-	for _, toolCallID := range toolCallIDs {
-		toolCallID = strings.TrimSpace(toolCallID)
-		if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) ||
-			!isADKParityLabel(planTaskID, maxADKParityLabelRunes) {
-			continue
-		}
-		if _, exists := tracker.state.JournalToolPlanTasks[toolCallID]; !exists && len(tracker.state.JournalToolPlanTasks) >= maxADKParityJournalBindings {
-			continue
-		}
-		if tracker.state.JournalToolPlanTasks[toolCallID] != planTaskID {
-			tracker.state.JournalToolPlanTasks[toolCallID] = planTaskID
-			changed = true
-		}
-	}
-	if changed {
-		tracker.state.Revision++
-	}
+	delete(tracker.state.JournalToolPlanTasks, toolCallID)
+	tracker.state.Revision++
 }
 
 func boundADKJournalToolPlanTaskIDFromContext(
@@ -324,6 +357,9 @@ func NewADKParityStateTracker(
 	}
 	if err := tracker.applySeed(*seed); err != nil {
 		return nil, err
+	}
+	if seed.LastRunID != run.RunID {
+		tracker.state.JournalToolPlanTasks = map[string]string{}
 	}
 	tracker.state.LastRunID = run.RunID
 	return tracker, nil

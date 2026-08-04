@@ -47,9 +47,11 @@ Thread
 - 左侧执行流只展示已经到达的公共事件。大步骤由 `milestone.*` 表示，小步骤由实际
   执行过的 `action.*`、`artifact.*`、`verification.*` 或 `confirmation.*` 表示；
   没有子动作的大步骤保持原子步骤，不显示展开入口。
-- 工具调用开始时绑定当时唯一的 active plan task，绑定随 Eino 内部 checkpoint
-  恢复，保证工具结果仍归属原大步骤。该绑定不进入模型上下文，也不进入公共
-  checkpoint 投影。
+- 工具调用开始时绑定当时唯一的 active plan task；父子 Agent 的未结束调用可并存，
+  terminal 事件成功持久化后才释放对应绑定。同一 run 的 Eino 内部 checkpoint 会保留
+  未结束绑定，新 run 开始时清空，保证工具结果仍归属原大步骤且不会随 thread 长期
+  累积。该绑定不进入模型上下文，也不进入公共 checkpoint 投影；容量不足时 Journal
+  对新增批次统一省略大步骤归属，不能影响工具实际执行。
 - 同一工具动作的事件和内容快照必须复用稳定的 action identity、operation、target
   与 milestone；实际文件名和路径保留在经过审核的文档或代码快照内容中，不能通过
   改写动作字段破坏幂等和重放。

@@ -22,6 +22,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -431,6 +432,185 @@ func TestMapADKEventPreservesToolPlanBindingAcrossParitySnapshot(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(mapped.Payload), &payload))
 	require.Equal(t, "2", payload["plan_task_id"])
+}
+
+func TestMapADKEventPreservesParentToolBindingAcrossNestedAgentBatches(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "2", Title: "核验项目事实", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-parent", Type: "function",
+					Function: schema.FunctionCall{Name: "task"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+
+	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "researcher",
+		RunPath: []adk.RunStep{
+			newADKRunStep(t, "lead"),
+			newADKRunStep(t, "researcher"),
+		},
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-child", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"call-parent": "2",
+		"call-child":  "2",
+	}, tracker.Snapshot().JournalToolPlanTasks)
+
+	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "researcher",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "call-child", Content: "done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "researcher",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: schema.AssistantMessage("research complete", nil),
+			Role:    schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+
+	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "call-parent", Content: "done",
+			},
+			Role: schema.Tool, ToolName: "task",
+		}},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(terminal.Payload), &payload))
+	require.Equal(t, "2", payload["plan_task_id"])
+}
+
+func TestMapADKEventOmitsPlanBindingForAnOversizedToolBatch(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "2", Title: "核验项目事实", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	toolCalls := make([]schema.ToolCall, 0, maxADKParityJournalBindings+1)
+	for index := 0; index <= maxADKParityJournalBindings; index++ {
+		toolCalls = append(toolCalls, schema.ToolCall{
+			ID: fmt.Sprintf("call-%d", index), Type: "function",
+			Function: schema.FunctionCall{Name: "read_file"},
+		})
+	}
+
+	started, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{Role: schema.Assistant, ToolCalls: toolCalls},
+			Role:    schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(started.Payload), &payload))
+	require.NotContains(t, payload, "plan_task_id")
+	require.Empty(t, tracker.Snapshot().JournalToolPlanTasks)
+
+	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool,
+				ToolCallID: fmt.Sprintf(
+					"call-%d",
+					maxADKParityJournalBindings,
+				),
+				Content: "done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(terminal.Payload), &payload))
+	require.NotContains(t, payload, "plan_task_id")
+}
+
+func TestMapADKEventOmitsPlanBindingWhenOutstandingCapacityIsExhausted(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	bindings := make(map[string]string, maxADKParityJournalBindings)
+	for index := 0; index < maxADKParityJournalBindings; index++ {
+		bindings[fmt.Sprintf("outstanding-call-%d", index)] = "2"
+	}
+	require.NoError(t, tracker.ReplaceJournalToolPlanTasks(bindings))
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "2", Title: "核验项目事实", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	started, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-overflow", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(started.Payload), &payload))
+	require.NotContains(t, payload, "plan_task_id")
+	require.Len(t, tracker.Snapshot().JournalToolPlanTasks, maxADKParityJournalBindings)
+
+	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "call-overflow", Content: "done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(terminal.Payload), &payload))
+	require.NotContains(t, payload, "plan_task_id")
 }
 
 func TestMapADKEventMapsNormalizedToolError(t *testing.T) {

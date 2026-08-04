@@ -32,9 +32,10 @@ import (
 
 type ADKEventMapping struct {
 	RunEvent
-	Usage     *AgentTokenUsage
-	FinalText string
-	Interrupt *ADKInterruptMapping
+	Usage              *AgentTokenUsage
+	FinalText          string
+	Interrupt          *ADKInterruptMapping
+	TerminalToolCallID string
 }
 
 type ADKInterruptMapping struct {
@@ -203,6 +204,7 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 		mapped.EventType = "message.completed"
 		if payload.Role == schema.Tool {
 			mapped.EventType = "tool.completed"
+			mapped.TerminalToolCallID = strings.TrimSpace(payload.ToolCallID)
 			if toolError, ok := decodeADKToolErrorResult(payload.Content); ok {
 				payload.ToolError = toolError
 				mapped.EventType = "tool.failed"
@@ -254,7 +256,9 @@ func attachADKJournalPlanTask(ctx context.Context, payload *adkMessagePayload) {
 		for _, call := range payload.ToolCalls {
 			toolCallIDs = append(toolCallIDs, call.ID)
 		}
-		bindADKJournalToolPlanTasks(ctx, toolCallIDs, payload.PlanTaskID)
+		if !bindADKJournalToolPlanTasks(ctx, toolCallIDs, payload.PlanTaskID) {
+			payload.PlanTaskID = ""
+		}
 	case schema.Tool:
 		payload.PlanTaskID = boundADKJournalToolPlanTaskIDFromContext(
 			ctx,
