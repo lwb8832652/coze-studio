@@ -19,8 +19,18 @@ import { type ReactNode } from 'react';
 import { isString } from 'lodash-es';
 import { I18n } from '@coze-arch/i18n';
 
+let configuredSiteName: string | undefined;
+
+export const setHtmlTitleSiteName = (siteName?: string): void => {
+  const normalized = siteName?.trim();
+  configuredSiteName = normalized || undefined;
+};
+
+const resolveHtmlTitleSiteName = (): string =>
+  configuredSiteName || I18n.t('platform_name');
+
 export const renderHtmlTitle = (prefix?: ReactNode) => {
-  const platformName = I18n.t('platform_name');
+  const platformName = resolveHtmlTitleSiteName();
   if (isString(prefix)) {
     return `${prefix} - ${platformName}`;
   }
