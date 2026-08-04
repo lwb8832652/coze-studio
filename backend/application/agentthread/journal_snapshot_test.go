@@ -1435,19 +1435,29 @@ func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
 		ID: "plan-1", Title: "核验实现", Status: "in_progress",
 	}}))
 	ctx := withADKParityStateTracker(context.Background(), tracker)
+	observed := make(chan struct{})
 	backend, err := newADKSkillBackend(
 		[]AgentSkill{
 			{ID: 7, Name: "review", Description: "Review an implementation.", Body: "review body"},
 			{ID: 8, Name: "document", Description: "Prepare a document.", Body: "document body"},
 		},
 		ADKContextBudget{SkillCatalogTokens: 200, SkillContentTokens: 200},
-		WithADKSkillBackendJournal(run, events, service),
+		WithADKSkillBackendJournal(
+			run,
+			events,
+			notifyingJournalContentProducer{next: service, done: observed},
+		),
 	)
 	require.NoError(t, err)
 
 	_, err = backend.Get(ctx, "review")
 
 	require.NoError(t, err)
+	select {
+	case <-observed:
+	case <-time.After(time.Second):
+		require.FailNow(t, "selected skill Journal observation did not finish")
+	}
 	require.Equal(t, []string{"skill.started"}, events.eventTypes())
 	require.Len(t, repo.snapshots, 1)
 	for _, snapshot := range repo.snapshots {
@@ -1466,6 +1476,19 @@ func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
 			event.Milestone,
 		)
 	}
+}
+
+type notifyingJournalContentProducer struct {
+	next JournalContentProducer
+	done chan struct{}
+}
+
+func (p notifyingJournalContentProducer) ProduceJournalContent(
+	ctx context.Context,
+	req JournalRuntimeContentSubmission,
+) (*entity.JournalContentSnapshot, *entity.JournalEvent, error) {
+	defer close(p.done)
+	return p.next.ProduceJournalContent(ctx, req)
 }
 
 func TestOutputSnapshotKeepsTheBoundPlanMilestone(t *testing.T) {

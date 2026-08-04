@@ -227,6 +227,20 @@ func bindADKJournalToolPlanTasks(
 	toolCallIDs []string,
 	planTaskID string,
 ) bool {
+	return bindADKJournalScopedToolPlanTasks(
+		ctx,
+		"",
+		toolCallIDs,
+		planTaskID,
+	)
+}
+
+func bindADKJournalScopedToolPlanTasks(
+	ctx context.Context,
+	agentName string,
+	toolCallIDs []string,
+	planTaskID string,
+) bool {
 	if len(toolCallIDs) == 0 {
 		return true
 	}
@@ -238,11 +252,11 @@ func bindADKJournalToolPlanTasks(
 	}
 	next := make(map[string]string, len(toolCallIDs))
 	for _, toolCallID := range toolCallIDs {
-		toolCallID = strings.TrimSpace(toolCallID)
-		if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+		bindingKey := adkJournalToolBindingKey(agentName, toolCallID)
+		if bindingKey == "" {
 			return false
 		}
-		next[toolCallID] = planTaskID
+		next[bindingKey] = planTaskID
 	}
 	if len(next) > maxADKParityJournalBindings {
 		return false
@@ -276,8 +290,8 @@ func bindADKJournalToolPlanTasks(
 func releaseADKJournalToolPlanTask(ctx context.Context, toolCallID string) {
 	tracker := adkParityStateTrackerFromContext(ctx)
 	toolCallID = strings.TrimSpace(toolCallID)
-	if tracker == nil ||
-		!isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+	if tracker == nil || toolCallID == "" ||
+		len(toolCallID) > maxADKParityLabelRunes*2+32 {
 		return
 	}
 	tracker.mu.Lock()
@@ -292,14 +306,37 @@ func boundADKJournalToolPlanTaskIDFromContext(
 	ctx context.Context,
 	toolCallID string,
 ) string {
+	return boundADKJournalScopedToolPlanTaskIDFromContext(ctx, "", toolCallID)
+}
+
+func boundADKJournalScopedToolPlanTaskIDFromContext(
+	ctx context.Context,
+	agentName string,
+	toolCallID string,
+) string {
 	tracker := adkParityStateTrackerFromContext(ctx)
-	toolCallID = strings.TrimSpace(toolCallID)
-	if tracker == nil || toolCallID == "" {
+	bindingKey := adkJournalToolBindingKey(agentName, toolCallID)
+	if tracker == nil || bindingKey == "" {
 		return ""
 	}
 	tracker.mu.RLock()
 	defer tracker.mu.RUnlock()
-	return tracker.journalToolPlanTasks[toolCallID]
+	return tracker.journalToolPlanTasks[bindingKey]
+}
+
+func adkJournalToolBindingKey(agentName, toolCallID string) string {
+	agentName = strings.TrimSpace(agentName)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+		return ""
+	}
+	if agentName == "" {
+		return toolCallID
+	}
+	if !isADKParityLabel(agentName, maxADKParityLabelRunes) {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s:%s", len(agentName), agentName, toolCallID)
 }
 
 func NewADKParityStateTracker(

@@ -1500,6 +1500,26 @@ func TestJournalActionFieldsStayStableAndDuplicatePhaseReplays(t *testing.T) {
 	require.Equal(t, uint64(4), next.Sequence)
 }
 
+func TestJournalTerminalInheritsStartedMilestoneAfterProjectionRecovery(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusActive, 1)
+
+	started := appendJournalEventForTest(
+		t,
+		repo,
+		journalActionEvent(1000, "started", "recovery-started"),
+	)
+	terminal := journalActionEvent(1001, "terminal", "recovery-terminal")
+	terminal.Milestone = ""
+
+	stored, err := repo.AppendJournalEvent(context.Background(), terminal)
+
+	require.NoError(t, err)
+	require.Equal(t, started.Milestone, stored.Milestone)
+}
+
 func TestJournalActionEventRequiresStableIdentity(t *testing.T) {
 	tests := map[string]func(*entity.JournalEvent){
 		"action_id": func(event *entity.JournalEvent) { event.ActionID = "" },

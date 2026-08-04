@@ -4,7 +4,7 @@
 
 **Goal:** 在 Pro/Ultra 的真实 Journal 任务中，把任务级执行策略摘要稳定展示在首个大步骤之前；简单直答不展示。
 
-**Architecture:** 不创建额外聊天消息，不增加第二套状态机，也不修改模型原有执行提示词。后端可读取已有计划中的可选 `metadata.execution_intro`，但默认从完整计划标题生成安全摘要；现有 `plan.task.*` RunEvent 经过脱敏后投影为幂等 `journal.intro`。前端只消费公共 Journal 投影，并在 Milestone 列表之前渲染摘要。Journal 的父子步骤绑定只保存在当前进程的瞬时投影状态中，失败或恢复丢失时降级为原子步骤，绝不改写或阻塞工具执行。
+**Architecture:** 不创建额外聊天消息，不增加第二套状态机，也不修改模型原有执行提示词。后端可读取已有计划中的可选 `metadata.execution_intro`，但默认从完整计划标题生成安全摘要；现有 `plan.task.*` RunEvent 经过脱敏后投影为幂等 `journal.intro`。前端只消费公共 Journal 投影，并在 Milestone 列表之前渲染摘要。Journal 的父子步骤绑定只保存在当前进程的瞬时投影状态中并按 Agent 隔离；恢复后由 Journal 仓储为同一 action 继承已落库的 milestone，没有既有阶段时才降级为原子步骤。Skill Journal 观察异步且限时，绝不改写、阻塞或取消工具执行。
 
 **Tech Stack:** Go、Eino ADK PlanTask middleware、JournalEvent v1、React、TypeScript、Vitest、Testing Library。
 

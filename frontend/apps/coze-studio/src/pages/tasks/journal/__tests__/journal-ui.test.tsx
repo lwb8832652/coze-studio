@@ -764,6 +764,50 @@ describe('accepted Journal production UI contract', () => {
     ).toBe('已读取 requirements.md');
   });
 
+  it('keeps a safe concrete target without masking a failed terminal state', () => {
+    const lifecycleEvents = [
+      milestone({
+        eventId: 'failed-target-milestone',
+        milestoneId: 'failed-target-milestone',
+        sequence: 1,
+        status: 'running',
+        title: '读取项目事实',
+      }),
+      action({
+        actionId: 'failed-target-action',
+        contentType: 'document',
+        eventId: 'failed-target-started',
+        milestoneId: 'failed-target-milestone',
+        sequence: 2,
+        status: 'running',
+        target: 'requirements.md',
+      }),
+      action({
+        actionId: 'failed-target-action',
+        contentType: 'document',
+        eventId: 'failed-target-terminal',
+        milestoneId: 'failed-target-milestone',
+        sequence: 3,
+        status: 'failed',
+        target: '文件',
+      }),
+    ];
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={lifecycleEvents}
+          selectedEventId="failed-target-terminal"
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector('.journal-action-detail-copy')?.textContent,
+    ).toBe('读取失败 requirements.md');
+  });
+
   it('preserves the started milestone when a terminal lifecycle event omits it', () => {
     const lifecycleEvents = [
       milestone({

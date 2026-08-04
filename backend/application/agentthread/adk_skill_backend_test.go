@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	einoskill "github.com/cloudwego/eino/adk/middlewares/skill"
@@ -186,6 +188,107 @@ func TestADKSkillBackendJournalFailureDoesNotFailSkillLoad(t *testing.T) {
 	require.Equal(t, "Use research instructions.", got.Content)
 }
 
+func TestADKSkillBackendDoesNotWaitForJournalSnapshot(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			&RunSummary{
+				RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+			},
+			nil,
+			blockingJournalContentProducer{
+				started: started,
+				release: release,
+			},
+		),
+	)
+	require.NoError(t, err)
+
+	type result struct {
+		skill einoskill.Skill
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		skill, loadErr := backend.Get(context.Background(), "research")
+		done <- result{skill: skill, err: loadErr}
+	}()
+
+	select {
+	case loaded := <-done:
+		require.NoError(t, loaded.err)
+		require.Equal(t, "Use research instructions.", loaded.skill.Content)
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		require.FailNow(t, "skill load waited for Journal snapshot persistence")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(release)
+		require.FailNow(t, "Journal snapshot observation did not start")
+	}
+	close(release)
+}
+
+func TestADKSkillBackendDoesNotWaitForJournalEventSink(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			&RunSummary{
+				RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+			},
+			&blockingJournalRunEventSink{
+				started: started,
+				release: release,
+			},
+			nil,
+		),
+	)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		_, loadErr := backend.Get(context.Background(), "research")
+		done <- loadErr
+	}()
+
+	select {
+	case loadErr := <-done:
+		require.NoError(t, loadErr)
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		require.FailNow(t, "skill load waited for Journal event persistence")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(release)
+		require.FailNow(t, "Journal event observation did not start")
+	}
+	close(release)
+}
+
 type failingJournalContentProducer struct{}
 
 func (failingJournalContentProducer) ProduceJournalContent(
@@ -193,6 +296,35 @@ func (failingJournalContentProducer) ProduceJournalContent(
 	JournalRuntimeContentSubmission,
 ) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
 	return nil, nil, fmt.Errorf("journal snapshot unavailable")
+}
+
+type blockingJournalContentProducer struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (p blockingJournalContentProducer) ProduceJournalContent(
+	context.Context,
+	JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	close(p.started)
+	<-p.release
+	return nil, nil, nil
+}
+
+type blockingJournalRunEventSink struct {
+	started chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingJournalRunEventSink) EmitRunEvent(
+	context.Context,
+	RunEvent,
+) error {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return nil
 }
 
 func TestADKSkillBackendGuardrailBlocksBeforeReturningContent(t *testing.T) {

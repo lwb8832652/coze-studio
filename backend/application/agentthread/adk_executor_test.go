@@ -244,7 +244,7 @@ func TestADKExecutorRetainsToolPlanBindingWhenTerminalEventPersistenceFails(t *t
 	require.Equal(
 		t,
 		"1",
-		journalToolPlanTasksForTest(parityTracker)["call-write"],
+		journalToolPlanTasksForTest(parityTracker)[adkJournalToolBindingKey("lead", "call-write")],
 	)
 }
 

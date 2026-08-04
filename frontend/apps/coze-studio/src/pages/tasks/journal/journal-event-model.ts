@@ -75,13 +75,6 @@ const contentTypes = new Set<WorkbenchJournalContentType>([
   'browser',
 ]);
 
-const terminalStatuses = new Set<WorkbenchJournalExecutionStatus>([
-  'completed',
-  'failed',
-  'cancelled',
-  'timed_out',
-]);
-
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -153,30 +146,35 @@ const normalizeVerb = (verb: string, target: string): string => {
   return `${conciseVerb || verb} ${target}`.trim();
 };
 
-export const journalActionLabel = (event: WorkbenchJournalEvent): string => {
-  const data = journalEventData(event);
-  const target = asText(data.target);
-  const status = asStatus(event.status);
+const journalActionVerb = (
+  status: WorkbenchJournalExecutionStatus,
+  data: Record<string, unknown>,
+): string => {
   const runningVerb = asText(data.display_verb_running);
   const completedVerb = asText(data.display_verb_completed);
   const actionStem =
     completedVerb.replace(/^已/u, '') ||
     runningVerb.replace(/^正在/u, '') ||
     '执行';
-  const verb = (() => {
-    switch (status) {
-      case 'completed':
-        return completedVerb;
-      case 'failed':
-        return `${actionStem}失败`;
-      case 'timed_out':
-        return `${actionStem}超时`;
-      case 'cancelled':
-        return `已取消${actionStem}`;
-      default:
-        return runningVerb;
-    }
-  })();
+  switch (status) {
+    case 'completed':
+      return completedVerb;
+    case 'failed':
+      return `${actionStem}失败`;
+    case 'timed_out':
+      return `${actionStem}超时`;
+    case 'cancelled':
+      return `已取消${actionStem}`;
+    default:
+      return runningVerb;
+  }
+};
+
+export const journalActionLabel = (event: WorkbenchJournalEvent): string => {
+  const data = journalEventData(event);
+  const target = asText(data.target);
+  const status = asStatus(event.status);
+  const verb = journalActionVerb(status, data);
   return normalizeVerb(verb, target) || target || '执行操作';
 };
 
@@ -345,12 +343,7 @@ const mergeActionItem = (
   ) {
     return merged;
   }
-  const completed = terminalStatuses.has(latest.status);
-  const verb = asText(
-    completed
-      ? latestData.display_verb_completed
-      : latestData.display_verb_running,
-  );
+  const verb = journalActionVerb(latest.status, latestData);
   return {
     ...merged,
     title: earlier.title,

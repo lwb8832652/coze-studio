@@ -23,12 +23,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	einoskill "github.com/cloudwego/eino/adk/middlewares/skill"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
+
+const adkJournalSkillObservationTimeout = 2 * time.Second
 
 type adkSkillBackend struct {
 	matters           []einoskill.FrontMatter
@@ -237,8 +240,40 @@ func (b *adkSkillBackend) Get(
 	if err := b.enforceGuardrail(ctx, name); err != nil {
 		return einoskill.Skill{}, err
 	}
-	b.publishJournalUse(ctx, name)
+	b.observeJournalUse(ctx, name)
 	return item, nil
+}
+
+func (b *adkSkillBackend) observeJournalUse(ctx context.Context, name string) {
+	if b == nil || b.run == nil || b.run.RunID <= 0 || b.run.ThreadID <= 0 ||
+		(b.eventSink == nil && b.journalProducer == nil) {
+		return
+	}
+	if _, ok := b.summaries[name]; !ok {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	observationCtx := context.WithoutCancel(ctx)
+	go func() {
+		journalCtx, cancel := context.WithTimeout(
+			observationCtx,
+			adkJournalSkillObservationTimeout,
+		)
+		defer cancel()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				logs.CtxWarnf(
+					journalCtx,
+					"journal skill observation panicked: run_id=%d err=%v",
+					b.run.RunID,
+					recovered,
+				)
+			}
+		}()
+		b.publishJournalUse(journalCtx, name)
+	}()
 }
 
 func (b *adkSkillBackend) publishJournalUse(ctx context.Context, name string) {

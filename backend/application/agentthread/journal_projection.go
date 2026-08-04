@@ -60,8 +60,8 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 		return nil, fmt.Errorf("runtime event type is required")
 	}
 
+	var source map[string]any
 	if journalProjectionSupportsEvent(eventType) {
-		var source map[string]any
 		if err := json.Unmarshal([]byte(event.Payload), &source); err != nil || source == nil {
 			return nil, fmt.Errorf("journal source payload for %s must be a JSON object", eventType)
 		}
@@ -69,7 +69,7 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 	publicPayload := publicJSONObject(projectPublicRunEventPayload(eventType, event.Payload))
 	switch {
 	case eventType == "message.completed":
-		return projectJournalMessageToolAction(event, publicPayload)
+		return projectJournalMessageToolAction(event, publicPayload, source)
 	case eventType == "run.interrupted":
 		return projectJournalInterruptedConfirmation(event, publicPayload)
 	case isJournalRunTerminalEvent(eventType):
@@ -77,7 +77,7 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 	case strings.HasPrefix(eventType, "plan.task."), strings.HasPrefix(eventType, "todo."):
 		return projectJournalMilestone(event, eventType, publicPayload)
 	case strings.HasPrefix(eventType, "tool."), strings.HasPrefix(eventType, "mcp.tool."):
-		return projectJournalToolAction(event, eventType, publicPayload)
+		return projectJournalToolAction(event, eventType, publicPayload, source)
 	case strings.HasPrefix(eventType, "skill."):
 		return projectJournalSkillAction(event, eventType, publicPayload)
 	case strings.HasPrefix(eventType, "subagent."):
@@ -111,6 +111,7 @@ func journalProjectionSupportsEvent(eventType string) bool {
 func projectJournalMessageToolAction(
 	event RunEvent,
 	payload map[string]any,
+	source map[string]any,
 ) (*JournalEventProjection, error) {
 	if strings.ToLower(publicString(payload["role"])) != "assistant" {
 		return nil, nil
@@ -128,7 +129,7 @@ func projectJournalMessageToolAction(
 		"tool_call_id":   toolCall["id"],
 		"journal_target": toolCall["journal_target"],
 		"plan_task_id":   payload["plan_task_id"],
-	})
+	}, source)
 }
 
 func projectJournalInterruptedConfirmation(
@@ -271,12 +272,17 @@ func projectJournalToolAction(
 	event RunEvent,
 	eventType string,
 	payload map[string]any,
+	source map[string]any,
 ) (*JournalEventProjection, error) {
 	phase, projectionType, status := journalActionPhase(eventType, payload)
 	if phase == "" {
 		return nil, nil
 	}
 	correlationKey := journalFirstSourceID(payload, "invocation_id", "tool_call_id", "step_id", "action_id")
+	if correlationKey == "" {
+		return nil, nil
+	}
+	correlationKey = journalScopedToolCorrelationKey(source, correlationKey)
 	if correlationKey == "" {
 		return nil, nil
 	}
@@ -330,6 +336,17 @@ func projectJournalToolAction(
 	projection.Target = target
 	projection.Milestone = milestoneID
 	return projection, nil
+}
+
+func journalScopedToolCorrelationKey(
+	source map[string]any,
+	toolCallID string,
+) string {
+	agentName := journalSourceID(source["agent_name"])
+	if agentName == "" {
+		return toolCallID
+	}
+	return adkJournalToolBindingKey(agentName, toolCallID)
 }
 
 func journalInternalTool(toolName string) bool {

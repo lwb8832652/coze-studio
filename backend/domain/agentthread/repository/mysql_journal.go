@@ -1337,9 +1337,13 @@ func appendJournalEventLockedWithBase(
 			attempt.JournalRunID, attempt.AttemptID, event.ActionID,
 		).Order("id ASC").First(&action).Error
 		if err == nil {
+			storedMilestone := stringFromPtr(action.Milestone)
+			if event.Milestone == "" && storedMilestone != "" {
+				event.Milestone = storedMilestone
+			}
 			if stringFromPtr(action.Operation) != event.Operation ||
 				stringFromPtr(action.Target) != event.Target ||
-				stringFromPtr(action.Milestone) != event.Milestone {
+				storedMilestone != event.Milestone {
 				return nil, ErrJournalActionDrift
 			}
 			var phase runEventPO
