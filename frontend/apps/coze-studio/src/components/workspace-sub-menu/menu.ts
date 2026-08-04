@@ -69,6 +69,11 @@ const DEVELOPER_FEATURE_MENU_PATHS = new Set<string>([
   SPACE_SUB_MODULE.DEVELOP,
 ]);
 
+// AppDev remains routable and implemented while its primary entry is hidden by product policy.
+const TEMPORARILY_HIDDEN_MENU_PATHS = new Set<string>([
+  SPACE_SUB_MODULE.APP_DEV,
+]);
+
 export const WORKSPACE_MENU_META = [
   {
     label: '新建任务',
@@ -129,8 +134,9 @@ const isDeveloperFeatureDisabled = (space?: WorkspaceMenuPolicySpace) => {
 export const getVisibleWorkspaceMenuMeta = (space?: WorkspaceMenuPolicySpace) =>
   WORKSPACE_MENU_META.filter(
     item =>
-      !isDeveloperFeatureDisabled(space) ||
-      !DEVELOPER_FEATURE_MENU_PATHS.has(item.path),
+      !TEMPORARILY_HIDDEN_MENU_PATHS.has(item.path) &&
+      (!isDeveloperFeatureDisabled(space) ||
+        !DEVELOPER_FEATURE_MENU_PATHS.has(item.path)),
   );
 
 export const shouldShowSystemManagementEntry = ({

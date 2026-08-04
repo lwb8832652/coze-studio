@@ -55,6 +55,10 @@ Sandbox 控制面和运行流量分别启用。生产与共享环境只通过数
 remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安全依赖缺失
 时 fail closed，不回退到宿主机或内存 stub。
 
+当前产品策略暂时不在工作空间侧栏展示“网页应用开发”入口。该能力的菜单元数据、
+路由、页面、后端 API、通知映射和 Sandbox AppDev scope 继续保留，不视为删除或
+废弃；后续完成功能开发后通过可见菜单投影恢复入口。
+
 ### IM Channels
 
 当前只支持飞书官方 Go SDK。配置按工作空间隔离，secret 加密且不回显；外部
