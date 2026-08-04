@@ -19,6 +19,7 @@ interface PublicSiteConfigResponse {
 }
 
 const SITE_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
+const DEFAULT_FAVICON_URL = '/favicon.png';
 
 const readString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
@@ -59,6 +60,28 @@ const upsertManagedMeta = (
   return element;
 };
 
+const applyFaviconToDocument = (faviconUrl: string): void => {
+  const iconLinks = Array.from(
+    document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]'),
+  );
+  const managedIcon = iconLinks.find(
+    icon => icon.dataset.cozeSiteConfig === 'true',
+  );
+  const favicon = managedIcon ?? iconLinks[0] ?? document.createElement('link');
+  favicon.rel = 'icon';
+  favicon.dataset.cozeSiteConfig = 'true';
+  favicon.removeAttribute('type');
+  favicon.setAttribute('href', faviconUrl || DEFAULT_FAVICON_URL);
+  if (!favicon.isConnected) {
+    document.head.appendChild(favicon);
+  }
+  iconLinks.forEach(icon => {
+    if (icon !== favicon) {
+      icon.remove();
+    }
+  });
+};
+
 export const applySiteConfigToDocument = (config: ISiteConfig): void => {
   if (typeof document === 'undefined') {
     return;
@@ -88,21 +111,7 @@ export const applySiteConfigToDocument = (config: ISiteConfig): void => {
   );
   description.setAttribute('content', config.siteDescription);
 
-  const existingIcon = document.head.querySelector<HTMLLinkElement>(
-    'link[rel="icon"][data-coze-site-config]',
-  );
-  if (!config.faviconUrl) {
-    existingIcon?.remove();
-    return;
-  }
-  const favicon =
-    existingIcon ??
-    (upsertManagedMeta('link[rel="icon"][data-coze-site-config]', () => {
-      const element = document.createElement('link');
-      element.setAttribute('rel', 'icon');
-      return element;
-    }) as HTMLLinkElement);
-  favicon.href = config.faviconUrl;
+  applyFaviconToDocument(config.faviconUrl);
 };
 
 export const fetchSiteConfig = async (

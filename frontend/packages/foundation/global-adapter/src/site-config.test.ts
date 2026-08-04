@@ -26,6 +26,9 @@ describe('site configuration bootstrap', () => {
     document.head
       .querySelectorAll('[data-coze-site-config]')
       .forEach(node => node.remove());
+    document.head
+      .querySelectorAll('link[rel="icon"]')
+      .forEach(node => node.remove());
   });
 
   it('falls back to product defaults for an incomplete public response', () => {
@@ -74,6 +77,31 @@ describe('site configuration bootstrap', () => {
       true,
       true,
     );
+  });
+
+  it('owns one favicon link and restores the default when unset', () => {
+    const staticIcon = document.createElement('link');
+    staticIcon.rel = 'icon';
+    staticIcon.href = '/favicon.png';
+    document.head.appendChild(staticIcon);
+    const customConfig = {
+      ...DEFAULT_SITE_CONFIG,
+      faviconUrl: 'https://assets.example.com/favicon.png',
+    };
+
+    applySiteConfigToDocument(customConfig);
+
+    let icons =
+      document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]');
+    expect(icons).toHaveLength(1);
+    expect(icons[0]?.href).toBe('https://assets.example.com/favicon.png');
+    expect(icons[0]?.dataset.cozeSiteConfig).toBe('true');
+
+    applySiteConfigToDocument({ ...customConfig, faviconUrl: '' });
+
+    icons = document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]');
+    expect(icons).toHaveLength(1);
+    expect(icons[0]?.getAttribute('href')).toBe('/favicon.png');
   });
 
   it('fetches and normalizes the public site configuration', async () => {
