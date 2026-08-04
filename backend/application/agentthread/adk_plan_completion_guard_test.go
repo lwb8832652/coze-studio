@@ -174,7 +174,7 @@ func TestADKPlanCompletionGuardAllowsFinalAfterReminderCap(t *testing.T) {
 	require.Equal(t, "in_progress", store.task(1).Status)
 }
 
-func TestADKPlanCompletionGuardRequiresPlanBeforeExecutionTool(t *testing.T) {
+func TestADKPlanCompletionGuardLeavesExecutionWithoutPlanUntouched(t *testing.T) {
 	ctx := context.Background()
 	run := &RunSummary{
 		RunID: 25, ThreadID: 10, SpaceID: 30, CreatorID: 40,
@@ -204,13 +204,12 @@ func TestADKPlanCompletionGuardRequiresPlanBeforeExecutionTool(t *testing.T) {
 	require.Len(t, rewritten.Messages[0].ToolCalls, 1)
 	require.Equal(
 		t,
-		adkPlanCompletionGuardToolName,
+		adkWriteFileToolName,
 		rewritten.Messages[0].ToolCalls[0].Function.Name,
 	)
-	require.Equal(t, true, rewritten.Messages[0].Extra["hide_from_ui"])
 }
 
-func TestADKPlanCompletionGuardRequiresActiveTaskBeforeExecutionTool(t *testing.T) {
+func TestADKPlanCompletionGuardLeavesExecutionWithPendingPlanUntouched(t *testing.T) {
 	ctx := context.Background()
 	run := &RunSummary{
 		RunID: 26, ThreadID: 10, SpaceID: 30, CreatorID: 40,
@@ -246,12 +245,12 @@ func TestADKPlanCompletionGuardRequiresActiveTaskBeforeExecutionTool(t *testing.
 	require.NoError(t, err)
 	require.Equal(
 		t,
-		adkPlanCompletionGuardToolName,
+		adkWriteFileToolName,
 		rewritten.Messages[0].ToolCalls[0].Function.Name,
 	)
 }
 
-func TestADKPlanCompletionGuardAllowsPlanningAndActiveExecution(t *testing.T) {
+func TestADKPlanCompletionGuardLeavesPlanningAndActiveExecutionUntouched(t *testing.T) {
 	ctx := context.Background()
 	run := &RunSummary{
 		RunID: 27, ThreadID: 10, SpaceID: 30, CreatorID: 40,
@@ -312,7 +311,7 @@ func TestADKPlanCompletionGuardAllowsPlanningAndActiveExecution(t *testing.T) {
 	)
 }
 
-func TestADKPlanCompletionGuardSeparatesPlanTransitionFromChildOperation(t *testing.T) {
+func TestADKPlanCompletionGuardLeavesMixedPlanTransitionAndExecutionUntouched(t *testing.T) {
 	ctx := context.Background()
 	run := &RunSummary{
 		RunID: 28, ThreadID: 10, SpaceID: 30, CreatorID: 40,
@@ -355,15 +354,20 @@ func TestADKPlanCompletionGuardSeparatesPlanTransitionFromChildOperation(t *test
 	_, rewritten, err := guard.AfterModelRewriteState(ctx, state, nil)
 
 	require.NoError(t, err)
-	require.Len(t, rewritten.Messages[0].ToolCalls, 1)
+	require.Len(t, rewritten.Messages[0].ToolCalls, 2)
 	require.Equal(
 		t,
-		adkPlanCompletionGuardToolName,
+		plantask.TaskUpdateToolName,
 		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[1].Function.Name,
 	)
 }
 
-func TestADKPlanCompletionGuardPreservesReasoningWhenRewritingToolCalls(t *testing.T) {
+func TestADKPlanCompletionGuardPreservesReasoningForExecutionToolCalls(t *testing.T) {
 	ctx := context.Background()
 	run := &RunSummary{
 		RunID: 29, ThreadID: 10, SpaceID: 30, CreatorID: 40,
@@ -410,6 +414,17 @@ func TestADKPlanCompletionGuardPreservesReasoningWhenRewritingToolCalls(t *testi
 		t,
 		message.ReasoningContent,
 		rewritten.Messages[0].ReasoningContent,
+	)
+	require.Len(t, rewritten.Messages[0].ToolCalls, 2)
+	require.Equal(
+		t,
+		plantask.TaskUpdateToolName,
+		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[1].Function.Name,
 	)
 }
 

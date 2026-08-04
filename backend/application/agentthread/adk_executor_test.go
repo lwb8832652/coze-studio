@@ -107,8 +107,9 @@ func TestADKExecutorAssociatesToolEventsWithActivePlanTask(t *testing.T) {
 	bindingReleasedBeforeNextEvent := false
 	eventSink := &recordingRunEventSink{onEmit: func(event RunEvent) {
 		if event.EventType == "agent.event" && parityTracker != nil {
-			bindingReleasedBeforeNextEvent =
-				len(parityTracker.Snapshot().JournalToolPlanTasks) == 0
+			bindingReleasedBeforeNextEvent = len(
+				journalToolPlanTasksForTest(parityTracker),
+			) == 0
 		}
 	}}
 	checkpointService := &recordingADKCheckpointService{}
@@ -240,7 +241,11 @@ func TestADKExecutorRetainsToolPlanBindingWhenTerminalEventPersistenceFails(t *t
 	_, err := executor.Execute(context.Background(), run)
 
 	require.ErrorContains(t, err, "event persistence unavailable")
-	require.Equal(t, "1", parityTracker.Snapshot().JournalToolPlanTasks["call-write"])
+	require.Equal(
+		t,
+		"1",
+		journalToolPlanTasksForTest(parityTracker)["call-write"],
+	)
 }
 
 func TestADKExecutorSeedsAndReturnsDurableParityState(t *testing.T) {

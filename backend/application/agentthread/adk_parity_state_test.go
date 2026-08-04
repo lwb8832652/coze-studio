@@ -17,6 +17,7 @@
 package agentthread
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -149,18 +150,13 @@ func TestADKParityStateSnapshotIsDeepCopiedAndConcurrent(t *testing.T) {
 	require.NoError(t, tracker.MergePromotedTools(&ADKParityPromotedTools{
 		CatalogHash: "catalog-a", Names: []string{"weather"},
 	}))
-	require.NoError(t, tracker.ReplaceJournalToolPlanTasks(map[string]string{
-		"call-1": "todo-1",
-	}))
 
 	snapshot := tracker.Snapshot()
 	snapshot.PromotedTools.Names[0] = "mutated"
-	snapshot.JournalToolPlanTasks["call-1"] = "mutated"
 	snapshot.Uploads = append(snapshot.Uploads, ADKParityUpload{
 		FileName: "outside.txt", VirtualPath: "/mnt/user-data/uploads/outside.txt",
 	})
 	require.Equal(t, []string{"weather"}, tracker.Snapshot().PromotedTools.Names)
-	require.Equal(t, "todo-1", tracker.Snapshot().JournalToolPlanTasks["call-1"])
 	require.Empty(t, tracker.Snapshot().Uploads)
 
 	var wait sync.WaitGroup
@@ -193,9 +189,6 @@ func TestADKParityStateRejectsUnsafeOrOversizedValues(t *testing.T) {
 	require.Error(t, tracker.SetCompletion(ADKParityCompletion{
 		Status: "unknown", Reason: "not-valid",
 	}))
-	require.Error(t, tracker.ReplaceJournalToolPlanTasks(map[string]string{
-		"bad\x00call": "todo-1",
-	}))
 	seed := tracker.Snapshot()
 	seed.Revision = -1
 	_, err := NewADKParityStateTracker(&RunSummary{
@@ -204,11 +197,24 @@ func TestADKParityStateRejectsUnsafeOrOversizedValues(t *testing.T) {
 	require.ErrorContains(t, err, "revision")
 }
 
-func TestADKParityStateClearsJournalToolBindingsForANewRun(t *testing.T) {
+func TestADKJournalBindingsDoNotChangeDurableParityState(t *testing.T) {
+	tracker := newTestADKParityStateTracker(t)
+	before := tracker.Snapshot()
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	require.True(t, bindADKJournalToolPlanTasks(ctx, []string{"call-1"}, "todo-1"))
+	require.Equal(t, "todo-1", boundADKJournalToolPlanTaskIDFromContext(ctx, "call-1"))
+	require.Equal(t, before, tracker.Snapshot())
+}
+
+func TestADKParityStateDoesNotCarryJournalToolBindingsIntoANewTracker(t *testing.T) {
 	initial := newTestADKParityStateTracker(t)
-	require.NoError(t, initial.ReplaceJournalToolPlanTasks(map[string]string{
-		"call-previous": "todo-previous",
-	}))
+	initialCtx := withADKParityStateTracker(context.Background(), initial)
+	require.True(t, bindADKJournalToolPlanTasks(
+		initialCtx,
+		[]string{"call-previous"},
+		"todo-previous",
+	))
 	seed := initial.Snapshot()
 
 	next, err := NewADKParityStateTracker(&RunSummary{
@@ -216,7 +222,11 @@ func TestADKParityStateClearsJournalToolBindingsForANewRun(t *testing.T) {
 	}, &seed)
 
 	require.NoError(t, err)
-	require.Empty(t, next.Snapshot().JournalToolPlanTasks)
+	nextCtx := withADKParityStateTracker(context.Background(), next)
+	require.Empty(t, boundADKJournalToolPlanTaskIDFromContext(
+		nextCtx,
+		"call-previous",
+	))
 }
 
 func TestADKParityStateRejectsCumulativeCollectionOverflow(t *testing.T) {

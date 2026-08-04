@@ -107,7 +107,7 @@ func TestADKLeadPromptProjectsConditionalCapabilitySections(t *testing.T) {
 	}
 }
 
-func TestADKLeadPromptDefinesJournalPlanExecutionContract(t *testing.T) {
+func TestADKLeadPromptKeepsPlanningAdvisoryAndSimpleActionsDirect(t *testing.T) {
 	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"pro"}`)
 	require.NoError(t, err)
 
@@ -119,33 +119,24 @@ func TestADKLeadPromptDefinesJournalPlanExecutionContract(t *testing.T) {
 	require.Contains(
 		t,
 		prompt.Instruction,
-		"Before the first execution tool call, create the major steps",
+		"For multi-step work, maintain a concise Todo plan",
 	)
 	require.Contains(
 		t,
 		prompt.Instruction,
-		"Set exactly one major step to in_progress before its child operations",
+		"Keep one active step at a time",
 	)
 	require.Contains(
 		t,
 		prompt.Instruction,
-		"Direct answers that use no execution tools do not need a plan",
+		"Do not create ceremony for a single straightforward action",
 	)
-	require.Contains(
+	require.NotContains(
 		t,
 		prompt.Instruction,
 		"Do not combine a plan status change and its child operations",
 	)
-	for _, expected := range []string{
-		"Create every major step with status pending before activating any step",
-		"metadata.execution_intro",
-		"lowest-ID major step",
-		"one or two concise public sentences",
-		"Match the user's language",
-		"hidden reasoning, raw tool arguments, raw tool results, credentials, or internal paths",
-	} {
-		require.Contains(t, prompt.Instruction, expected)
-	}
+	require.NotContains(t, prompt.Instruction, "metadata.execution_intro")
 }
 
 func TestADKLeadPromptAppendsEscapedBoundedOverlays(t *testing.T) {

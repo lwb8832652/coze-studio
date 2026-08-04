@@ -380,7 +380,7 @@ func TestMapADKEventAssociatesToolMessagesWithSingleActivePlanTask(t *testing.T)
 	require.Equal(t, startedProjection.Milestone, terminalProjection.Milestone)
 }
 
-func TestMapADKEventPreservesToolPlanBindingAcrossParitySnapshot(t *testing.T) {
+func TestMapADKEventFallsBackToAtomicActionAfterParityRestore(t *testing.T) {
 	tracker, err := NewADKParityStateTracker(&RunSummary{
 		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
 	}, nil)
@@ -431,7 +431,7 @@ func TestMapADKEventPreservesToolPlanBindingAcrossParitySnapshot(t *testing.T) {
 	require.NoError(t, err)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(mapped.Payload), &payload))
-	require.Equal(t, "2", payload["plan_task_id"])
+	require.NotContains(t, payload, "plan_task_id")
 }
 
 func TestMapADKEventPreservesParentToolBindingAcrossNestedAgentBatches(t *testing.T) {
@@ -480,7 +480,7 @@ func TestMapADKEventPreservesParentToolBindingAcrossNestedAgentBatches(t *testin
 	require.Equal(t, map[string]string{
 		"call-parent": "2",
 		"call-child":  "2",
-	}, tracker.Snapshot().JournalToolPlanTasks)
+	}, journalToolPlanTasksForTest(tracker))
 
 	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
 		AgentName: "researcher",
@@ -544,7 +544,7 @@ func TestMapADKEventOmitsPlanBindingForAnOversizedToolBatch(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(started.Payload), &payload))
 	require.NotContains(t, payload, "plan_task_id")
-	require.Empty(t, tracker.Snapshot().JournalToolPlanTasks)
+	require.Empty(t, journalToolPlanTasksForTest(tracker))
 
 	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
 		AgentName: "lead",
@@ -570,15 +570,15 @@ func TestMapADKEventOmitsPlanBindingWhenOutstandingCapacityIsExhausted(t *testin
 		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
 	}, nil)
 	require.NoError(t, err)
-	bindings := make(map[string]string, maxADKParityJournalBindings)
+	toolCallIDs := make([]string, 0, maxADKParityJournalBindings)
 	for index := 0; index < maxADKParityJournalBindings; index++ {
-		bindings[fmt.Sprintf("outstanding-call-%d", index)] = "2"
+		toolCallIDs = append(toolCallIDs, fmt.Sprintf("outstanding-call-%d", index))
 	}
-	require.NoError(t, tracker.ReplaceJournalToolPlanTasks(bindings))
 	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
 		ID: "2", Title: "核验项目事实", Status: "in_progress",
 	}}))
 	ctx := withADKParityStateTracker(context.Background(), tracker)
+	require.True(t, bindADKJournalToolPlanTasks(ctx, toolCallIDs, "2"))
 
 	started, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
 		AgentName: "lead",
@@ -597,7 +597,7 @@ func TestMapADKEventOmitsPlanBindingWhenOutstandingCapacityIsExhausted(t *testin
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(started.Payload), &payload))
 	require.NotContains(t, payload, "plan_task_id")
-	require.Len(t, tracker.Snapshot().JournalToolPlanTasks, maxADKParityJournalBindings)
+	require.Len(t, journalToolPlanTasksForTest(tracker), maxADKParityJournalBindings)
 
 	terminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
 		AgentName: "lead",
@@ -611,6 +611,21 @@ func TestMapADKEventOmitsPlanBindingWhenOutstandingCapacityIsExhausted(t *testin
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(terminal.Payload), &payload))
 	require.NotContains(t, payload, "plan_task_id")
+}
+
+func journalToolPlanTasksForTest(
+	tracker *ADKParityStateTracker,
+) map[string]string {
+	if tracker == nil {
+		return nil
+	}
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	bindings := make(map[string]string, len(tracker.journalToolPlanTasks))
+	for toolCallID, planTaskID := range tracker.journalToolPlanTasks {
+		bindings[toolCallID] = planTaskID
+	}
+	return bindings
 }
 
 func TestMapADKEventMapsNormalizedToolError(t *testing.T) {

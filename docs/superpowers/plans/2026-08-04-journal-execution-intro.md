@@ -4,21 +4,22 @@
 
 **Goal:** 在 Pro/Ultra 的真实 Journal 任务中，把任务级执行策略摘要稳定展示在首个大步骤之前；简单直答不展示。
 
-**Architecture:** 不创建额外聊天消息，也不增加第二套状态机。模型在首个计划任务的 `metadata.execution_intro` 中写入一至两句公开摘要，现有 `plan.task.*` RunEvent 经过脱敏后投影为幂等 `journal.intro`；若模型未写入，则首个可见 Milestone 事件携带由完整计划标题生成的安全兜底。前端只消费公共 Journal 投影，并在 Milestone 列表之前渲染摘要。
+**Architecture:** 不创建额外聊天消息，不增加第二套状态机，也不修改模型原有执行提示词。后端可读取已有计划中的可选 `metadata.execution_intro`，但默认从完整计划标题生成安全摘要；现有 `plan.task.*` RunEvent 经过脱敏后投影为幂等 `journal.intro`。前端只消费公共 Journal 投影，并在 Milestone 列表之前渲染摘要。Journal 的父子步骤绑定只保存在当前进程的瞬时投影状态中，失败或恢复丢失时降级为原子步骤，绝不改写或阻塞工具执行。
 
 **Tech Stack:** Go、Eino ADK PlanTask middleware、JournalEvent v1、React、TypeScript、Vitest、Testing Library。
 
 ---
 
-### Task 1: Freeze The Public Contract
+### Task 1: Freeze The Non-Interference Contract
 
 **Files:**
-- Modify: `backend/application/agentthread/adk_lead_prompt.go`
 - Test: `backend/application/agentthread/adk_lead_prompt_test.go`
+- Test: `backend/application/agentthread/adk_plan_completion_guard_test.go`
+- Test: `backend/application/agentthread/adk_parity_state_test.go`
 
-- [x] **Step 1: Write the failing prompt-contract test**
+- [x] **Step 1: Write the execution-preservation tests**
 
-Assert that plan-enabled prompts require all major steps to be created as `pending`, require exactly one public `metadata.execution_intro` on the lowest-ID task, match the user's language, and exclude hidden reasoning, raw tool data, credentials, and internal paths.
+Assert that the existing planning prompt remains advisory, simple actions remain direct, execution tool calls are never rewritten because a plan is absent or incomplete, and Journal bindings do not change durable parity state.
 
 - [x] **Step 2: Run the focused test and confirm RED**
 
@@ -29,11 +30,11 @@ cd backend
 GOCACHE=/private/tmp/coze-go-build go test -p 1 -gcflags="all=-l -N" ./application/agentthread -run TestDefaultADKLeadPromptComposer -count=1
 ```
 
-Expected: the new `execution_intro` assertion fails because the prompt does not yet define the field.
+Expected: the new non-interference assertions fail while the experimental execution guard and durable Journal bindings are present.
 
-- [x] **Step 3: Add the minimal prompt rule**
+- [x] **Step 3: Remove execution coupling**
 
-Extend `<todo_system>` with the frozen metadata contract. Keep direct answers plan-free and keep step density proportional to task complexity.
+Keep `<todo_system>` identical to the established runtime contract. Remove the Journal execution guard, keep tool calls untouched, and store parent bindings outside durable parity state.
 
 - [x] **Step 4: Re-run the focused test and confirm GREEN**
 

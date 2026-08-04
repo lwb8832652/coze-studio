@@ -40,18 +40,18 @@ Thread
 - Journal 只为通过 feature gate 的 Pro、Ultra 顶层 Task Run 建立投影；Flash、
   Thinking、子任务和 Subagent Run 不建立公共 Journal。简单直答即使属于 Pro 或
   Ultra，也只保留生命周期事实，前端不展示空步骤或 Journal 外壳。
-- `journal.intro` 是任务执行开场语的权威事件，位于第一个可见大步骤之前；它来自
-  经过脱敏和长度限制的 `metadata.execution_intro`，缺失时才使用完整计划标题生成
-  安全兜底。它不是额外的聊天消息，也不得包含隐藏推理、原始工具参数、凭证或内部
-  绝对路径。
+- `journal.intro` 是任务执行开场语的权威事件，位于第一个可见大步骤之前。后端可接收
+  经过脱敏和长度限制的 `metadata.execution_intro`，但不得要求模型为了 Journal 改变
+  原执行提示词；通常由完整计划标题生成安全兜底。它不是额外的聊天消息，也不得包含
+  隐藏推理、原始工具参数、凭证或内部绝对路径。
 - 左侧执行流只展示已经到达的公共事件。大步骤由 `milestone.*` 表示，小步骤由实际
   执行过的 `action.*`、`artifact.*`、`verification.*` 或 `confirmation.*` 表示；
   没有子动作的大步骤保持原子步骤，不显示展开入口。
-- 工具调用开始时绑定当时唯一的 active plan task；父子 Agent 的未结束调用可并存，
-  terminal 事件成功持久化后才释放对应绑定。同一 run 的 Eino 内部 checkpoint 会保留
-  未结束绑定，新 run 开始时清空，保证工具结果仍归属原大步骤且不会随 thread 长期
-  累积。该绑定不进入模型上下文，也不进入公共 checkpoint 投影；容量不足时 Journal
-  对新增批次统一省略大步骤归属，不能影响工具实际执行。
+- 工具调用开始时可绑定当时唯一的 active plan task；父子 Agent 的未结束调用可并存，
+  terminal 事件成功持久化后才释放对应绑定。绑定只存在于当前进程的 Journal 投影内存，
+  不进入模型上下文、Eino checkpoint、公共 checkpoint 或业务 revision。恢复后绑定缺失、
+  当前步骤不唯一或容量不足时，Journal 将动作降级为原子步骤，不能改写、阻塞或重试
+  工具实际执行。
 - 同一工具动作的事件和内容快照必须复用稳定的 action identity、operation、target
   与 milestone；实际文件名和路径保留在经过审核的文档或代码快照内容中，不能通过
   改写动作字段破坏幂等和重放。

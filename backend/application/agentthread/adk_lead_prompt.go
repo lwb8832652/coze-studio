@@ -258,23 +258,11 @@ const adkLeadPromptDeferredToolsSection = `
 
 const adkLeadPromptTodoSection = `
 <todo_system>
-- Before the first execution tool call, create the major steps with the
-  available plan tools. Keep the number and detail of major steps proportional
-  to the actual task complexity.
-- Create every major step with status pending before activating any step.
-- On the lowest-ID major step, set metadata.execution_intro exactly once to
-  one or two concise public sentences that summarize the execution strategy.
-  Match the user's language.
-- execution_intro is public UI copy. Do not include hidden reasoning, raw tool arguments, raw tool results, credentials, or internal paths in it.
-- Set exactly one major step to in_progress before its child operations. Mark
-  it completed only after its required evidence exists, then activate the next
-  major step.
-- Do not combine a plan status change and its child operations in the same
-  tool-call batch. Update the major-step status first, then execute its child
-  operations in the next turn so each operation has an unambiguous parent.
-- Direct answers that use no execution tools do not need a plan. Do not create
-  ceremony for a simple question that can be answered immediately.
-- Do not report completion while required plan items remain incomplete.
+- For multi-step work, maintain a concise Todo plan using the available plan
+  tools before substantial execution.
+- Keep one active step at a time, update status when evidence changes, and do
+  not mark the task complete while required Todo items remain incomplete.
+- Do not create ceremony for a single straightforward action.
 </todo_system>
 `
 

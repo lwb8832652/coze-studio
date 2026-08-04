@@ -26,6 +26,7 @@ import (
 	einoskill "github.com/cloudwego/eino/adk/middlewares/skill"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,6 +154,45 @@ func TestADKSkillBackendIgnoresTypedNilGuardrailEnforcer(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "Use research instructions.", got.Content)
+}
+
+func TestADKSkillBackendJournalFailureDoesNotFailSkillLoad(t *testing.T) {
+	run := &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	events := &recordingRunEventSink{emitErr: func(RunEvent) error {
+		return fmt.Errorf("journal event unavailable")
+	}}
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			run,
+			events,
+			failingJournalContentProducer{},
+		),
+	)
+	require.NoError(t, err)
+
+	got, err := backend.Get(context.Background(), "research")
+
+	require.NoError(t, err)
+	require.Equal(t, "Use research instructions.", got.Content)
+}
+
+type failingJournalContentProducer struct{}
+
+func (failingJournalContentProducer) ProduceJournalContent(
+	context.Context,
+	JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	return nil, nil, fmt.Errorf("journal snapshot unavailable")
 }
 
 func TestADKSkillBackendGuardrailBlocksBeforeReturningContent(t *testing.T) {
