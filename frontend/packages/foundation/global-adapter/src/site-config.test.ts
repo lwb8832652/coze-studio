@@ -10,6 +10,10 @@ import {
 } from '@coze-foundation/global-store';
 import { I18n } from '@coze-arch/i18n';
 
+const setHtmlTitleSiteName = vi.hoisted(() => vi.fn());
+
+vi.mock('@coze-arch/bot-utils', () => ({ setHtmlTitleSiteName }));
+
 import {
   applySiteConfigToDocument,
   fetchSiteConfig,
@@ -22,6 +26,7 @@ describe('site configuration bootstrap', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    setHtmlTitleSiteName.mockReset();
     useCommonConfigStore.getState().updateSiteConfig(DEFAULT_SITE_CONFIG);
     document.head
       .querySelectorAll('[data-coze-site-config]')
@@ -53,6 +58,7 @@ describe('site configuration bootstrap', () => {
     applySiteConfigToDocument(config);
 
     expect(document.title).toBe('Acme AI');
+    expect(setHtmlTitleSiteName).toHaveBeenCalledWith('Acme AI');
     expect(
       document.head.querySelectorAll(
         'meta[name="description"][data-coze-site-config]',

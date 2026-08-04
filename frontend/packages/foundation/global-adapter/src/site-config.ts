@@ -7,6 +7,7 @@ import {
   useCommonConfigStore,
 } from '@coze-foundation/global-store';
 import { I18n } from '@coze-arch/i18n';
+import { setHtmlTitleSiteName } from '@coze-arch/bot-utils';
 
 export { DEFAULT_SITE_CONFIG };
 
@@ -100,6 +101,7 @@ export const applySiteConfigToDocument = (config: ISiteConfig): void => {
     );
   });
 
+  setHtmlTitleSiteName(config.siteName);
   document.title = config.siteName;
   const description = upsertManagedMeta(
     'meta[name="description"][data-coze-site-config]',
