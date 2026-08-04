@@ -48,6 +48,10 @@ import type {
   WorkbenchJournalSnapshot,
 } from '../../workbench/thread-client';
 import {
+  TaskArtifactInlinePreview,
+  type ArtifactInlinePreviewState,
+} from '../task-artifact-inline-preview';
+import {
   JournalBrowserView,
   JournalCodeView,
   JournalDocumentView,
@@ -159,6 +163,8 @@ export const JournalRestoreButton = ({
 // eslint-disable-next-line complexity, @coze-arch/max-line-per-function -- Keep accepted panel state together.
 export const JournalPanel = ({
   activeTab,
+  artifactPreview,
+  artifactPreviewTab,
   artifacts = [],
   attempts = [],
   closeButtonRef,
@@ -175,6 +181,7 @@ export const JournalPanel = ({
   viewMode,
   onActiveTabChange,
   onArtifactDownload,
+  onArtifactPreviewClose,
   onClose,
   onScrollPositionChange,
   onSelectEvent,
@@ -184,6 +191,8 @@ export const JournalPanel = ({
   onViewModeChange,
 }: {
   activeTab: WorkbenchJournalContentType;
+  artifactPreview?: ArtifactInlinePreviewState | null;
+  artifactPreviewTab?: WorkbenchJournalContentType;
   artifacts?: WorkbenchArtifact[];
   attempts?: WorkbenchJournalAttempt[];
   closeButtonRef?: RefObject<HTMLButtonElement>;
@@ -200,6 +209,7 @@ export const JournalPanel = ({
   viewMode: JournalViewMode;
   onActiveTabChange: (tab: WorkbenchJournalContentType) => void;
   onArtifactDownload?: (artifact: WorkbenchArtifact) => void | Promise<void>;
+  onArtifactPreviewClose?: () => void;
   onClose: () => void;
   onScrollPositionChange?: (
     key: string,
@@ -218,16 +228,23 @@ export const JournalPanel = ({
     () => findJournalEvent(events, selectedEventId),
     [events, selectedEventId],
   );
-  const selectedLabel = selectedEvent
-    ? journalEventLabel(selectedEvent)
-    : '执行详情';
+  const artifactPreviewActive = Boolean(
+    artifactPreview && activeTab === (artifactPreviewTab ?? 'document'),
+  );
+  const selectedLabel = artifactPreviewActive
+    ? artifactPreview?.name ?? '任务产物'
+    : selectedEvent
+      ? journalEventLabel(selectedEvent)
+      : '执行详情';
   const resolvedContentStatus = contentStatus ?? snapshot?.status ?? 'empty';
   const mediaContext = useMemo(
     () => journalMediaContextForEvent(selectedEvent, artifacts),
     [artifacts, selectedEvent],
   );
   const mediaTabActive = Boolean(
-    mediaContext && suppressedMediaEventID !== selectedEventId,
+    !artifactPreviewActive &&
+      mediaContext &&
+      suppressedMediaEventID !== selectedEventId,
   );
   const browserEvents = useMemo(
     () =>
@@ -251,7 +268,9 @@ export const JournalPanel = ({
   const scrollScope = [
     selectedAttemptId || 'legacy',
     selectedEventId || 'none',
-    mediaTabActive
+    artifactPreviewActive
+      ? `artifact:${artifactPreview?.artifactId ?? 'none'}`
+      : mediaTabActive
       ? `media:${mediaContext?.artifact.artifact_id ?? 'none'}`
       : activeTab,
   ].join(':');
@@ -422,7 +441,12 @@ export const JournalPanel = ({
         ref={contentRef}
         onScrollCapture={handleScrollCapture}
       >
-        {mediaTabActive && mediaContext ? (
+        {artifactPreviewActive && artifactPreview ? (
+          <TaskArtifactInlinePreview
+            inlinePreview={artifactPreview}
+            onClose={onArtifactPreviewClose ?? (() => undefined)}
+          />
+        ) : mediaTabActive && mediaContext ? (
           <JournalMediaView
             context={mediaContext}
             spaceId={spaceId}

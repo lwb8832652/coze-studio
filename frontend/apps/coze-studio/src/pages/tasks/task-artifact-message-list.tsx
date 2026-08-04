@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 
 import {
   IconCozDocument,
@@ -234,14 +234,14 @@ const TaskArtifactMessageCard = ({
             loading={activeDownload}
             size="small"
             theme="borderless"
+            className="coze-prototype-artifact-message-download"
+            title={`下载 ${artifactName}`}
             type="tertiary"
             onClick={event => {
               event.stopPropagation();
               void handleArtifactAction(artifact, 'download');
             }}
-          >
-            下载
-          </Button>
+          />
         ) : null}
       </div>
     </article>
@@ -251,7 +251,6 @@ const TaskArtifactMessageCard = ({
 export const TaskArtifactMessageList = ({
   artifactActions,
   artifacts,
-  autoPreview = true,
   renderFeedback = true,
   renderReviewActions = true,
   spaceId,
@@ -259,7 +258,6 @@ export const TaskArtifactMessageList = ({
 }: {
   artifactActions?: TaskArtifactActions;
   artifacts: TaskThreadArtifact[];
-  autoPreview?: boolean;
   renderFeedback?: boolean;
   renderReviewActions?: boolean;
   spaceId?: string;
@@ -270,6 +268,7 @@ export const TaskArtifactMessageList = ({
     activeAction,
     clearInlinePreview,
     error,
+    errorArtifactId,
     handleArtifactAction,
     handleReviewArtifact,
     inlinePreview,
@@ -285,32 +284,6 @@ export const TaskArtifactMessageList = ({
       ),
     [artifacts],
   );
-  const autoPreviewedArtifactId = useRef('');
-  const firstPreviewableArtifact = visibleArtifacts.find(canPreviewArtifact);
-
-  useEffect(() => {
-    if (
-      !threadId ||
-      !autoPreview ||
-      !firstPreviewableArtifact ||
-      inlinePreview ||
-      activeAction ||
-      autoPreviewedArtifactId.current === firstPreviewableArtifact.artifact_id
-    ) {
-      return;
-    }
-
-    autoPreviewedArtifactId.current = firstPreviewableArtifact.artifact_id;
-    void handleArtifactAction(firstPreviewableArtifact, 'preview');
-  }, [
-    activeAction,
-    autoPreview,
-    firstPreviewableArtifact,
-    handleArtifactAction,
-    inlinePreview,
-    threadId,
-  ]);
-
   if (!threadId || visibleArtifacts.length === 0) {
     return null;
   }
@@ -339,6 +312,14 @@ export const TaskArtifactMessageList = ({
           error={error}
           inlinePreview={inlinePreview}
         />
+      ) :
+        error &&
+        visibleArtifacts.some(
+          artifact => artifact.artifact_id === errorArtifactId,
+        ) ? (
+        <div className="coze-prototype-artifact-message-error" role="alert">
+          {error}
+        </div>
       ) : null}
     </section>
   );

@@ -23,7 +23,12 @@ type ArtifactPreviewModeCarrier = Pick<
 >;
 
 export type ArtifactInlinePreviewKind = 'text' | 'markdown' | 'json' | 'table';
-export type ArtifactPreviewFamily = 'text' | 'image' | 'pdf';
+export type ArtifactPreviewFamily =
+  | 'text'
+  | 'image'
+  | 'pdf'
+  | 'audio'
+  | 'video';
 
 export interface ArtifactInlinePreviewTableColumn {
   dataIndex: string;
@@ -78,6 +83,10 @@ export const artifactPreviewFamily = (
       return IMAGE_PREVIEW_CONTENT_TYPES.has(contentType) ? 'image' : null;
     case 'pdf':
       return contentType === 'application/pdf' ? 'pdf' : null;
+    case 'audio':
+      return contentType.startsWith('audio/') ? 'audio' : null;
+    case 'video':
+      return contentType.startsWith('video/') ? 'video' : null;
     default:
       return null;
   }

@@ -107,6 +107,18 @@ describe('task artifact preview helpers', () => {
         preview_mode: 'pdf',
       }),
     ).toBe('pdf');
+    expect(
+      artifactPreviewFamily({
+        content_type: 'audio/mpeg',
+        preview_mode: 'audio',
+      }),
+    ).toBe('audio');
+    expect(
+      artifactPreviewFamily({
+        content_type: 'video/mp4',
+        preview_mode: 'video',
+      }),
+    ).toBe('video');
 
     for (const contentType of [
       'text/html; charset=utf-8',
@@ -139,6 +151,14 @@ describe('task artifact preview helpers', () => {
         artifactWithPreview({
           contentType: 'image/svg+xml',
           previewMode: 'image',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      canPreviewArtifact(
+        artifactWithPreview({
+          contentType: 'audio/mpeg',
+          previewMode: 'video',
         }),
       ),
     ).toBe(false);

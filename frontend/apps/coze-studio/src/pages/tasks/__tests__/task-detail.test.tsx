@@ -1520,6 +1520,15 @@ describe('TaskDetailPage', () => {
         await Promise.resolve();
       });
 
+      await act(async () => {
+        Simulate.click(
+          container.querySelector<HTMLButtonElement>(
+            '[aria-label="重新打开执行详情"]',
+          )!,
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+      });
       expect(
         container.querySelector('[data-testid="journal-panel"]'),
       ).toBeTruthy();
@@ -5319,7 +5328,7 @@ describe('TaskDetailPage', () => {
     }
   });
 
-  it('renders generated document artifacts in a DeerFlow-style side preview without mixing them with thread export', async () => {
+  it('opens generated document previews in the Follow document tab only after the user selects an artifact card', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -5434,54 +5443,17 @@ describe('TaskDetailPage', () => {
       expect(messageList?.textContent).not.toContain('阻断');
       expect(titleGroup?.textContent).toContain('武汉3日游攻略');
       expect(titleGroup?.textContent).not.toContain('请生成一份');
-      expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
-        artifact_id: 'artifact-doc-1',
-        mode: 'preview',
-        thread_id: 'thread-doc-artifacts-1',
-        space_id: 'space-1',
-      });
-      expect(
-        container.querySelector('[data-testid="task-artifact-side-preview"]'),
-      ).toBeTruthy();
-      expect(
-        container.querySelector('[data-testid="task-artifact-inline-preview"]'),
-      ).toBeTruthy();
-      expect(
-        container.querySelector(
-          '[data-testid="task-artifact-inline-preview-markdown"]',
-        ),
-      ).toBeTruthy();
-      expect(
-        container.querySelector(
-          '[data-testid="task-artifact-inline-preview-truncated"]',
-        ),
-      ).toBeTruthy();
-      expect(
-        container.querySelector(
-          '[data-testid="task-artifact-inline-preview-text"]',
-        ),
-      ).toBeNull();
-      const sidePreview = container.querySelector(
-        '[data-testid="task-artifact-side-preview"]',
-      );
       const detailSplit = container.querySelector(
         '.coze-prototype-detail-split',
       );
-      expect(detailSplit?.getAttribute('data-artifact-open')).toBe('true');
+      expect(mockFetchTaskThreadArtifactContent).not.toHaveBeenCalled();
       expect(
-        container.querySelector('button[aria-label="调整产物面板宽度"]'),
-      ).toBeTruthy();
-      expect(sidePreview?.getAttribute('data-layout')).toBe('deerflow-split');
-      expect(sidePreview?.getAttribute('data-width-mode')).toBe(
-        'deerflow-60-40',
-      );
+        container.querySelector('[data-testid="task-artifact-side-preview"]'),
+      ).toBeNull();
+      expect(detailSplit?.getAttribute('data-artifact-open')).toBe('false');
       expect(
-        sidePreview?.querySelector(
-          'button[aria-label="复制文档 武汉3日游攻略.md"]',
-        ),
-      ).toBeTruthy();
-      expect(sidePreview?.textContent).not.toContain('复制');
-      expect(container.textContent).toContain('# 武汉3日游攻略');
+        container.querySelector('[data-testid="journal-panel"]'),
+      ).toBeNull();
 
       const previewCard = messageList?.querySelector(
         '[data-artifact-id="artifact-doc-1"]',
@@ -5495,6 +5467,7 @@ describe('TaskDetailPage', () => {
       expect(previewCard).toBeTruthy();
       expect(previewCard.getAttribute('role')).toBe('button');
       expect(markdownDownloadButton).toBeTruthy();
+      expect(markdownDownloadButton.textContent?.trim()).toBe('');
       expect(downloadButton).toBeTruthy();
 
       await act(async () => {
@@ -5511,7 +5484,48 @@ describe('TaskDetailPage', () => {
       });
       expect(
         container.querySelector('[data-testid="task-artifact-side-preview"]'),
+      ).toBeNull();
+      const journalPanel = container.querySelector(
+        '[data-testid="journal-panel"]',
+      );
+      expect(journalPanel).toBeTruthy();
+      expect(
+        journalPanel?.querySelector('button[aria-label="文档"]')?.getAttribute(
+          'aria-selected',
+        ),
+      ).toBe('true');
+      expect(
+        journalPanel?.querySelector(
+          '[data-testid="task-artifact-inline-preview"]',
+        ),
       ).toBeTruthy();
+      expect(
+        journalPanel?.querySelector(
+          '[data-testid="task-artifact-inline-preview-markdown"]',
+        ),
+      ).toBeTruthy();
+      expect(
+        journalPanel?.querySelector(
+          '[data-testid="task-artifact-inline-preview-truncated"]',
+        ),
+      ).toBeTruthy();
+      expect(
+        journalPanel?.querySelector(
+          '[data-testid="task-artifact-inline-preview-text"]',
+        ),
+      ).toBeNull();
+      expect(detailSplit?.getAttribute('data-artifact-open')).toBe('true');
+      expect(detailSplit?.getAttribute('data-journal-open')).toBe('true');
+      expect(
+        container.querySelector('button[aria-label="调整执行详情宽度"]'),
+      ).toBeTruthy();
+      expect(
+        journalPanel?.querySelector(
+          'button[aria-label="复制文档 武汉3日游攻略.md"]',
+        ),
+      ).toBeTruthy();
+      expect(journalPanel?.textContent).not.toContain('复制');
+      expect(container.textContent).toContain('# 武汉3日游攻略');
 
       await act(async () => {
         Simulate.click(markdownDownloadButton);
@@ -5549,7 +5563,7 @@ describe('TaskDetailPage', () => {
     }
   });
 
-  it('places document artifact cards in their owning assistant turns and previews the latest generated file', async () => {
+  it('places document artifact cards in their owning assistant turns without automatically previewing them', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -5694,18 +5708,7 @@ describe('TaskDetailPage', () => {
       ).toBe('artifact-doc-new');
       expect(container.textContent).toContain('文档已生成完毕');
       expect(container.textContent).toContain('已按穷游风格全面重写');
-      expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
-        artifact_id: 'artifact-doc-new',
-        mode: 'preview',
-        thread_id: 'thread-doc-followup-1',
-        space_id: 'space-1',
-      });
-      expect(mockFetchTaskThreadArtifactContent).not.toHaveBeenCalledWith({
-        artifact_id: 'artifact-doc-old',
-        mode: 'preview',
-        thread_id: 'thread-doc-followup-1',
-        space_id: 'space-1',
-      });
+      expect(mockFetchTaskThreadArtifactContent).not.toHaveBeenCalled();
     } finally {
       act(() => {
         root?.unmount();

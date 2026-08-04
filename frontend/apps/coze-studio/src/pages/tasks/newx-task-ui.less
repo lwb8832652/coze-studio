@@ -499,9 +499,26 @@
 .coze-prototype-artifact-preview-text,
 .coze-prototype-artifact-preview-table,
 .coze-prototype-artifact-preview-image,
-.coze-prototype-artifact-preview-pdf {
+.coze-prototype-artifact-preview-pdf,
+.coze-prototype-artifact-preview-audio,
+.coze-prototype-artifact-preview-video {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.coze-prototype-artifact-preview-audio {
+  width: calc(100% - 28px);
+  margin: 20px 14px;
+}
+
+.coze-prototype-artifact-preview-video {
+  display: block;
+
+  width: 100%;
+  max-height: 100%;
+
+  object-fit: contain;
+  background: #101712;
 }
 
 .coze-prototype-artifact-preview-markdown,
@@ -529,6 +546,87 @@
     #f8faf8,
     var(--newx-color-surface-muted, #eef1ee)
   );
+}
+
+.task-detail-scrollbar() {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  &::-webkit-scrollbar-track,
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: transparent;
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+  }
+
+  &:hover,
+  &:focus-within {
+    scrollbar-color: rgb(96 112 103 / 48%) transparent;
+    scrollbar-width: thin;
+  }
+
+  &:hover::-webkit-scrollbar,
+  &:focus-within::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  &:hover::-webkit-scrollbar-thumb,
+  &:focus-within::-webkit-scrollbar-thumb {
+    background-color: rgb(69 84 76 / 68%);
+  }
+}
+
+.task-detail-horizontal-scrollbar() {
+  &::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-width: 1px 2px;
+  }
+
+  &:hover::-webkit-scrollbar,
+  &:focus-within::-webkit-scrollbar {
+    height: 4px;
+  }
+}
+
+.coze-prototype-task-detail-page {
+  .coze-prototype-detail-scroll,
+  .coze-prototype-artifact-preview-markdown,
+  .coze-prototype-artifact-preview-text,
+  .coze-prototype-token-usage-panel,
+  .coze-prototype-markdown-content [class*='table-container'],
+  .coze-prototype-markdown-content [class*='table-container'] > table,
+  .journal-document-toc,
+  .journal-code-tree,
+  .journal-browser-captures,
+  .journal-document-page,
+  .journal-terminal-surface,
+  .journal-skill-view,
+  .journal-browser-stage,
+  .journal-browser-analysis,
+  .journal-image-stage,
+  .journal-audio-stage,
+  .journal-media-collection-list {
+    .task-detail-scrollbar();
+  }
+
+  .coze-prototype-markdown-content [class*='table-container'],
+  .coze-prototype-markdown-content [class*='table-container'] > table {
+    .task-detail-horizontal-scrollbar();
+  }
 }
 
 .coze-prototype-task-detail-page .coze-prototype-detail-inner {
@@ -980,6 +1078,32 @@
   background: var(--newx-color-surface, #fff);
   border-color: var(--task-detail-line);
   border-radius: 10px;
+}
+
+.coze-prototype-task-detail-page
+  .coze-prototype-artifact-message-download.coz-button {
+  color: var(--task-detail-muted, #607067) !important;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.coze-prototype-task-detail-page
+  .coze-prototype-artifact-message-download.coz-button:hover {
+  color: var(--task-detail-ink, #1d2520) !important;
+  background: var(--newx-color-surface-muted, #f3f5f3) !important;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-artifact-message-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--newx-color-danger, #c93c4a);
+
+  background: #fff8f8;
+  border: 1px solid rgba(201, 60, 74, 14%);
+  border-radius: 6px;
 }
 
 .coze-prototype-task-detail-page .coze-prototype-followup-suggestions {
