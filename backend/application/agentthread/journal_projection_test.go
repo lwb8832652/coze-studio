@@ -52,6 +52,51 @@ func TestJournalProjectionPublishesOnlyStartedPlanTasks(t *testing.T) {
 		journalPayloadString(t, completed.Payload, "milestone_id"))
 }
 
+func TestJournalProjectionPublishesExecutionIntroBeforeFirstMilestone(t *testing.T) {
+	intro, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "plan.task.created",
+		Payload: `{
+			"plan_task_id":"7",
+			"subject":"核验接口",
+			"status":"pending",
+			"execution_intro":"收到。我会先核验接口，再完成实现与验证。"
+		}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, intro)
+	require.Equal(t, "journal.intro", intro.EventType)
+	require.Equal(t, "running", intro.Status)
+	require.Equal(t, "收到。我会先核验接口，再完成实现与验证。", journalPayloadString(t, intro.Payload, "text"))
+	require.Equal(t, journalProjectionIdempotencyKey(2, "run", "2", "intro"), intro.IdempotencyKey)
+
+	replayed, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "plan.task.created",
+		Payload: `{
+			"plan_task_id":"8",
+			"subject":"运行验证",
+			"status":"pending",
+			"execution_intro":"这段重复摘要不会创建第二个可见节点。"
+		}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, replayed)
+	require.Equal(t, intro.IdempotencyKey, replayed.IdempotencyKey)
+
+	started, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "plan.task.updated",
+		Payload: `{
+			"plan_task_id":"7",
+			"subject":"核验接口",
+			"status":"in_progress",
+			"execution_intro":"收到。我会先核验接口，再完成实现与验证。"
+		}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, started)
+	require.Equal(t, "milestone.started", started.EventType)
+	require.Equal(t, "收到。我会先核验接口，再完成实现与验证。", journalPayloadString(t, started.Payload, "execution_intro"))
+}
+
 func TestJournalProjectionKeepsActionIdentityAndServerOwnedVerbs(t *testing.T) {
 	started, err := ProjectRunEventToJournal(RunEvent{
 		ThreadID: 1, RunID: 2, EventType: "tool.started",
@@ -91,12 +136,17 @@ func TestJournalProjectionKeepsActionIdentityAndServerOwnedVerbs(t *testing.T) {
 func TestJournalProjectionMapsADKToolCallMessageToActionStarted(t *testing.T) {
 	started, err := ProjectRunEventToJournal(RunEvent{
 		ThreadID: 1, RunID: 2, EventType: "message.completed",
-		Payload: `{"role":"assistant","tool_calls":[{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/secret.md\"}"}}]}`,
+		Payload: `{"role":"assistant","plan_task_id":"7","tool_calls":[{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/secret.md\"}"}}]}`,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, started)
 	require.Equal(t, "action.started", started.EventType)
 	require.Equal(t, "read", started.Operation)
+	require.Equal(t, "文件", started.Target)
+	require.Equal(t,
+		journalStableProjectionID(2, "milestone", "7"),
+		started.Milestone,
+	)
 	require.NotContains(t, started.Payload, "/private/secret.md")
 
 	completed, err := ProjectRunEventToJournal(RunEvent{
@@ -106,12 +156,13 @@ func TestJournalProjectionMapsADKToolCallMessageToActionStarted(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, completed)
 	require.Equal(t, started.ActionID, completed.ActionID)
+	require.Equal(t, started.Target, completed.Target)
 }
 
 func TestJournalProjectionExpandsParallelADKToolCallsWithoutArguments(t *testing.T) {
 	source := RunEvent{
 		ThreadID: 1, RunID: 2, EventType: "message.completed",
-		Payload: `{"role":"assistant","tool_calls":[
+		Payload: `{"role":"assistant","agent_name":"lead","run_path":["lead","worker"],"tool_calls":[
 			{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/one.md\"}"}},
 			{"id":"call-2","function":{"name":"web_search","arguments":"{\"query\":\"secret\"}"}}
 		]}`,
@@ -134,6 +185,14 @@ func TestJournalProjectionExpandsParallelADKToolCallsWithoutArguments(t *testing
 	require.NotNil(t, second)
 	require.Equal(t, "search", second.Operation)
 	require.NotEqual(t, first.ActionID, second.ActionID)
+
+	completed, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "tool.completed",
+		Payload: `{"role":"tool","agent_name":"lead","run_path":["lead","worker"],"tool_name":"web_search","tool_call_id":"call-2","content":"done"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, completed)
+	require.Equal(t, second.ActionID, completed.ActionID)
 }
 
 func TestJournalProjectionUsesProgressRevisionForAppendOnlyUpdates(t *testing.T) {
@@ -180,11 +239,6 @@ func TestJournalProjectionCoversSkillsArtifactsVerificationAndConfirmation(t *te
 		target    string
 	}{
 		{
-			name: "skills", event: RunEvent{ThreadID: 1, RunID: 2, EventType: "skills.loaded",
-				Payload: `{"skill_count":2,"skill_ids":["10","11"],"skill_names":["research-planner","document-tools"]}`},
-			eventType: "action.terminal", operation: "use_skill", target: "research-planner、document-tools",
-		},
-		{
 			name: "artifact", event: RunEvent{ThreadID: 1, RunID: 2, EventType: "artifact.presented",
 				Payload: `{"artifacts":[{"artifact_id":99,"title":"评审报告.md","artifact_type":"document"}]}`},
 			eventType: "artifact.created", target: "评审报告.md",
@@ -212,6 +266,89 @@ func TestJournalProjectionCoversSkillsArtifactsVerificationAndConfirmation(t *te
 			require.Equal(t, test.target, projection.Target)
 		})
 	}
+}
+
+func TestJournalProjectionDoesNotTreatSkillCatalogAsUsedSkills(t *testing.T) {
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID:  1,
+		RunID:     2,
+		EventType: "skills.loaded",
+		Payload: `{"skill_count":2,"skill_ids":["10","11"],` +
+			`"skill_names":["research-planner","document-tools"]}`,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, projection)
+}
+
+func TestJournalProjectionTracksActualSkillLifecycle(t *testing.T) {
+	started, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "skill.started",
+		Payload: `{"skill_id":"10","skill_name":"research-planner",` +
+			`"action_id":"skill-action-1","plan_task_id":"7","status":"running"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, started)
+	require.Equal(t, "action.started", started.EventType)
+	require.Equal(t, "use_skill", started.Operation)
+	require.Equal(t, "research-planner", started.Target)
+	require.Equal(t, "skill-action-1", started.ActionID)
+	require.Equal(t,
+		journalStableProjectionID(2, "milestone", "7"),
+		started.Milestone,
+	)
+
+	completed, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "skill.completed",
+		Payload: `{"skill_id":"10","skill_name":"research-planner",` +
+			`"action_id":"skill-action-1","plan_task_id":"7","status":"completed"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, completed)
+	require.Equal(t, "action.terminal", completed.EventType)
+	require.Equal(t, "completed", completed.Status)
+	require.Equal(t, started.ActionID, completed.ActionID)
+	require.Equal(t, started.Target, completed.Target)
+	require.Equal(t, started.Milestone, completed.Milestone)
+}
+
+func TestJournalProjectionDoesNotDuplicateSkillToolMessages(t *testing.T) {
+	started, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "message.completed",
+		Payload: `{"role":"assistant","tool_calls":[{"id":"call-1",` +
+			`"function":{"name":"skill","arguments":"{\"skill\":\"research-planner\"}"}}]}`,
+	})
+	require.NoError(t, err)
+	require.Nil(t, started)
+
+	completed, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "tool.completed",
+		Payload: `{"role":"tool","tool_name":"skill","tool_call_id":"call-1"}`,
+	})
+	require.NoError(t, err)
+	require.Nil(t, completed)
+}
+
+func TestJournalProjectionDoesNotExposeArtifactPresentationToolAsStep(t *testing.T) {
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "tool.completed",
+		Payload: `{"role":"tool","tool_name":"present_files","tool_call_id":"call-present"}`,
+	})
+	require.NoError(t, err)
+	require.Nil(t, projection)
+}
+
+func TestJournalArtifactProjectionKeepsPublicArtifactTitle(t *testing.T) {
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "artifact.presented",
+		Payload: `{"artifacts":[{"artifact_id":99,"title":"journal-acceptance-plan.md"}]}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, projection)
+	require.Equal(t,
+		"journal-acceptance-plan.md",
+		journalPayloadString(t, projection.Payload, "title"),
+	)
 }
 
 func TestJournalProjectionUsesWholeArtifactCollectionIdentity(t *testing.T) {

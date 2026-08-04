@@ -55,15 +55,16 @@ import { JournalFailureDetail } from './journal-failure-detail';
 import {
   buildJournalMilestones,
   journalActionKind,
+  journalExecutionIntro,
   journalFailureDetails,
   type JournalActionItem,
   type JournalMilestoneItem,
 } from './journal-event-model';
 
 const virtualRowThreshold = 80;
-const milestoneHeaderHeight = 42;
-const actionRowHeight = 38;
-const failedActionRowHeight = 76;
+const milestoneHeaderHeight = 36;
+const actionRowHeight = 64;
+const failedActionRowHeight = 94;
 const failedAtomicMilestoneHeight = 84;
 const maximumVirtualListHeight = 560;
 
@@ -127,6 +128,7 @@ const atomicMilestoneAction = (
 ): JournalActionItem => ({
   id: milestone.id,
   title: milestone.title,
+  detail: milestone.title,
   kind: journalActionKind(milestone.event),
   status: milestone.status,
   event: milestone.event,
@@ -154,13 +156,17 @@ const JournalActionRow = ({
     <button
       type="button"
       aria-current={selected ? 'step' : undefined}
+      aria-label={action.detail}
       className="journal-action-main"
       onClick={() => onSelectEvent(action.event)}
     >
-      <span className="journal-action-icon" aria-hidden="true">
-        {actionIcon(action)}
+      <span className="journal-action-title">{action.title}</span>
+      <span className="journal-action-detail" data-status={action.status}>
+        <span className="journal-action-icon" aria-hidden="true">
+          {actionIcon(action)}
+        </span>
+        <span className="journal-action-detail-copy">{action.detail}</span>
       </span>
-      <span className="journal-action-copy">{action.title}</span>
     </button>
     <JournalFailureDetail
       action={action}
@@ -440,6 +446,7 @@ export const JournalConversationFlow = ({
   onSelectEvent: (event: WorkbenchJournalEvent) => void;
 }) => {
   const milestones = useMemo(() => buildJournalMilestones(events), [events]);
+  const executionIntro = useMemo(() => journalExecutionIntro(events), [events]);
   const [expandedIDs, setExpandedIDs] = useState<Set<string>>(() =>
     defaultExpandedIDs(milestones),
   );
@@ -459,7 +466,7 @@ export const JournalConversationFlow = ({
     setExpandedIDs(current => new Set([...current, ...runningIDs]));
   }, [activeMilestoneID, milestones]);
 
-  if (!milestones.length) {
+  if (!milestones.length && !executionIntro) {
     return null;
   }
 
@@ -516,27 +523,32 @@ export const JournalConversationFlow = ({
 
   return (
     <div className="journal-conversation-flow" data-testid="journal-flow">
-      {shouldVirtualize ? (
-        <JournalVirtualizedMilestoneList
-          canRecover={canRecover}
-          expandedIDs={expandedIDs}
-          milestones={milestones}
-          selectedEventId={selectedEventId}
-          onSelectEvent={onSelectEvent}
-          onRequestRecovery={requestRecovery}
-          onToggle={toggleMilestone}
-        />
-      ) : (
-        <JournalMilestoneList
-          canRecover={canRecover}
-          expandedIDs={expandedIDs}
-          milestones={milestones}
-          selectedEventId={selectedEventId}
-          onSelectEvent={onSelectEvent}
-          onRequestRecovery={requestRecovery}
-          onToggle={toggleMilestone}
-        />
-      )}
+      {executionIntro ? (
+        <p className="journal-execution-intro">{executionIntro}</p>
+      ) : null}
+      {milestones.length ? (
+        shouldVirtualize ? (
+          <JournalVirtualizedMilestoneList
+            canRecover={canRecover}
+            expandedIDs={expandedIDs}
+            milestones={milestones}
+            selectedEventId={selectedEventId}
+            onSelectEvent={onSelectEvent}
+            onRequestRecovery={requestRecovery}
+            onToggle={toggleMilestone}
+          />
+        ) : (
+          <JournalMilestoneList
+            canRecover={canRecover}
+            expandedIDs={expandedIDs}
+            milestones={milestones}
+            selectedEventId={selectedEventId}
+            onSelectEvent={onSelectEvent}
+            onRequestRecovery={requestRecovery}
+            onToggle={toggleMilestone}
+          />
+        )
+      ) : null}
       {recoveryTarget && recoveryCapability && onRecover ? (
         <JournalRecoveryDialog
           busy={recoveryBusy}

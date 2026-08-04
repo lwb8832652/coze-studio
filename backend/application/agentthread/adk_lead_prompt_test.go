@@ -107,6 +107,38 @@ func TestADKLeadPromptProjectsConditionalCapabilitySections(t *testing.T) {
 	}
 }
 
+func TestADKLeadPromptKeepsPlanningAdvisoryAndSimpleActionsDirect(t *testing.T) {
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"pro"}`)
+	require.NoError(t, err)
+
+	prompt, err := NewDefaultADKLeadPromptComposer().Compose(
+		ADKLeadPromptComposeInput{RuntimeConfig: runtimeConfig},
+	)
+
+	require.NoError(t, err)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"For multi-step work, maintain a concise Todo plan",
+	)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Keep one active step at a time",
+	)
+	require.Contains(
+		t,
+		prompt.Instruction,
+		"Do not create ceremony for a single straightforward action",
+	)
+	require.NotContains(
+		t,
+		prompt.Instruction,
+		"Do not combine a plan status change and its child operations",
+	)
+	require.NotContains(t, prompt.Instruction, "metadata.execution_intro")
+}
+
 func TestADKLeadPromptAppendsEscapedBoundedOverlays(t *testing.T) {
 	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"pro"}`)
 	require.NoError(t, err)

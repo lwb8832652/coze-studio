@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -1394,7 +1396,7 @@ func TestJournalContentProducerSkipsAttemptsWithoutSnapshotEnrollment(t *testing
 	require.Empty(t, repo.snapshots)
 }
 
-func TestSkillsLoadedProducerPublishesListOnlySnapshot(t *testing.T) {
+func TestSkillsLoadedProducerPublishesCatalogEventWithoutJournalAction(t *testing.T) {
 	service, repo, _ := newJournalSnapshotApplicationTestService()
 	repo.activeAttempt = &entity.RunAttempt{
 		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 10,
@@ -1413,10 +1415,49 @@ func TestSkillsLoadedProducerPublishesListOnlySnapshot(t *testing.T) {
 			ID: 7, Name: "review", Description: "Review an implementation.",
 			Body: "internal instructions must never enter Journal",
 		}}},
-		service,
 	)
 
 	require.Equal(t, []string{"skills.loaded"}, events.eventTypes())
+	require.Empty(t, repo.snapshots)
+}
+
+func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
+	service, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &entity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 10,
+		AttemptID: "att-skills", Status: entity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: entity.JournalProjectionStateHealthy,
+	}
+	service.JournalSnapshotAttemptReader = repo
+	run := &RunSummary{RunID: 10, ThreadID: 1, SpaceID: 10, CreatorID: 9}
+	tracker, err := NewADKParityStateTracker(run, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "plan-1", Title: "核验实现", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	observed := make(chan struct{})
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{
+			{ID: 7, Name: "review", Description: "Review an implementation.", Body: "review body"},
+			{ID: 8, Name: "document", Description: "Prepare a document.", Body: "document body"},
+		},
+		ADKContextBudget{SkillCatalogTokens: 200, SkillContentTokens: 200},
+		WithADKSkillBackendJournal(
+			run,
+			notifyingJournalContentProducer{next: service, done: observed},
+		),
+	)
+	require.NoError(t, err)
+
+	_, err = backend.Get(ctx, "review")
+
+	require.NoError(t, err)
+	select {
+	case <-observed:
+	case <-time.After(time.Second):
+		require.FailNow(t, "selected skill Journal observation did not finish")
+	}
 	require.Len(t, repo.snapshots, 1)
 	for _, snapshot := range repo.snapshots {
 		require.Equal(t, entity.JournalSnapshotContentTypeSkill, snapshot.ContentType)
@@ -1426,6 +1467,92 @@ func TestSkillsLoadedProducerPublishesListOnlySnapshot(t *testing.T) {
 		require.Equal(t, []JournalSkillSummary{{
 			SkillID: "7", Name: "review", Description: "Review an implementation.",
 		}}, content.Skill.Skills)
+		event := repo.events[snapshot.EventID]
+		require.NotNil(t, event)
+		require.Equal(t, "review", event.Target)
+		require.Equal(t,
+			journalStableProjectionID(10, "milestone", "plan-1"),
+			event.Milestone,
+		)
+	}
+}
+
+type notifyingJournalContentProducer struct {
+	next JournalContentProducer
+	done chan struct{}
+}
+
+func (p notifyingJournalContentProducer) ProduceJournalContent(
+	ctx context.Context,
+	req JournalRuntimeContentSubmission,
+) (*entity.JournalContentSnapshot, *entity.JournalEvent, error) {
+	defer close(p.done)
+	return p.next.ProduceJournalContent(ctx, req)
+}
+
+func TestOutputSnapshotKeepsTheBoundPlanMilestone(t *testing.T) {
+	service, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &entity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 10,
+		AttemptID: "att-output", Status: entity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: entity.JournalProjectionStateHealthy,
+	}
+	service.JournalSnapshotAttemptReader = repo
+	run := &RunSummary{RunID: 10, ThreadID: 1, SpaceID: 10, CreatorID: 9}
+	tracker, err := NewADKParityStateTracker(run, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "plan-output", Title: "生成验收文档", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	startedEvent, err := MapADKEvent(ctx, 1, 10, &adk.AgentEvent{
+		AgentName: "lead",
+		RunPath:   []adk.RunStep{newADKRunStep(t, "lead")},
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-write-output", Type: "function",
+					Function: schema.FunctionCall{Name: "write_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	started, err := ProjectRunEventToJournal(startedEvent.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, started)
+
+	service.publishJournalDocumentSnapshot(
+		ctx,
+		run,
+		"call-write-output",
+		&OutputFileSummary{
+			FileID: 7, FileName: "report.md",
+			VirtualPath: "/mnt/user-data/outputs/report.md",
+			ContentType: "text/markdown",
+			Digest:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		"",
+		[]byte("# report"),
+	)
+
+	require.Len(t, repo.events, 1)
+	for _, event := range repo.events {
+		require.Equal(t, started.ActionID, event.ActionID)
+		require.Equal(t, started.Operation, event.Operation)
+		require.Equal(t, started.Target, event.Target)
+		require.Equal(t,
+			started.Milestone,
+			event.Milestone,
+		)
+	}
+	for _, snapshot := range repo.snapshots {
+		var content JournalTypedSnapshotContent
+		require.NoError(t, json.Unmarshal([]byte(snapshot.ContentJSON), &content))
+		require.NotNil(t, content.Document)
+		require.Equal(t, "report.md", content.Document.Title)
 	}
 }
 

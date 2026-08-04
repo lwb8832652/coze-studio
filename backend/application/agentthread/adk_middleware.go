@@ -480,6 +480,10 @@ func defaultADKMiddlewareBuilder(
 					input.Run,
 					options.GuardrailEnforcer,
 				),
+				WithADKSkillBackendJournal(
+					input.Run,
+					options.JournalContentProducer,
+				),
 			)
 			if err != nil {
 				return nil, err
@@ -537,7 +541,6 @@ func defaultADKMiddlewareBuilder(
 				options.EventSink,
 				input.Run,
 				skillContext,
-				options.JournalContentProducer,
 			)
 			return middleware, nil
 		}

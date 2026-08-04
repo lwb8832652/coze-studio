@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -37,6 +38,8 @@ const (
 	maxADKParityPromotedTools   = 512
 	maxADKParitySkills          = 256
 	maxADKParityInterrupts      = 64
+	maxADKParityJournalBindings = 4096
+	maxADKParityRunPathDepth    = 64
 	maxADKParityLabelRunes      = 1024
 	maxADKParityContentBytes    = 256 * 1024
 	maxADKParityStateBytes      = 8 << 20
@@ -176,6 +179,17 @@ type ADKParityCompletion struct {
 type ADKParityStateTracker struct {
 	mu    sync.RWMutex
 	state ADKParityState
+	// Projection-only correlation state. It must never enter ADK checkpoints.
+	journalToolPlanTasks map[string]string
+	journalToolCallIDs   map[string]string
+}
+
+type adkJournalToolCorrelationContextKey struct{}
+
+type adkJournalToolCorrelation struct {
+	ToolCallID string
+	BindingKey string
+	PlanTaskID string
 }
 
 type adkParityStateContextKey struct{}
@@ -201,6 +215,244 @@ func adkParityStateTrackerFromContext(ctx context.Context) *ADKParityStateTracke
 	return tracker
 }
 
+func activeADKPlanTaskIDFromContext(ctx context.Context) string {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	if tracker == nil {
+		return ""
+	}
+	activeID := ""
+	for _, todo := range tracker.Snapshot().Todos {
+		if strings.ToLower(strings.TrimSpace(todo.Status)) != "in_progress" {
+			continue
+		}
+		if activeID != "" {
+			return ""
+		}
+		activeID = strings.TrimSpace(todo.ID)
+	}
+	return activeID
+}
+
+func bindADKJournalToolPlanTasks(
+	ctx context.Context,
+	toolCallIDs []string,
+	planTaskID string,
+) bool {
+	return bindADKJournalScopedToolPlanTasks(
+		ctx,
+		"",
+		nil,
+		toolCallIDs,
+		planTaskID,
+	)
+}
+
+func bindADKJournalScopedToolPlanTasks(
+	ctx context.Context,
+	agentName string,
+	runPath []string,
+	toolCallIDs []string,
+	planTaskID string,
+) bool {
+	if len(toolCallIDs) == 0 {
+		return true
+	}
+	tracker := adkParityStateTrackerFromContext(ctx)
+	planTaskID = strings.TrimSpace(planTaskID)
+	if tracker == nil ||
+		!isADKParityLabel(planTaskID, maxADKParityLabelRunes) {
+		return false
+	}
+	next := make(map[string]string, len(toolCallIDs))
+	nextToolCallIDs := make(map[string]string, len(toolCallIDs))
+	for _, toolCallID := range toolCallIDs {
+		toolCallID = strings.TrimSpace(toolCallID)
+		bindingKey := adkJournalToolBindingKey(agentName, runPath, toolCallID)
+		if bindingKey == "" {
+			return false
+		}
+		next[bindingKey] = planTaskID
+		nextToolCallIDs[bindingKey] = toolCallID
+	}
+	if len(next) > maxADKParityJournalBindings {
+		return false
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	additional := 0
+	for toolCallID, nextPlanTaskID := range next {
+		currentPlanTaskID, exists := tracker.journalToolPlanTasks[toolCallID]
+		if exists && currentPlanTaskID != nextPlanTaskID {
+			return false
+		}
+		if currentToolCallID, exists := tracker.journalToolCallIDs[toolCallID]; exists && currentToolCallID != nextToolCallIDs[toolCallID] {
+			return false
+		}
+		if !exists {
+			additional++
+		}
+	}
+	if len(tracker.journalToolPlanTasks)+additional > maxADKParityJournalBindings {
+		return false
+	}
+	if tracker.journalToolPlanTasks == nil {
+		tracker.journalToolPlanTasks = make(map[string]string, len(next))
+	}
+	if tracker.journalToolCallIDs == nil {
+		tracker.journalToolCallIDs = make(map[string]string, len(next))
+	}
+	for bindingKey, nextPlanTaskID := range next {
+		tracker.journalToolPlanTasks[bindingKey] = nextPlanTaskID
+		tracker.journalToolCallIDs[bindingKey] = nextToolCallIDs[bindingKey]
+	}
+	return true
+}
+
+func releaseADKJournalToolPlanTask(ctx context.Context, toolCallID string) {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if tracker == nil || toolCallID == "" ||
+		len(toolCallID) > maxADKParityLabelRunes*2+32 {
+		return
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if _, exists := tracker.journalToolPlanTasks[toolCallID]; !exists {
+		return
+	}
+	delete(tracker.journalToolPlanTasks, toolCallID)
+	delete(tracker.journalToolCallIDs, toolCallID)
+}
+
+func boundADKJournalToolPlanTaskIDFromContext(
+	ctx context.Context,
+	toolCallID string,
+) string {
+	_, planTaskID, found, _ := resolveADKJournalToolBindingFromContext(
+		ctx,
+		toolCallID,
+	)
+	if !found {
+		return ""
+	}
+	return planTaskID
+}
+
+func boundADKJournalScopedToolPlanTaskIDFromContext(
+	ctx context.Context,
+	agentName string,
+	runPath []string,
+	toolCallID string,
+) string {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	bindingKey := adkJournalToolBindingKey(agentName, runPath, toolCallID)
+	if tracker == nil || bindingKey == "" {
+		return ""
+	}
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	return tracker.journalToolPlanTasks[bindingKey]
+}
+
+func resolveADKJournalToolBindingFromContext(
+	ctx context.Context,
+	toolCallID string,
+) (bindingKey, planTaskID string, found, ambiguous bool) {
+	tracker := adkParityStateTrackerFromContext(ctx)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if tracker == nil ||
+		!isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+		return "", "", false, false
+	}
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	for candidateKey, candidateToolCallID := range tracker.journalToolCallIDs {
+		if candidateToolCallID != toolCallID {
+			continue
+		}
+		if found {
+			return "", "", false, true
+		}
+		bindingKey = candidateKey
+		planTaskID = tracker.journalToolPlanTasks[candidateKey]
+		found = true
+	}
+	return bindingKey, planTaskID, found, false
+}
+
+func captureADKJournalToolCorrelation(
+	ctx context.Context,
+	toolCallID string,
+) context.Context {
+	bindingKey, planTaskID, found, ambiguous :=
+		resolveADKJournalToolBindingFromContext(ctx, toolCallID)
+	if !found || ambiguous {
+		return ctx
+	}
+	return context.WithValue(ctx, adkJournalToolCorrelationContextKey{}, adkJournalToolCorrelation{
+		ToolCallID: strings.TrimSpace(toolCallID),
+		BindingKey: bindingKey,
+		PlanTaskID: planTaskID,
+	})
+}
+
+func capturedADKJournalToolCorrelation(
+	ctx context.Context,
+	toolCallID string,
+) (bindingKey, planTaskID string, found bool) {
+	correlation, ok := ctx.Value(adkJournalToolCorrelationContextKey{}).(adkJournalToolCorrelation)
+	if !ok || correlation.ToolCallID != strings.TrimSpace(toolCallID) ||
+		correlation.BindingKey == "" ||
+		len(correlation.BindingKey) > maxADKParityLabelRunes*2+32 ||
+		(correlation.PlanTaskID != "" &&
+			!isADKParityLabel(correlation.PlanTaskID, maxADKParityLabelRunes)) {
+		return "", "", false
+	}
+	return correlation.BindingKey, correlation.PlanTaskID, true
+}
+
+func adkJournalToolBindingKey(
+	agentName string,
+	runPath []string,
+	toolCallID string,
+) string {
+	agentName = strings.TrimSpace(agentName)
+	toolCallID = strings.TrimSpace(toolCallID)
+	if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) {
+		return ""
+	}
+	if agentName == "" && len(runPath) == 0 {
+		return toolCallID
+	}
+	if agentName != "" &&
+		!isADKParityLabel(agentName, maxADKParityLabelRunes) {
+		return ""
+	}
+	if len(runPath) > maxADKParityRunPathDepth {
+		return ""
+	}
+	normalizedRunPath := make([]string, 0, len(runPath))
+	for _, step := range runPath {
+		step = strings.TrimSpace(step)
+		if !isADKParityLabel(step, maxADKParityLabelRunes) {
+			return ""
+		}
+		normalizedRunPath = append(normalizedRunPath, step)
+	}
+	encoded, err := json.Marshal(struct {
+		AgentName  string   `json:"agent_name"`
+		RunPath    []string `json:"run_path"`
+		ToolCallID string   `json:"tool_call_id"`
+	}{
+		AgentName: agentName, RunPath: normalizedRunPath, ToolCallID: toolCallID,
+	})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("scope:%x", digest)
+}
+
 func NewADKParityStateTracker(
 	run *RunSummary,
 	seed *ADKParityState,
@@ -209,20 +461,24 @@ func NewADKParityStateTracker(
 		return nil, fmt.Errorf("eino adk parity state requires run ownership")
 	}
 	workspace := newADKParityWorkspace(run.SpaceID, run.ThreadID)
-	tracker := &ADKParityStateTracker{state: ADKParityState{
-		SchemaVersion: adkParityStateSchemaVersion,
-		SpaceID:       run.SpaceID,
-		ThreadID:      run.ThreadID,
-		LastRunID:     run.RunID,
-		Messages:      []ADKParityMessage{},
-		Todos:         []ADKParityTodo{},
-		Workspace:     workspace,
-		Uploads:       []ADKParityUpload{},
-		Artifacts:     []ADKParityArtifact{},
-		ViewedImages:  map[string]ADKParityViewedImage{},
-		ActiveSkills:  []ADKParitySkill{},
-		Interrupts:    []ADKParityInterrupt{},
-	}}
+	tracker := &ADKParityStateTracker{
+		state: ADKParityState{
+			SchemaVersion: adkParityStateSchemaVersion,
+			SpaceID:       run.SpaceID,
+			ThreadID:      run.ThreadID,
+			LastRunID:     run.RunID,
+			Messages:      []ADKParityMessage{},
+			Todos:         []ADKParityTodo{},
+			Workspace:     workspace,
+			Uploads:       []ADKParityUpload{},
+			Artifacts:     []ADKParityArtifact{},
+			ViewedImages:  map[string]ADKParityViewedImage{},
+			ActiveSkills:  []ADKParitySkill{},
+			Interrupts:    []ADKParityInterrupt{},
+		},
+		journalToolPlanTasks: map[string]string{},
+		journalToolCallIDs:   map[string]string{},
+	}
 	if seed == nil {
 		return tracker, nil
 	}

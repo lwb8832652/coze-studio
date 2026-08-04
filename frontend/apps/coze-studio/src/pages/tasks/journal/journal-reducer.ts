@@ -131,6 +131,7 @@ export const createInitialJournalState = (
 });
 
 const isDisplayableEvent = (event: WorkbenchJournalEvent): boolean =>
+  event.event_type === 'journal.intro' ||
   ['milestone.', 'action.', 'artifact.', 'verification.', 'confirmation.'].some(
     prefix => event.event_type.startsWith(prefix),
   );

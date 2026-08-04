@@ -96,6 +96,7 @@ import type { JournalViewMode } from './journal/journal-reducer';
 import type { JournalRecoveryHandler } from './journal/journal-recovery-dialog';
 import { JournalPanel, JournalRestoreButton } from './journal/journal-panel';
 import { JournalConversationFlow } from './journal/journal-conversation-flow';
+import { journalExecutionIntro } from './journal/journal-event-model';
 import {
   getTaskExecutionType,
   getTaskInputText,
@@ -506,11 +507,13 @@ const TaskConversation = ({ task }: { task: TaskThreadDetailModel }) => (
 const TaskThreadAssistantMessage = ({
   message,
   isRunning = false,
+  journalIntro = false,
   reasoning,
   streamingMessage,
 }: {
   message?: ThreadTranscriptMessage;
   isRunning?: boolean;
+  journalIntro?: boolean;
   reasoning?: string;
   streamingMessage?: string;
 }) => {
@@ -520,16 +523,25 @@ const TaskThreadAssistantMessage = ({
   const answerMessage = messageResult?.message || streamingMessage;
   const inlineReasoning = reasoning || messageResult?.reasoning;
 
+  if (journalIntro && !answerMessage) {
+    return null;
+  }
+
   if (!answerMessage && !inlineReasoning && !isRunning) {
     return null;
   }
 
   return (
-    <article className="coze-prototype-answer" data-result-type="answer">
-      <TaskInlineReasoning content={inlineReasoning} />
+    <article
+      className={`coze-prototype-answer ${
+        journalIntro ? 'coze-prototype-journal-intro' : ''
+      }`.trim()}
+      data-result-type="answer"
+    >
+      {journalIntro ? null : <TaskInlineReasoning content={inlineReasoning} />}
       {answerMessage ? <TaskMarkdownContent value={answerMessage} /> : null}
-      {isRunning ? <TaskStreamingIndicator /> : null}
-      {!isRunning && answerMessage ? (
+      {!journalIntro && isRunning ? <TaskStreamingIndicator /> : null}
+      {!journalIntro && !isRunning && answerMessage ? (
         <TaskAssistantMessageActions copyText={answerMessage} />
       ) : null}
     </article>
@@ -598,9 +610,16 @@ const getConversationMessageState = (
         : latestIndex,
     -1,
   );
+  const latestAssistantCount = transcript.filter(
+    (message, index) =>
+      message.role === 'assistant' &&
+      index > latestUserIndex &&
+      (!latestRunID || normalizeThreadRunID(message.run_id) === latestRunID),
+  ).length;
 
   return {
     latestAssistantIndex,
+    latestAssistantCount,
     hasLatestAssistantMessage: latestRunID
       ? transcript.some(
           message =>
@@ -610,6 +629,124 @@ const getConversationMessageState = (
       : latestAssistantIndex >= 0,
   };
 };
+
+type JournalConversationFlowProps = Parameters<
+  typeof JournalConversationFlow
+>[0];
+
+const TaskThreadLatestRunTurn = ({
+  hasLatestAssistantMessage,
+  journalFlowProps,
+  journalFlowRendered,
+  latestRunEvents,
+  latestRunIsActive,
+  task,
+}: {
+  hasLatestAssistantMessage: boolean;
+  journalFlowProps: JournalConversationFlowProps;
+  journalFlowRendered: boolean;
+  latestRunEvents: TaskThreadDetailEvent[];
+  latestRunIsActive: boolean;
+  task: TaskThreadDetailModel;
+}) => {
+  const latestAnswerMessage = getLatestAnswerEventMessage(latestRunEvents);
+
+  return (
+    <TaskAssistantTurnShell
+      journalMode={!journalFlowRendered && journalFlowProps.events.length > 0}
+      subtitle={getTaskExecutionType(task.input)}
+    >
+      {!journalFlowRendered && journalFlowProps.events.length ? (
+        <JournalConversationFlow {...journalFlowProps} />
+      ) : latestRunEvents.length ? (
+        <TaskExecutionSummary events={latestRunEvents} task={task} />
+      ) : null}
+      {!hasLatestAssistantMessage ? (
+        <TaskThreadAssistantMessage
+          isRunning={latestRunIsActive}
+          reasoning={getLatestAnswerEventReasoning(latestRunEvents)}
+          streamingMessage={latestAnswerMessage}
+        />
+      ) : null}
+    </TaskAssistantTurnShell>
+  );
+};
+
+const TaskThreadAssistantTurn = ({
+  artifactActions,
+  artifactsAfterAnswer,
+  artifactsBeforeAnswer,
+  isJournalContinuation,
+  isJournalIntroMessage,
+  isJournalRunMessage,
+  journalFlowProps,
+  journalIntroVisible,
+  latestPreviewableArtifactID,
+  message,
+  messageRunEvents,
+  onAssistantMessageRef,
+  runID,
+  runningAssistantMessage,
+  shouldRenderJournalFlow,
+  shouldRenderMessageEvents,
+  task,
+}: {
+  artifactActions: TaskArtifactActions;
+  artifactsAfterAnswer: TaskThreadArtifact[];
+  artifactsBeforeAnswer: TaskThreadArtifact[];
+  isJournalContinuation: boolean;
+  isJournalIntroMessage: boolean;
+  isJournalRunMessage: boolean;
+  journalFlowProps: JournalConversationFlowProps;
+  journalIntroVisible: boolean;
+  latestPreviewableArtifactID: string;
+  message: ThreadTranscriptMessage;
+  messageRunEvents: TaskThreadDetailEvent[];
+  onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
+  runID: string;
+  runningAssistantMessage: boolean;
+  shouldRenderJournalFlow: boolean;
+  shouldRenderMessageEvents: boolean;
+  task: TaskThreadDetailModel;
+}) => (
+  <TaskAssistantTurnShell
+    ref={element => {
+      if (runID) {
+        onAssistantMessageRef?.(runID, element);
+      }
+    }}
+    createdAt={message.created_at}
+    hideHeader={isJournalContinuation}
+    journalMode={isJournalRunMessage}
+    subtitle={getTaskExecutionType(task.input)}
+  >
+    {journalIntroVisible ? (
+      <TaskThreadAssistantMessage journalIntro={true} message={message} />
+    ) : null}
+    {shouldRenderJournalFlow ? (
+      <JournalConversationFlow {...journalFlowProps} />
+    ) : shouldRenderMessageEvents && !isJournalRunMessage ? (
+      <TaskExecutionSummary events={messageRunEvents} task={task} />
+    ) : null}
+    <TaskThreadArtifactCards
+      artifactActions={artifactActions}
+      artifacts={artifactsBeforeAnswer}
+      latestPreviewableArtifactID={latestPreviewableArtifactID}
+      task={task}
+    />
+    <TaskThreadAssistantMessage
+      isRunning={runningAssistantMessage}
+      message={isJournalIntroMessage ? undefined : message}
+      reasoning={getLatestAnswerEventReasoning(messageRunEvents)}
+    />
+    <TaskThreadArtifactCards
+      artifactActions={artifactActions}
+      artifacts={artifactsAfterAnswer}
+      latestPreviewableArtifactID={latestPreviewableArtifactID}
+      task={task}
+    />
+  </TaskAssistantTurnShell>
+);
 
 const TaskThreadConversation = ({
   artifactActions,
@@ -637,13 +774,24 @@ const TaskThreadConversation = ({
   const latestRunID = normalizeThreadRunID(latestTaskRunID);
   const latestRunEvents = getRunEvents(events, latestRunID);
   const latestRunIsActive = !isTaskTerminalStatus(task.status);
-  const { hasLatestAssistantMessage, latestAssistantIndex } =
+  const hasCanonicalJournalIntro = Boolean(
+    journalExecutionIntro(journalEvents),
+  );
+  const { hasLatestAssistantMessage, latestAssistantCount, latestAssistantIndex } =
     getConversationMessageState(transcript, latestRunID);
   let latestEventsRendered = false;
   let journalFlowRendered = false;
   const isRunningAssistantMessage = (runID: string, index: number) =>
     latestRunIsActive &&
     (latestRunID ? runID === latestRunID : index === latestAssistantIndex);
+  const journalFlowProps = {
+    events: journalEvents,
+    recoveryCapability: journalRecoveryCapability,
+    selectedEventId: selectedJournalEventId,
+    viewMode: journalViewMode,
+    onRecover: onRecoverJournal,
+    onSelectEvent: onSelectJournalEvent,
+  };
   const renderedItems = transcript.map((message, index) => {
     if (message.role === 'user') {
       return (
@@ -659,18 +807,39 @@ const TaskThreadConversation = ({
     const runID = normalizeThreadRunID(message.run_id);
     const messageKey = getThreadTranscriptMessageKey(message, index);
     const messageRunEvents = runID ? getRunEvents(events, runID) : [];
-    const messageArtifacts = getMessageArtifactGroups({
-      artifactsByRunID,
-      fallbackArtifactsByMessageKey,
-      index,
-      message,
-      renderedArtifactIDs,
-    });
     const shouldRenderMessageEvents = messageRunEvents.length > 0;
-    const shouldRenderJournalFlow =
+    const isJournalRunMessage =
       journalEvents.length > 0 &&
-      !journalFlowRendered &&
       (latestRunID ? runID === latestRunID : index === latestAssistantIndex);
+    const shouldRenderJournalFlow =
+      isJournalRunMessage && !journalFlowRendered;
+    const isJournalContinuation =
+      isJournalRunMessage && journalFlowRendered;
+    const runningAssistantMessage = isRunningAssistantMessage(runID, index);
+    const isJournalIntroMessage =
+      shouldRenderJournalFlow &&
+      Boolean(message.content) &&
+      (index < latestAssistantIndex ||
+        (hasCanonicalJournalIntro &&
+          latestAssistantCount === 1 &&
+          latestRunIsActive));
+    const journalIntroVisible =
+      isJournalIntroMessage && !hasCanonicalJournalIntro;
+    const messageArtifacts = isJournalIntroMessage
+      ? { before: [], after: [] }
+      : getMessageArtifactGroups({
+          artifactsByRunID,
+          fallbackArtifactsByMessageKey,
+          index,
+          message,
+          renderedArtifactIDs,
+        });
+    const artifactsBeforeAnswer = isJournalRunMessage
+      ? []
+      : messageArtifacts.before;
+    const artifactsAfterAnswer = isJournalRunMessage
+      ? [...messageArtifacts.before, ...messageArtifacts.after]
+      : messageArtifacts.after;
     journalFlowRendered = journalFlowRendered || shouldRenderJournalFlow;
     latestEventsRendered =
       latestEventsRendered ||
@@ -679,46 +848,26 @@ const TaskThreadConversation = ({
       );
 
     return (
-      <TaskAssistantTurnShell
+      <TaskThreadAssistantTurn
         key={messageKey}
-        ref={element => {
-          if (runID) {
-            onAssistantMessageRef?.(runID, element);
-          }
-        }}
-        createdAt={message.created_at}
-        subtitle={getTaskExecutionType(task.input)}
-      >
-        {shouldRenderJournalFlow ? (
-          <JournalConversationFlow
-            events={journalEvents}
-            recoveryCapability={journalRecoveryCapability}
-            selectedEventId={selectedJournalEventId}
-            viewMode={journalViewMode}
-            onRecover={onRecoverJournal}
-            onSelectEvent={onSelectJournalEvent}
-          />
-        ) : shouldRenderMessageEvents ? (
-          <TaskExecutionSummary events={messageRunEvents} task={task} />
-        ) : null}
-        <TaskThreadArtifactCards
-          artifactActions={artifactActions}
-          artifacts={messageArtifacts.before}
-          latestPreviewableArtifactID={latestPreviewableArtifactID}
-          task={task}
-        />
-        <TaskThreadAssistantMessage
-          isRunning={isRunningAssistantMessage(runID, index)}
-          message={message}
-          reasoning={getLatestAnswerEventReasoning(messageRunEvents)}
-        />
-        <TaskThreadArtifactCards
-          artifactActions={artifactActions}
-          artifacts={messageArtifacts.after}
-          latestPreviewableArtifactID={latestPreviewableArtifactID}
-          task={task}
-        />
-      </TaskAssistantTurnShell>
+        artifactActions={artifactActions}
+        artifactsAfterAnswer={artifactsAfterAnswer}
+        artifactsBeforeAnswer={artifactsBeforeAnswer}
+        isJournalContinuation={isJournalContinuation}
+        isJournalIntroMessage={isJournalIntroMessage}
+        isJournalRunMessage={isJournalRunMessage}
+        journalFlowProps={journalFlowProps}
+        journalIntroVisible={journalIntroVisible}
+        latestPreviewableArtifactID={latestPreviewableArtifactID}
+        message={message}
+        messageRunEvents={messageRunEvents}
+        onAssistantMessageRef={onAssistantMessageRef}
+        runID={runID}
+        runningAssistantMessage={runningAssistantMessage}
+        shouldRenderJournalFlow={shouldRenderJournalFlow}
+        shouldRenderMessageEvents={shouldRenderMessageEvents}
+        task={task}
+      />
     );
   });
   const unmatchedArtifacts = artifacts.filter(
@@ -730,27 +879,14 @@ const TaskThreadConversation = ({
       {renderedItems}
       {!latestEventsRendered &&
       (latestRunEvents.length || !hasLatestAssistantMessage) ? (
-        <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
-          {!journalFlowRendered && journalEvents.length ? (
-            <JournalConversationFlow
-              events={journalEvents}
-              recoveryCapability={journalRecoveryCapability}
-              selectedEventId={selectedJournalEventId}
-              viewMode={journalViewMode}
-              onRecover={onRecoverJournal}
-              onSelectEvent={onSelectJournalEvent}
-            />
-          ) : latestRunEvents.length ? (
-            <TaskExecutionSummary events={latestRunEvents} task={task} />
-          ) : null}
-          {!hasLatestAssistantMessage ? (
-            <TaskThreadAssistantMessage
-              isRunning={latestRunIsActive}
-              reasoning={getLatestAnswerEventReasoning(latestRunEvents)}
-              streamingMessage={getLatestAnswerEventMessage(latestRunEvents)}
-            />
-          ) : null}
-        </TaskAssistantTurnShell>
+        <TaskThreadLatestRunTurn
+          hasLatestAssistantMessage={hasLatestAssistantMessage}
+          journalFlowProps={journalFlowProps}
+          journalFlowRendered={journalFlowRendered}
+          latestRunEvents={latestRunEvents}
+          latestRunIsActive={latestRunIsActive}
+          task={task}
+        />
       ) : null}
       <TaskThreadArtifactCards
         artifactActions={artifactActions}
@@ -819,6 +955,7 @@ const TaskTranscript = ({
 }) => (
   <section
     className="coze-prototype-chat-transcript"
+    data-journal-active={journalEvents.length > 0}
     data-testid="task-chat-transcript"
   >
     <TaskConversationColumn>
@@ -849,7 +986,10 @@ const TaskTranscript = ({
       ) : (
         <>
           <TaskConversation task={task} />
-          <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
+          <TaskAssistantTurnShell
+            journalMode={journalEvents.length > 0}
+            subtitle={getTaskExecutionType(task.input)}
+          >
             {journalEvents.length ? (
               <JournalConversationFlow
                 events={journalEvents}

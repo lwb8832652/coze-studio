@@ -17,6 +17,7 @@
 package agentthread
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -194,6 +195,38 @@ func TestADKParityStateRejectsUnsafeOrOversizedValues(t *testing.T) {
 		RunID: 2, ThreadID: 42, SpaceID: 7, CreatorID: 9,
 	}, &seed)
 	require.ErrorContains(t, err, "revision")
+}
+
+func TestADKJournalBindingsDoNotChangeDurableParityState(t *testing.T) {
+	tracker := newTestADKParityStateTracker(t)
+	before := tracker.Snapshot()
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	require.True(t, bindADKJournalToolPlanTasks(ctx, []string{"call-1"}, "todo-1"))
+	require.Equal(t, "todo-1", boundADKJournalToolPlanTaskIDFromContext(ctx, "call-1"))
+	require.Equal(t, before, tracker.Snapshot())
+}
+
+func TestADKParityStateDoesNotCarryJournalToolBindingsIntoANewTracker(t *testing.T) {
+	initial := newTestADKParityStateTracker(t)
+	initialCtx := withADKParityStateTracker(context.Background(), initial)
+	require.True(t, bindADKJournalToolPlanTasks(
+		initialCtx,
+		[]string{"call-previous"},
+		"todo-previous",
+	))
+	seed := initial.Snapshot()
+
+	next, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 2, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	}, &seed)
+
+	require.NoError(t, err)
+	nextCtx := withADKParityStateTracker(context.Background(), next)
+	require.Empty(t, boundADKJournalToolPlanTaskIDFromContext(
+		nextCtx,
+		"call-previous",
+	))
 }
 
 func TestADKParityStateRejectsCumulativeCollectionOverflow(t *testing.T) {

@@ -1568,6 +1568,661 @@ describe('TaskDetailPage', () => {
     }
   });
 
+  it('renders one configured-brand Journal turn without the legacy execution summary', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-journal-turn-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-journal-turn-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '生成 Journal 验收计划',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成 Journal 验收计划',
+        last_agent_message: '文档已生成。',
+        created_at: 1717000000000,
+        updated_at: 1717000400000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-journal-user-1',
+            thread_id: 'thread-journal-turn-1',
+            run_id: 'run-journal-1',
+            role: 'user',
+            content: '请生成 Journal 验收计划',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-journal-intro-1',
+            thread_id: 'thread-journal-turn-1',
+            run_id: 'run-journal-1',
+            role: 'assistant',
+            content: '收到，我会直接生成验收计划。',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'message-journal-final-1',
+            thread_id: 'thread-journal-turn-1',
+            run_id: 'run-journal-1',
+            role: 'assistant',
+            content: '文档已生成。',
+            metadata: '',
+            created_at: 1717000400000,
+          },
+        ],
+        total: 3,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockTopLevelRun({
+      ...createMockRunningRun('thread-journal-turn-1', 'run-journal-1'),
+      status: 'success',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-skill-catalog-1',
+            thread_id: 'thread-journal-turn-1',
+            run_id: 'run-journal-1',
+            event_type: 'skills.loaded',
+            payload: JSON.stringify({
+              skill_count: 22,
+              skill_names: ['research-planner', 'document-tools'],
+            }),
+            created_at: 1717000050000,
+          },
+          {
+            event_id: 'event-write-output-1',
+            thread_id: 'thread-journal-turn-1',
+            run_id: 'run-journal-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_file',
+              tool_call_id: 'call-write-output-1',
+              status: 'completed',
+            }),
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetRunJournal.mockResolvedValue({
+      attempts: [
+        {
+          attempt_id: 'attempt-journal-turn-1',
+          run_id: 'run-journal-1',
+          status: 'completed',
+          projection_state: 'healthy',
+          latest_sequence: 2,
+          created_at: 1717000000000,
+        },
+      ],
+      content_types: ['document'],
+      default_attempt_id: 'attempt-journal-turn-1',
+      default_attempt: {
+        attempt_id: 'attempt-journal-turn-1',
+        run_id: 'run-journal-1',
+        status: 'completed',
+        projection_state: 'healthy',
+        latest_sequence: 2,
+        created_at: 1717000000000,
+      },
+      enrollment: {
+        enrolled: true,
+        journal_enabled: true,
+        journal_protocol_version: '1.1',
+        payload_version: '1.0',
+        schema_version: '1.1',
+        snapshots_enabled: true,
+      },
+      events: {
+        attempt_id: 'attempt-journal-turn-1',
+        has_more: false,
+        latest_sequence: 2,
+        next_after_sequence: 2,
+        items: [
+          {
+            attempt_id: 'attempt-journal-turn-1',
+            created_at: 1717000150000,
+            event_id: 'journal-intro-1',
+            event_type: 'journal.intro',
+            occurred_at: 1717000150000,
+            payload: {
+              type: 'journal',
+              data: {
+                text: '我会先整理验收范围，再生成验收计划。',
+              },
+            },
+            run_id: 'run-journal-1',
+            sequence: 1,
+            status: 'completed',
+            thread_id: 'thread-journal-turn-1',
+          },
+          {
+            attempt_id: 'attempt-journal-turn-1',
+            created_at: 1717000300000,
+            event_id: 'journal-action-write-1',
+            event_type: 'action.terminal',
+            occurred_at: 1717000300000,
+            payload: {
+              type: 'document',
+              data: {
+                action_id: 'action-write-1',
+                content_type: 'document',
+                display_verb_completed: '已写入',
+                display_verb_running: '正在写入',
+                operation: 'write',
+                target: 'journal-acceptance-plan.md',
+              },
+            },
+            run_id: 'run-journal-1',
+            sequence: 2,
+            status: 'completed',
+            thread_id: 'thread-journal-turn-1',
+          },
+        ],
+      },
+      latest_sequence: 2,
+      projection_state: 'healthy',
+      recovery_capability: {
+        allowed: false,
+        allowed_actions: [],
+        requires_confirmation: false,
+      },
+      server_time: 1717000500000,
+      submit_at: 1717000000000,
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [
+          {
+            artifact_id: 'artifact-journal-plan-1',
+            artifact_type: 'document',
+            content_type: 'text/markdown; charset=utf-8',
+            created_at: 1717000350000,
+            file_id: 'file-journal-plan-1',
+            metadata: '{"source":"present_files"}',
+            preview_mode: 'text',
+            run_id: 'run-journal-1',
+            size_bytes: 4096,
+            thread_id: 'thread-journal-turn-1',
+            title: 'journal-acceptance-plan.md',
+            updated_at: 1717000350000,
+            virtual_path: '/mnt/user-data/outputs/journal-acceptance-plan.md',
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const journalFlow = container.querySelector('.journal-conversation-flow');
+      const journalIntro = container.querySelector('.journal-execution-intro');
+      const firstJournalMilestone = container.querySelector(
+        '.journal-milestone',
+      );
+      const assistantHeaders = container.querySelectorAll(
+        '.coze-prototype-assistant-turn-header',
+      );
+      const finalAnswer = Array.from(
+        container.querySelectorAll('.coze-prototype-answer'),
+      ).find(element => element.textContent?.includes('文档已生成。'));
+      const artifactList = container.querySelector(
+        '[data-testid="task-artifact-message-list"]',
+      );
+
+      expect(journalFlow).toBeTruthy();
+      expect(journalIntro?.textContent).toContain(
+        '我会先整理验收范围，再生成验收计划。',
+      );
+      expect(
+        container.querySelector('.coze-prototype-journal-intro'),
+      ).toBeNull();
+      expect(container.textContent).not.toContain(
+        '收到，我会直接生成验收计划。',
+      );
+      expect(finalAnswer).toBeTruthy();
+      expect(artifactList).toBeTruthy();
+      expect(journalFlow?.contains(journalIntro)).toBe(true);
+      expect(
+        journalIntro && firstJournalMilestone
+          ? journalIntro.compareDocumentPosition(firstJournalMilestone) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          : 0,
+      ).toBeTruthy();
+      expect(assistantHeaders).toHaveLength(1);
+      expect(assistantHeaders[0]?.textContent).toContain('NewX AI');
+      expect(assistantHeaders[0]?.textContent).not.toContain('· Agent');
+      expect(container.querySelector('.coze-prototype-execution-feed')).toBeNull();
+      expect(container.textContent).not.toContain('可用技能目录');
+      expect(container.textContent).toContain('文档已生成。');
+      expect(
+        journalFlow && finalAnswer
+          ? journalFlow.compareDocumentPosition(finalAnswer) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          : 0,
+      ).toBeTruthy();
+      expect(
+        finalAnswer && artifactList
+          ? finalAnswer.compareDocumentPosition(artifactList) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          : 0,
+      ).toBeTruthy();
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('replaces the only running assistant intro with the canonical Journal intro', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-journal-running-intro-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-journal-running-intro-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '运行中的 Journal 任务',
+        status: 'running',
+        source: 'agent',
+        progress: 20,
+        last_user_message: '请执行 Journal 任务',
+        last_agent_message: '收到，我会开始执行任务。',
+        created_at: 1717000000000,
+        updated_at: 1717000200000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-journal-running-user-1',
+            thread_id: 'thread-journal-running-intro-1',
+            run_id: 'run-journal-running-intro-1',
+            role: 'user',
+            content: '请执行 Journal 任务',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-journal-running-assistant-1',
+            thread_id: 'thread-journal-running-intro-1',
+            run_id: 'run-journal-running-intro-1',
+            role: 'assistant',
+            content: '收到，我会开始执行任务。',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockTopLevelRun(
+      createMockRunningRun(
+        'thread-journal-running-intro-1',
+        'run-journal-running-intro-1',
+      ),
+    );
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: { events: [], total: 0 },
+      code: 0,
+      msg: '',
+    });
+    mockGetRunJournal.mockResolvedValue({
+      attempts: [
+        {
+          attempt_id: 'attempt-journal-running-intro-1',
+          run_id: 'run-journal-running-intro-1',
+          status: 'running',
+          projection_state: 'healthy',
+          latest_sequence: 1,
+          created_at: 1717000000000,
+        },
+      ],
+      content_types: [],
+      default_attempt_id: 'attempt-journal-running-intro-1',
+      default_attempt: {
+        attempt_id: 'attempt-journal-running-intro-1',
+        run_id: 'run-journal-running-intro-1',
+        status: 'running',
+        projection_state: 'healthy',
+        latest_sequence: 1,
+        created_at: 1717000000000,
+      },
+      enrollment: {
+        enrolled: true,
+        journal_enabled: true,
+        journal_protocol_version: '1.1',
+        payload_version: '1.0',
+        schema_version: '1.1',
+        snapshots_enabled: true,
+      },
+      events: {
+        attempt_id: 'attempt-journal-running-intro-1',
+        has_more: false,
+        latest_sequence: 1,
+        next_after_sequence: 1,
+        items: [
+          {
+            attempt_id: 'attempt-journal-running-intro-1',
+            created_at: 1717000100000,
+            event_id: 'journal-running-intro-1',
+            event_type: 'journal.intro',
+            occurred_at: 1717000100000,
+            payload: {
+              type: 'journal',
+              data: {
+                text: '我会先规划执行路径，再逐步完成任务。',
+              },
+            },
+            run_id: 'run-journal-running-intro-1',
+            sequence: 1,
+            status: 'completed',
+            thread_id: 'thread-journal-running-intro-1',
+          },
+        ],
+      },
+      latest_sequence: 1,
+      projection_state: 'healthy',
+      recovery_capability: {
+        allowed: false,
+        allowed_actions: [],
+        requires_confirmation: false,
+      },
+      server_time: 1717000200000,
+      submit_at: 1717000000000,
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(
+        container.querySelectorAll('.journal-execution-intro'),
+      ).toHaveLength(1);
+      expect(container.textContent).toContain(
+        '我会先规划执行路径，再逐步完成任务。',
+      );
+      expect(container.textContent).not.toContain(
+        '收到，我会开始执行任务。',
+      );
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('preserves a single final Journal answer after a failed execution flow', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-journal-final-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-journal-final-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '生成 Journal 验收报告',
+        status: 'failed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成 Journal 验收报告',
+        last_agent_message: '报告已生成。',
+        created_at: 1717000000000,
+        updated_at: 1717000400000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-journal-final-user-1',
+            thread_id: 'thread-journal-final-1',
+            run_id: 'run-journal-final-1',
+            role: 'user',
+            content: '请生成 Journal 验收报告',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-journal-final-answer-1',
+            thread_id: 'thread-journal-final-1',
+            run_id: 'run-journal-final-1',
+            role: 'assistant',
+            content: '报告已生成。',
+            metadata: '',
+            created_at: 1717000400000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockTopLevelRun({
+      ...createMockRunningRun(
+        'thread-journal-final-1',
+        'run-journal-final-1',
+      ),
+      status: 'failed',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetRunJournal.mockResolvedValue({
+      attempts: [
+        {
+          attempt_id: 'attempt-journal-final-1',
+          run_id: 'run-journal-final-1',
+          status: 'failed',
+          projection_state: 'healthy',
+          latest_sequence: 2,
+          created_at: 1717000000000,
+        },
+      ],
+      content_types: ['document'],
+      default_attempt_id: 'attempt-journal-final-1',
+      default_attempt: {
+        attempt_id: 'attempt-journal-final-1',
+        run_id: 'run-journal-final-1',
+        status: 'failed',
+        projection_state: 'healthy',
+        latest_sequence: 2,
+        created_at: 1717000000000,
+      },
+      enrollment: {
+        enrolled: true,
+        journal_enabled: true,
+        journal_protocol_version: '1.1',
+        payload_version: '1.0',
+        schema_version: '1.1',
+        snapshots_enabled: true,
+      },
+      events: {
+        attempt_id: 'attempt-journal-final-1',
+        has_more: false,
+        latest_sequence: 2,
+        next_after_sequence: 2,
+        items: [
+          {
+            attempt_id: 'attempt-journal-final-1',
+            created_at: 1717000100000,
+            event_id: 'journal-final-intro-1',
+            event_type: 'journal.intro',
+            occurred_at: 1717000100000,
+            payload: {
+              type: 'journal',
+              data: {
+                text: '我会先执行检查，再汇总最终结果。',
+              },
+            },
+            run_id: 'run-journal-final-1',
+            sequence: 1,
+            status: 'completed',
+            thread_id: 'thread-journal-final-1',
+          },
+          {
+            attempt_id: 'attempt-journal-final-1',
+            created_at: 1717000300000,
+            event_id: 'journal-final-action-1',
+            event_type: 'action.terminal',
+            occurred_at: 1717000300000,
+            payload: {
+              type: 'document',
+              data: {
+                action_id: 'action-journal-final-1',
+                content_type: 'document',
+                display_verb_completed: '已写入',
+                display_verb_running: '正在写入',
+                operation: 'write',
+                target: 'journal-report.md',
+              },
+            },
+            run_id: 'run-journal-final-1',
+            sequence: 2,
+            status: 'completed',
+            thread_id: 'thread-journal-final-1',
+          },
+        ],
+      },
+      latest_sequence: 2,
+      projection_state: 'healthy',
+      recovery_capability: {
+        allowed: false,
+        allowed_actions: [],
+        requires_confirmation: false,
+      },
+      server_time: 1717000500000,
+      submit_at: 1717000000000,
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [
+          {
+            artifact_id: 'artifact-journal-final-report-1',
+            artifact_type: 'document',
+            content_type: 'text/markdown; charset=utf-8',
+            created_at: 1717000350000,
+            file_id: 'file-journal-final-report-1',
+            metadata: '{"source":"present_files"}',
+            preview_mode: 'text',
+            run_id: 'run-journal-final-1',
+            size_bytes: 8192,
+            thread_id: 'thread-journal-final-1',
+            title: 'journal-report.md',
+            updated_at: 1717000350000,
+            virtual_path: '/mnt/user-data/outputs/journal-report.md',
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const journalFlow = container.querySelector('.journal-conversation-flow');
+      const finalAnswer = Array.from(
+        container.querySelectorAll('.coze-prototype-answer'),
+      ).find(element => element.textContent?.includes('报告已生成。'));
+      const artifactList = container.querySelector(
+        '[data-testid="task-artifact-message-list"]',
+      );
+
+      expect(journalFlow).toBeTruthy();
+      expect(finalAnswer).toBeTruthy();
+      expect(artifactList).toBeTruthy();
+      expect(container.querySelector('.coze-prototype-journal-intro')).toBeNull();
+      expect(
+        journalFlow && finalAnswer
+          ? journalFlow.compareDocumentPosition(finalAnswer) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          : 0,
+      ).toBeTruthy();
+      expect(
+        finalAnswer && artifactList
+          ? finalAnswer.compareDocumentPosition(artifactList) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          : 0,
+      ).toBeTruthy();
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('groups task detail header actions away from the title area', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

@@ -21,16 +21,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	einoskill "github.com/cloudwego/eino/adk/middlewares/skill"
+
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
+
+const adkJournalSkillObservationTimeout = 2 * time.Second
 
 type adkSkillBackend struct {
 	matters           []einoskill.FrontMatter
 	skills            map[string]einoskill.Skill
+	summaries         map[string]JournalSkillSummary
 	description       string
 	run               *RunSummary
+	journalProducer   JournalContentProducer
 	guardrailEnforcer ADKGuardrailEnforcer
 }
 
@@ -55,6 +64,22 @@ func WithADKSkillBackendGuardrail(
 	}
 }
 
+func WithADKSkillBackendJournal(
+	run *RunSummary,
+	producer JournalContentProducer,
+) ADKSkillBackendOption {
+	return func(backend *adkSkillBackend) {
+		if backend == nil {
+			return
+		}
+		if run != nil {
+			snapshot := *run
+			backend.run = &snapshot
+		}
+		backend.journalProducer = producer
+	}
+}
+
 func newADKSkillBackend(
 	skills []AgentSkill,
 	budget ADKContextBudget,
@@ -76,8 +101,9 @@ func newADKSkillBackend(
 	})
 
 	backend := &adkSkillBackend{
-		matters: make([]einoskill.FrontMatter, 0, len(selected)),
-		skills:  make(map[string]einoskill.Skill, len(selected)),
+		matters:   make([]einoskill.FrontMatter, 0, len(selected)),
+		skills:    make(map[string]einoskill.Skill, len(selected)),
+		summaries: make(map[string]JournalSkillSummary, len(selected)),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -133,6 +159,10 @@ func newADKSkillBackend(
 		}
 		backend.matters = append(backend.matters, matter)
 		backend.skills[name] = runtimeSkill
+		backend.summaries[name] = JournalSkillSummary{
+			SkillID: strconv.FormatInt(item.ID, 10),
+			Name:    name, Description: description,
+		}
 
 		catalog.AvailableSkills = append(catalog.AvailableSkills, struct {
 			Name        string `json:"name"`
@@ -207,7 +237,90 @@ func (b *adkSkillBackend) Get(
 	if err := b.enforceGuardrail(ctx, name); err != nil {
 		return einoskill.Skill{}, err
 	}
+	b.observeJournalUse(ctx, name)
 	return item, nil
+}
+
+func (b *adkSkillBackend) observeJournalUse(ctx context.Context, name string) {
+	if b == nil || b.run == nil || b.run.RunID <= 0 || b.run.ThreadID <= 0 ||
+		b.journalProducer == nil {
+		return
+	}
+	summary, ok := b.summaries[name]
+	if !ok || summary.SkillID == "" || summary.Name == "" {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	planTaskID := activeADKPlanTaskIDFromContext(ctx)
+	observationCtx := context.WithoutCancel(ctx)
+	go func() {
+		journalCtx, cancel := context.WithTimeout(
+			observationCtx,
+			adkJournalSkillObservationTimeout,
+		)
+		defer cancel()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				logs.CtxWarnf(
+					journalCtx,
+					"journal skill observation panicked: run_id=%d err=%v",
+					b.run.RunID,
+					recovered,
+				)
+			}
+		}()
+		b.publishJournalUse(journalCtx, summary, planTaskID)
+	}()
+}
+
+func (b *adkSkillBackend) publishJournalUse(
+	ctx context.Context,
+	summary JournalSkillSummary,
+	planTaskID string,
+) {
+	if b == nil || b.run == nil || b.run.RunID <= 0 || b.run.ThreadID <= 0 {
+		return
+	}
+	if b.journalProducer == nil || summary.SkillID == "" || summary.Name == "" {
+		return
+	}
+	identity := summary.SkillID
+	if planTaskID != "" {
+		identity += ":" + planTaskID
+	}
+	actionID := journalStableProjectionID(b.run.RunID, "skill", identity)
+	milestoneID := ""
+	if planTaskID != "" {
+		milestoneID = journalStableProjectionID(b.run.RunID, "milestone", planTaskID)
+	}
+	runningVerb, completedVerb := journalActionVerbs("use_skill")
+	_, _, err := b.journalProducer.ProduceJournalContent(
+		ctx,
+		JournalRuntimeContentSubmission{
+			Run: b.run, Status: domainentity.JournalContentStatusReady,
+			ContentType: domainentity.JournalSnapshotContentTypeSkill,
+			Action: JournalContentAction{
+				ActionID: actionID, MilestoneID: milestoneID,
+				Operation: "use_skill", Target: summary.Name,
+				DisplayVerbRunning:   runningVerb,
+				DisplayVerbCompleted: completedVerb,
+			},
+			Content: JournalTypedSnapshotContent{Skill: &JournalSkillContent{
+				Skills: []JournalSkillSummary{summary},
+			}},
+		},
+	)
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal skill snapshot unavailable: run_id=%d skill_id=%s err=%v",
+			b.run.RunID,
+			summary.SkillID,
+			err,
+		)
+	}
 }
 
 func (b *adkSkillBackend) enforceGuardrail(

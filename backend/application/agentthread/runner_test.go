@@ -2032,14 +2032,22 @@ func TestRunProcessorDiscardsLateSuccessAfterDurableMultitaskInterruption(t *tes
 }
 
 type recordingRunEventSink struct {
-	mu     sync.Mutex
-	events []RunEvent
+	mu      sync.Mutex
+	events  []RunEvent
+	onEmit  func(RunEvent)
+	emitErr func(RunEvent) error
 }
 
 func (s *recordingRunEventSink) EmitRunEvent(ctx context.Context, event RunEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, event)
+	if s.onEmit != nil {
+		s.onEmit(event)
+	}
+	if s.emitErr != nil {
+		return s.emitErr(event)
+	}
 
 	return nil
 }

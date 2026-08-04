@@ -849,6 +849,7 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicVisibleContent(payload, result, "content")
 		copyPublicIdentifier(payload, result, "finish_reason")
 		copyPublicIdentifier(payload, result, "status")
+		copyPublicIdentifier(payload, result, "plan_task_id")
 		copyPublicMessageToolCalls(payload, result)
 	case eventType == "llm.token":
 		copyPublicIdentifier(payload, result, "node")
@@ -872,6 +873,7 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicIdentifier(payload, result, "role")
 		copyPublicIdentifier(payload, result, "finish_reason")
 		copyPublicIdentifier(payload, result, "status")
+		copyPublicIdentifier(payload, result, "plan_task_id")
 		copyPublicMessageToolCalls(payload, result)
 	case strings.HasPrefix(eventType, "tool."):
 		result["redacted"] = true
@@ -919,6 +921,7 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		copyPublicLabel(payload, result, "subject")
 		copyPublicLabel(payload, result, "active_form")
 		copyPublicLabel(payload, result, "description")
+		copyPublicLabel(payload, result, "execution_intro")
 		copyPublicIdentifier(payload, result, "error_code")
 	case strings.HasPrefix(eventType, "node."):
 		copyPublicIdentifier(payload, result, "node")
@@ -951,13 +954,20 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 			}
 		}
 		copyPublicTokenCounts(payload, result)
-	case eventType == "skills.loaded", strings.HasPrefix(eventType, "skill."):
+	case eventType == "skills.loaded":
 		copyPublicInt64(payload, result, "count")
 		copyPublicInt64(payload, result, "skill_count")
 		copyPublicStringSlice(payload, result, "skill_ids")
 		copyPublicStringSlice(payload, result, "skill_names")
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicSkills(payload, result)
+	case strings.HasPrefix(eventType, "skill."):
+		copyPublicIdentifier(payload, result, "skill_id")
+		copyPublicLabel(payload, result, "skill_name")
+		copyPublicIdentifier(payload, result, "action_id")
+		copyPublicIdentifier(payload, result, "plan_task_id")
+		copyPublicIdentifier(payload, result, "status")
+		copyPublicIdentifier(payload, result, "error_code")
 	case strings.HasPrefix(eventType, "human.interaction."):
 		copyPublicIdentifier(payload, result, "interrupt_id")
 		copyPublicIdentifier(payload, result, "confirmation_id")

@@ -211,6 +211,7 @@ func NewADKTurnLoop(
 						err,
 					)
 				}
+				releaseADKJournalToolPlanTask(ctx, mapped.TerminalToolCallID)
 				if mapped.Usage != nil && runtime.usageBridge != nil {
 					if err := runtime.usageBridge.RecordEvent(ctx, *mapped.Usage); err != nil {
 						return fmt.Errorf("record eino adk turn token usage: %w", err)

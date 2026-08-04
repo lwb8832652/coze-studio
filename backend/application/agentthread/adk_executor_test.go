@@ -102,6 +102,155 @@ func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) 
 	require.Contains(t, eventSink.events[2].Payload, `"content":"final answer"`)
 }
 
+func TestADKExecutorAssociatesToolEventsWithActivePlanTask(t *testing.T) {
+	var parityTracker *ADKParityStateTracker
+	bindingReleasedBeforeNextEvent := false
+	eventSink := &recordingRunEventSink{onEmit: func(event RunEvent) {
+		if event.EventType == "agent.event" && parityTracker != nil {
+			bindingReleasedBeforeNextEvent = len(
+				journalToolPlanTasksForTest(parityTracker),
+			) == 0
+		}
+	}}
+	checkpointService := &recordingADKCheckpointService{}
+	agent := &scriptedADKAgent{
+		run: func(ctx context.Context) []*adk.AgentEvent {
+			parityTracker = adkParityStateTrackerFromContext(ctx)
+			require.NotNil(t, parityTracker)
+			require.NoError(t, parityTracker.ReplaceTodos([]ADKParityTodo{{
+				ID: "1", Title: "Write report", Status: "in_progress",
+			}}))
+			return []*adk.AgentEvent{
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("", []schema.ToolCall{{
+							ID: "call-write",
+							Function: schema.FunctionCall{
+								Name:      adkWriteFileToolName,
+								Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+							},
+						}}),
+						Role: schema.Assistant,
+					}},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: &schema.Message{
+							Role: schema.Tool, Content: `{"ok":true}`,
+							ToolCallID: "call-write",
+						},
+						Role: schema.Tool, ToolName: adkWriteFileToolName,
+					}},
+				},
+				{
+					AgentName: "lead",
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("report ready", nil),
+						Role:    schema.Assistant,
+					}},
+				},
+			}
+		},
+	}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		eventSink,
+		func(run *RunSummary) (adk.CheckPointStore, error) {
+			return NewADKCheckpointStore(checkpointService, run)
+		},
+		nil,
+	)
+	run := &RunSummary{
+		RunID: 29, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+		Input: `{"messages":[{"role":"user","content":"write report"}]}`,
+	}
+
+	_, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Len(t, eventSink.events, 4)
+	require.Contains(t, eventSink.events[0].Payload, `"plan_task_id":"1"`)
+	require.Contains(t, eventSink.events[1].Payload, `"plan_task_id":"1"`)
+	require.True(t, bindingReleasedBeforeNextEvent)
+}
+
+func TestADKExecutorRetainsToolPlanBindingWhenTerminalEventPersistenceFails(t *testing.T) {
+	var parityTracker *ADKParityStateTracker
+	eventSink := &recordingRunEventSink{emitErr: func(event RunEvent) error {
+		if event.EventType == "tool.completed" {
+			return fmt.Errorf("event persistence unavailable")
+		}
+		return nil
+	}}
+	agent := &scriptedADKAgent{
+		run: func(ctx context.Context) []*adk.AgentEvent {
+			parityTracker = adkParityStateTrackerFromContext(ctx)
+			require.NotNil(t, parityTracker)
+			require.NoError(t, parityTracker.ReplaceTodos([]ADKParityTodo{{
+				ID: "1", Title: "Write report", Status: "in_progress",
+			}}))
+			return []*adk.AgentEvent{
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("", []schema.ToolCall{{
+							ID: "call-write",
+							Function: schema.FunctionCall{
+								Name:      adkWriteFileToolName,
+								Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+							},
+						}}),
+						Role: schema.Assistant,
+					}},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: &schema.Message{
+							Role: schema.Tool, Content: `{"ok":true}`,
+							ToolCallID: "call-write",
+						},
+						Role: schema.Tool, ToolName: adkWriteFileToolName,
+					}},
+				},
+			}
+		},
+	}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		eventSink,
+		func(run *RunSummary) (adk.CheckPointStore, error) {
+			return NewADKCheckpointStore(&recordingADKCheckpointService{}, run)
+		},
+		nil,
+	)
+	run := &RunSummary{
+		RunID: 30, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+		Input: `{"messages":[{"role":"user","content":"write report"}]}`,
+	}
+
+	_, err := executor.Execute(context.Background(), run)
+
+	require.ErrorContains(t, err, "event persistence unavailable")
+	require.Equal(
+		t,
+		"1",
+		boundADKJournalToolPlanTaskIDFromContext(
+			withADKParityStateTracker(context.Background(), parityTracker),
+			"call-write",
+		),
+	)
+}
+
 func TestADKExecutorSeedsAndReturnsDurableParityState(t *testing.T) {
 	checkpointService := &recordingADKCheckpointService{}
 	run := &RunSummary{

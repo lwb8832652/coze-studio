@@ -331,18 +331,23 @@ func (e *ADKExecutor) consumeEvents(
 
 	finalText := ""
 	var interrupted *RunInterruptedError
+	mappingCtx := ctx
+	if parityTracker != nil {
+		mappingCtx = withADKParityStateTracker(mappingCtx, parityTracker)
+	}
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
-		mapped, err := MapADKEvent(ctx, run.ThreadID, run.RunID, event)
+		mapped, err := MapADKEvent(mappingCtx, run.ThreadID, run.RunID, event)
 		if err != nil {
 			return nil, err
 		}
 		if err := e.eventSink.EmitRunEvent(ctx, mapped.RunEvent); err != nil {
 			return nil, fmt.Errorf("persist eino adk event %s: %w", mapped.EventType, err)
 		}
+		releaseADKJournalToolPlanTask(mappingCtx, mapped.TerminalToolCallID)
 		if mapped.Usage != nil && usageBridge != nil {
 			if err := usageBridge.RecordEvent(ctx, *mapped.Usage); err != nil {
 				return nil, fmt.Errorf("record eino adk token usage: %w", err)

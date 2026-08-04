@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -61,8 +60,8 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 		return nil, fmt.Errorf("runtime event type is required")
 	}
 
+	var source map[string]any
 	if journalProjectionSupportsEvent(eventType) {
-		var source map[string]any
 		if err := json.Unmarshal([]byte(event.Payload), &source); err != nil || source == nil {
 			return nil, fmt.Errorf("journal source payload for %s must be a JSON object", eventType)
 		}
@@ -70,7 +69,7 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 	publicPayload := publicJSONObject(projectPublicRunEventPayload(eventType, event.Payload))
 	switch {
 	case eventType == "message.completed":
-		return projectJournalMessageToolAction(event, publicPayload)
+		return projectJournalMessageToolAction(event, publicPayload, source)
 	case eventType == "run.interrupted":
 		return projectJournalInterruptedConfirmation(event, publicPayload)
 	case isJournalRunTerminalEvent(eventType):
@@ -78,8 +77,8 @@ func ProjectRunEventToJournal(event RunEvent) (*JournalEventProjection, error) {
 	case strings.HasPrefix(eventType, "plan.task."), strings.HasPrefix(eventType, "todo."):
 		return projectJournalMilestone(event, eventType, publicPayload)
 	case strings.HasPrefix(eventType, "tool."), strings.HasPrefix(eventType, "mcp.tool."):
-		return projectJournalToolAction(event, eventType, publicPayload)
-	case eventType == "skills.loaded", strings.HasPrefix(eventType, "skill."):
+		return projectJournalToolAction(event, eventType, publicPayload, source)
+	case strings.HasPrefix(eventType, "skill."):
 		return projectJournalSkillAction(event, eventType, publicPayload)
 	case strings.HasPrefix(eventType, "subagent."):
 		return projectJournalSubagentAction(event, eventType, publicPayload)
@@ -102,7 +101,6 @@ func journalProjectionSupportsEvent(eventType string) bool {
 		strings.HasPrefix(eventType, "todo.") ||
 		strings.HasPrefix(eventType, "tool.") ||
 		strings.HasPrefix(eventType, "mcp.tool.") ||
-		eventType == "skills.loaded" ||
 		strings.HasPrefix(eventType, "skill.") ||
 		strings.HasPrefix(eventType, "subagent.") ||
 		strings.HasPrefix(eventType, "artifact.") ||
@@ -113,6 +111,7 @@ func journalProjectionSupportsEvent(eventType string) bool {
 func projectJournalMessageToolAction(
 	event RunEvent,
 	payload map[string]any,
+	source map[string]any,
 ) (*JournalEventProjection, error) {
 	if strings.ToLower(publicString(payload["role"])) != "assistant" {
 		return nil, nil
@@ -126,9 +125,11 @@ func projectJournalMessageToolAction(
 		return nil, nil
 	}
 	return projectJournalToolAction(event, "tool.started", map[string]any{
-		"tool_name":    toolCall["name"],
-		"tool_call_id": toolCall["id"],
-	})
+		"tool_name":      toolCall["name"],
+		"tool_call_id":   toolCall["id"],
+		"journal_target": toolCall["journal_target"],
+		"plan_task_id":   payload["plan_task_id"],
+	}, source)
 }
 
 func projectJournalInterruptedConfirmation(
@@ -215,8 +216,24 @@ func projectJournalMilestone(
 		return nil, nil
 	}
 	status := strings.ToLower(publicString(payload["status"]))
-	if status == "pending" || status == "planned" || strings.HasSuffix(eventType, ".deleted") {
+	executionIntro := journalFirstLabel(payload, "execution_intro")
+	if strings.HasSuffix(eventType, ".deleted") {
 		return nil, nil
+	}
+	if status == "pending" || status == "planned" {
+		if executionIntro == "" || !strings.HasSuffix(eventType, ".created") {
+			return nil, nil
+		}
+		return newJournalProjection(
+			event,
+			"journal.intro",
+			"running",
+			"intro",
+			map[string]any{"text": executionIntro},
+			"run",
+			strconv.FormatInt(event.RunID, 10),
+			"intro",
+		)
 	}
 
 	projectionType := "milestone.started"
@@ -235,12 +252,16 @@ func projectJournalMilestone(
 		return nil, nil
 	}
 	milestoneID := journalStableProjectionID(event.RunID, "milestone", sourceID)
+	data := map[string]any{"milestone_id": milestoneID, "title": title}
+	if executionIntro != "" {
+		data["execution_intro"] = executionIntro
+	}
 	return newJournalProjection(
 		event,
 		projectionType,
 		projectionStatus,
 		"milestone",
-		map[string]any{"milestone_id": milestoneID, "title": title},
+		data,
 		"milestone",
 		sourceID,
 		phase,
@@ -251,6 +272,7 @@ func projectJournalToolAction(
 	event RunEvent,
 	eventType string,
 	payload map[string]any,
+	source map[string]any,
 ) (*JournalEventProjection, error) {
 	phase, projectionType, status := journalActionPhase(eventType, payload)
 	if phase == "" {
@@ -260,7 +282,14 @@ func projectJournalToolAction(
 	if correlationKey == "" {
 		return nil, nil
 	}
+	correlationKey = journalScopedToolCorrelationKey(source, correlationKey)
+	if correlationKey == "" {
+		return nil, nil
+	}
 	toolName := strings.ToLower(publicString(payload["tool_name"]))
+	if journalInternalTool(toolName) {
+		return nil, nil
+	}
 	operation := journalToolOperation(toolName)
 	target := journalControlledTarget(payload["journal_target"])
 	if target == "" {
@@ -309,46 +338,81 @@ func projectJournalToolAction(
 	return projection, nil
 }
 
+func journalScopedToolCorrelationKey(
+	source map[string]any,
+	toolCallID string,
+) string {
+	agentName := journalSourceID(source["agent_name"])
+	runPath := publicStringSlice(source["run_path"])
+	return adkJournalToolBindingKey(agentName, runPath, toolCallID)
+}
+
+func journalInternalTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "present_files", "skill", "taskcreate", "taskget", "taskupdate", "tasklist":
+		return true
+	default:
+		return false
+	}
+}
+
 func projectJournalSkillAction(
 	event RunEvent,
 	eventType string,
 	payload map[string]any,
 ) (*JournalEventProjection, error) {
-	ids := journalStringSlice(payload["skill_ids"])
-	names := journalStringSlice(payload["skill_names"])
-	if len(ids) == 0 || len(names) == 0 {
+	phase, projectionType, status := journalActionPhase(eventType, payload)
+	if phase == "" {
 		return nil, nil
 	}
-	identity := append([]string(nil), ids...)
-	sort.Strings(identity)
-	correlationKey := strings.Join(identity, ",")
-	target := strings.Join(names, "、")
-	actionID := journalStableProjectionID(event.RunID, "skill", correlationKey)
+	skillID := journalSourceID(payload["skill_id"])
+	target := journalControlledTarget(payload["skill_name"])
+	if skillID == "" || target == "" {
+		return nil, nil
+	}
+	planTaskID := journalSourceID(payload["plan_task_id"])
+	correlationKey := journalSourceID(payload["action_id"])
+	if correlationKey == "" {
+		correlationKey = strings.Join([]string{skillID, planTaskID}, ":")
+	}
+	actionID := journalSourceID(payload["action_id"])
+	if actionID == "" {
+		actionID = journalStableProjectionID(event.RunID, "skill", correlationKey)
+	}
+	milestoneID := ""
+	if planTaskID != "" {
+		milestoneID = journalStableProjectionID(event.RunID, "milestone", planTaskID)
+	}
 	runningVerb, completedVerb := journalActionVerbs("use_skill")
+	data := map[string]any{
+		"action_id":              actionID,
+		"operation":              "use_skill",
+		"target":                 target,
+		"display_verb_running":   runningVerb,
+		"display_verb_completed": completedVerb,
+		"content_type":           "skill",
+	}
+	if milestoneID != "" {
+		data["milestone_id"] = milestoneID
+	}
 	projection, err := newJournalProjection(
 		event,
-		"action.terminal",
-		"completed",
+		projectionType,
+		status,
 		"skill",
-		map[string]any{
-			"action_id":              actionID,
-			"operation":              "use_skill",
-			"target":                 target,
-			"display_verb_running":   runningVerb,
-			"display_verb_completed": completedVerb,
-			"content_type":           "skill",
-		},
+		data,
 		"skill",
 		correlationKey,
-		"terminal",
+		phase,
 	)
 	if err != nil {
 		return nil, err
 	}
 	projection.ActionID = actionID
-	projection.Phase = "terminal"
+	projection.Phase = phase
 	projection.Operation = "use_skill"
 	projection.Target = target
+	projection.Milestone = milestoneID
 	return projection, nil
 }
 
@@ -452,6 +516,9 @@ func projectJournalArtifact(
 		return nil, nil
 	}
 	data := map[string]any{"artifact_id": artifactID}
+	if title != "" {
+		data["title"] = title
+	}
 	if collectionID != "" {
 		data["collection_id"] = collectionID
 	}
@@ -540,6 +607,9 @@ func journalSupplementalRunEvents(event RunEvent) ([]RunEvent, error) {
 		return nil, nil
 	}
 	result := make([]RunEvent, 0, len(toolCalls)-1)
+	planTaskID := journalSourceID(publicPayload["plan_task_id"])
+	agentName := journalSourceID(source["agent_name"])
+	runPath := publicStringSlice(source["run_path"])
 	for _, item := range toolCalls[1:] {
 		toolCall, ok := item.(map[string]any)
 		if !ok {
@@ -550,9 +620,22 @@ func journalSupplementalRunEvents(event RunEvent) ([]RunEvent, error) {
 		if toolCallID == "" || toolName == "" {
 			continue
 		}
-		payload, err := json.Marshal(map[string]any{
+		payloadData := map[string]any{
 			"tool_name": toolName, "tool_call_id": toolCallID,
-		})
+		}
+		if agentName != "" {
+			payloadData["agent_name"] = agentName
+		}
+		if len(runPath) > 0 {
+			payloadData["run_path"] = runPath
+		}
+		if journalTarget := journalControlledTarget(toolCall["journal_target"]); journalTarget != "" {
+			payloadData["journal_target"] = journalTarget
+		}
+		if planTaskID != "" {
+			payloadData["plan_task_id"] = planTaskID
+		}
+		payload, err := json.Marshal(payloadData)
 		if err != nil {
 			return nil, err
 		}

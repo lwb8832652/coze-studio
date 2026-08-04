@@ -166,6 +166,21 @@ describe('journalReducer', () => {
     expect(state.has_displayable_journal_content).toBe(false);
   });
 
+  it('publishes an intro-only Journal before the first execution step arrives', () => {
+    const intro = event({
+      eventId: '101',
+      eventType: 'journal.intro',
+      sequence: 1,
+    });
+    const state = journalReducer(createInitialJournalState(), {
+      type: 'bootstrap_succeeded',
+      bootstrap: bootstrap([intro]),
+    });
+
+    expect(state.execution.events).toEqual([intro]);
+    expect(state.has_displayable_journal_content).toBe(true);
+  });
+
   it('keeps the Attempt running when a child action completes', () => {
     const completedAction = event({
       eventId: '101',

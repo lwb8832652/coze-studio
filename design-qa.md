@@ -96,3 +96,52 @@ Date: 2026-07-22
 - P3: existing Markdown child-key warning and optional flow-infra diagnostic logging are outside this visual alignment change.
 
 final result: passed
+
+---
+
+# Journal v26 Design QA
+
+## Source of truth
+
+- Accepted prototype: `/Users/liuwenbo/code/BuildingAI/coze-studio/.superpowers/brainstorm/95907-1785334528/content/journal-designed-interactive-v26.html`
+- Production route: `http://localhost:8080/space/7666420680379858944/tasks/7669822047173738496`
+- Scope: keep the existing Coze Studio shell and component system; align the Journal conversation flow, workspace, timeline, and responsive behavior to v26.
+
+## Visual evidence
+
+- Normalized side-by-side desktop comparison, 2560 x 720: `/private/tmp/journal-v26-qa/final-comparison.png`
+- Focused conversation-flow comparison, 1200 x 480: `/private/tmp/journal-v26-qa/focused-flow-comparison.png`
+- Accepted running prototype, 1280 x 720: `/private/tmp/journal-v26-qa/prototype-running-desktop.png`
+- Production components in the matched running state, 1230 x 692: `/private/tmp/journal-v26-qa/implementation-final-desktop.png`
+- Real historical task after the final build, 1230 x 692: `/private/tmp/journal-v26-qa/implementation-real-task-desktop.png`
+- Real historical task with a 390 x 844 viewport override, captured content 375 x 812: `/private/tmp/journal-v26-qa/implementation-real-task-mobile.png`
+
+## State coverage
+
+- Completed milestone collapsed; current milestone expanded.
+- Milestone with child operations and atomic milestone without a chevron.
+- Running and completed operation verbs with action-specific icons.
+- Pro/Ultra Journal visibility; Flash result-only and Thinking public-summary contracts are covered by tests.
+- Document, terminal, code, skill, and browser tabs.
+- Timeline Live/history selection with labels exposed on hover only.
+- Journal close, floating restore control, and restoration to the Live document view.
+- Desktop split view and mobile full-width execution-detail view.
+
+## QA passes
+
+1. Removed duplicated technical labels from child rows. The primary line is now the semantic step, and the secondary pill is the concrete public operation.
+2. Moved the real running assistant acknowledgement above the Journal flow and kept the final assistant answer below it. No synthetic acknowledgement copy is rendered.
+3. Bound tool events to stable plan-task IDs, removed future steps, retained started milestones, and allowed atomic milestones without children.
+4. Replaced generic timeline labels and failure copy with semantic, status-aware text; aligned row height, text contrast, spacing, icons, and control placement to v26.
+5. Restricted skill events to skills actually selected by the runtime. The skill view is a one-row-per-skill list with descriptions and no unsupported detail view.
+6. Verified the real task page in the in-app browser: close/restore passed, Live/document restoration passed, desktop/mobile layouts rendered without overlap, and console errors were empty.
+
+## Intentional boundaries
+
+- The application header, navigation, task composer, and current Coze design tokens remain unchanged. The dark prototype review strip is explicitly not production UI.
+- The real task used for final browser QA contains historical pre-upgrade events, so its all-skill event remains visible. New events use the selected-skill-only contract; historical migration was explicitly excluded.
+- Journal snapshots, checkpoint recovery, and production Terminal/Browser snapshot producers remain feature-gated. Their absence is an operational capability gate, not a visual fallback, and no full worker-runtime E2E claim is made here.
+
+## Result
+
+passed

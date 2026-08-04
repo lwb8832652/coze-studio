@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	einoskill "github.com/cloudwego/eino/adk/middlewares/skill"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,6 +155,161 @@ func TestADKSkillBackendIgnoresTypedNilGuardrailEnforcer(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "Use research instructions.", got.Content)
+}
+
+func TestADKSkillBackendJournalFailureDoesNotFailSkillLoad(t *testing.T) {
+	run := &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			run,
+			failingJournalContentProducer{},
+		),
+	)
+	require.NoError(t, err)
+
+	got, err := backend.Get(context.Background(), "research")
+
+	require.NoError(t, err)
+	require.Equal(t, "Use research instructions.", got.Content)
+}
+
+func TestADKSkillBackendDoesNotWaitForJournalSnapshot(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			&RunSummary{
+				RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+			},
+			blockingJournalContentProducer{
+				started: started,
+				release: release,
+			},
+		),
+	)
+	require.NoError(t, err)
+
+	type result struct {
+		skill einoskill.Skill
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		skill, loadErr := backend.Get(context.Background(), "research")
+		done <- result{skill: skill, err: loadErr}
+	}()
+
+	select {
+	case loaded := <-done:
+		require.NoError(t, loaded.err)
+		require.Equal(t, "Use research instructions.", loaded.skill.Content)
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		require.FailNow(t, "skill load waited for Journal snapshot persistence")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(release)
+		require.FailNow(t, "Journal snapshot observation did not start")
+	}
+	close(release)
+}
+
+func TestADKSkillBackendJournalSubmitsSnapshotWithCapturedPlan(t *testing.T) {
+	run := &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	tracker, err := NewADKParityStateTracker(run, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "plan-1", Title: "核验实现", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	submissions := make(chan JournalRuntimeContentSubmission, 1)
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID: 1, Name: "research", Description: "Research.",
+			Body: "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendJournal(
+			run,
+			notifyingSkillJournalProducer{submissions: submissions},
+		),
+	)
+	require.NoError(t, err)
+
+	got, err := backend.Get(ctx, "research")
+	require.NoError(t, err)
+	require.Equal(t, "Use research instructions.", got.Content)
+
+	select {
+	case submission := <-submissions:
+		require.Equal(t,
+			journalStableProjectionID(20, "milestone", "plan-1"),
+			submission.Action.MilestoneID,
+		)
+	case <-time.After(time.Second):
+		require.FailNow(t, "Journal skill snapshot was not observed")
+	}
+}
+
+type notifyingSkillJournalProducer struct {
+	submissions chan<- JournalRuntimeContentSubmission
+}
+
+func (p notifyingSkillJournalProducer) ProduceJournalContent(
+	_ context.Context,
+	req JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	p.submissions <- req
+	return nil, &domainentity.JournalEvent{}, nil
+}
+
+type failingJournalContentProducer struct{}
+
+func (failingJournalContentProducer) ProduceJournalContent(
+	context.Context,
+	JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	return nil, nil, fmt.Errorf("journal snapshot unavailable")
+}
+
+type blockingJournalContentProducer struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (p blockingJournalContentProducer) ProduceJournalContent(
+	context.Context,
+	JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	close(p.started)
+	<-p.release
+	return nil, nil, nil
 }
 
 func TestADKSkillBackendGuardrailBlocksBeforeReturningContent(t *testing.T) {

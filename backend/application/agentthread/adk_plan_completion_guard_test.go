@@ -174,6 +174,260 @@ func TestADKPlanCompletionGuardAllowsFinalAfterReminderCap(t *testing.T) {
 	require.Equal(t, "in_progress", store.task(1).Status)
 }
 
+func TestADKPlanCompletionGuardLeavesExecutionWithoutPlanUntouched(t *testing.T) {
+	ctx := context.Background()
+	run := &RunSummary{
+		RunID: 25, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := NewADKPlanBackend(
+		run,
+		newMemoryADKPlanStore(),
+		&recordingRunEventSink{},
+	)
+	require.NoError(t, err)
+	guard, err := newADKPlanCompletionGuardMiddleware(backend)
+	require.NoError(t, err)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call-write",
+			Function: schema.FunctionCall{
+				Name:      adkWriteFileToolName,
+				Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+			},
+		}}),
+	}}
+
+	_, rewritten, err := guard.AfterModelRewriteState(ctx, state, nil)
+
+	require.NoError(t, err)
+	require.Len(t, rewritten.Messages, 1)
+	require.Len(t, rewritten.Messages[0].ToolCalls, 1)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+}
+
+func TestADKPlanCompletionGuardLeavesExecutionWithPendingPlanUntouched(t *testing.T) {
+	ctx := context.Background()
+	run := &RunSummary{
+		RunID: 26, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := NewADKPlanBackend(
+		run,
+		newMemoryADKPlanStore(),
+		&recordingRunEventSink{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"Write report","description":"","status":"pending","blocks":[],"blockedBy":[]}`,
+	}))
+	guard, err := newADKPlanCompletionGuardMiddleware(backend)
+	require.NoError(t, err)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call-write",
+			Function: schema.FunctionCall{
+				Name:      adkWriteFileToolName,
+				Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+			},
+		}}),
+	}}
+
+	_, rewritten, err := guard.AfterModelRewriteState(ctx, state, nil)
+
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+}
+
+func TestADKPlanCompletionGuardLeavesPlanningAndActiveExecutionUntouched(t *testing.T) {
+	ctx := context.Background()
+	run := &RunSummary{
+		RunID: 27, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := NewADKPlanBackend(
+		run,
+		newMemoryADKPlanStore(),
+		&recordingRunEventSink{},
+	)
+	require.NoError(t, err)
+	guard, err := newADKPlanCompletionGuardMiddleware(backend)
+	require.NoError(t, err)
+
+	planState := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call-plan",
+			Function: schema.FunctionCall{
+				Name:      plantask.TaskCreateToolName,
+				Arguments: `{"subject":"Write report","description":"Create the requested report"}`,
+			},
+		}}),
+	}}
+	_, rewrittenPlan, err := guard.AfterModelRewriteState(ctx, planState, nil)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		plantask.TaskCreateToolName,
+		rewrittenPlan.Messages[0].ToolCalls[0].Function.Name,
+	)
+
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"Write report","description":"","status":"in_progress","blocks":[],"blockedBy":[]}`,
+	}))
+	executionState := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call-write",
+			Function: schema.FunctionCall{
+				Name:      adkWriteFileToolName,
+				Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+			},
+		}}),
+	}}
+	_, rewrittenExecution, err := guard.AfterModelRewriteState(
+		ctx,
+		executionState,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewrittenExecution.Messages[0].ToolCalls[0].Function.Name,
+	)
+}
+
+func TestADKPlanCompletionGuardLeavesMixedPlanTransitionAndExecutionUntouched(t *testing.T) {
+	ctx := context.Background()
+	run := &RunSummary{
+		RunID: 28, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := NewADKPlanBackend(
+		run,
+		newMemoryADKPlanStore(),
+		&recordingRunEventSink{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"Inspect sources","description":"","status":"in_progress","blocks":[],"blockedBy":[]}`,
+	}))
+	guard, err := newADKPlanCompletionGuardMiddleware(backend)
+	require.NoError(t, err)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{
+			{
+				ID: "call-complete",
+				Function: schema.FunctionCall{
+					Name:      plantask.TaskUpdateToolName,
+					Arguments: `{"taskId":"1","status":"completed"}`,
+				},
+			},
+			{
+				ID: "call-write",
+				Function: schema.FunctionCall{
+					Name:      adkWriteFileToolName,
+					Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+				},
+			},
+		}),
+	}}
+
+	_, rewritten, err := guard.AfterModelRewriteState(ctx, state, nil)
+
+	require.NoError(t, err)
+	require.Len(t, rewritten.Messages[0].ToolCalls, 2)
+	require.Equal(
+		t,
+		plantask.TaskUpdateToolName,
+		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[1].Function.Name,
+	)
+}
+
+func TestADKPlanCompletionGuardPreservesReasoningForExecutionToolCalls(t *testing.T) {
+	ctx := context.Background()
+	run := &RunSummary{
+		RunID: 29, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	backend, err := NewADKPlanBackend(
+		run,
+		newMemoryADKPlanStore(),
+		&recordingRunEventSink{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"Inspect sources","description":"","status":"in_progress","blocks":[],"blockedBy":[]}`,
+	}))
+	guard, err := newADKPlanCompletionGuardMiddleware(backend)
+	require.NoError(t, err)
+	message := schema.AssistantMessage("", []schema.ToolCall{
+		{
+			ID: "call-complete",
+			Function: schema.FunctionCall{
+				Name:      plantask.TaskUpdateToolName,
+				Arguments: `{"taskId":"1","status":"completed"}`,
+			},
+		},
+		{
+			ID: "call-write",
+			Function: schema.FunctionCall{
+				Name:      adkWriteFileToolName,
+				Arguments: `{"file_path":"/mnt/user-data/outputs/report.md","content":"done"}`,
+			},
+		},
+	})
+	message.ReasoningContent = "I should complete the current step before writing."
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{message}}
+
+	_, rewritten, err := guard.AfterModelRewriteState(ctx, state, nil)
+
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		message.ReasoningContent,
+		rewritten.Messages[0].ReasoningContent,
+	)
+	require.Len(t, rewritten.Messages[0].ToolCalls, 2)
+	require.Equal(
+		t,
+		plantask.TaskUpdateToolName,
+		rewritten.Messages[0].ToolCalls[0].Function.Name,
+	)
+	require.Equal(
+		t,
+		adkWriteFileToolName,
+		rewritten.Messages[0].ToolCalls[1].Function.Name,
+	)
+}
+
 func runPlanGuardAgent(
 	t *testing.T,
 	ctx context.Context,

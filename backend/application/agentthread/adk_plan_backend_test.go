@@ -88,6 +88,110 @@ func TestADKPlanBackendTranslatesEinoFilesToDurablePlan(t *testing.T) {
 	}}, tracker.Snapshot().Todos)
 }
 
+func TestADKPlanBackendEmitsExplicitExecutionIntroWithoutMetadata(t *testing.T) {
+	store := newMemoryADKPlanStore()
+	events := &recordingRunEventSink{}
+	backend, err := NewADKPlanBackend(&RunSummary{
+		RunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, store, events)
+	require.NoError(t, err)
+
+	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content: `{
+			"id":"1",
+			"subject":"核验执行链路",
+			"description":"",
+			"status":"pending",
+			"blocks":[],
+			"blockedBy":[],
+			"metadata":{
+				"execution_intro":"收到。我会先核验执行链路，再完成实现与验证。",
+				"private_note":"must-not-leak"
+			}
+		}`,
+	}))
+
+	require.Len(t, events.events, 1)
+	require.Contains(
+		t,
+		events.events[0].Payload,
+		`"execution_intro":"收到。我会先核验执行链路，再完成实现与验证。"`,
+	)
+	require.NotContains(t, events.events[0].Payload, `"metadata"`)
+	require.NotContains(t, events.events[0].Payload, "must-not-leak")
+}
+
+func TestADKPlanBackendDefersFallbackExecutionIntroUntilPlanIsVisible(t *testing.T) {
+	store := newMemoryADKPlanStore()
+	events := &recordingRunEventSink{}
+	backend, err := NewADKPlanBackend(&RunSummary{
+		RunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, store, events)
+	require.NoError(t, err)
+
+	for _, task := range []struct {
+		id      string
+		content string
+	}{
+		{id: "1", content: `{"id":"1","subject":"核验执行链路","description":"","status":"pending","blocks":[],"blockedBy":[]}`},
+		{id: "2", content: `{"id":"2","subject":"实现前后端改造","description":"","status":"pending","blocks":[],"blockedBy":[]}`},
+		{id: "3", content: `{"id":"3","subject":"运行完整验证","description":"","status":"pending","blocks":[],"blockedBy":[]}`},
+	} {
+		require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+			FilePath: "/plans/.highwatermark",
+			Content:  task.id,
+		}))
+		require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+			FilePath: "/plans/" + task.id + ".json",
+			Content:  task.content,
+		}))
+	}
+	for _, event := range events.events {
+		require.NotContains(t, event.Payload, "execution_intro")
+	}
+
+	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"核验执行链路","description":"","status":"in_progress","blocks":[],"blockedBy":[]}`,
+	}))
+	visiblePayload := events.events[len(events.events)-1].Payload
+	require.Contains(t, visiblePayload, `"execution_intro":`)
+	require.Contains(t, visiblePayload, "核验执行链路")
+	require.Contains(t, visiblePayload, "实现前后端改造")
+	require.Contains(t, visiblePayload, "运行完整验证")
+}
+
+func TestADKPlanBackendOmitsSensitiveExecutionIntro(t *testing.T) {
+	store := newMemoryADKPlanStore()
+	events := &recordingRunEventSink{}
+	backend, err := NewADKPlanBackend(&RunSummary{
+		RunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, store, events)
+	require.NoError(t, err)
+
+	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark",
+		Content:  "1",
+	}))
+	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content: `{
+			"id":"1","subject":"核验执行链路","description":"","status":"pending",
+			"blocks":[],"blockedBy":[],
+			"metadata":{"execution_intro":"正在读取 /Users/alice/private/report.md"}
+		}`,
+	}))
+
+	require.Len(t, events.events, 1)
+	require.NotContains(t, events.events[0].Payload, "execution_intro")
+	require.NotContains(t, events.events[0].Payload, "/Users/alice/private/report.md")
+}
+
 func TestADKPlanBackendArchivesCompletedCleanupWithoutDuplicateEvent(t *testing.T) {
 	store := newMemoryADKPlanStore()
 	events := &recordingRunEventSink{}

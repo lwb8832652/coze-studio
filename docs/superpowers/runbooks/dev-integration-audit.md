@@ -1,62 +1,46 @@
-# dev 集成双重审计手册
+# dev 单次集成检查手册
 
-## 当前默认路径
+## 默认路径
 
-普通 `dev` 自动发布不要求用户手动完成 ACR 登录、镜像拉取、镜像 revision 检查、
-GitHub 页面操作或宝塔接口调用。需求分支完成必要测试并合入本地 `dev` 后，只运行：
+每个需求仍在独立 `codex/` 分支完成，但只做一次代码与范围审计：
 
-```bash
-AUDITED_ORIGIN_DEV_SHA=$(git rev-parse origin/dev)
-AUDITED_TARGET_DEV_SHA=$(git rev-parse dev)
-deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
-```
+1. 需求分支对齐最新 `origin/dev`，完成范围审核和必要验证；
+2. 报告远程基准、目标 exact SHA、文件范围、测试结果、migration 清单和风险；
+3. 用户确认后，将本地 `dev` fast-forward 到已审计的需求 SHA；
+4. 本地 `dev` 与已验证分支是同一个 exact SHA，因此不重复第二轮测试或审计；
+5. 合并后不重跑代码审计，只执行实际部署区间、migration、credential 和 Atlas
+   状态的发布前预检；
+6. 展示预检结果和标准发布命令，获得发布确认后运行一次
+   `deploy/dev/publish-dev.sh`。
 
-该脚本内部负责分支、工作区、exact SHA、远程竞态和 Atlas 状态检查，并在成功后执行
-非 force push。脚本成功后本地流程结束；GitHub Actions 自动完成 ACR 登录、双镜像
-构建、推送、revision 校验、`dev` 标签晋级和宝塔 WebHook，服务器自动拉取并重启服务。
+合并确认与发布确认复用同一份代码审计证据，不再生成第二份代码审计报告。发布前
+预检只补充部署和数据库事实，不重跑测试。SHA、文件范围、migration 清单、实际部署
+基准或远程基准变化时，证据失效并重新执行相应检查。
 
-以下详细审计步骤只用于用户明确要求严格审计、迁移风险排查或发布异常定位；不得把
-其中的本地 ACR 预校验当作普通发布的额外前置操作，也不得要求用户重复执行远程发布
-动作。任何密码、token 或 ACR credential 都不得写入仓库、脚本或聊天记录。
-
-## 目的
-
-每个需求必须先在独立 `codex/` 分支完成。需求分支通过第一次审计并获得用户
-确认后，才能合入本地 `dev`；合并后的本地 `dev` 必须接受更严格的第二次审计，
-再次获得用户确认后才能推送 `origin/dev`。
-
-两次确认只对报告中列出的分支、SHA、文件范围和验证结果有效。提交、远程基准
-或范围变化后，原确认失效。
+普通发布不要求用户手动完成 ACR 登录、镜像拉取、revision 检查、GitHub 页面操作或
+宝塔接口调用。执行审计的一方负责完成发布前只读预检；发布脚本负责分支、干净工作区、
+exact SHA、远程竞态和 Atlas 状态复核；GitHub Actions 负责镜像构建、校验、标签晋级
+和宝塔 WebHook。
 
 ## 禁止事项
 
 - 禁止直接在 `dev` 开发需求；
-- 禁止把第一次确认解释为远程推送授权；
-- 禁止 Codex 直接运行 `git push origin dev` 或等价 refspec 绕过发布脚本；
-- 禁止 force push、自动合并或自动解决冲突；
-- 禁止在本地 `dev` 上试合并、修冲突或补功能；
-- 禁止合并未提交、未审计或来源不明的 worktree 改动；
-- 禁止复用需求分支测试结果冒充合并后验证。
+- 禁止未经当前范围确认就合并、apply migration 或推送；
+- 禁止直接运行 `git push origin dev` 绕过发布脚本；
+- 禁止 force push、自动解决冲突或在本地 `dev` 补功能；
+- 禁止把未提交、来源不明或未验证的改动合入 `dev`；
+- 禁止在 SHA、文件范围、migration 清单或远程基准变化后复用旧确认；
+- 禁止把 credential、DSN、token 或密码写入仓库、脚本、日志或报告。
 
-## 审计前提
+## 单次集成检查
 
-执行前确认：
+### 1. 固定工作区与远程基准
 
 ```bash
 git status --short --branch
 git worktree list --porcelain
 git branch -vv
 git remote -v
-```
-
-若需求相关 worktree 不干净、`dev` 被未知 worktree 占用、远程配置异常或存在
-无法归属的相关改动，停止并向用户报告。
-
-## 第一次审计：需求分支
-
-### 1. 固定远程基准
-
-```bash
 git fetch origin dev
 git rev-parse origin/dev
 git rev-parse dev
@@ -64,25 +48,25 @@ git rev-parse HEAD
 git rev-list --left-right --count dev...origin/dev
 ```
 
-记录三个 SHA 和领先/落后计数。本地 `dev` 必须能够 fast-forward 到
-`origin/dev`；若本地 `dev` 含远程没有的提交或双方分叉，停止审计。
+记录 `origin/dev`、本地 `dev` 和需求分支的完整 SHA。本地 `dev` 必须干净且能够
+fast-forward 到 `origin/dev`；若本地 `dev` 有未解释提交、工作区改动或双方分叉，
+停止并报告。
 
-### 2. 在需求分支吸收最新基准
+### 2. 对齐需求分支
 
 ```bash
 git merge-base --is-ancestor origin/dev HEAD
 ```
 
-若退出码不是 `0`，在需求分支执行：
+退出码不是 `0` 时，只能在需求分支吸收最新 `origin/dev` 并解决冲突：
 
 ```bash
 git merge --no-edit origin/dev
 ```
 
-冲突只能在需求分支解决。解决后重新运行完整需求验证；不得在第一次审计期间
-切到或修改本地 `dev`。
+冲突解决或基准变化后重新运行受影响验证。不得在本地 `dev` 解决冲突。
 
-### 3. 审核提交和文件范围
+### 3. 审核提交与文件范围
 
 ```bash
 git log --oneline --decorate origin/dev..HEAD
@@ -92,119 +76,80 @@ git diff --check origin/dev...HEAD
 git diff --check
 ```
 
-检查无关文件、生成代码、锁文件、迁移、credential、调试日志和本地缓存。
+检查无关文件、生成代码、锁文件、credential、调试日志、本地缓存和 migration。
+涉及 migration 时，逐个列出 SQL 文件、数据库对象、forward apply 副作用、锁风险、
+兼容性和不可逆操作；没有 migration 也要明确记录。
 
 ### 4. 验证需求
 
-按变更类型执行：
+按变更风险执行：
 
 - 前端：相关 Vitest，必要时 typecheck、lint、build 和 in-app browser；
-- 后端：相关 Go package 测试，必要时跨包测试和 build；
-- 迁移：Atlas hash 与 validate；
-- 文档：链接、残留规则、`git diff --check` 和工具可用性；
-- 所有需求：codebase-memory `detect_changes` 或等价影响分析。
+- 后端：相关 Go package 测试，必要时跨包、race 和 build；
+- 公共合同或权限：补未授权、跨空间、脱敏和兼容性验证；
+- migration：Atlas hash、validate 和 SQL 审阅；实际 status 在发布前预检执行；
+- 文档：链接、残留规则和 `git diff --check`；
+- 结构影响：codebase-memory 或等价调用链分析。
 
-### 5. 第一次报告和确认
+### 5. 审计报告与合并确认
 
 报告必须列出：
 
-- `origin/dev` 基准 SHA；
-- 本地 `dev` SHA 和领先/落后关系；
-- 需求分支与审计 SHA；
-- 提交列表和文件范围；
-- 验证命令、退出状态和关键结果；
-- codebase-memory 影响面；
-- Graphify 验证状态（适用时）；
-- 已知风险、未验证项和停止条件。
+- `origin/dev` 基准 SHA、本地 `dev` SHA 和领先/落后关系；
+- 需求分支名、目标 exact SHA 和提交列表；
+- 文件范围、验证命令、退出状态和关键结果；
+- migration 清单及副作用，或明确“无 migration”；
+- 业务影响边界、已知风险和未验证项；
+- 推送会触发的镜像构建、标签晋级和预发布部署。
 
-报告后停止。只有用户明确确认合入本地 `dev` 才能进入下一阶段。
+报告后停止。用户明确确认后，只授权报告中 exact SHA 的本地 fast-forward 合并；
+不自动授权 migration apply、远程推送、部署、baseline、repair、backfill、down
+migration、生产发布、配置变更、人工回滚或服务器操作。
 
 ## 合入本地 dev
 
-用户第一次确认后，先重新 fetch 并确认远程 SHA 未变化：
+确认后先再次固定远程状态：
 
 ```bash
 git fetch origin dev
 git rev-parse origin/dev
+git rev-parse <audited-feature-sha>
 ```
 
-若 SHA 与第一次报告不同，确认失效，回到第一次审计。
-
-在 `dev` 所在 worktree 确认工作区干净后执行：
+若 `origin/dev` 或需求 SHA 与报告不同，确认失效，回到单次集成检查。两者未变化时，
+在干净的本地 `dev` worktree 执行：
 
 ```bash
 git switch dev
 git merge --ff-only origin/dev
-git merge --no-ff --no-edit <audited-feature-sha>
+git merge --ff-only <audited-feature-sha>
 ```
 
-合并对象必须是第一次报告中的审计 SHA，并再次确认需求分支仍指向该 SHA。
-发生冲突时立即执行 `git merge --abort`，回到需求分支吸收最新 `origin/dev`；
-不得直接在 `dev` 解决冲突。
-
-## 第二次审计：本地 dev
-
-### 1. 固定合并结果
+第二次 `--ff-only` 保证本地 `dev` 与已经验证的需求 SHA 完全一致，不产生新的 merge
+commit。合并后只核对：
 
 ```bash
-git rev-parse origin/dev
 git rev-parse dev
-git log --oneline --decorate origin/dev..dev
-git diff --stat origin/dev...dev
-git diff --name-status origin/dev...dev
+git status --short
 git diff --check origin/dev...dev
 ```
 
-确认只包含已批准需求提交和预期 merge commit。
+不再重跑同一 exact SHA 的测试、构建、浏览器验收或第二轮审计。任一 fast-forward
+失败时立即停止，回需求分支处理；不能在 `dev` 上 rebase、补提交或解决冲突。
 
-### 2. 严格重新验证
+## 发布确认与执行
 
-所有相关测试必须从本地 `dev` 重新执行。第二次审计至少包含第一次全部命令，
-并按风险增加：
+### 1. 固定实际部署区间
 
-- 共享前端包：消费方测试、typecheck 或 build；
-- 公共后端合同：跨 application/api/router package 测试；
-- 权限与租户：未授权、跨空间和脱敏路径；
-- 页面：真实 URL、账号/空间、核心交互和控制台；
-- 迁移：hash、validate、顺序和兼容性；
-- 文档与上下文：链接、残留扫描、Graphify 增量结果；
-- 全部变更：codebase-memory 最终影响和反向依赖。
+先重新 fetch 并确认 `origin/dev` 仍等于审计报告中的完整 SHA。本地 `dev` 必须仍是
+已审计目标 exact SHA。随后使用只读 ACR credential 分别读取当前
+`coze-server:dev`、`coze-web:dev` 的 `org.opencontainers.image.revision`；两个
+revision 必须都是合法的 40 位 SHA 且完全一致。两张 manifest 都明确不存在时，只有
+在首次部署条件已经验证后，才能使用已验证的 push `before`；只有一张缺失、认证或
+网络失败、revision 缺失或不一致时立即停止。
 
-同时扫描：
-
-```bash
-rg -n '^(<<<<<<<|=======|>>>>>>>)' . --glob '!graphify-out/**' --glob '!.git/**'
-git status --short
-```
-
-### 3. 远程竞态检查
-
-```bash
-git fetch origin dev
-git rev-parse origin/dev
-git rev-list --left-right --count origin/dev...dev
-```
-
-远程 SHA 必须仍等于第一次审计基准，且本地 `dev` 只能领先预期提交。否则停止，
-不得自动 pull、rebase、push 或覆盖本地 `dev`。记录当前 merge SHA 并向用户报告；
-只有获得明确恢复授权后，才能将本地 `dev` 重新对齐新的 `origin/dev`，随后回到
-需求分支重新执行第一次审计。
-
-### 4. 固定实际部署区间和 migration 授权
-
-第二次报告前，把远程竞态检查得到的 `origin/dev` 完整 SHA 记为
-`AUDITED_ORIGIN_DEV_SHA`，把本地 `dev` 完整 SHA 记为
-`AUDITED_TARGET_DEV_SHA`。使用已审计的只读 ACR 凭据分别拉取当前
-`coze-server:dev`、`coze-web:dev`，读取 `org.opencontainers.image.revision`。
-两个 revision 必须都是合法的 40 位完整 SHA，并且完全一致。不能使用本地缓存标签
-代替本次 ACR 读取。
-
-若两张 `:dev` manifest 都明确不存在，只有在首次部署条件已经验证时，才能把远程
-竞态检查固定的 push `before` 作为比较基线。只有一张 manifest 缺失、ACR 认证或
-网络错误、revision 缺失或不一致时立即停止，不得请求推送确认。
-
-把一致的 `<deployed-revision>`，或首次部署的 `<verified-push-before>`，记为
-`comparison_base`；把本地 `dev` 完整 SHA 记为 `target_sha`。然后验证实际部署区间：
+把一致的已部署 revision（首次部署时为已验证 push `before`）记为
+`comparison_base`，目标记为 `target_sha`，并执行：
 
 ```bash
 git cat-file -e "${comparison_base}^{commit}"
@@ -213,101 +158,67 @@ git merge-base --is-ancestor "$comparison_base" "$target_sha"
 git diff --name-status "$comparison_base" "$target_sha" -- docker/atlas/migrations
 ```
 
-记录每条命令的退出状态。Git 对象、祖先关系或 diff 任一项无法取得可信结果时，
-禁止进入确认阶段。Migration 清单必须来自
-`<deployed-revision>..<target-sha>`；首次部署来自
-`<verified-push-before>..<target-sha>`。不得只列 `origin/dev...dev` 中新增的文件，
-也不得漏掉区间内修改、删除或较早提交引入的 migration。
+migration 清单必须来自实际部署区间，不得只审阅 `origin/dev...dev`。逐项记录 SQL、
+数据库对象、forward apply 副作用、锁和不可逆风险，以及旧应用在镜像晋级前访问迁移后
+schema 的兼容性；没有 migration 也要明确记录。需要 baseline、repair、backfill 或
+down migration 时退出常规发布流程并单独申请授权。
 
-对区间内每个待执行 migration 逐项审阅 SQL，报告数据库对象、数据、锁和可逆性等
-forward apply 副作用，并给出旧应用在镜像晋级前继续访问迁移后 schema 的兼容性
-证据。授权只覆盖清单中的文件和副作用。数据库 schema、已执行 migration 与 Atlas
-revision 必须有一致性证据；需要 baseline 时停止常规审计，baseline 写 revision 的
-操作另行申请数据库变更授权，`--baseline` 使用 migration 文件名的版本时间戳而非
-Git SHA。
+### 2. 校验 credential 与只读 Atlas 状态
 
-检查本机 Atlas credential 文件。默认路径是
-`~/.config/coze-studio/dev-atlas.env`，可由 `ATLAS_ENV_FILE` 指定其他路径。它必须
-存在、是普通文件而不是 symlink、物理路径位于仓库外，且模式严格为 `600`。文件只
-允许注释、空行和一条 `ATLAS_URL=mysql://...`。审计报告只记录物理路径和各项检查
-结果，禁止记录、打印或转述文件内容。
+Atlas credential 默认位于 `~/.config/coze-studio/dev-atlas.env`，也可由
+`ATLAS_ENV_FILE` 指定。它必须是仓库外的普通文件、不是 symlink、权限严格为 `600`，
+并且只允许注释、空行和一条 `ATLAS_URL=mysql://...`。报告只记录物理路径和检查结果，
+禁止输出文件内容、DSN 或密码。
 
-第二次确认前只允许读取 Atlas 状态。先设置报告中的两个具体 SHA，再运行安全的只读
-模式：
+在发布确认前仅运行只读状态模式：
 
 ```bash
-: "${AUDITED_ORIGIN_DEV_SHA:?set from the second audit evidence}"
-: "${AUDITED_TARGET_DEV_SHA:?set from the second audit evidence}"
+AUDITED_ORIGIN_DEV_SHA=<reported-origin-dev-sha>
+AUDITED_TARGET_DEV_SHA=<audited-feature-sha>
 deploy/dev/publish-dev.sh --status \
   "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 ```
 
-`--status` 会复用正式发布的 env 校验、exact target 快照、固定 Atlas 镜像、安全临时
-输出和 credential 脱敏，只执行 validate/status，再次核对本地与远程 SHA 后退出；它
-不会 apply 或 push。若状态无法读取、checksum/revision/schema 基线与审阅结果不一致，
-或需要 baseline、repair、backfill，立即停止；第二次确认前禁止运行 `migrate apply`、
-`migrate down`、baseline 或修复命令。
+`--status` 必须完成 pinned Atlas validate/status、credential 脱敏和远程 SHA 复核，
+不得 apply 或 push。checksum、revision、schema 基线或 migration 清单不一致时立即停止。
+若实际部署区间存在待执行 migration，还必须确认数据库网络只允许受控来源，并使用专用
+最小权限 migration 账号，禁止 root；无法证明时不得请求数据库变更授权。
 
-当前 dev MySQL 可以使用无 TLS 连接，但公网链路会暴露数据库 credential 和 schema
-流量。审计必须确认安全组或数据库白名单只允许受控来源，并使用专用最小权限
-migration 账号，禁止 root。无法证明网络限制或账号权限时，不得请求包含数据库变更
-的第二次确认。
+以上是发布前安全预检，不是第二次代码审计，不重跑测试、构建或浏览器验收。
 
-### 5. 第二次报告和确认
+### 3. 报告并请求发布确认
 
-报告必须列出合并前后 SHA、最终提交范围、重新运行的全部验证、工具影响分析、
-远程竞态检查和剩余风险。
-
-仓库启用 dev 自动发布后，第二次报告还必须明确列出：
-
-- 具体的 `AUDITED_ORIGIN_DEV_SHA` 与 `AUDITED_TARGET_DEV_SHA`，均为 40 位完整 SHA；
-- 从 ACR 读取的两张当前 `:dev` OCI revision、合法性和一致性证据；首次部署则列出
-  两张 manifest 均不存在的证据和已验证 push `before`；
-- `comparison_base`、实际部署区间、Git 对象和祖先关系，以及该区间内的全部 migration；
-  没有 migration 时也要明确写出；
-- 每个待执行 migration 对远程 dev 数据库的 forward apply 副作用，以及与发布前旧
-  应用兼容的证据；
-- 本地 env 文件的物理路径、普通文件/非 symlink/仓库外/模式 `600` 检查结果，以及
-  pinned Atlas `migrate status` 摘要；报告不得包含 credential 或 DSN；
-- dev MySQL 的 TLS 现状、受控来源网络证据和最小权限 migration 账号检查结果；
-- 推送将触发的 ACR 前后端镜像构建、不可变标签、`dev` 标签晋级条件；
-- 宝塔 webhook 对 dev/预发布服务器的自动更新副作用；
-- workflow 对该 SHA 的成功路径：`preflight -> build-server/build-web ->
-  verify-images -> promote -> deploy`。GitHub 不连接数据库；预发布服务器保留应用
-  运行时 DSN，但不持有 migration credential，也不执行 Atlas。
-
-报告后停止。用户第二次明确确认只授权报告逐项列出的本地 Atlas forward apply、
-从 `AUDITED_ORIGIN_DEV_SHA` 到 `AUDITED_TARGET_DEV_SHA` 的 exact-SHA 非 force push，
-以及该 push 触发的 ACR 双镜像晋级和宝塔预发布部署。授权不延伸到其他 SHA，也不
-包含 baseline、repair、backfill、down migration、数据库重试、生产发布、配置变更、
-人工回滚或其他服务器操作。
-
-若 `origin/dev` 在任一审计或等待确认期间变化，当前确认失效。回到需求分支吸收
-新基准，并从第一次审计重新执行，不能只补一次远程竞态检查后继续推送。
-
-## 推送与核验
-
-用户第二次确认后，只执行：
+报告必须追加实际 `comparison_base`、目标 SHA、完整 migration 清单、credential 文件
+安全检查、Atlas status 摘要、数据库网络/账号检查（适用时），以及将触发的镜像晋级和
+预发布部署。然后展示以下完整 SHA 和命令，等待用户对本次发布明确确认：
 
 ```bash
-: "${AUDITED_ORIGIN_DEV_SHA:?set from the second audit report}"
-: "${AUDITED_TARGET_DEV_SHA:?set from the second audit report}"
+AUDITED_ORIGIN_DEV_SHA=<reported-origin-dev-sha>
+AUDITED_TARGET_DEV_SHA=<audited-feature-sha>
 deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 ```
 
-脚本会再次核对分支、干净工作区、两个 SHA、祖先关系和远程竞态，再从 exact target
-快照依次执行 validate、status、forward apply 和 exact push。任一步失败都立即停止。
-不得改用直接 push，也不得追加 force 参数。
+该确认只授权报告中已审阅的 migration forward apply、从基准到目标 SHA 的非 force
+push，以及该 push 触发的标准镜像发布和预发布部署。确认不延伸到其他 SHA 或其他
+数据库、生产、配置、回滚和服务器操作。
 
-若 apply 已成功，但第二次远程检查或 push 失败，dev schema 可能领先于远程代码。
-保留并报告两个审计 SHA 与脚本结果，不再 push、不自动重试数据库操作；远程恢复后
-从第一次审计重新开始并取得新的两次确认。
+发布脚本会再次校验当前分支、干净工作区、目标 SHA、祖先关系、远程竞态和 Atlas
+状态，再按顺序执行 validate、status、必要的 forward apply 和 exact push。任一步
+失败都停止；不得改用直接 push、force 参数或未经确认的数据库修复命令。
 
-push 成功后脚本立即结束。本地不再调用 `gh`、GitHub API、curl、dispatch 或服务器
-命令。只观察目标 SHA 对应的 `Publish and deploy dev images` run，依次核对
-`preflight`、两项 build、`verify-images`、`promote`、`deploy`，再核对两张 `:dev`
-revision、宝塔结果和服务健康。`deployment-blocked` 出现时，后续晋级和部署不得继续。
+若 migration apply 已成功但 push 失败，schema 可能领先于远程代码。保留两个 SHA
+和脚本输出并报告，不自动重试 apply、push、baseline、repair 或回滚。
 
-任何 post-push 失败都先报告。初始确认不授权 Actions 重跑、dispatch、标签修复、
-人工回滚或服务器操作；这些动作必须根据当次证据另行确认。GitHub 侧没有 Atlas job，
-不得用远程重跑代替新的数据库审计或授权。
+## 发布后核验
+
+push 成功后不再执行第二次本地审计。只观察目标 SHA 对应的
+`Publish and deploy dev images`，核对 `preflight`、前后端 build、`verify-images`、
+`promote`、`deploy` 和服务健康。任何失败先报告；Actions 重跑、标签修复、人工回滚
+或服务器操作需要根据当次证据另行确认。
+
+## 附加排查模式
+
+只有用户明确要求 migration 深度风险排查或发布异常定位时，才增加镜像内容比对、
+部署日志、数据库锁评估和服务器链路等专项检查。实际部署 revision、migration 区间、
+credential 文件权限和 Atlas status 属于默认强制预检，不得降为可选项。专项结果补充
+到同一份证据，不恢复合并后的第二轮重复测试。

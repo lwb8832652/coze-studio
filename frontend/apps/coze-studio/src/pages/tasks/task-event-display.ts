@@ -294,6 +294,7 @@ const getSkillLoadedEventDisplay = ({
     runtime: 'Agent',
     structured: true,
     kind: 'step',
+    visibleInFlow: false,
   };
 };
 
@@ -473,6 +474,7 @@ export const getTaskThreadEventDisplay = (
       status: 'completed',
       structured: false,
       kind: 'event',
+      visibleInFlow: false,
     }
   );
 };

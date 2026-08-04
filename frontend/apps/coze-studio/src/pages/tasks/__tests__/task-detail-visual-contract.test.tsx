@@ -66,10 +66,64 @@ describe('task detail approved visual contract', () => {
     expect(todos).not.toMatch(/>\s*\^\s*</);
   });
 
+  it('uses the configured project identity in the approved compact Journal shell', () => {
+    const conversation = taskSource('conversation-turn.tsx');
+    const detail = taskSource('detail.tsx');
+    const styles = taskSource('newx-task-ui.less');
+
+    expect(conversation).toContain('journalMode = false');
+    expect(conversation).toContain('<strong>{siteName}</strong>');
+    expect(conversation).toContain('<WorkspaceMark variant="assistant" />');
+    expect(conversation).not.toContain("journalMode ? 'Aime' : siteName");
+    expect(detail).toContain('journalIntro = false');
+    expect(detail).toContain('coze-prototype-journal-intro');
+    expect(detail).toContain('data-journal-active={journalEvents.length > 0}');
+    expect(detail).toContain('hideHeader={isJournalContinuation}');
+    expect(detail).toContain('journalMode={isJournalRunMessage}');
+    expect(detail).toContain('journalIntro={true}');
+    expect(detail).toContain(
+      'message={isJournalIntroMessage ? undefined : message}',
+    );
+    expect(detail).toContain(
+      'isJournalIntroMessage && !hasCanonicalJournalIntro',
+    );
+    expect(styles).toMatch(
+      /coze-prototype-assistant-turn-journal[\s\S]*?display:\s*block/,
+    );
+    expect(styles).toMatch(
+      /data-journal-active='true'[\s\S]*?coze-prototype-user-turn[\s\S]*?display:\s*none/,
+    );
+  });
+
   it('uses the compact execution summary copy from the approved target', () => {
     const summary = taskSource('execution-summary.tsx');
 
     expect(summary).toContain('可用技能目录');
     expect(summary).not.toContain('查看执行详情');
+  });
+
+  it('keeps virtual Journal rows tall enough and action details readable', () => {
+    const flow = taskSource('journal/journal-conversation-flow.tsx');
+    const styles = taskSource('journal/journal.less');
+
+    expect(flow).toContain('const actionRowHeight = 64;');
+    expect(styles).toMatch(
+      /\.journal-action-detail[\s\S]*?font-size:\s*10px[\s\S]*?color:\s*#59616d/,
+    );
+  });
+
+  it('keeps Journal copy inside the conversation column when the detail panel is open', () => {
+    const taskStyles = taskSource('newx-task-ui.less');
+    const journalStyles = taskSource('journal/journal.less');
+
+    expect(taskStyles).toMatch(
+      /coze-prototype-assistant-turn-journal[\s\S]*?coze-prototype-assistant-turn-body[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+    expect(journalStyles).toMatch(
+      /\.journal-conversation-flow[\s\S]*?min-width:\s*0/,
+    );
+    expect(journalStyles).toMatch(
+      /\.journal-execution-intro[\s\S]*?overflow-wrap:\s*anywhere/,
+    );
   });
 });

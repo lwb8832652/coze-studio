@@ -234,12 +234,12 @@ Corpus 只接受仓库内普通源码/合同文件。`.env`、私钥/keystore、
 也不得上传或导出。若未来引入远程语义提取、共享语料或产物导出，必须先增加
 内容级脱敏和独立安全复核。
 
-## dev 两阶段审计
+## dev 单次集成检查
 
 本图谱任务与其它需求一样遵循
 `docs/superpowers/runbooks/dev-integration-audit.md`，并增加图谱专项检查。
 
-### 第一次审计：需求分支
+### 需求分支检查
 
 1. `git fetch origin dev`，记录 `origin/dev` SHA、需求分支 SHA 和 merge-base；
 2. 确认需求分支基于最新 `origin/dev`，工作区无未解释改动；
@@ -251,18 +251,12 @@ Corpus 只接受仓库内普通源码/合同文件。`.env`、私钥/keystore、
 
 未获确认不得 checkout/merge 本地 `dev`，不得推送。
 
-### 第二次审计：本地 dev 合并后
+用户确认后先 fetch 并确认 `origin/dev` 与报告基准完全一致，再将本地 `dev`
+fast-forward 到 `origin/dev` 和已确认的需求 SHA。由于本地 `dev` 与已验证需求提交
+是同一个 exact SHA，不重复执行第二轮测试和审计报告；只展示合并后的 SHA 与标准
+发布命令，获得发布确认后由 `deploy/dev/publish-dev.sh` 复核工作区、SHA、远程竞态
+和 Atlas 状态并发布。
 
-用户确认后，先再次确认 `origin/dev` 未变化，再把已审计 SHA 合入本地 `dev`。
-合并后执行更严格审计：
-
-1. 记录合并前后本地 `dev` SHA 和实际合入提交；
-2. 验证本地 `dev` 包含远端最新功能和需求分支全部预期提交；
-3. 复查合并 diff、冲突解决、重复/丢失提交、意外覆盖和工作区状态；
-4. 从合并后的 `dev` 重跑全部测试、`verify --changed-from origin/dev`、build、
-   `verify-derived`、Graphify 查询、CodeGraph 和安全扫描；
-5. 向用户提交第二次审计报告，等待单独的“推送远端”确认。
-
-远端 `dev` 在任一审计阶段变化、需求 SHA 改变、冲突解决引入新内容或验证结果
-变化时，第一次审计作废并重新开始。第一次确认只授权本地合并，第二次确认才
-授权推送；禁止 force push。
+远端 `dev`、需求 SHA、文件范围、迁移清单或验证结果在等待确认期间变化时，当前
+确认失效并重新执行本节检查。发生冲突或无法 fast-forward 时回到需求分支处理并
+重新验证；禁止在本地 `dev` 修冲突或 force push。
