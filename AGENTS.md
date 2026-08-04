@@ -126,30 +126,29 @@ plans/specs 只能按需追溯，不能用于推断当前合同。
 
 一次性任务状态、临时日志和局部实现细节保留在任务 plan、提交或验证证据中。
 
-## dev 集成门禁
+## dev 自动发布
 
-每个需求完成后必须遵循
-`docs/superpowers/runbooks/dev-integration-audit.md`：
+默认发布流程保持简单：需求分支完成必要的代码测试并合入本地 `dev` 后，推送前只
+执行一次本地发布脚本，不要求手动登录 ACR、拉取镜像、读取镜像 revision、操作
+GitHub 页面或调用宝塔接口。脚本自身会校验当前分支、工作区、exact SHA、远程竞态
+和 Atlas 状态；这些是脚本内部的 fail-closed 检查，不需要用户额外操作。
 
-1. 在需求分支完成第一次审计，确保基于最新 `origin/dev`、范围正确且验证通过；
-2. 向用户提交审计报告，获得第一次明确确认后才可合入本地 `dev`；
-3. 从合并后的本地 `dev` 执行更严格的第二次审计；
-4. 向用户提交第二次报告，获得第二次明确确认后才可推送 `origin/dev`；
-5. 禁止 force push；远程 `dev` 在审计期间变化时重新从第一次审计开始。
-
-用户确认只对报告中的分支、SHA、文件范围和验证结果有效；提交发生变化后必须
-重新审计。不得把“确认合入本地 dev”解释为远程推送授权。
-
-远程 `dev` 发布禁止 Codex 直接执行 `git push origin dev`。第二次审计确认同时
-授权报告逐项列出的本地 Atlas forward apply 与同一 exact SHA 的非 force push；
-确认后只能调用：
+在本地 `dev` 工作区执行：
 
 ```bash
+AUDITED_ORIGIN_DEV_SHA=$(git rev-parse origin/dev)
+AUDITED_TARGET_DEV_SHA=$(git rev-parse dev)
 deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 ```
 
-脚本 push 成功后立即结束，后续镜像构建、晋级和宝塔部署由 GitHub Actions 与
-服务器完成。详细授权和停止条件见上述 runbook。
+脚本成功后停止本地流程。GitHub Actions 负责 ACR 登录、构建并推送
+`coze-server`/`coze-web` 镜像、校验镜像、晋级 `dev` 标签并调用宝塔 WebHook；服务器
+负责拉取镜像、启动 OceanBase/NSQ 和应用健康检查。不要直接执行 `git push origin dev`
+或手动重复这些远程步骤，也不要把 ACR 密码写入仓库或脚本。
+
+推送、迁移 apply、合并和远程分支操作仍需用户对当前范围明确确认；禁止 force push。
+详细脚本行为见 `docs/superpowers/runbooks/dev-integration-audit.md`，其中的本地 ACR
+预校验仅作为异常排查/严格审计参考，不是默认发布前置步骤。
 
 ## 项目结构
 
