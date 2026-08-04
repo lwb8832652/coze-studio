@@ -64,6 +64,7 @@ import { nodeMetaValidate } from '../materials/node-meta-validate';
 import { SettingOnError } from '../components/setting-on-error';
 import NodeMeta from '../components/node-meta';
 import { Vision, isVisionInput } from './vision';
+import { isLLMPromptPairValid } from './validators/llm-prompt-validator';
 import {
   llmOutputTreeMetaValidator,
   llmInputNameValidator,
@@ -294,7 +295,11 @@ const Render = ({ form }: FormRenderProps<FormData>) => {
         </Field>
         <Field
           name="$$prompt_decorator$$.prompt"
-          deps={['$$input_decorator$$.inputParameters', 'model']}
+          deps={[
+            '$$input_decorator$$.inputParameters',
+            'model',
+            '$$prompt_decorator$$.systemPrompt',
+          ]}
           defaultValue={''}
         >
           {({ field, fieldState }: FieldRenderProps<string>) => (
@@ -334,6 +339,7 @@ const Render = ({ form }: FormRenderProps<FormData>) => {
 
 const NEW_NODE_DEFAULT_VERSION = '3';
 
+const systemPromptFieldKey = '$$prompt_decorator$$.systemPrompt';
 const userPromptFieldKey = '$$prompt_decorator$$.prompt';
 
 export const LLM_FORM_META: FormMetaV2<FormData> = {
@@ -357,10 +363,12 @@ export const LLM_FORM_META: FormMetaV2<FormData> = {
         model => model.model_type === modelType,
       );
       const isUserPromptRequired = curModel?.is_up_required ?? false;
-      if (!isUserPromptRequired) {
-        return undefined;
+      if (isUserPromptRequired) {
+        return value?.trim()
+          ? undefined
+          : I18n.t('workflow_detail_llm_prompt_error_empty');
       }
-      return value?.length
+      return isLLMPromptPairValid(get(formValues, systemPromptFieldKey), value)
         ? undefined
         : I18n.t('workflow_detail_llm_prompt_error_empty');
     }) as Validate,
