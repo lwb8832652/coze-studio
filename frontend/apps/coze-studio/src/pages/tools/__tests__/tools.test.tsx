@@ -389,6 +389,69 @@ describe('ToolsPage', () => {
     });
   });
 
+  it('keeps permission undecided while MCP services are loading', async () => {
+    mockList.mockReturnValue(new Promise(() => undefined));
+    mockListOfficialCatalog.mockReturnValue(new Promise(() => undefined));
+
+    const { container, root } = await renderMcpSettingsPanel();
+
+    expect(container.textContent).toContain('正在加载 MCP 服务');
+    expect(container.textContent).not.toContain('当前空间为只读权限');
+
+    cleanup(container, root);
+  });
+
+  it('does not present unavailable MCP services as readonly permissions', async () => {
+    mockList.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 503'), {
+        response: { status: 503, data: { msg: 'mcp service disabled' } },
+      }),
+    );
+
+    const { container, root } = await renderMcpSettingsPanel();
+
+    expect(container.textContent).toContain(
+      '当前环境未启用或暂时无法提供 MCP 服务',
+    );
+    expect(container.textContent).not.toContain('当前空间为只读权限');
+
+    cleanup(container, root);
+  });
+
+  it('projects unauthorized MCP responses to a stable login error', async () => {
+    mockList.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 401'), {
+        response: { status: 401 },
+      }),
+    );
+
+    const { container, root } = await renderMcpSettingsPanel();
+
+    expect(container.textContent).toContain('登录状态已失效，请重新登录');
+    expect(container.textContent).not.toContain('当前空间为只读权限');
+
+    cleanup(container, root);
+  });
+
+  it('shows readonly permissions only after successful permission responses', async () => {
+    mockList.mockResolvedValue({
+      data: { servers: [], total: 0, can_manage: false },
+      code: 0,
+      msg: '',
+    });
+    mockListOfficialCatalog.mockResolvedValue({
+      data: { entries: [], can_manage: false },
+      code: 0,
+      msg: '',
+    });
+
+    const { container, root } = await renderMcpSettingsPanel();
+
+    expect(container.textContent).toContain('当前空间为只读权限');
+
+    cleanup(container, root);
+  });
+
   it('renders the Nuwax-aligned MCP management workspace on the existing page', async () => {
     const { container, root } = await renderToolsPage();
 

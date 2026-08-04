@@ -40,6 +40,8 @@ type MCPExport = workbenchTool.ExportMCPToolServerData;
 type MCPOfficialCatalogEntry = workbenchTool.MCPOfficialCatalogEntry;
 
 const JSON_INDENT = 2;
+const HTTP_STATUS_UNAUTHORIZED = 401;
+const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
 
 interface MCPToolSettingsPanelProps {
   mode?: 'compact' | 'full';
@@ -49,6 +51,25 @@ interface MCPToolSettingsPanelProps {
 type SourceFilter = 'custom' | 'official';
 type CreatorFilter = 'all' | 'me';
 type StatusFilter = 'all' | 'enabled' | 'disabled' | 'healthy' | 'unhealthy';
+type MCPSettingsLoadStatus = 'loading' | 'success' | 'error';
+
+const mcpSettingsLoadErrorMessage = (cause: unknown) => {
+  const response = (
+    cause as {
+      response?: { status?: number; data?: { msg?: unknown } };
+    }
+  )?.response;
+  if (response?.status === HTTP_STATUS_UNAUTHORIZED) {
+    return '登录状态已失效，请重新登录';
+  }
+  if (response?.status === HTTP_STATUS_SERVICE_UNAVAILABLE) {
+    return '当前环境未启用或暂时无法提供 MCP 服务';
+  }
+  if (typeof response?.data?.msg === 'string' && response.data.msg.trim()) {
+    return response.data.msg;
+  }
+  return '加载 MCP 服务失败，请重试';
+};
 
 const ensureSuccessfulWorkbenchResponse = (response: {
   code?: number;
@@ -123,8 +144,9 @@ export const MCPToolSettingsPanel = ({
   const [officialCatalog, setOfficialCatalog] = useState<
     MCPOfficialCatalogEntry[]
   >([]);
-  const [canManage, setCanManage] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [canManage, setCanManage] = useState<boolean>();
+  const [loadStatus, setLoadStatus] =
+    useState<MCPSettingsLoadStatus>('loading');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyAction, setBusyAction] = useState('');
@@ -150,14 +172,17 @@ export const MCPToolSettingsPanel = ({
   const [auditError, setAuditError] = useState('');
   const [auditLoaded, setAuditLoaded] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
+  const loading = loadStatus === 'loading';
 
   const loadServers = useCallback(async () => {
     if (!spaceId) {
       setServers([]);
-      setCanManage(false);
+      setCanManage(undefined);
+      setLoadStatus('error');
       return;
     }
-    setLoading(true);
+    setLoadStatus('loading');
+    setCanManage(undefined);
     setError('');
     try {
       const [serversResponse, catalogResponse] = await Promise.all([
@@ -173,12 +198,11 @@ export const MCPToolSettingsPanel = ({
           serversResponse.data?.can_manage && catalogResponse.data?.can_manage,
         ),
       );
+      setLoadStatus('success');
     } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : '加载 MCP 服务失败',
-      );
-    } finally {
-      setLoading(false);
+      setCanManage(undefined);
+      setError(mcpSettingsLoadErrorMessage(loadError));
+      setLoadStatus('error');
     }
   }, [spaceId]);
 
@@ -462,7 +486,7 @@ export const MCPToolSettingsPanel = ({
             size="small"
             checked={server.enabled}
             loading={updating}
-            disabled={!canManage || Boolean(busyAction)}
+            disabled={canManage !== true || Boolean(busyAction)}
             aria-label={(server.enabled ? '关闭 ' : '开启 ') + server.name}
             onChange={checked => void handleToggleEnabled(server, checked)}
           />
@@ -497,7 +521,7 @@ export const MCPToolSettingsPanel = ({
             >
               查看能力
             </Button>
-            {!isOfficial && canManage ? (
+            {!isOfficial && canManage === true ? (
               <details className="mcp-management-more">
                 <summary>更多</summary>
                 <div>
@@ -531,11 +555,11 @@ export const MCPToolSettingsPanel = ({
                   </button>
                 </div>
               </details>
-            ) : (
+            ) : isOfficial || canManage === false ? (
               <span className="mcp-management-readonly">
                 {isOfficial ? '官方只读' : '只读'}
               </span>
-            )}
+            ) : null}
           </footer>
         ) : null}
       </article>
@@ -598,7 +622,7 @@ export const MCPToolSettingsPanel = ({
               size="small"
               checked={installedServer.enabled}
               loading={updating}
-              disabled={!canManage || Boolean(busyAction)}
+              disabled={canManage !== true || Boolean(busyAction)}
               aria-label={
                 (installedServer.enabled ? '关闭 ' : '开启 ') + entry.name
               }
@@ -678,7 +702,9 @@ export const MCPToolSettingsPanel = ({
             size="small"
             theme={installed ? 'borderless' : 'solid'}
             type={installed ? 'tertiary' : 'primary'}
-            disabled={adapterRequired || !canManage || Boolean(busyAction)}
+            disabled={
+              adapterRequired || canManage !== true || Boolean(busyAction)
+            }
             title={adapterRequired ? entry.availability_reason : undefined}
             onClick={() => openOfficialInstaller(entry)}
           >
@@ -748,7 +774,7 @@ export const MCPToolSettingsPanel = ({
               <Button
                 theme="solid"
                 type="primary"
-                disabled={!canManage}
+                disabled={canManage !== true}
                 onClick={() => {
                   setEditingServer(undefined);
                   setFormVisible(true);
@@ -798,7 +824,7 @@ export const MCPToolSettingsPanel = ({
               >
                 刷新
               </Button>
-              {!canManage ? (
+              {loadStatus === 'success' && canManage === false ? (
                 <span className="mcp-management-permission-tip">
                   当前空间为只读权限
                 </span>
@@ -861,7 +887,9 @@ export const MCPToolSettingsPanel = ({
               ? '当前没有可用的官方服务。'
               : '新建服务后，系统会自动发现工具、资源和提示词。'}
           </p>
-          {mode === 'full' && canManage && sourceFilter === 'custom' ? (
+          {mode === 'full' &&
+          canManage === true &&
+          sourceFilter === 'custom' ? (
             <Button
               theme="solid"
               type="primary"
@@ -961,7 +989,7 @@ export const MCPToolSettingsPanel = ({
         auditEvents={auditEvents}
         auditLoading={auditLoading}
         auditNextCursor={auditCursor}
-        canManage={canManage}
+        canManage={canManage === true}
         discovering={
           busyAction === `discover-${capabilityServer?.server_id ?? ''}`
         }
