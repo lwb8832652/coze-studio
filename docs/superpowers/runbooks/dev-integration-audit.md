@@ -1,5 +1,24 @@
 # dev 集成双重审计手册
 
+## 当前默认路径
+
+普通 `dev` 自动发布不要求用户手动完成 ACR 登录、镜像拉取、镜像 revision 检查、
+GitHub 页面操作或宝塔接口调用。需求分支完成必要测试并合入本地 `dev` 后，只运行：
+
+```bash
+AUDITED_ORIGIN_DEV_SHA=$(git rev-parse origin/dev)
+AUDITED_TARGET_DEV_SHA=$(git rev-parse dev)
+deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
+
+该脚本内部负责分支、工作区、exact SHA、远程竞态和 Atlas 状态检查，并在成功后执行
+非 force push。脚本成功后本地流程结束；GitHub Actions 自动完成 ACR 登录、双镜像
+构建、推送、revision 校验、`dev` 标签晋级和宝塔 WebHook，服务器自动拉取并重启服务。
+
+以下详细审计步骤只用于用户明确要求严格审计、迁移风险排查或发布异常定位；不得把
+其中的本地 ACR 预校验当作普通发布的额外前置操作，也不得要求用户重复执行远程发布
+动作。任何密码、token 或 ACR credential 都不得写入仓库、脚本或聊天记录。
+
 ## 目的
 
 每个需求必须先在独立 `codex/` 分支完成。需求分支通过第一次审计并获得用户
