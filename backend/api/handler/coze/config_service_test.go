@@ -33,6 +33,7 @@ import (
 	adminconfig "github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 	baseconfig "github.com/coze-dev/coze-studio/backend/bizpkg/config/base"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
@@ -225,13 +226,150 @@ func TestBasicConfigurationHandlerDoesNotWriteAfterReadFailure(t *testing.T) {
 	require.Equal(t, "BASE_CONFIG_INTERNAL", code)
 }
 
-func newBasicConfigurationTestServer(backend basicConfigurationBackend) *server.Hertz {
+func TestBasicConfigurationHandlerValidatesBrandObjectsBeforeSave(t *testing.T) {
+	stub := &basicConfigurationBackendStub{revision: "rev-8"}
+	var headKeys []string
+	assets := siteAssetService{
+		head: func(_ context.Context, objectKey string) error {
+			headKeys = append(headKeys, objectKey)
+			return nil
+		},
+	}
+	h := newBasicConfigurationTestServer(stub, assets)
+	requestBody := `{"expected_revision":"rev-7","configuration":{"site_logo_uri":"site-brand/logo/available.png"}}`
+
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/config/basic/save",
+		&ut.Body{Body: stringsReader(requestBody), Len: len(requestBody)},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
+	require.Equal(t, []string{"site-brand/logo/available.png"}, headKeys)
+	require.Equal(t, 1, stub.saveCalls)
+	require.NotNil(t, stub.patch.SiteLogoURI)
+	require.Equal(t, "site-brand/logo/available.png", *stub.patch.SiteLogoURI)
+}
+
+func TestBasicConfigurationHandlerRejectsMissingBrandObject(t *testing.T) {
+	stub := &basicConfigurationBackendStub{revision: "rev-8"}
+	assets := siteAssetService{
+		head: func(context.Context, string) error {
+			return storage.ErrObjectNotFound
+		},
+	}
+	h := newBasicConfigurationTestServer(stub, assets)
+	requestBody := `{"expected_revision":"rev-7","configuration":{"site_logo_uri":"site-brand/logo/missing.png"}}`
+
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/config/basic/save",
+		&ut.Body{Body: stringsReader(requestBody), Len: len(requestBody)},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+
+	require.Equal(
+		t,
+		http.StatusBadRequest,
+		response.Code,
+		string(response.Result().Body()),
+	)
+	require.Contains(t, string(response.Result().Body()), "site_logo_uri")
+	require.Equal(t, 0, stub.saveCalls)
+}
+
+func TestBasicConfigurationHandlerMapsBrandStorageFailureToInternalError(t *testing.T) {
+	stub := &basicConfigurationBackendStub{revision: "rev-8"}
+	assets := siteAssetService{
+		head: func(context.Context, string) error {
+			return errors.New("storage unavailable")
+		},
+	}
+	h := newBasicConfigurationTestServer(stub, assets)
+	requestBody := `{"expected_revision":"rev-7","configuration":{"favicon_uri":"site-brand/favicon/unavailable.png"}}`
+
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/config/basic/save",
+		&ut.Body{Body: stringsReader(requestBody), Len: len(requestBody)},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+
+	require.Equal(
+		t,
+		http.StatusInternalServerError,
+		response.Code,
+		string(response.Result().Body()),
+	)
+	require.Equal(t, 0, stub.saveCalls)
+}
+
+func TestBasicConfigurationHandlerSkipsBrandLookupForEmptyOrAbsentPatch(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty favicon removes custom asset",
+			body: `{"expected_revision":"rev-7","configuration":{"favicon_uri":""}}`,
+		},
+		{
+			name: "text-only patch",
+			body: `{"expected_revision":"rev-7","configuration":{"site_name":"Acme AI"}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stub := &basicConfigurationBackendStub{revision: "rev-8"}
+			headCalls := 0
+			assets := siteAssetService{
+				head: func(context.Context, string) error {
+					headCalls++
+					return nil
+				},
+			}
+			h := newBasicConfigurationTestServer(stub, assets)
+
+			response := ut.PerformRequest(
+				h.Engine,
+				http.MethodPost,
+				"/api/admin/config/basic/save",
+				&ut.Body{
+					Body: stringsReader(test.body),
+					Len:  len(test.body),
+				},
+				ut.Header{Key: "content-type", Value: "application/json"},
+			)
+
+			require.Equal(
+				t,
+				http.StatusOK,
+				response.Code,
+				string(response.Result().Body()),
+			)
+			require.Equal(t, 0, headCalls)
+			require.Equal(t, 1, stub.saveCalls)
+		})
+	}
+}
+
+func newBasicConfigurationTestServer(
+	backend basicConfigurationBackend,
+	assetServices ...siteAssetService,
+) *server.Hertz {
+	assets := siteAssetService{}
+	if len(assetServices) > 0 {
+		assets = assetServices[0]
+	}
 	h := server.New()
 	h.GET("/api/admin/config/basic/get", func(ctx context.Context, c *app.RequestContext) {
 		getBasicConfiguration(ctx, c, backend)
 	})
 	h.POST("/api/admin/config/basic/save", func(ctx context.Context, c *app.RequestContext) {
-		saveBasicConfiguration(ctx, c, backend)
+		saveBasicConfiguration(ctx, c, backend, assets)
 	})
 	return h
 }
