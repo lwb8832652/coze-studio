@@ -16,7 +16,6 @@
 
 import { type FC, type FormEvent, useEffect, useMemo, useState } from 'react';
 
-import { CozeBrand } from '@coze-studio/components/coze-brand';
 import { useCommonConfigStore } from '@coze-foundation/global-store';
 import { I18n } from '@coze-arch/i18n';
 import { IconCozEarth } from '@coze-arch/coze-design/icons';
@@ -34,12 +33,9 @@ const MIN_PASSWORD_LENGTH = 6;
 
 const AUTH_COPY = {
   'zh-CN': {
-    brandName: 'Coze Studio',
     brandTitle: 'An open-source AI agent development platform',
-    brandDescription: '提供完整的智能体开发、调试、监控、发布与团队协作能力。',
     loginTab: '密码登录',
     registerTab: '邮箱注册',
-    welcome: '欢迎来到扣子-开源版',
     emailPlaceholder: '请输入邮箱',
     passwordPlaceholder: '请输入不少于 6 位的密码',
     confirmPasswordPlaceholder: '请再次输入密码',
@@ -51,18 +47,13 @@ const AUTH_COPY = {
     agreementPrefix: '已阅读并同意协议：',
     agreement: '开源协议',
     agreementRequired: '请先阅读并同意开源协议',
-    footer: 'Powered by Coze Studio',
     language: '简体中文',
     switchLanguage: '切换至 English',
   },
   en: {
-    brandName: 'Coze Studio',
     brandTitle: 'An open-source AI agent development platform',
-    brandDescription:
-      'A complete workspace for building, debugging, monitoring, publishing, and collaborating on AI agents.',
     loginTab: 'Password',
     registerTab: 'Sign up',
-    welcome: 'Welcome to Coze Studio',
     emailPlaceholder: 'Enter your email',
     passwordPlaceholder: 'Enter a password with at least 6 characters',
     confirmPasswordPlaceholder: 'Enter your password again',
@@ -74,7 +65,6 @@ const AUTH_COPY = {
     agreementPrefix: 'I have read and agree to the ',
     agreement: 'Open-source license',
     agreementRequired: 'Please read and agree to the open-source license',
-    footer: 'Powered by Coze Studio',
     language: 'English',
     switchLanguage: '切换至简体中文',
   },
@@ -91,7 +81,7 @@ const readInitialLocale = (): AuthLocale => {
 
 // Login and registration intentionally share one stateful form so switching
 // modes preserves the user's input and validation state.
-// eslint-disable-next-line @coze-arch/max-line-per-function, complexity -- Both modes intentionally share one stateful form.
+// eslint-disable-next-line @coze-arch/max-line-per-function, complexity -- Shared auth form.
 export const LoginPage: FC = () => {
   const siteConfig = useCommonConfigStore(state => state.siteConfig);
   const [mode, setMode] = useState<AuthMode>('login');
@@ -202,7 +192,12 @@ export const LoginPage: FC = () => {
             src={siteConfig.siteLogoUrl}
           />
         ) : (
-          <CozeBrand isOversea={false} />
+          <span
+            data-testid="login.brand-fallback"
+            aria-label={siteConfig.siteName}
+          >
+            {siteConfig.siteName}
+          </span>
         )}
       </div>
       <button

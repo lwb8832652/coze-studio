@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useCommonConfigStore } from '@coze-foundation/global-store';
 import {
   Button,
   Input,
@@ -96,6 +97,7 @@ const formatTime = (timestamp?: number) => {
 export const FeishuIMSettingsPanel = ({
   spaceId,
 }: FeishuIMSettingsPanelProps) => {
+  const siteName = useCommonConfigStore(state => state.siteConfig.siteName);
   const [configs, setConfigs] = useState<FeishuIMConfig[]>([]);
   const [agents, setAgents] = useState<AgentTarget[]>([]);
   const [canManage, setCanManage] = useState(false);
@@ -247,7 +249,7 @@ export const FeishuIMSettingsPanel = ({
     }
     Modal.confirm({
       title: '删除飞书机器人？',
-      content: `删除后会立即断开“${config.name}”的长连接，已有 Coze 任务记录不会被删除。`,
+      content: `删除后会立即断开“${config.name}”的长连接，已有 ${siteName} 任务记录不会被删除。`,
       okText: '删除',
       cancelText: '取消',
       okButtonProps: { type: 'danger' },
@@ -362,7 +364,7 @@ export const FeishuIMSettingsPanel = ({
           <p className={styles.description}>
             将当前工作空间内已发布的 Agent
             接入飞书。私聊直接响应，群聊默认仅在明确
-            @机器人时响应，消息与任务记录会持续保存在 Coze。
+            @机器人时响应，消息与任务记录会持续保存在 {siteName}。
           </p>
         </div>
         <Button

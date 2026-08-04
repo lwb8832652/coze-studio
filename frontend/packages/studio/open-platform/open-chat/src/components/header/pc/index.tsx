@@ -25,19 +25,20 @@ import {
   useChatChatButtonInfo,
   useChatOpInfo,
 } from '@/components/studio-open-chat/hooks/use-chat-op-info';
-import CozeLogoPng from '@/assets/coze-logo.png';
 
 import { type ChatHeaderProps } from '../type';
+import { resolveChatHeaderBrand } from '../brand';
 
 import styles from './index.module.less';
 
 const ChatHeader = ({
-  iconUrl = CozeLogoPng,
-  title = 'Coze Bot',
+  iconUrl,
+  title,
   extra,
   theme,
   isShowConversations,
 }: ChatHeaderProps) => {
+  const brand = resolveChatHeaderBrand(title, iconUrl);
   const { headerTopLeftOps } = useChatOpInfo();
   const buttonList = useChatChatButtonInfo(headerTopLeftOps);
   const { updateCurrentConversationInfo, currentConversationInfo } =
@@ -71,7 +72,7 @@ const ChatHeader = ({
           }}
         />
       )}
-      <img className={styles.avatar} src={iconUrl} alt="avatar" />
+      <img className={styles.avatar} src={brand.iconUrl} alt="avatar" />
       <Typography.Text
         className={styles.title}
         ellipsis={{
@@ -82,7 +83,7 @@ const ChatHeader = ({
           rows: 1,
         }}
       >
-        {title}
+        {brand.title}
       </Typography.Text>
       {buttonList?.map(
         item => (

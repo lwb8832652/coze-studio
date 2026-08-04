@@ -14,26 +14,16 @@
  * limitations under the License.
  */
 
-import { type ReactNode } from 'react';
-
-import { renderHtmlTitle, setHtmlTitleSiteName } from '../src/html';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@coze-arch/i18n', () => ({
-  I18n: { t: vi.fn(k => k) },
+  I18n: { t: vi.fn(() => 'Acme AI') },
 }));
 
-describe('html', () => {
-  afterEach(() => setHtmlTitleSiteName(undefined));
+import { formatPluginTokenPrice } from '../src/plugin-limit-info';
 
-  test('renderHtmlTitle', () => {
-    expect(renderHtmlTitle('test')).equal('test - platform_name');
-    expect(renderHtmlTitle({} as unknown as ReactNode)).equal('platform_name');
-  });
-
-  test('uses the configured site name in page titles', () => {
-    setHtmlTitleSiteName(' NewX AI ');
-
-    expect(renderHtmlTitle('资源库')).equal('资源库 - NewX AI');
-    expect(renderHtmlTitle({} as unknown as ReactNode)).equal('NewX AI');
+describe('formatPluginTokenPrice', () => {
+  it('uses the configured platform name for plugin token prices', () => {
+    expect(formatPluginTokenPrice(42)).toBe('42 Acme AI tokens');
   });
 });

@@ -42,8 +42,8 @@ const mergedConfig = defineConfig({
     ],
   },
   html: {
-    title: '扣子 Studio',
-    favicon: './assets/favicon.png',
+    title: 'NewX AI',
+    favicon: './assets/brand/newx-favicon.png',
     template: './index.html',
     crossorigin: 'anonymous',
   },

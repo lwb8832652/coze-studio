@@ -37,11 +37,6 @@ vi.mock('../service', () => ({
   }),
 }));
 
-vi.mock('@coze-studio/components/coze-brand', () => ({
-  // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
-  CozeBrand: () => <div data-testid="fallback-brand">Coze</div>,
-}));
-
 vi.mock('@coze-arch/i18n', () => ({
   I18n: { setLang },
 }));
@@ -204,6 +199,22 @@ describe('LoginPage', () => {
     );
     expect(screen.getByText('Acme intelligent workspace')).toBeInTheDocument();
     expect(screen.getByText('Powered by Acme AI')).toBeInTheDocument();
-    expect(screen.queryByTestId('fallback-brand')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('login.brand-fallback'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('uses the configured site name when no logo is configured', () => {
+    useCommonConfigStore.getState().updateSiteConfig({
+      ...DEFAULT_SITE_CONFIG,
+      siteName: 'Acme AI',
+    });
+
+    render(<LoginPage />);
+
+    expect(screen.getByTestId('login.brand-fallback')).toHaveTextContent(
+      'Acme AI',
+    );
+    expect(screen.queryByText(/Coze|扣子/)).not.toBeInTheDocument();
   });
 });

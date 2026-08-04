@@ -42,6 +42,7 @@ type siteConfigBackend interface {
 type siteAssetService struct {
 	upload func(context.Context, []byte, string) (string, string, error)
 	url    func(context.Context, string) (string, error)
+	head   func(context.Context, string) error
 }
 
 func defaultSiteAssetService() siteAssetService {
@@ -56,7 +57,8 @@ func defaultSiteAssetService() siteAssetService {
 			}
 			return response.Data.UploadURI, response.Data.UploadURL, nil
 		},
-		url: upload.SVC.GetObjectURL,
+		url:  upload.SVC.GetObjectURL,
+		head: upload.SVC.HeadObject,
 	}
 }
 
@@ -98,20 +100,44 @@ func getPublicSiteConfig(
 
 	response := projectPublicSiteConfig(configuration, revision)
 	if configuration != nil && configuration.SiteLogoURI != nil && *configuration.SiteLogoURI != "" {
-		response.SiteLogoURL, err = assets.url(ctx, *configuration.SiteLogoURI)
-		if err != nil {
-			logs.CtxWarnf(ctx, "[SiteConfig] resolve logo failed: %v", err)
-			response.SiteLogoURL = ""
-		}
+		response.SiteLogoURL = resolveSiteAssetURL(
+			ctx,
+			"logo",
+			*configuration.SiteLogoURI,
+			assets,
+		)
 	}
 	if configuration != nil && configuration.FaviconURI != nil && *configuration.FaviconURI != "" {
-		response.FaviconURL, err = assets.url(ctx, *configuration.FaviconURI)
-		if err != nil {
-			logs.CtxWarnf(ctx, "[SiteConfig] resolve favicon failed: %v", err)
-			response.FaviconURL = ""
-		}
+		response.FaviconURL = resolveSiteAssetURL(
+			ctx,
+			"favicon",
+			*configuration.FaviconURI,
+			assets,
+		)
 	}
 	c.JSON(consts.StatusOK, response)
+}
+
+func resolveSiteAssetURL(
+	ctx context.Context,
+	kind string,
+	uri string,
+	assets siteAssetService,
+) string {
+	if assets.head == nil || assets.url == nil {
+		logs.CtxWarnf(ctx, "[SiteConfig] %s resolver unavailable", kind)
+		return ""
+	}
+	if err := assets.head(ctx, uri); err != nil {
+		logs.CtxWarnf(ctx, "[SiteConfig] %s object unavailable", kind)
+		return ""
+	}
+	resolved, err := assets.url(ctx, uri)
+	if err != nil {
+		logs.CtxWarnf(ctx, "[SiteConfig] %s URL unavailable", kind)
+		return ""
+	}
+	return resolved
 }
 
 func projectPublicSiteConfig(configuration *config.BasicConfiguration, revision string) publicSiteConfigResponse {
@@ -178,6 +204,23 @@ func uploadSiteAsset(ctx context.Context, c *app.RequestContext, assets siteAsse
 	uri, url, err := assets.upload(ctx, data, objectKey)
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+	if strings.TrimSpace(uri) == "" || assets.head == nil {
+		internalServerErrorResponse(
+			ctx,
+			c,
+			errors.New("site asset persistence verification is unavailable"),
+		)
+		return
+	}
+	if err = assets.head(ctx, uri); err != nil {
+		logs.CtxErrorf(ctx, "[SiteConfig] uploaded %s object unavailable", kind)
+		internalServerErrorResponse(
+			ctx,
+			c,
+			errors.New("site asset persistence verification failed"),
+		)
 		return
 	}
 	c.JSON(consts.StatusOK, siteAssetUploadResponse{

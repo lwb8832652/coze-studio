@@ -514,9 +514,10 @@ describe('NewX AI WorkspaceSubMenu', () => {
     }).map(item => item.label);
 
     expect(personalLabels).toContain('工作空间');
+    expect(personalLabels).not.toContain('网页应用开发');
     expect(teamMemberLabels).toContain('工作空间');
     expect(teamMemberLabels).toContain('资源配置');
-    expect(teamMemberLabels).toContain('网页应用开发');
+    expect(teamMemberLabels).not.toContain('网页应用开发');
   });
 
   it('defines the system management quick entry outside workspace navigation', () => {
@@ -654,7 +655,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
     ).toEqual([
       '新建任务',
       '资源配置',
-      '网页应用开发',
       '技能配置',
       '开发配置',
       '工作空间',

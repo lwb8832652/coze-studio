@@ -23,7 +23,7 @@ export { messageReportEvent, type MessageReportEvent } from './message-report';
 export { ArrayUtil } from './array';
 export { skillKeyToApiStatusKeyTransformer } from './skill';
 export { loadImage } from './image';
-export { renderHtmlTitle } from './html';
+export { renderHtmlTitle, setHtmlTitleSiteName } from './html';
 export { getParamsFromQuery, appendUrlParam, openUrl } from './url';
 export { responsiveTableColumn } from './responsive-table-column';
 export {

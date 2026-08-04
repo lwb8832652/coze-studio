@@ -14,25 +14,20 @@
  * limitations under the License.
  */
 
-import { type ReactNode } from 'react';
-
-import { isString } from 'lodash-es';
 import { I18n } from '@coze-arch/i18n';
 
-let configuredSiteName: string | undefined;
-
-export const setHtmlTitleSiteName = (siteName?: string): void => {
-  const normalized = siteName?.trim();
-  configuredSiteName = normalized || undefined;
-};
-
-const resolveHtmlTitleSiteName = (): string =>
-  configuredSiteName || I18n.t('platform_name');
-
-export const renderHtmlTitle = (prefix?: ReactNode) => {
-  const platformName = resolveHtmlTitleSiteName();
-  if (isString(prefix)) {
-    return `${prefix} - ${platformName}`;
+const getConfiguredFaviconUrl = (): string | undefined => {
+  if (typeof document === 'undefined') {
+    return undefined;
   }
-  return platformName;
+  const favicon =
+    document.head.querySelector<HTMLLinkElement>(
+      'link[rel="icon"][data-coze-site-config]',
+    ) ?? document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  return favicon?.href;
 };
+
+export const resolveChatHeaderBrand = (title?: string, iconUrl?: string) => ({
+  title: title || I18n.t('platform_name'),
+  iconUrl: iconUrl || getConfiguredFaviconUrl(),
+});

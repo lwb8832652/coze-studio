@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
 func TestProjectPublicSiteConfigUsesSafeDefaults(t *testing.T) {
@@ -66,6 +67,64 @@ func TestProjectPublicSiteConfigReadsConfiguredTextOnly(t *testing.T) {
 		if strings.Contains(string(payload), forbidden) {
 			t.Fatalf("public response leaked %q: %s", forbidden, payload)
 		}
+	}
+}
+
+func TestGetPublicSiteConfigOmitsOnlyMissingAsset(t *testing.T) {
+	name := "Acme AI"
+	description := "Acme intelligent workspace"
+	logoURI := "site-brand/logo/missing.png"
+	faviconURI := "site-brand/favicon/available.png"
+	backend := &siteConfigBackendStub{
+		configuration: &config.BasicConfiguration{
+			SiteName:        &name,
+			SiteDescription: &description,
+			SiteLogoURI:     &logoURI,
+			FaviconURI:      &faviconURI,
+		},
+		revision: "revision-3",
+	}
+	var urlKeys []string
+	assets := siteAssetService{
+		head: func(_ context.Context, objectKey string) error {
+			if objectKey == logoURI {
+				return storage.ErrObjectNotFound
+			}
+			return nil
+		},
+		url: func(_ context.Context, objectKey string) (string, error) {
+			urlKeys = append(urlKeys, objectKey)
+			return "https://assets.example.com/favicon.png", nil
+		},
+	}
+	requestContext := app.NewContext(0)
+
+	getPublicSiteConfig(
+		context.Background(),
+		requestContext,
+		backend,
+		assets,
+	)
+
+	if requestContext.Response.StatusCode() != 200 {
+		t.Fatalf(
+			"public site config status = %d, body = %s",
+			requestContext.Response.StatusCode(),
+			requestContext.Response.Body(),
+		)
+	}
+	var response publicSiteConfigResponse
+	if err := json.Unmarshal(requestContext.Response.Body(), &response); err != nil {
+		t.Fatalf("decode public site config: %v", err)
+	}
+	if response.SiteLogoURL != "" {
+		t.Fatalf("missing logo URL = %q, want empty", response.SiteLogoURL)
+	}
+	if response.FaviconURL != "https://assets.example.com/favicon.png" {
+		t.Fatalf("favicon URL = %q", response.FaviconURL)
+	}
+	if len(urlKeys) != 1 || urlKeys[0] != faviconURI {
+		t.Fatalf("URL resolver keys = %#v", urlKeys)
 	}
 }
 
@@ -126,11 +185,16 @@ func TestUploadSiteAssetUsesStableServerOwnedKeyAndRejectsOversizedFiles(t *test
 	data := encodePNG(t, 128, 64)
 	var uploadedData []byte
 	var uploadedKeys []string
+	var headKeys []string
 	assets := siteAssetService{
 		upload: func(_ context.Context, body []byte, objectKey string) (string, string, error) {
 			uploadedData = append([]byte(nil), body...)
 			uploadedKeys = append(uploadedKeys, objectKey)
 			return "tos://" + objectKey, "https://assets.example.com/logo.png", nil
+		},
+		head: func(_ context.Context, objectKey string) error {
+			headKeys = append(headKeys, objectKey)
+			return nil
 		},
 	}
 
@@ -158,6 +222,10 @@ func TestUploadSiteAssetUsesStableServerOwnedKeyAndRejectsOversizedFiles(t *test
 	if len(uploadedKeys) != 2 || uploadedKeys[0] != uploadedKeys[1] {
 		t.Fatalf("content-addressed object key is not stable: %#v", uploadedKeys)
 	}
+	if len(headKeys) != 2 || headKeys[0] != "tos://"+uploadedKeys[0] ||
+		headKeys[1] != "tos://"+uploadedKeys[1] {
+		t.Fatalf("metadata lookup keys = %#v", headKeys)
+	}
 	if !strings.HasPrefix(uploadedKeys[0], "site-brand/logo/") ||
 		!strings.HasSuffix(uploadedKeys[0], ".png") {
 		t.Fatalf("object key is outside the controlled logo prefix: %q", uploadedKeys[0])
@@ -182,6 +250,55 @@ func TestUploadSiteAssetUsesStableServerOwnedKeyAndRejectsOversizedFiles(t *test
 			oversizedContext.Response.Body(),
 		)
 	}
+}
+
+func TestUploadSiteAssetRejectsMissingPersistedObject(t *testing.T) {
+	data := encodePNG(t, 128, 64)
+	requestContext := newSiteAssetUploadContext(
+		t,
+		"logo",
+		"missing.png",
+		data,
+	)
+	assets := siteAssetService{
+		upload: func(_ context.Context, _ []byte, objectKey string) (string, string, error) {
+			return objectKey, "https://assets.example.com/missing.png", nil
+		},
+		head: func(context.Context, string) error {
+			return storage.ErrObjectNotFound
+		},
+	}
+
+	uploadSiteAsset(context.Background(), requestContext, assets)
+
+	if requestContext.Response.StatusCode() != 500 {
+		t.Fatalf(
+			"missing persisted object status = %d, body = %s",
+			requestContext.Response.StatusCode(),
+			requestContext.Response.Body(),
+		)
+	}
+	if strings.Contains(
+		string(requestContext.Response.Body()),
+		"site-brand/logo/",
+	) {
+		t.Fatalf(
+			"missing object response exposed object key: %s",
+			requestContext.Response.Body(),
+		)
+	}
+}
+
+type siteConfigBackendStub struct {
+	configuration *config.BasicConfiguration
+	revision      string
+	err           error
+}
+
+func (s *siteConfigBackendStub) GetBaseConfigWithRevision(
+	context.Context,
+) (*config.BasicConfiguration, string, error) {
+	return s.configuration, s.revision, s.err
 }
 
 func encodePNG(t *testing.T, width, height int) []byte {

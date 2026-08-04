@@ -7,6 +7,7 @@ import {
   useCommonConfigStore,
 } from '@coze-foundation/global-store';
 import { I18n } from '@coze-arch/i18n';
+import { setHtmlTitleSiteName } from '@coze-arch/bot-utils';
 
 export { DEFAULT_SITE_CONFIG };
 
@@ -19,6 +20,9 @@ interface PublicSiteConfigResponse {
 }
 
 const SITE_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
+const DEFAULT_FAVICON_URL = '/newx-favicon.png';
+
+let siteConfigRefreshSequence = 0;
 
 const readString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
@@ -59,6 +63,28 @@ const upsertManagedMeta = (
   return element;
 };
 
+const applyFaviconToDocument = (faviconUrl: string): void => {
+  const iconLinks = Array.from(
+    document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]'),
+  );
+  const managedIcon = iconLinks.find(
+    icon => icon.dataset.cozeSiteConfig === 'true',
+  );
+  const favicon = managedIcon ?? iconLinks[0] ?? document.createElement('link');
+  favicon.rel = 'icon';
+  favicon.dataset.cozeSiteConfig = 'true';
+  favicon.removeAttribute('type');
+  favicon.setAttribute('href', faviconUrl || DEFAULT_FAVICON_URL);
+  if (!favicon.isConnected) {
+    document.head.appendChild(favicon);
+  }
+  iconLinks.forEach(icon => {
+    if (icon !== favicon) {
+      icon.remove();
+    }
+  });
+};
+
 export const applySiteConfigToDocument = (config: ISiteConfig): void => {
   if (typeof document === 'undefined') {
     return;
@@ -77,6 +103,7 @@ export const applySiteConfigToDocument = (config: ISiteConfig): void => {
     );
   });
 
+  setHtmlTitleSiteName(config.siteName);
   document.title = config.siteName;
   const description = upsertManagedMeta(
     'meta[name="description"][data-coze-site-config]',
@@ -88,21 +115,7 @@ export const applySiteConfigToDocument = (config: ISiteConfig): void => {
   );
   description.setAttribute('content', config.siteDescription);
 
-  const existingIcon = document.head.querySelector<HTMLLinkElement>(
-    'link[rel="icon"][data-coze-site-config]',
-  );
-  if (!config.faviconUrl) {
-    existingIcon?.remove();
-    return;
-  }
-  const favicon =
-    existingIcon ??
-    (upsertManagedMeta('link[rel="icon"][data-coze-site-config]', () => {
-      const element = document.createElement('link');
-      element.setAttribute('rel', 'icon');
-      return element;
-    }) as HTMLLinkElement);
-  favicon.href = config.faviconUrl;
+  applyFaviconToDocument(config.faviconUrl);
 };
 
 export const fetchSiteConfig = async (
@@ -140,13 +153,17 @@ export const fetchSiteConfig = async (
 export const refreshSiteConfig = async (
   signal?: AbortSignal,
 ): Promise<ISiteConfig> => {
-  let config = DEFAULT_SITE_CONFIG;
+  const refreshSequence = ++siteConfigRefreshSequence;
+  let config = useCommonConfigStore.getState().siteConfig;
   try {
     config = await fetchSiteConfig(signal);
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
+  }
+  if (refreshSequence !== siteConfigRefreshSequence) {
+    return useCommonConfigStore.getState().siteConfig;
   }
   useCommonConfigStore.getState().updateSiteConfig(config);
   applySiteConfigToDocument(config);

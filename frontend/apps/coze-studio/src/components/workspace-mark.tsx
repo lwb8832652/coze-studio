@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useState } from 'react';
+
 import { useCommonConfigStore } from '@coze-foundation/global-store';
 
 export const WorkspaceMark = ({
@@ -24,6 +26,8 @@ export const WorkspaceMark = ({
   const siteLogoUrl = useCommonConfigStore(
     state => state.siteConfig.siteLogoUrl,
   );
+  const [failedLogoUrl, setFailedLogoUrl] = useState('');
+  const displaySiteLogo = siteLogoUrl && siteLogoUrl !== failedLogoUrl;
 
   return (
     <span
@@ -34,11 +38,12 @@ export const WorkspaceMark = ({
       }
       aria-hidden="true"
     >
-      {siteLogoUrl ? (
+      {displaySiteLogo ? (
         <img
           alt=""
           className="h-full w-full rounded-[inherit] object-contain"
           src={siteLogoUrl}
+          onError={() => setFailedLogoUrl(siteLogoUrl)}
         />
       ) : (
         <svg

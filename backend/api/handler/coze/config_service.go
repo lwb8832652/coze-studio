@@ -41,6 +41,7 @@ import (
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
 	"github.com/coze-dev/coze-studio/backend/infra/embedding/impl"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/conv"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
@@ -93,10 +94,15 @@ func getBasicConfiguration(ctx context.Context, c *app.RequestContext, backend b
 // SaveBasicConfiguration .
 // @router /api/admin/config/basic/save [POST]
 func SaveBasicConfiguration(ctx context.Context, c *app.RequestContext) {
-	saveBasicConfiguration(ctx, c, bizConf.Base())
+	saveBasicConfiguration(ctx, c, bizConf.Base(), defaultSiteAssetService())
 }
 
-func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend basicConfigurationBackend) {
+func saveBasicConfiguration(
+	ctx context.Context,
+	c *app.RequestContext,
+	backend basicConfigurationBackend,
+	assets siteAssetService,
+) {
 	var req saveBasicConfigurationRequest
 	err := c.BindAndValidate(&req)
 	if err != nil {
@@ -134,6 +140,23 @@ func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend 
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	field, assetErr := validateSiteBrandObjects(ctx, patch, assets)
+	if assetErr != nil {
+		if errors.Is(assetErr, storage.ErrObjectNotFound) {
+			invalidParamRequestResponse(
+				c,
+				fmt.Sprintf("%s does not reference an existing object", field),
+			)
+			return
+		}
+		logs.CtxErrorf(ctx, "[SiteConfig] %s metadata validation failed", field)
+		internalServerErrorResponse(
+			ctx,
+			c,
+			errors.New("site asset metadata validation failed"),
+		)
+		return
+	}
 
 	revision, err := backend.SaveBaseConfig(ctx, patch, strings.TrimSpace(*req.ExpectedRevision))
 	if err != nil {
@@ -141,6 +164,34 @@ func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend 
 		return
 	}
 	c.JSON(consts.StatusOK, map[string]any{"revision": revision})
+}
+
+func validateSiteBrandObjects(
+	ctx context.Context,
+	patch baseconfig.BasicConfigurationPatch,
+	assets siteAssetService,
+) (string, error) {
+	values := []struct {
+		name string
+		uri  *string
+	}{
+		{name: "site_logo_uri", uri: patch.SiteLogoURI},
+		{name: "favicon_uri", uri: patch.FaviconURI},
+	}
+	for _, value := range values {
+		if value.uri == nil || *value.uri == "" {
+			continue
+		}
+		if assets.head == nil {
+			return value.name, errors.New(
+				"site asset metadata service is unavailable",
+			)
+		}
+		if err := assets.head(ctx, *value.uri); err != nil {
+			return value.name, err
+		}
+	}
+	return "", nil
 }
 
 func (p *basicConfigurationPatchPayload) toPatch() baseconfig.BasicConfigurationPatch {
