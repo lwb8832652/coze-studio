@@ -8,15 +8,19 @@
 2. 报告远程基准、目标 exact SHA、文件范围、测试结果、migration 清单和风险；
 3. 用户确认后，将本地 `dev` fast-forward 到已审计的需求 SHA；
 4. 本地 `dev` 与已验证分支是同一个 exact SHA，因此不重复第二轮测试或审计；
-5. 展示合并结果和标准发布命令，获得发布确认后运行一次
+5. 合并后不重跑代码审计，只执行实际部署区间、migration、credential 和 Atlas
+   状态的发布前预检；
+6. 展示预检结果和标准发布命令，获得发布确认后运行一次
    `deploy/dev/publish-dev.sh`。
 
-合并确认与发布确认复用同一份审计证据，不再生成第二份审计报告。SHA、文件范围、
-migration 清单或远程基准变化时，证据失效并重新执行单次检查。
+合并确认与发布确认复用同一份代码审计证据，不再生成第二份代码审计报告。发布前
+预检只补充部署和数据库事实，不重跑测试。SHA、文件范围、migration 清单、实际部署
+基准或远程基准变化时，证据失效并重新执行相应检查。
 
-普通发布不要求手动完成 ACR 登录、镜像拉取、revision 检查、GitHub 页面操作或
-宝塔接口调用。发布脚本负责分支、干净工作区、exact SHA、远程竞态和 Atlas 状态
-检查；GitHub Actions 负责镜像构建、校验、标签晋级和宝塔 WebHook。
+普通发布不要求用户手动完成 ACR 登录、镜像拉取、revision 检查、GitHub 页面操作或
+宝塔接口调用。执行审计的一方负责完成发布前只读预检；发布脚本负责分支、干净工作区、
+exact SHA、远程竞态和 Atlas 状态复核；GitHub Actions 负责镜像构建、校验、标签晋级
+和宝塔 WebHook。
 
 ## 禁止事项
 
@@ -83,7 +87,7 @@ git diff --check
 - 前端：相关 Vitest，必要时 typecheck、lint、build 和 in-app browser；
 - 后端：相关 Go package 测试，必要时跨包、race 和 build；
 - 公共合同或权限：补未授权、跨空间、脱敏和兼容性验证；
-- migration：Atlas hash、validate/status 和 SQL 审阅；
+- migration：Atlas hash、validate 和 SQL 审阅；实际 status 在发布前预检执行；
 - 文档：链接、残留规则和 `git diff --check`；
 - 结构影响：codebase-memory 或等价调用链分析。
 
@@ -135,7 +139,58 @@ git diff --check origin/dev...dev
 
 ## 发布确认与执行
 
-展示以下完整 SHA 和命令，等待用户对本次发布明确确认：
+### 1. 固定实际部署区间
+
+先重新 fetch 并确认 `origin/dev` 仍等于审计报告中的完整 SHA。本地 `dev` 必须仍是
+已审计目标 exact SHA。随后使用只读 ACR credential 分别读取当前
+`coze-server:dev`、`coze-web:dev` 的 `org.opencontainers.image.revision`；两个
+revision 必须都是合法的 40 位 SHA 且完全一致。两张 manifest 都明确不存在时，只有
+在首次部署条件已经验证后，才能使用已验证的 push `before`；只有一张缺失、认证或
+网络失败、revision 缺失或不一致时立即停止。
+
+把一致的已部署 revision（首次部署时为已验证 push `before`）记为
+`comparison_base`，目标记为 `target_sha`，并执行：
+
+```bash
+git cat-file -e "${comparison_base}^{commit}"
+git cat-file -e "${target_sha}^{commit}"
+git merge-base --is-ancestor "$comparison_base" "$target_sha"
+git diff --name-status "$comparison_base" "$target_sha" -- docker/atlas/migrations
+```
+
+migration 清单必须来自实际部署区间，不得只审阅 `origin/dev...dev`。逐项记录 SQL、
+数据库对象、forward apply 副作用、锁和不可逆风险，以及旧应用在镜像晋级前访问迁移后
+schema 的兼容性；没有 migration 也要明确记录。需要 baseline、repair、backfill 或
+down migration 时退出常规发布流程并单独申请授权。
+
+### 2. 校验 credential 与只读 Atlas 状态
+
+Atlas credential 默认位于 `~/.config/coze-studio/dev-atlas.env`，也可由
+`ATLAS_ENV_FILE` 指定。它必须是仓库外的普通文件、不是 symlink、权限严格为 `600`，
+并且只允许注释、空行和一条 `ATLAS_URL=mysql://...`。报告只记录物理路径和检查结果，
+禁止输出文件内容、DSN 或密码。
+
+在发布确认前仅运行只读状态模式：
+
+```bash
+AUDITED_ORIGIN_DEV_SHA=<reported-origin-dev-sha>
+AUDITED_TARGET_DEV_SHA=<audited-feature-sha>
+deploy/dev/publish-dev.sh --status \
+  "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
+```
+
+`--status` 必须完成 pinned Atlas validate/status、credential 脱敏和远程 SHA 复核，
+不得 apply 或 push。checksum、revision、schema 基线或 migration 清单不一致时立即停止。
+若实际部署区间存在待执行 migration，还必须确认数据库网络只允许受控来源，并使用专用
+最小权限 migration 账号，禁止 root；无法证明时不得请求数据库变更授权。
+
+以上是发布前安全预检，不是第二次代码审计，不重跑测试、构建或浏览器验收。
+
+### 3. 报告并请求发布确认
+
+报告必须追加实际 `comparison_base`、目标 SHA、完整 migration 清单、credential 文件
+安全检查、Atlas status 摘要、数据库网络/账号检查（适用时），以及将触发的镜像晋级和
+预发布部署。然后展示以下完整 SHA 和命令，等待用户对本次发布明确确认：
 
 ```bash
 AUDITED_ORIGIN_DEV_SHA=<reported-origin-dev-sha>
@@ -161,8 +216,9 @@ push 成功后不再执行第二次本地审计。只观察目标 SHA 对应的
 `promote`、`deploy` 和服务健康。任何失败先报告；Actions 重跑、标签修复、人工回滚
 或服务器操作需要根据当次证据另行确认。
 
-## 严格排查模式
+## 附加排查模式
 
-只有用户明确要求严格发布审计、migration 风险排查或发布异常定位时，才增加 ACR
-revision、实际部署区间、Atlas credential 文件权限、数据库网络和部署链路等专项
-检查。专项结果补充到同一份审计证据，不恢复合并后的第二轮重复测试。
+只有用户明确要求 migration 深度风险排查或发布异常定位时，才增加镜像内容比对、
+部署日志、数据库锁评估和服务器链路等专项检查。实际部署 revision、migration 区间、
+credential 文件权限和 Atlas status 属于默认强制预检，不得降为可选项。专项结果补充
+到同一份证据，不恢复合并后的第二轮重复测试。

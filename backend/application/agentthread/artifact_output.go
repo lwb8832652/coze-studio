@@ -245,6 +245,9 @@ func (s *ApplicationService) publishJournalCodeSnapshot(
 		toolCallID,
 		file,
 	)
+	if actionID == "" {
+		return
+	}
 	_, _, err = s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeCode,
@@ -316,6 +319,9 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 		toolCallID,
 		file,
 	)
+	if actionID == "" {
+		return
+	}
 	_, _, err := s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeDocument,
@@ -347,9 +353,17 @@ func journalOutputProjectionIDs(
 	toolCallID string,
 	file *OutputFileSummary,
 ) (actionID, milestoneID string) {
-	correlationKey, planTaskID, found, ambiguous :=
-		resolveADKJournalToolBindingFromContext(ctx, toolCallID)
+	correlationKey, planTaskID, found :=
+		capturedADKJournalToolCorrelation(ctx, toolCallID)
+	ambiguous := false
 	if !found {
+		correlationKey, planTaskID, found, ambiguous =
+			resolveADKJournalToolBindingFromContext(ctx, toolCallID)
+	}
+	if !found {
+		if adkParityStateTrackerFromContext(ctx) != nil {
+			return "", ""
+		}
 		correlationKey = strings.TrimSpace(toolCallID)
 		if ambiguous ||
 			!isADKParityLabel(correlationKey, maxADKParityLabelRunes) {

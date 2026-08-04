@@ -210,9 +210,11 @@ func (t *adkRuntimeCatalogTool) InvokableRun(
 		return "", fmt.Errorf("runtime tool invoker is required")
 	}
 
+	callID := compose.GetToolCallID(ctx)
+	ctx = captureADKJournalToolCorrelation(ctx, callID)
 	return t.definition.Invoker.InvokeADKRuntimeTool(ctx, ADKRuntimeToolCall{
 		Run:       t.run,
-		CallID:    compose.GetToolCallID(ctx),
+		CallID:    callID,
 		Name:      t.definition.Name,
 		Arguments: strings.TrimSpace(argumentsInJSON),
 	})

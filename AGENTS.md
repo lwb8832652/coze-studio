@@ -129,11 +129,10 @@ plans/specs 只能按需追溯，不能用于推断当前合同。
 ## dev 自动发布
 
 默认发布流程保持简单：需求分支完成必要测试和一次集成检查、获得用户对合并范围的
-明确确认并 fast-forward 合入本地 `dev` 后，不再重复第二轮审计或测试；发布确认后
-只执行一次本地发布脚本。不要求手动
-登录 ACR、拉取镜像、读取镜像 revision、操作
-GitHub 页面或调用宝塔接口。脚本自身会校验当前分支、工作区、exact SHA、远程竞态
-和 Atlas 状态；这些是脚本内部的 fail-closed 检查，不需要用户额外操作。
+明确确认并 fast-forward 合入本地 `dev` 后，不再重复第二轮代码审计或测试。发布前只
+执行实际部署 revision、migration 区间、credential 文件权限和 Atlas 只读状态预检；
+这不是第二次代码审计。预检通过并获得发布确认后，只执行一次本地发布脚本。上述检查
+由执行审计的一方完成，不要求用户手动操作 ACR、GitHub 页面或宝塔接口。
 
 在本地 `dev` 工作区执行：
 
@@ -151,8 +150,9 @@ deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 合并、迁移 apply、推送和远程分支操作仍需用户对当前 exact SHA 与范围明确授权；
 可以复用同一份集成检查证据，不要求重复审计。SHA、文件范围、迁移清单或远程基准
 变化后必须重新检查和确认。禁止 force push。
-详细脚本行为见 `docs/superpowers/runbooks/dev-integration-audit.md`，其中的本地 ACR
-预校验仅作为异常排查/严格审计参考，不是默认发布前置步骤。
+详细脚本行为见 `docs/superpowers/runbooks/dev-integration-audit.md`。实际部署 revision、
+migration 区间、credential 文件权限和 Atlas `--status` 是默认发布前置检查；镜像内容、
+部署日志和服务器链路深查才属于异常排查项。
 
 ## 项目结构
 

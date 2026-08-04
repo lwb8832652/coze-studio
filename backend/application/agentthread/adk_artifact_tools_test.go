@@ -23,9 +23,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
@@ -179,6 +182,155 @@ func TestApplicationWriteOutputFilePublishesTypedCodeSnapshot(t *testing.T) {
 		require.Equal(t, int32(1), content.Code.StartLine)
 		require.Equal(t, int32(3), content.Code.EndLine)
 	}
+}
+
+func TestADKRuntimeToolCapturesJournalCorrelationBeforeBindingRelease(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	require.True(t, bindADKJournalScopedToolPlanTasks(
+		ctx,
+		"lead",
+		[]string{"lead"},
+		[]string{"call-write"},
+		"plan-1",
+	))
+	bindingKey := adkJournalToolBindingKey(
+		"lead",
+		[]string{"lead"},
+		"call-write",
+	)
+
+	var actionID string
+	var milestoneID string
+	provider := NewADKRuntimeToolCatalogProvider(&recordingADKRuntimeToolCatalog{
+		definitions: []ADKRuntimeToolDefinition{{
+			Name:        adkWriteFileToolName,
+			Description: "Write a file.",
+			InputSchema: `{"type":"object"}`,
+			Invoker: ADKRuntimeToolInvokerFunc(func(
+				invokeCtx context.Context,
+				call ADKRuntimeToolCall,
+			) (string, error) {
+				releaseADKJournalToolPlanTask(invokeCtx, bindingKey)
+				actionID, milestoneID = journalOutputProjectionIDs(
+					invokeCtx,
+					call.Run.RunID,
+					call.CallID,
+					&OutputFileSummary{FileID: 99, Digest: strings.Repeat("a", 64)},
+				)
+				return "ok", nil
+			}),
+		}},
+	})
+	toolSet, err := provider.ResolveToolSet(ctx, &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	})
+	require.NoError(t, err)
+	node, err := compose.NewToolNode(ctx, &compose.ToolsNodeConfig{
+		Tools: toolSet.StaticTools,
+	})
+	require.NoError(t, err)
+	graph := compose.NewGraph[*schema.Message, []*schema.Message]()
+	require.NoError(t, graph.AddToolsNode("tools", node))
+	require.NoError(t, graph.AddEdge(compose.START, "tools"))
+	require.NoError(t, graph.AddEdge("tools", compose.END))
+	runnable, err := graph.Compile(ctx)
+	require.NoError(t, err)
+
+	_, err = runnable.Invoke(ctx, schema.AssistantMessage("", []schema.ToolCall{{
+		ID: "call-write",
+		Function: schema.FunctionCall{
+			Name: adkWriteFileToolName, Arguments: `{}`,
+		},
+	}}))
+
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		journalStableProjectionID(20, "action", bindingKey),
+		actionID,
+	)
+	require.Equal(
+		t,
+		journalStableProjectionID(20, "milestone", "plan-1"),
+		milestoneID,
+	)
+}
+
+func TestApplicationWriteOutputFileSkipsJournalSnapshotForAmbiguousScopedBinding(
+	t *testing.T,
+) {
+	app, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &domainentity.RunAttempt{
+		ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "att-ambiguous", Status: domainentity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+	}
+	app.JournalSnapshotAttemptReader = repo
+	app.RuntimeFileSVC = &recordingRuntimeFileService{}
+	app.ArtifactObjectStorage = &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	require.True(t, bindADKJournalScopedToolPlanTasks(
+		ctx, "lead", []string{"lead"}, []string{"call-shared"}, "plan-1",
+	))
+	require.True(t, bindADKJournalScopedToolPlanTasks(
+		ctx, "lead", []string{"lead", "child"}, []string{"call-shared"}, "plan-2",
+	))
+
+	resp, err := app.WriteOutputFile(ctx, &WriteOutputFileRequest{
+		Run:        &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40},
+		ToolCallID: "call-shared",
+		FilePath:   "/mnt/user-data/outputs/ambiguous.md",
+		Content:    "# Ambiguous\n", ContentType: "text/markdown",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Empty(t, repo.snapshots)
+}
+
+func TestApplicationWriteOutputFileSkipsJournalSnapshotWhenScopedBindingIsUnavailable(
+	t *testing.T,
+) {
+	app, repo, _ := newJournalSnapshotApplicationTestService()
+	repo.activeAttempt = &domainentity.RunAttempt{
+		ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "att-unavailable", Status: domainentity.RunAttemptStatusRunning,
+		SnapshotsEnabled: true, ProjectionState: domainentity.JournalProjectionStateHealthy,
+	}
+	app.JournalSnapshotAttemptReader = repo
+	app.RuntimeFileSVC = &recordingRuntimeFileService{}
+	app.ArtifactObjectStorage = &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	toolCallIDs := make([]string, maxADKParityJournalBindings+1)
+	for index := range toolCallIDs {
+		toolCallIDs[index] = fmt.Sprintf("call-%d", index)
+	}
+	require.False(t, bindADKJournalScopedToolPlanTasks(
+		ctx, "lead", []string{"lead"}, toolCallIDs, "plan-1",
+	))
+
+	resp, err := app.WriteOutputFile(ctx, &WriteOutputFileRequest{
+		Run:        &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40},
+		ToolCallID: toolCallIDs[0],
+		FilePath:   "/mnt/user-data/outputs/unbound.md",
+		Content:    "# Unbound\n", ContentType: "text/markdown",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Empty(t, repo.snapshots)
 }
 
 func TestJournalOutputCodeLanguageUsesExplicitMIMEAllowlist(t *testing.T) {

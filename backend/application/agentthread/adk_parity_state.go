@@ -184,6 +184,14 @@ type ADKParityStateTracker struct {
 	journalToolCallIDs   map[string]string
 }
 
+type adkJournalToolCorrelationContextKey struct{}
+
+type adkJournalToolCorrelation struct {
+	ToolCallID string
+	BindingKey string
+	PlanTaskID string
+}
+
 type adkParityStateContextKey struct{}
 
 func withADKParityStateTracker(
@@ -370,6 +378,37 @@ func resolveADKJournalToolBindingFromContext(
 		found = true
 	}
 	return bindingKey, planTaskID, found, false
+}
+
+func captureADKJournalToolCorrelation(
+	ctx context.Context,
+	toolCallID string,
+) context.Context {
+	bindingKey, planTaskID, found, ambiguous :=
+		resolveADKJournalToolBindingFromContext(ctx, toolCallID)
+	if !found || ambiguous {
+		return ctx
+	}
+	return context.WithValue(ctx, adkJournalToolCorrelationContextKey{}, adkJournalToolCorrelation{
+		ToolCallID: strings.TrimSpace(toolCallID),
+		BindingKey: bindingKey,
+		PlanTaskID: planTaskID,
+	})
+}
+
+func capturedADKJournalToolCorrelation(
+	ctx context.Context,
+	toolCallID string,
+) (bindingKey, planTaskID string, found bool) {
+	correlation, ok := ctx.Value(adkJournalToolCorrelationContextKey{}).(adkJournalToolCorrelation)
+	if !ok || correlation.ToolCallID != strings.TrimSpace(toolCallID) ||
+		correlation.BindingKey == "" ||
+		len(correlation.BindingKey) > maxADKParityLabelRunes*2+32 ||
+		(correlation.PlanTaskID != "" &&
+			!isADKParityLabel(correlation.PlanTaskID, maxADKParityLabelRunes)) {
+		return "", "", false
+	}
+	return correlation.BindingKey, correlation.PlanTaskID, true
 }
 
 func adkJournalToolBindingKey(
