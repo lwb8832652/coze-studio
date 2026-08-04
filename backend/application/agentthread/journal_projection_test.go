@@ -162,7 +162,7 @@ func TestJournalProjectionMapsADKToolCallMessageToActionStarted(t *testing.T) {
 func TestJournalProjectionExpandsParallelADKToolCallsWithoutArguments(t *testing.T) {
 	source := RunEvent{
 		ThreadID: 1, RunID: 2, EventType: "message.completed",
-		Payload: `{"role":"assistant","tool_calls":[
+		Payload: `{"role":"assistant","agent_name":"lead","run_path":["lead","worker"],"tool_calls":[
 			{"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":\"/private/one.md\"}"}},
 			{"id":"call-2","function":{"name":"web_search","arguments":"{\"query\":\"secret\"}"}}
 		]}`,
@@ -185,6 +185,14 @@ func TestJournalProjectionExpandsParallelADKToolCallsWithoutArguments(t *testing
 	require.NotNil(t, second)
 	require.Equal(t, "search", second.Operation)
 	require.NotEqual(t, first.ActionID, second.ActionID)
+
+	completed, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: 1, RunID: 2, EventType: "tool.completed",
+		Payload: `{"role":"tool","agent_name":"lead","run_path":["lead","worker"],"tool_name":"web_search","tool_call_id":"call-2","content":"done"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, completed)
+	require.Equal(t, second.ActionID, completed.ActionID)
 }
 
 func TestJournalProjectionUsesProgressRevisionForAppendOnlyUpdates(t *testing.T) {

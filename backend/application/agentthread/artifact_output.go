@@ -239,11 +239,12 @@ func (s *ApplicationService) publishJournalCodeSnapshot(
 	operation := journalToolOperation("write_file")
 	target := journalToolTarget("write_file", operation)
 	runningVerb, completedVerb := journalActionVerbs(operation)
-	actionID := ""
-	if strings.TrimSpace(toolCallID) != "" {
-		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
-	}
-	milestoneID := journalOutputMilestoneID(ctx, run.RunID, toolCallID)
+	actionID, milestoneID := journalOutputProjectionIDs(
+		ctx,
+		run.RunID,
+		toolCallID,
+		file,
+	)
 	_, _, err = s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeCode,
@@ -309,11 +310,12 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 	operation := journalToolOperation("write_file")
 	target := journalToolTarget("write_file", operation)
 	runningVerb, completedVerb := journalActionVerbs(operation)
-	actionID := ""
-	if strings.TrimSpace(toolCallID) != "" {
-		actionID = journalStableProjectionID(run.RunID, "action", toolCallID)
-	}
-	milestoneID := journalOutputMilestoneID(ctx, run.RunID, toolCallID)
+	actionID, milestoneID := journalOutputProjectionIDs(
+		ctx,
+		run.RunID,
+		toolCallID,
+		file,
+	)
 	_, _, err := s.ProduceJournalContent(ctx, JournalRuntimeContentSubmission{
 		Run: run, Status: domainentity.JournalContentStatusReady,
 		ContentType: domainentity.JournalSnapshotContentTypeDocument,
@@ -339,19 +341,39 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 	}
 }
 
-func journalOutputMilestoneID(
+func journalOutputProjectionIDs(
 	ctx context.Context,
 	runID int64,
 	toolCallID string,
-) string {
-	planTaskID := boundADKJournalToolPlanTaskIDFromContext(ctx, toolCallID)
-	if planTaskID == "" {
-		planTaskID = activeADKPlanTaskIDFromContext(ctx)
+	file *OutputFileSummary,
+) (actionID, milestoneID string) {
+	correlationKey, planTaskID, found, ambiguous :=
+		resolveADKJournalToolBindingFromContext(ctx, toolCallID)
+	if !found {
+		correlationKey = strings.TrimSpace(toolCallID)
+		if ambiguous ||
+			!isADKParityLabel(correlationKey, maxADKParityLabelRunes) {
+			correlationKey = journalOutputResourceCorrelationKey(file)
+		}
 	}
-	if planTaskID == "" {
+	if correlationKey != "" {
+		actionID = journalStableProjectionID(runID, "action", correlationKey)
+	}
+	if found && planTaskID != "" {
+		milestoneID = journalStableProjectionID(runID, "milestone", planTaskID)
+	}
+	return actionID, milestoneID
+}
+
+func journalOutputResourceCorrelationKey(file *OutputFileSummary) string {
+	if file == nil || file.FileID <= 0 {
 		return ""
 	}
-	return journalStableProjectionID(runID, "milestone", planTaskID)
+	return fmt.Sprintf(
+		"output:%d:%s",
+		file.FileID,
+		strings.TrimSpace(file.Digest),
+	)
 }
 
 func journalOutputDocumentFormat(contentType string) (string, bool) {

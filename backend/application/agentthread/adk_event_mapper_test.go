@@ -478,8 +478,10 @@ func TestMapADKEventPreservesParentToolBindingAcrossNestedAgentBatches(t *testin
 	})
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{
-		adkJournalToolBindingKey("lead", "call-parent"):      "2",
-		adkJournalToolBindingKey("researcher", "call-child"): "2",
+		adkJournalToolBindingKey("lead", nil, "call-parent"): "2",
+		adkJournalToolBindingKey(
+			"researcher", []string{"lead", "researcher"}, "call-child",
+		): "2",
 	}, journalToolPlanTasksForTest(tracker))
 
 	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
@@ -588,6 +590,98 @@ func TestMapADKEventScopesReusedToolCallIDsByAgent(t *testing.T) {
 
 	parentTerminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
 		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "shared-call", Content: "parent done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(parentTerminal.Payload), &payload))
+	require.Equal(t, "parent-plan", payload["plan_task_id"])
+	parentTerminalProjection, err := ProjectRunEventToJournal(parentTerminal.RunEvent)
+	require.NoError(t, err)
+	require.Equal(t, parentProjection.ActionID, parentTerminalProjection.ActionID)
+}
+
+func TestMapADKEventScopesReusedToolCallIDsByRunPath(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	parentPath := []adk.RunStep{newADKRunStep(t, "lead")}
+	childPath := []adk.RunStep{
+		newADKRunStep(t, "lead"),
+		newADKRunStep(t, "lead"),
+	}
+
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "parent-plan", Title: "父任务", Status: "in_progress",
+	}}))
+	parentStarted, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead", RunPath: parentPath,
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "shared-call", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	parentProjection, err := ProjectRunEventToJournal(parentStarted.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, parentProjection)
+
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "child-plan", Title: "子任务", Status: "in_progress",
+	}}))
+	childStarted, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead", RunPath: childPath,
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "shared-call", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(childStarted.Payload), &payload))
+	require.Equal(t, "child-plan", payload["plan_task_id"])
+	childProjection, err := ProjectRunEventToJournal(childStarted.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, childProjection)
+	require.NotEqual(t, parentProjection.ActionID, childProjection.ActionID)
+
+	childTerminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead", RunPath: childPath,
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "shared-call", Content: "child done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(childTerminal.Payload), &payload))
+	require.Equal(t, "child-plan", payload["plan_task_id"])
+	childTerminalProjection, err := ProjectRunEventToJournal(childTerminal.RunEvent)
+	require.NoError(t, err)
+	require.Equal(t, childProjection.ActionID, childTerminalProjection.ActionID)
+	releaseADKJournalToolPlanTask(ctx, childTerminal.TerminalToolCallID)
+
+	parentTerminal, err := MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead", RunPath: parentPath,
 		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
 			Message: &schema.Message{
 				Role: schema.Tool, ToolCallID: "shared-call", Content: "parent done",

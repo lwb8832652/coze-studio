@@ -482,7 +482,6 @@ func defaultADKMiddlewareBuilder(
 				),
 				WithADKSkillBackendJournal(
 					input.Run,
-					options.EventSink,
 					options.JournalContentProducer,
 				),
 			)

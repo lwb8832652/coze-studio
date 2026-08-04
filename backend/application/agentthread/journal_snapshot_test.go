@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -1427,7 +1429,6 @@ func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
 		SnapshotsEnabled: true, ProjectionState: entity.JournalProjectionStateHealthy,
 	}
 	service.JournalSnapshotAttemptReader = repo
-	events := &recordingRunEventSink{}
 	run := &RunSummary{RunID: 10, ThreadID: 1, SpaceID: 10, CreatorID: 9}
 	tracker, err := NewADKParityStateTracker(run, nil)
 	require.NoError(t, err)
@@ -1444,7 +1445,6 @@ func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
 		ADKContextBudget{SkillCatalogTokens: 200, SkillContentTokens: 200},
 		WithADKSkillBackendJournal(
 			run,
-			events,
 			notifyingJournalContentProducer{next: service, done: observed},
 		),
 	)
@@ -1458,7 +1458,6 @@ func TestADKSkillBackendPublishesOnlySelectedSkillSnapshot(t *testing.T) {
 	case <-time.After(time.Second):
 		require.FailNow(t, "selected skill Journal observation did not finish")
 	}
-	require.Equal(t, []string{"skill.started"}, events.eventTypes())
 	require.Len(t, repo.snapshots, 1)
 	for _, snapshot := range repo.snapshots {
 		require.Equal(t, entity.JournalSnapshotContentTypeSkill, snapshot.ContentType)
@@ -1506,6 +1505,24 @@ func TestOutputSnapshotKeepsTheBoundPlanMilestone(t *testing.T) {
 		ID: "plan-output", Title: "生成验收文档", Status: "in_progress",
 	}}))
 	ctx := withADKParityStateTracker(context.Background(), tracker)
+	startedEvent, err := MapADKEvent(ctx, 1, 10, &adk.AgentEvent{
+		AgentName: "lead",
+		RunPath:   []adk.RunStep{newADKRunStep(t, "lead")},
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-write-output", Type: "function",
+					Function: schema.FunctionCall{Name: "write_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+	started, err := ProjectRunEventToJournal(startedEvent.RunEvent)
+	require.NoError(t, err)
+	require.NotNil(t, started)
 
 	service.publishJournalDocumentSnapshot(
 		ctx,
@@ -1522,12 +1539,6 @@ func TestOutputSnapshotKeepsTheBoundPlanMilestone(t *testing.T) {
 	)
 
 	require.Len(t, repo.events, 1)
-	started, err := ProjectRunEventToJournal(RunEvent{
-		ThreadID: 1, RunID: 10, EventType: "message.completed",
-		Payload: `{"role":"assistant","plan_task_id":"plan-output","tool_calls":[{"id":"call-write-output","function":{"name":"write_file"}}]}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, started)
 	for _, event := range repo.events {
 		require.Equal(t, started.ActionID, event.ActionID)
 		require.Equal(t, started.Operation, event.Operation)

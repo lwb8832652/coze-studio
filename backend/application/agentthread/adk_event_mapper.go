@@ -206,6 +206,7 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 			mapped.EventType = "tool.completed"
 			mapped.TerminalToolCallID = adkJournalToolBindingKey(
 				payload.AgentName,
+				payload.RunPath,
 				payload.ToolCallID,
 			)
 			if toolError, ok := decodeADKToolErrorResult(payload.Content); ok {
@@ -262,6 +263,7 @@ func attachADKJournalPlanTask(ctx context.Context, payload *adkMessagePayload) {
 		if !bindADKJournalScopedToolPlanTasks(
 			ctx,
 			payload.AgentName,
+			payload.RunPath,
 			toolCallIDs,
 			payload.PlanTaskID,
 		) {
@@ -271,6 +273,7 @@ func attachADKJournalPlanTask(ctx context.Context, payload *adkMessagePayload) {
 		payload.PlanTaskID = boundADKJournalScopedToolPlanTaskIDFromContext(
 			ctx,
 			payload.AgentName,
+			payload.RunPath,
 			payload.ToolCallID,
 		)
 	}

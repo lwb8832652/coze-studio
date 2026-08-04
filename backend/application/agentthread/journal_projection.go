@@ -343,10 +343,8 @@ func journalScopedToolCorrelationKey(
 	toolCallID string,
 ) string {
 	agentName := journalSourceID(source["agent_name"])
-	if agentName == "" {
-		return toolCallID
-	}
-	return adkJournalToolBindingKey(agentName, toolCallID)
+	runPath := publicStringSlice(source["run_path"])
+	return adkJournalToolBindingKey(agentName, runPath, toolCallID)
 }
 
 func journalInternalTool(toolName string) bool {
@@ -610,6 +608,8 @@ func journalSupplementalRunEvents(event RunEvent) ([]RunEvent, error) {
 	}
 	result := make([]RunEvent, 0, len(toolCalls)-1)
 	planTaskID := journalSourceID(publicPayload["plan_task_id"])
+	agentName := journalSourceID(source["agent_name"])
+	runPath := publicStringSlice(source["run_path"])
 	for _, item := range toolCalls[1:] {
 		toolCall, ok := item.(map[string]any)
 		if !ok {
@@ -622,6 +622,12 @@ func journalSupplementalRunEvents(event RunEvent) ([]RunEvent, error) {
 		}
 		payloadData := map[string]any{
 			"tool_name": toolName, "tool_call_id": toolCallID,
+		}
+		if agentName != "" {
+			payloadData["agent_name"] = agentName
+		}
+		if len(runPath) > 0 {
+			payloadData["run_path"] = runPath
 		}
 		if journalTarget := journalControlledTarget(toolCall["journal_target"]); journalTarget != "" {
 			payloadData["journal_target"] = journalTarget

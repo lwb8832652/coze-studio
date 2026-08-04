@@ -39,7 +39,6 @@ type adkSkillBackend struct {
 	summaries         map[string]JournalSkillSummary
 	description       string
 	run               *RunSummary
-	eventSink         RunEventSink
 	journalProducer   JournalContentProducer
 	guardrailEnforcer ADKGuardrailEnforcer
 }
@@ -67,7 +66,6 @@ func WithADKSkillBackendGuardrail(
 
 func WithADKSkillBackendJournal(
 	run *RunSummary,
-	eventSink RunEventSink,
 	producer JournalContentProducer,
 ) ADKSkillBackendOption {
 	return func(backend *adkSkillBackend) {
@@ -78,7 +76,6 @@ func WithADKSkillBackendJournal(
 			snapshot := *run
 			backend.run = &snapshot
 		}
-		backend.eventSink = eventSink
 		backend.journalProducer = producer
 	}
 }
@@ -246,15 +243,17 @@ func (b *adkSkillBackend) Get(
 
 func (b *adkSkillBackend) observeJournalUse(ctx context.Context, name string) {
 	if b == nil || b.run == nil || b.run.RunID <= 0 || b.run.ThreadID <= 0 ||
-		(b.eventSink == nil && b.journalProducer == nil) {
+		b.journalProducer == nil {
 		return
 	}
-	if _, ok := b.summaries[name]; !ok {
+	summary, ok := b.summaries[name]
+	if !ok || summary.SkillID == "" || summary.Name == "" {
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	planTaskID := activeADKPlanTaskIDFromContext(ctx)
 	observationCtx := context.WithoutCancel(ctx)
 	go func() {
 		journalCtx, cancel := context.WithTimeout(
@@ -272,19 +271,21 @@ func (b *adkSkillBackend) observeJournalUse(ctx context.Context, name string) {
 				)
 			}
 		}()
-		b.publishJournalUse(journalCtx, name)
+		b.publishJournalUse(journalCtx, summary, planTaskID)
 	}()
 }
 
-func (b *adkSkillBackend) publishJournalUse(ctx context.Context, name string) {
+func (b *adkSkillBackend) publishJournalUse(
+	ctx context.Context,
+	summary JournalSkillSummary,
+	planTaskID string,
+) {
 	if b == nil || b.run == nil || b.run.RunID <= 0 || b.run.ThreadID <= 0 {
 		return
 	}
-	summary, ok := b.summaries[name]
-	if !ok || summary.SkillID == "" || summary.Name == "" {
+	if b.journalProducer == nil || summary.SkillID == "" || summary.Name == "" {
 		return
 	}
-	planTaskID := activeADKPlanTaskIDFromContext(ctx)
 	identity := summary.SkillID
 	if planTaskID != "" {
 		identity += ":" + planTaskID
@@ -295,60 +296,31 @@ func (b *adkSkillBackend) publishJournalUse(ctx context.Context, name string) {
 		milestoneID = journalStableProjectionID(b.run.RunID, "milestone", planTaskID)
 	}
 	runningVerb, completedVerb := journalActionVerbs("use_skill")
-	b.emitJournalSkillEvent(ctx, "skill.started", summary, actionID, planTaskID)
-
-	var terminalRecorded bool
-	if b.journalProducer != nil {
-		_, event, err := b.journalProducer.ProduceJournalContent(
-			ctx,
-			JournalRuntimeContentSubmission{
-				Run: b.run, Status: domainentity.JournalContentStatusReady,
-				ContentType: domainentity.JournalSnapshotContentTypeSkill,
-				Action: JournalContentAction{
-					ActionID: actionID, MilestoneID: milestoneID,
-					Operation: "use_skill", Target: summary.Name,
-					DisplayVerbRunning:   runningVerb,
-					DisplayVerbCompleted: completedVerb,
-				},
-				Content: JournalTypedSnapshotContent{Skill: &JournalSkillContent{
-					Skills: []JournalSkillSummary{summary},
-				}},
+	_, _, err := b.journalProducer.ProduceJournalContent(
+		ctx,
+		JournalRuntimeContentSubmission{
+			Run: b.run, Status: domainentity.JournalContentStatusReady,
+			ContentType: domainentity.JournalSnapshotContentTypeSkill,
+			Action: JournalContentAction{
+				ActionID: actionID, MilestoneID: milestoneID,
+				Operation: "use_skill", Target: summary.Name,
+				DisplayVerbRunning:   runningVerb,
+				DisplayVerbCompleted: completedVerb,
 			},
+			Content: JournalTypedSnapshotContent{Skill: &JournalSkillContent{
+				Skills: []JournalSkillSummary{summary},
+			}},
+		},
+	)
+	if err != nil {
+		logs.CtxWarnf(
+			ctx,
+			"journal skill snapshot unavailable: run_id=%d skill_id=%s err=%v",
+			b.run.RunID,
+			summary.SkillID,
+			err,
 		)
-		if err != nil {
-			logs.CtxWarnf(
-				ctx,
-				"journal skill snapshot unavailable: run_id=%d skill_id=%s err=%v",
-				b.run.RunID,
-				summary.SkillID,
-				err,
-			)
-		}
-		terminalRecorded = event != nil
 	}
-	if !terminalRecorded {
-		b.emitJournalSkillEvent(ctx, "skill.completed", summary, actionID, planTaskID)
-	}
-}
-
-func (b *adkSkillBackend) emitJournalSkillEvent(
-	ctx context.Context,
-	eventType string,
-	summary JournalSkillSummary,
-	actionID string,
-	planTaskID string,
-) {
-	payload := map[string]any{
-		"skill_id": summary.SkillID, "skill_name": summary.Name,
-		"action_id": actionID,
-	}
-	if planTaskID != "" {
-		payload["plan_task_id"] = planTaskID
-	}
-	emitRunEvent(ctx, b.eventSink, RunEvent{
-		ThreadID: b.run.ThreadID, RunID: b.run.RunID, EventType: eventType,
-		Payload: encodeRunEventPayload(ctx, payload),
-	})
 }
 
 func (b *adkSkillBackend) enforceGuardrail(

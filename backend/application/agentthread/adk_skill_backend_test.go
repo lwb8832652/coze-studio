@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -162,9 +161,6 @@ func TestADKSkillBackendJournalFailureDoesNotFailSkillLoad(t *testing.T) {
 	run := &RunSummary{
 		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
 	}
-	events := &recordingRunEventSink{emitErr: func(RunEvent) error {
-		return fmt.Errorf("journal event unavailable")
-	}}
 	backend, err := newADKSkillBackend(
 		[]AgentSkill{{
 			ID: 1, Name: "research", Description: "Research.",
@@ -176,7 +172,6 @@ func TestADKSkillBackendJournalFailureDoesNotFailSkillLoad(t *testing.T) {
 		},
 		WithADKSkillBackendJournal(
 			run,
-			events,
 			failingJournalContentProducer{},
 		),
 	)
@@ -204,7 +199,6 @@ func TestADKSkillBackendDoesNotWaitForJournalSnapshot(t *testing.T) {
 			&RunSummary{
 				RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
 			},
-			nil,
 			blockingJournalContentProducer{
 				started: started,
 				release: release,
@@ -241,9 +235,17 @@ func TestADKSkillBackendDoesNotWaitForJournalSnapshot(t *testing.T) {
 	close(release)
 }
 
-func TestADKSkillBackendDoesNotWaitForJournalEventSink(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
+func TestADKSkillBackendJournalSubmitsSnapshotWithCapturedPlan(t *testing.T) {
+	run := &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}
+	tracker, err := NewADKParityStateTracker(run, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "plan-1", Title: "核验实现", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	submissions := make(chan JournalRuntimeContentSubmission, 1)
 	backend, err := newADKSkillBackend(
 		[]AgentSkill{{
 			ID: 1, Name: "research", Description: "Research.",
@@ -254,39 +256,37 @@ func TestADKSkillBackendDoesNotWaitForJournalEventSink(t *testing.T) {
 			SkillContentTokens: 200,
 		},
 		WithADKSkillBackendJournal(
-			&RunSummary{
-				RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
-			},
-			&blockingJournalRunEventSink{
-				started: started,
-				release: release,
-			},
-			nil,
+			run,
+			notifyingSkillJournalProducer{submissions: submissions},
 		),
 	)
 	require.NoError(t, err)
 
-	done := make(chan error, 1)
-	go func() {
-		_, loadErr := backend.Get(context.Background(), "research")
-		done <- loadErr
-	}()
+	got, err := backend.Get(ctx, "research")
+	require.NoError(t, err)
+	require.Equal(t, "Use research instructions.", got.Content)
 
 	select {
-	case loadErr := <-done:
-		require.NoError(t, loadErr)
-	case <-time.After(200 * time.Millisecond):
-		close(release)
-		require.FailNow(t, "skill load waited for Journal event persistence")
-	}
-
-	select {
-	case <-started:
+	case submission := <-submissions:
+		require.Equal(t,
+			journalStableProjectionID(20, "milestone", "plan-1"),
+			submission.Action.MilestoneID,
+		)
 	case <-time.After(time.Second):
-		close(release)
-		require.FailNow(t, "Journal event observation did not start")
+		require.FailNow(t, "Journal skill snapshot was not observed")
 	}
-	close(release)
+}
+
+type notifyingSkillJournalProducer struct {
+	submissions chan<- JournalRuntimeContentSubmission
+}
+
+func (p notifyingSkillJournalProducer) ProduceJournalContent(
+	_ context.Context,
+	req JournalRuntimeContentSubmission,
+) (*domainentity.JournalContentSnapshot, *domainentity.JournalEvent, error) {
+	p.submissions <- req
+	return nil, &domainentity.JournalEvent{}, nil
 }
 
 type failingJournalContentProducer struct{}
@@ -310,21 +310,6 @@ func (p blockingJournalContentProducer) ProduceJournalContent(
 	close(p.started)
 	<-p.release
 	return nil, nil, nil
-}
-
-type blockingJournalRunEventSink struct {
-	started chan struct{}
-	release <-chan struct{}
-	once    sync.Once
-}
-
-func (s *blockingJournalRunEventSink) EmitRunEvent(
-	context.Context,
-	RunEvent,
-) error {
-	s.once.Do(func() { close(s.started) })
-	<-s.release
-	return nil
 }
 
 func TestADKSkillBackendGuardrailBlocksBeforeReturningContent(t *testing.T) {
