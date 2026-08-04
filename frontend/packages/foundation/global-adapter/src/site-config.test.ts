@@ -107,7 +107,7 @@ describe('site configuration bootstrap', () => {
 
     icons = document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]');
     expect(icons).toHaveLength(1);
-    expect(icons[0]?.getAttribute('href')).toBe('/favicon.png');
+    expect(icons[0]?.getAttribute('href')).toBe('/newx-favicon.png');
   });
 
   it('fetches and normalizes the public site configuration', async () => {
@@ -165,13 +165,57 @@ describe('site configuration bootstrap', () => {
     await rejection;
   });
 
-  it('falls back safely and updates the shared store after a network error', async () => {
+  it('preserves the last successful configuration after a network error', async () => {
+    const configuredSite = {
+      ...DEFAULT_SITE_CONFIG,
+      siteName: 'Acme AI',
+      siteDescription: 'Acme intelligent workspace',
+      siteLogoUrl: 'https://assets.example.com/logo.png',
+      faviconUrl: 'https://assets.example.com/favicon.png',
+      revision: 'revision-1',
+    };
+    useCommonConfigStore.getState().updateSiteConfig(configuredSite);
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 
-    await expect(refreshSiteConfig()).resolves.toEqual(DEFAULT_SITE_CONFIG);
-    expect(useCommonConfigStore.getState().siteConfig).toEqual(
-      DEFAULT_SITE_CONFIG,
+    await expect(refreshSiteConfig()).resolves.toEqual(configuredSite);
+    expect(useCommonConfigStore.getState().siteConfig).toEqual(configuredSite);
+    expect(document.title).toBe(configuredSite.siteName);
+  });
+
+  it('keeps a newer refresh result when an older request resolves last', async () => {
+    type SiteConfigResponse = Pick<Response, 'ok' | 'json'>;
+    const responseFor = (siteName: string): SiteConfigResponse => ({
+      ok: true,
+      json: () => Promise.resolve({ site_name: siteName }),
+    });
+    let resolveFirst: (response: SiteConfigResponse) => void = () => undefined;
+    let resolveSecond: (response: SiteConfigResponse) => void = () => undefined;
+    const firstResponse = new Promise<SiteConfigResponse>(resolve => {
+      resolveFirst = resolve;
+    });
+    const secondResponse = new Promise<SiteConfigResponse>(resolve => {
+      resolveSecond = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementationOnce(() => firstResponse)
+        .mockImplementationOnce(() => secondResponse),
     );
-    expect(document.title).toBe(DEFAULT_SITE_CONFIG.siteName);
+
+    const firstRefresh = refreshSiteConfig();
+    const secondRefresh = refreshSiteConfig();
+    resolveSecond(responseFor('Newest AI'));
+    await expect(secondRefresh).resolves.toMatchObject({
+      siteName: 'Newest AI',
+    });
+    resolveFirst(responseFor('Older AI'));
+    await expect(firstRefresh).resolves.toMatchObject({
+      siteName: 'Newest AI',
+    });
+    expect(useCommonConfigStore.getState().siteConfig.siteName).toBe(
+      'Newest AI',
+    );
   });
 });

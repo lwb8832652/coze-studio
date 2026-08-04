@@ -18,7 +18,7 @@
 
 /* eslint-disable @coze-arch/max-line-per-function -- Cohesive orchestrator. */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useCommonConfigStore } from '@coze-foundation/global-store';
 
@@ -56,6 +56,7 @@ export const SystemSettingsSection = ({
   onSaveBasicConfig,
 }: SystemSettingsSectionProps) => {
   const publicSiteConfig = useCommonConfigStore(state => state.siteConfig);
+  const publicSiteConfigRef = useRef(publicSiteConfig);
   const [serverHost, setServerHost] = useState('');
   const [siteName, setSiteName] = useState('');
   const [siteDescription, setSiteDescription] = useState('');
@@ -72,24 +73,51 @@ export const SystemSettingsSection = ({
   const [validationMessage, setValidationMessage] = useState('');
 
   useEffect(() => {
+    publicSiteConfigRef.current = publicSiteConfig;
+  }, [publicSiteConfig]);
+
+  useEffect(() => {
     if (!basicConfig) {
       return;
     }
+    const currentPublicSiteConfig = publicSiteConfigRef.current;
     setServerHost(basicConfig.server_host || '');
     setSiteName(basicConfig.site_name || 'NewX AI');
     setSiteDescription(basicConfig.site_description || '');
     setSiteLogoURI(basicConfig.site_logo_uri || '');
     setFaviconURI(basicConfig.favicon_uri || '');
     setSiteLogoPreview(
-      basicConfig.site_logo_uri ? publicSiteConfig.siteLogoUrl : '',
+      basicConfig.site_logo_uri ? currentPublicSiteConfig.siteLogoUrl : '',
     );
     setFaviconPreview(
-      basicConfig.favicon_uri ? publicSiteConfig.faviconUrl : '',
+      basicConfig.favicon_uri ? currentPublicSiteConfig.faviconUrl : '',
     );
     setAdminEmails(basicConfig.admin_emails || '');
     setAllowRegistrationEmail(basicConfig.allow_registration_email || '');
     setDisableUserRegistration(Boolean(basicConfig.disable_user_registration));
-  }, [basicConfig, publicSiteConfig.faviconUrl, publicSiteConfig.siteLogoUrl]);
+  }, [basicConfig]);
+
+  useEffect(() => {
+    if (!basicConfig) {
+      return;
+    }
+    if (siteLogoURI === (basicConfig.site_logo_uri || '')) {
+      setSiteLogoPreview(
+        basicConfig.site_logo_uri ? publicSiteConfig.siteLogoUrl : '',
+      );
+    }
+    if (faviconURI === (basicConfig.favicon_uri || '')) {
+      setFaviconPreview(
+        basicConfig.favicon_uri ? publicSiteConfig.faviconUrl : '',
+      );
+    }
+  }, [
+    basicConfig,
+    faviconURI,
+    publicSiteConfig.faviconUrl,
+    publicSiteConfig.siteLogoUrl,
+    siteLogoURI,
+  ]);
 
   const normalizedCurrent = useMemo(
     () => ({

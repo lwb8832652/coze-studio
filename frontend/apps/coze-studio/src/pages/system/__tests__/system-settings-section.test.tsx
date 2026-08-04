@@ -391,6 +391,63 @@ describe('SystemSettingsSection', () => {
     });
   });
 
+  it('preserves an uploaded logo while public site configuration refreshes', async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    uploadAdminSiteAsset.mockResolvedValue({
+      uri: 'site-brand/logo/content-hash.png',
+      url: 'https://assets.example.com/uploaded-logo.png',
+      width: 128,
+      height: 64,
+      mime_type: 'image/png',
+    });
+    act(() => {
+      root.render(
+        <SystemSettingsSection
+          basicConfig={{
+            server_host: 'http://localhost:8888',
+            site_name: 'NewX AI',
+            site_logo_uri: 'site-brand/logo/persisted-logo.png',
+          }}
+          knowledgeConfig={{}}
+          onSaveBasicConfig={saveConfig}
+        />,
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="上传站点 Logo"]',
+    )!;
+    const file = new File(['logo'], 'logo.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [file],
+    });
+    await act(async () => {
+      Simulate.change(input);
+      await Promise.resolve();
+    });
+
+    act(() => {
+      useCommonConfigStore.getState().updateSiteConfig({
+        ...DEFAULT_SITE_CONFIG,
+        siteLogoUrl: 'https://assets.example.com/persisted-logo.png',
+      });
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存站点配置"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(saveConfig).toHaveBeenCalledWith({
+      site_logo_uri: 'site-brand/logo/content-hash.png',
+    });
+  });
+
   it('does not adopt an uploaded asset when its preview URL is unavailable', async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     uploadAdminSiteAsset.mockResolvedValue({

@@ -20,7 +20,9 @@ interface PublicSiteConfigResponse {
 }
 
 const SITE_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
-const DEFAULT_FAVICON_URL = '/favicon.png';
+const DEFAULT_FAVICON_URL = '/newx-favicon.png';
+
+let siteConfigRefreshSequence = 0;
 
 const readString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
@@ -151,13 +153,17 @@ export const fetchSiteConfig = async (
 export const refreshSiteConfig = async (
   signal?: AbortSignal,
 ): Promise<ISiteConfig> => {
-  let config = DEFAULT_SITE_CONFIG;
+  const refreshSequence = ++siteConfigRefreshSequence;
+  let config = useCommonConfigStore.getState().siteConfig;
   try {
     config = await fetchSiteConfig(signal);
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
+  }
+  if (refreshSequence !== siteConfigRefreshSequence) {
+    return useCommonConfigStore.getState().siteConfig;
   }
   useCommonConfigStore.getState().updateSiteConfig(config);
   applySiteConfigToDocument(config);

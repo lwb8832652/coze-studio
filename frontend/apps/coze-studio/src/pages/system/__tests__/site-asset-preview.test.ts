@@ -20,6 +20,7 @@ import { verifySiteAssetPreview } from '../site-asset-preview';
 
 describe('verifySiteAssetPreview', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -56,5 +57,25 @@ describe('verifySiteAssetPreview', () => {
     await expect(
       verifySiteAssetPreview('https://assets.example.com/missing.png'),
     ).rejects.toThrow('site asset preview is unavailable');
+  });
+
+  it('rejects when the image URL does not settle before the timeout', async () => {
+    vi.useFakeTimers();
+    class StalledImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      set src(_value: string) {}
+    }
+    vi.stubGlobal('Image', StalledImage);
+
+    const preview = verifySiteAssetPreview(
+      'https://assets.example.com/stalled.png',
+    );
+    const rejection = expect(preview).rejects.toThrow(
+      'site asset preview timed out',
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    await rejection;
   });
 });

@@ -14,11 +14,27 @@
  * limitations under the License.
  */
 
+const SITE_ASSET_PREVIEW_TIMEOUT_MS = 5_000;
+
 export const verifySiteAssetPreview = (url: string): Promise<void> =>
   new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve();
-    image.onerror = () =>
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('site asset preview timed out'));
+    }, SITE_ASSET_PREVIEW_TIMEOUT_MS);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      image.onload = null;
+      image.onerror = null;
+    };
+    image.onload = () => {
+      cleanup();
+      resolve();
+    };
+    image.onerror = () => {
+      cleanup();
       reject(new Error('site asset preview is unavailable'));
+    };
     image.src = url;
   });
