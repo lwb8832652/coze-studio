@@ -43,7 +43,7 @@ const mergedConfig = defineConfig({
   },
   html: {
     title: 'NewX AI',
-    favicon: './assets/favicon.png',
+    favicon: './assets/brand/newx-favicon.png',
     template: './index.html',
     crossorigin: 'anonymous',
   },

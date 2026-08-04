@@ -66,6 +66,9 @@ export const transPricingRules = (
         }))
     : [];
 
+export const formatPluginTokenPrice = (price: number | string): string =>
+  `${price} ${I18n.t('platform_name')} tokens`;
+
 export const usePluginLimitModal = ({
   content,
   dataSource,
@@ -100,7 +103,7 @@ export const usePluginLimitModal = ({
               {
                 title: I18n.t('plugin_usage_limits_modal_table_header_price'),
                 dataIndex: 'price',
-                render: text => <span>{text} Coze tokens</span>,
+                render: text => <span>{formatPluginTokenPrice(text)}</span>,
               },
             ],
             dataSource,
