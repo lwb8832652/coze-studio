@@ -379,6 +379,60 @@ func TestMapADKEventAssociatesToolMessagesWithSingleActivePlanTask(t *testing.T)
 	require.Equal(t, startedProjection.Milestone, terminalProjection.Milestone)
 }
 
+func TestMapADKEventPreservesToolPlanBindingAcrossParitySnapshot(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "2", Title: "核验项目事实", Status: "in_progress",
+	}}))
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+
+	_, err = MapADKEvent(ctx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{{
+					ID: "call-recovered", Type: "function",
+					Function: schema.FunctionCall{Name: "read_file"},
+				}},
+			},
+			Role: schema.Assistant,
+		}},
+	})
+	require.NoError(t, err)
+
+	rawSeed, err := json.Marshal(tracker.Snapshot())
+	require.NoError(t, err)
+	var seed ADKParityState
+	require.NoError(t, json.Unmarshal(rawSeed, &seed))
+	restored, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, &seed)
+	require.NoError(t, err)
+	require.NoError(t, restored.ReplaceTodos([]ADKParityTodo{
+		{ID: "2", Title: "核验项目事实", Status: "completed"},
+		{ID: "3", Title: "整理验收结论", Status: "in_progress"},
+	}))
+	restoredCtx := withADKParityStateTracker(context.Background(), restored)
+
+	mapped, err := MapADKEvent(restoredCtx, 10, 20, &adk.AgentEvent{
+		AgentName: "lead",
+		Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+			Message: &schema.Message{
+				Role: schema.Tool, ToolCallID: "call-recovered", Content: "done",
+			},
+			Role: schema.Tool, ToolName: "read_file",
+		}},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(mapped.Payload), &payload))
+	require.Equal(t, "2", payload["plan_task_id"])
+}
+
 func TestMapADKEventMapsNormalizedToolError(t *testing.T) {
 	content := encodeADKToolErrorResult(
 		"calculator",

@@ -149,13 +149,18 @@ func TestADKParityStateSnapshotIsDeepCopiedAndConcurrent(t *testing.T) {
 	require.NoError(t, tracker.MergePromotedTools(&ADKParityPromotedTools{
 		CatalogHash: "catalog-a", Names: []string{"weather"},
 	}))
+	require.NoError(t, tracker.ReplaceJournalToolPlanTasks(map[string]string{
+		"call-1": "todo-1",
+	}))
 
 	snapshot := tracker.Snapshot()
 	snapshot.PromotedTools.Names[0] = "mutated"
+	snapshot.JournalToolPlanTasks["call-1"] = "mutated"
 	snapshot.Uploads = append(snapshot.Uploads, ADKParityUpload{
 		FileName: "outside.txt", VirtualPath: "/mnt/user-data/uploads/outside.txt",
 	})
 	require.Equal(t, []string{"weather"}, tracker.Snapshot().PromotedTools.Names)
+	require.Equal(t, "todo-1", tracker.Snapshot().JournalToolPlanTasks["call-1"])
 	require.Empty(t, tracker.Snapshot().Uploads)
 
 	var wait sync.WaitGroup
@@ -187,6 +192,9 @@ func TestADKParityStateRejectsUnsafeOrOversizedValues(t *testing.T) {
 	}}))
 	require.Error(t, tracker.SetCompletion(ADKParityCompletion{
 		Status: "unknown", Reason: "not-valid",
+	}))
+	require.Error(t, tracker.ReplaceJournalToolPlanTasks(map[string]string{
+		"bad\x00call": "todo-1",
 	}))
 	seed := tracker.Snapshot()
 	seed.Revision = -1

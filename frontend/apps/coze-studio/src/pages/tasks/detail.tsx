@@ -96,6 +96,7 @@ import type { JournalViewMode } from './journal/journal-reducer';
 import type { JournalRecoveryHandler } from './journal/journal-recovery-dialog';
 import { JournalPanel, JournalRestoreButton } from './journal/journal-panel';
 import { JournalConversationFlow } from './journal/journal-conversation-flow';
+import { journalExecutionIntro } from './journal/journal-event-model';
 import {
   getTaskExecutionType,
   getTaskInputText,
@@ -669,6 +670,7 @@ const TaskThreadAssistantTurn = ({
   artifactsAfterAnswer,
   artifactsBeforeAnswer,
   isJournalContinuation,
+  isJournalIntroMessage,
   isJournalRunMessage,
   journalFlowProps,
   journalIntroVisible,
@@ -686,6 +688,7 @@ const TaskThreadAssistantTurn = ({
   artifactsAfterAnswer: TaskThreadArtifact[];
   artifactsBeforeAnswer: TaskThreadArtifact[];
   isJournalContinuation: boolean;
+  isJournalIntroMessage: boolean;
   isJournalRunMessage: boolean;
   journalFlowProps: JournalConversationFlowProps;
   journalIntroVisible: boolean;
@@ -726,7 +729,7 @@ const TaskThreadAssistantTurn = ({
     />
     <TaskThreadAssistantMessage
       isRunning={runningAssistantMessage}
-      message={journalIntroVisible ? undefined : message}
+      message={isJournalIntroMessage ? undefined : message}
       reasoning={getLatestAnswerEventReasoning(messageRunEvents)}
     />
     <TaskThreadArtifactCards
@@ -764,6 +767,9 @@ const TaskThreadConversation = ({
   const latestRunID = normalizeThreadRunID(latestTaskRunID);
   const latestRunEvents = getRunEvents(events, latestRunID);
   const latestRunIsActive = !isTaskTerminalStatus(task.status);
+  const hasCanonicalJournalIntro = Boolean(
+    journalExecutionIntro(journalEvents),
+  );
   const { hasLatestAssistantMessage, latestAssistantIndex } =
     getConversationMessageState(transcript, latestRunID);
   let latestEventsRendered = false;
@@ -803,11 +809,13 @@ const TaskThreadConversation = ({
     const isJournalContinuation =
       isJournalRunMessage && journalFlowRendered;
     const runningAssistantMessage = isRunningAssistantMessage(runID, index);
-    const journalIntroVisible =
+    const isJournalIntroMessage =
       shouldRenderJournalFlow &&
       Boolean(message.content) &&
       index < latestAssistantIndex;
-    const messageArtifacts = journalIntroVisible
+    const journalIntroVisible =
+      isJournalIntroMessage && !hasCanonicalJournalIntro;
+    const messageArtifacts = isJournalIntroMessage
       ? { before: [], after: [] }
       : getMessageArtifactGroups({
           artifactsByRunID,
@@ -836,6 +844,7 @@ const TaskThreadConversation = ({
         artifactsAfterAnswer={artifactsAfterAnswer}
         artifactsBeforeAnswer={artifactsBeforeAnswer}
         isJournalContinuation={isJournalContinuation}
+        isJournalIntroMessage={isJournalIntroMessage}
         isJournalRunMessage={isJournalRunMessage}
         journalFlowProps={journalFlowProps}
         journalIntroVisible={journalIntroVisible}

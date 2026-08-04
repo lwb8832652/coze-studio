@@ -82,7 +82,10 @@ describe('task detail approved visual contract', () => {
     expect(detail).toContain('journalMode={isJournalRunMessage}');
     expect(detail).toContain('journalIntro={true}');
     expect(detail).toContain(
-      'message={journalIntroVisible ? undefined : message}',
+      'message={isJournalIntroMessage ? undefined : message}',
+    );
+    expect(detail).toContain(
+      'isJournalIntroMessage && !hasCanonicalJournalIntro',
     );
     expect(styles).toMatch(
       /coze-prototype-assistant-turn-journal[\s\S]*?display:\s*block/,

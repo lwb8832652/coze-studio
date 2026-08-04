@@ -1673,7 +1673,7 @@ describe('TaskDetailPage', () => {
           run_id: 'run-journal-1',
           status: 'completed',
           projection_state: 'healthy',
-          latest_sequence: 1,
+          latest_sequence: 2,
           created_at: 1717000000000,
         },
       ],
@@ -1684,7 +1684,7 @@ describe('TaskDetailPage', () => {
         run_id: 'run-journal-1',
         status: 'completed',
         projection_state: 'healthy',
-        latest_sequence: 1,
+        latest_sequence: 2,
         created_at: 1717000000000,
       },
       enrollment: {
@@ -1698,9 +1698,26 @@ describe('TaskDetailPage', () => {
       events: {
         attempt_id: 'attempt-journal-turn-1',
         has_more: false,
-        latest_sequence: 1,
-        next_after_sequence: 1,
+        latest_sequence: 2,
+        next_after_sequence: 2,
         items: [
+          {
+            attempt_id: 'attempt-journal-turn-1',
+            created_at: 1717000150000,
+            event_id: 'journal-intro-1',
+            event_type: 'journal.intro',
+            occurred_at: 1717000150000,
+            payload: {
+              type: 'journal',
+              data: {
+                text: '我会先整理验收范围，再生成验收计划。',
+              },
+            },
+            run_id: 'run-journal-1',
+            sequence: 1,
+            status: 'completed',
+            thread_id: 'thread-journal-turn-1',
+          },
           {
             attempt_id: 'attempt-journal-turn-1',
             created_at: 1717000300000,
@@ -1719,13 +1736,13 @@ describe('TaskDetailPage', () => {
               },
             },
             run_id: 'run-journal-1',
-            sequence: 1,
+            sequence: 2,
             status: 'completed',
             thread_id: 'thread-journal-turn-1',
           },
         ],
       },
-      latest_sequence: 1,
+      latest_sequence: 2,
       projection_state: 'healthy',
       recovery_capability: {
         allowed: false,
@@ -1770,8 +1787,9 @@ describe('TaskDetailPage', () => {
       });
 
       const journalFlow = container.querySelector('.journal-conversation-flow');
-      const journalIntro = container.querySelector(
-        '.coze-prototype-journal-intro',
+      const journalIntro = container.querySelector('.journal-execution-intro');
+      const firstJournalMilestone = container.querySelector(
+        '.journal-milestone',
       );
       const assistantHeaders = container.querySelectorAll(
         '.coze-prototype-assistant-turn-header',
@@ -1785,13 +1803,20 @@ describe('TaskDetailPage', () => {
 
       expect(journalFlow).toBeTruthy();
       expect(journalIntro?.textContent).toContain(
+        '我会先整理验收范围，再生成验收计划。',
+      );
+      expect(
+        container.querySelector('.coze-prototype-journal-intro'),
+      ).toBeNull();
+      expect(container.textContent).not.toContain(
         '收到，我会直接生成验收计划。',
       );
       expect(finalAnswer).toBeTruthy();
       expect(artifactList).toBeTruthy();
+      expect(journalFlow?.contains(journalIntro)).toBe(true);
       expect(
-        journalIntro && journalFlow
-          ? journalIntro.compareDocumentPosition(journalFlow) &
+        journalIntro && firstJournalMilestone
+          ? journalIntro.compareDocumentPosition(firstJournalMilestone) &
               Node.DOCUMENT_POSITION_FOLLOWING
           : 0,
       ).toBeTruthy();

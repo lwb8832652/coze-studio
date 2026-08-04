@@ -35,6 +35,28 @@ Thread
   SSE；页面源码不得绕过统一 client 直接创建浏览器流连接。
 - 执行内核为 Eino ADK，公共 API 只返回经过审核的 bounded projection。
 
+## Journal 执行体验
+
+- Journal 只为通过 feature gate 的 Pro、Ultra 顶层 Task Run 建立投影；Flash、
+  Thinking、子任务和 Subagent Run 不建立公共 Journal。简单直答即使属于 Pro 或
+  Ultra，也只保留生命周期事实，前端不展示空步骤或 Journal 外壳。
+- `journal.intro` 是任务执行开场语的权威事件，位于第一个可见大步骤之前；它来自
+  经过脱敏和长度限制的 `metadata.execution_intro`，缺失时才使用完整计划标题生成
+  安全兜底。它不是额外的聊天消息，也不得包含隐藏推理、原始工具参数、凭证或内部
+  绝对路径。
+- 左侧执行流只展示已经到达的公共事件。大步骤由 `milestone.*` 表示，小步骤由实际
+  执行过的 `action.*`、`artifact.*`、`verification.*` 或 `confirmation.*` 表示；
+  没有子动作的大步骤保持原子步骤，不显示展开入口。
+- 工具调用开始时绑定当时唯一的 active plan task，绑定随 Eino 内部 checkpoint
+  恢复，保证工具结果仍归属原大步骤。该绑定不进入模型上下文，也不进入公共
+  checkpoint 投影。
+- 同一工具动作的事件和内容快照必须复用稳定的 action identity、operation、target
+  与 milestone；实际文件名和路径保留在经过审核的文档或代码快照内容中，不能通过
+  改写动作字段破坏幂等和重放。
+- 前端以规范 `journal.intro` 为准；历史 assistant 开场消息只作为没有规范事件时的
+  兼容兜底，二者不得重复显示。生命周期、技能目录和内部运行元数据不能伪装成可见
+  执行步骤。
+
 ## 代码所有权
 
 - 前端入口：`frontend/apps/coze-studio/src/pages/workbench`；

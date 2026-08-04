@@ -237,7 +237,7 @@ func (s *ApplicationService) publishJournalCodeSnapshot(
 		return
 	}
 	operation := journalToolOperation("write_file")
-	target := relativePath
+	target := journalToolTarget("write_file", operation)
 	runningVerb, completedVerb := journalActionVerbs(operation)
 	actionID := ""
 	if strings.TrimSpace(toolCallID) != "" {
@@ -307,7 +307,7 @@ func (s *ApplicationService) publishJournalDocumentSnapshot(
 		document.Chapters = journalMarkdownChapters(document.Content)
 	}
 	operation := journalToolOperation("write_file")
-	target := file.FileName
+	target := journalToolTarget("write_file", operation)
 	runningVerb, completedVerb := journalActionVerbs(operation)
 	actionID := ""
 	if strings.TrimSpace(toolCallID) != "" {

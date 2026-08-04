@@ -37,29 +37,31 @@ const (
 	maxADKParityPromotedTools   = 512
 	maxADKParitySkills          = 256
 	maxADKParityInterrupts      = 64
+	maxADKParityJournalBindings = 4096
 	maxADKParityLabelRunes      = 1024
 	maxADKParityContentBytes    = 256 * 1024
 	maxADKParityStateBytes      = 8 << 20
 )
 
 type ADKParityState struct {
-	SchemaVersion int                             `json:"schema_version"`
-	Revision      int64                           `json:"revision"`
-	SpaceID       int64                           `json:"space_id"`
-	ThreadID      int64                           `json:"thread_id"`
-	LastRunID     int64                           `json:"last_run_id"`
-	Messages      []ADKParityMessage              `json:"messages"`
-	Summary       *ADKParitySummaryBoundary       `json:"summary,omitempty"`
-	Title         string                          `json:"title,omitempty"`
-	Todos         []ADKParityTodo                 `json:"todos"`
-	Workspace     ADKParityWorkspace              `json:"workspace"`
-	Uploads       []ADKParityUpload               `json:"uploaded_files"`
-	Artifacts     []ADKParityArtifact             `json:"artifacts"`
-	ViewedImages  map[string]ADKParityViewedImage `json:"viewed_images"`
-	PromotedTools *ADKParityPromotedTools         `json:"promoted,omitempty"`
-	ActiveSkills  []ADKParitySkill                `json:"active_skills"`
-	Interrupts    []ADKParityInterrupt            `json:"interrupts"`
-	Completion    *ADKParityCompletion            `json:"completion,omitempty"`
+	SchemaVersion        int                             `json:"schema_version"`
+	Revision             int64                           `json:"revision"`
+	SpaceID              int64                           `json:"space_id"`
+	ThreadID             int64                           `json:"thread_id"`
+	LastRunID            int64                           `json:"last_run_id"`
+	Messages             []ADKParityMessage              `json:"messages"`
+	Summary              *ADKParitySummaryBoundary       `json:"summary,omitempty"`
+	Title                string                          `json:"title,omitempty"`
+	Todos                []ADKParityTodo                 `json:"todos"`
+	Workspace            ADKParityWorkspace              `json:"workspace"`
+	Uploads              []ADKParityUpload               `json:"uploaded_files"`
+	Artifacts            []ADKParityArtifact             `json:"artifacts"`
+	ViewedImages         map[string]ADKParityViewedImage `json:"viewed_images"`
+	PromotedTools        *ADKParityPromotedTools         `json:"promoted,omitempty"`
+	ActiveSkills         []ADKParitySkill                `json:"active_skills"`
+	Interrupts           []ADKParityInterrupt            `json:"interrupts"`
+	JournalToolPlanTasks map[string]string               `json:"journal_tool_plan_tasks"`
+	Completion           *ADKParityCompletion            `json:"completion,omitempty"`
 }
 
 func validateADKParityStateSnapshot(state *ADKParityState) error {
@@ -174,9 +176,8 @@ type ADKParityCompletion struct {
 }
 
 type ADKParityStateTracker struct {
-	mu                   sync.RWMutex
-	state                ADKParityState
-	journalToolPlanTasks map[string]string
+	mu    sync.RWMutex
+	state ADKParityState
 }
 
 type adkParityStateContextKey struct{}
@@ -232,13 +233,26 @@ func bindADKJournalToolPlanTasks(
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	if tracker.journalToolPlanTasks == nil {
-		tracker.journalToolPlanTasks = make(map[string]string)
+	if tracker.state.JournalToolPlanTasks == nil {
+		tracker.state.JournalToolPlanTasks = make(map[string]string)
 	}
+	changed := false
 	for _, toolCallID := range toolCallIDs {
-		if toolCallID = strings.TrimSpace(toolCallID); toolCallID != "" {
-			tracker.journalToolPlanTasks[toolCallID] = planTaskID
+		toolCallID = strings.TrimSpace(toolCallID)
+		if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) ||
+			!isADKParityLabel(planTaskID, maxADKParityLabelRunes) {
+			continue
 		}
+		if _, exists := tracker.state.JournalToolPlanTasks[toolCallID]; !exists && len(tracker.state.JournalToolPlanTasks) >= maxADKParityJournalBindings {
+			continue
+		}
+		if tracker.state.JournalToolPlanTasks[toolCallID] != planTaskID {
+			tracker.state.JournalToolPlanTasks[toolCallID] = planTaskID
+			changed = true
+		}
+	}
+	if changed {
+		tracker.state.Revision++
 	}
 }
 
@@ -253,7 +267,31 @@ func boundADKJournalToolPlanTaskIDFromContext(
 	}
 	tracker.mu.RLock()
 	defer tracker.mu.RUnlock()
-	return tracker.journalToolPlanTasks[toolCallID]
+	return tracker.state.JournalToolPlanTasks[toolCallID]
+}
+
+func (t *ADKParityStateTracker) ReplaceJournalToolPlanTasks(
+	bindings map[string]string,
+) error {
+	if len(bindings) > maxADKParityJournalBindings {
+		return fmt.Errorf(
+			"eino adk parity journal tool bindings exceed %d items",
+			maxADKParityJournalBindings,
+		)
+	}
+	next := make(map[string]string, len(bindings))
+	for toolCallID, planTaskID := range bindings {
+		toolCallID = strings.TrimSpace(toolCallID)
+		planTaskID = strings.TrimSpace(planTaskID)
+		if !isADKParityLabel(toolCallID, maxADKParityLabelRunes) ||
+			!isADKParityLabel(planTaskID, maxADKParityLabelRunes) {
+			return fmt.Errorf("eino adk parity journal tool binding is invalid")
+		}
+		next[toolCallID] = planTaskID
+	}
+	return t.mutate(func(state *ADKParityState) {
+		state.JournalToolPlanTasks = next
+	})
 }
 
 func NewADKParityStateTracker(
@@ -265,20 +303,20 @@ func NewADKParityStateTracker(
 	}
 	workspace := newADKParityWorkspace(run.SpaceID, run.ThreadID)
 	tracker := &ADKParityStateTracker{
-		journalToolPlanTasks: make(map[string]string),
 		state: ADKParityState{
-			SchemaVersion: adkParityStateSchemaVersion,
-			SpaceID:       run.SpaceID,
-			ThreadID:      run.ThreadID,
-			LastRunID:     run.RunID,
-			Messages:      []ADKParityMessage{},
-			Todos:         []ADKParityTodo{},
-			Workspace:     workspace,
-			Uploads:       []ADKParityUpload{},
-			Artifacts:     []ADKParityArtifact{},
-			ViewedImages:  map[string]ADKParityViewedImage{},
-			ActiveSkills:  []ADKParitySkill{},
-			Interrupts:    []ADKParityInterrupt{},
+			SchemaVersion:        adkParityStateSchemaVersion,
+			SpaceID:              run.SpaceID,
+			ThreadID:             run.ThreadID,
+			LastRunID:            run.RunID,
+			Messages:             []ADKParityMessage{},
+			Todos:                []ADKParityTodo{},
+			Workspace:            workspace,
+			Uploads:              []ADKParityUpload{},
+			Artifacts:            []ADKParityArtifact{},
+			ViewedImages:         map[string]ADKParityViewedImage{},
+			ActiveSkills:         []ADKParitySkill{},
+			Interrupts:           []ADKParityInterrupt{},
+			JournalToolPlanTasks: map[string]string{},
 		},
 	}
 	if seed == nil {
@@ -703,6 +741,9 @@ func (t *ADKParityStateTracker) applySeed(seed ADKParityState) error {
 	if err := t.ReplaceTodos(seed.Todos); err != nil {
 		return err
 	}
+	if err := t.ReplaceJournalToolPlanTasks(seed.JournalToolPlanTasks); err != nil {
+		return err
+	}
 	if err := t.MergeUploads(seed.Uploads); err != nil {
 		return err
 	}
@@ -825,6 +866,10 @@ func cloneADKParityState(state ADKParityState) ADKParityState {
 	copy.ViewedImages = make(map[string]ADKParityViewedImage, len(state.ViewedImages))
 	for key, value := range state.ViewedImages {
 		copy.ViewedImages[key] = value
+	}
+	copy.JournalToolPlanTasks = make(map[string]string, len(state.JournalToolPlanTasks))
+	for toolCallID, planTaskID := range state.JournalToolPlanTasks {
+		copy.JournalToolPlanTasks[toolCallID] = planTaskID
 	}
 	if state.Summary != nil {
 		value := *state.Summary

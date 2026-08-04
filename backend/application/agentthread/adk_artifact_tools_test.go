@@ -113,7 +113,8 @@ func TestApplicationWriteOutputFilePublishesTypedDocumentSnapshot(t *testing.T) 
 		require.NotNil(t, snapshotEvent)
 		require.Equal(t, projection.ActionID, snapshotEvent.ActionID)
 		require.Equal(t, projection.Operation, snapshotEvent.Operation)
-		require.Equal(t, "report.md", snapshotEvent.Target)
+		require.Equal(t, projection.Target, snapshotEvent.Target)
+		require.Equal(t, projection.Milestone, snapshotEvent.Milestone)
 		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
 		require.Equal(t, "99", snapshot.SourceResourceID)
 		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)
@@ -149,11 +150,20 @@ func TestApplicationWriteOutputFilePublishesTypedCodeSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, repo.snapshots, 1)
+	projection, err := ProjectRunEventToJournal(RunEvent{
+		ThreadID: run.ThreadID, RunID: run.RunID, EventType: "tool.completed",
+		Payload: `{"tool_name":"write_file","tool_call_id":"tool-call-code"}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, projection)
 	for _, snapshot := range repo.snapshots {
 		require.Equal(t, domainentity.JournalSnapshotContentTypeCode, snapshot.ContentType)
 		snapshotEvent := repo.events[snapshot.EventID]
 		require.NotNil(t, snapshotEvent)
-		require.Equal(t, "src/main.go", snapshotEvent.Target)
+		require.Equal(t, projection.ActionID, snapshotEvent.ActionID)
+		require.Equal(t, projection.Operation, snapshotEvent.Operation)
+		require.Equal(t, projection.Target, snapshotEvent.Target)
+		require.Equal(t, projection.Milestone, snapshotEvent.Milestone)
 		require.Equal(t, "runtime_file", snapshot.SourceResourceType)
 		require.Equal(t, "99", snapshot.SourceResourceID)
 		require.Equal(t, resp.File.Digest, snapshot.SourceRevision)

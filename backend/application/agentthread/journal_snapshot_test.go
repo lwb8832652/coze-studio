@@ -1508,11 +1508,17 @@ func TestOutputSnapshotKeepsTheBoundPlanMilestone(t *testing.T) {
 	for _, event := range repo.events {
 		require.Equal(t, started.ActionID, event.ActionID)
 		require.Equal(t, started.Operation, event.Operation)
-		require.Equal(t, "report.md", event.Target)
+		require.Equal(t, started.Target, event.Target)
 		require.Equal(t,
 			started.Milestone,
 			event.Milestone,
 		)
+	}
+	for _, snapshot := range repo.snapshots {
+		var content JournalTypedSnapshotContent
+		require.NoError(t, json.Unmarshal([]byte(snapshot.ContentJSON), &content))
+		require.NotNil(t, content.Document)
+		require.Equal(t, "report.md", content.Document.Title)
 	}
 }
 

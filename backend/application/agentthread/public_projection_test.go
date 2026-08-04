@@ -526,6 +526,9 @@ func TestPublicCheckpointProjectsBoundedADKParityState(t *testing.T) {
 		ID: "todo-1", Title: "整理行程", Description: "按天组织", Status: "completed",
 		ActiveForm: "正在整理行程", Owner: "lead-agent",
 	}}))
+	require.NoError(t, tracker.ReplaceJournalToolPlanTasks(map[string]string{
+		"private-journal-binding": "todo-1",
+	}))
 	require.NoError(t, tracker.MergeUploads([]ADKParityUpload{{
 		FileID: 5, FileName: "需求.txt", VirtualPath: "/mnt/user-data/uploads/需求.txt",
 		ContentType: "text/plain", SizeBytes: 12, CreatedAt: 8,
@@ -603,6 +606,7 @@ func TestPublicCheckpointProjectsBoundedADKParityState(t *testing.T) {
 	}, got.Values["completion"])
 	require.Equal(t, []string{"interrupt-1"}, got.Values["interrupts"])
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+	requirePublicProjectionDoesNotContain(t, got, "private-journal-binding")
 }
 
 func TestPublicCheckpointFailsClosedForMalformedADKEnvelope(t *testing.T) {
