@@ -31,11 +31,10 @@ import {
 } from 'react';
 
 import {
-  CodePluginDebugStatus,
-  CodePluginRuntime,
   DebugCodePlugin,
   GetCodePluginDraft,
   SaveCodePluginDraft,
+  plugin_develop_common as pluginDevelopCommon,
   type CodePluginDebugData,
   type CodePluginDraftData,
   type DebugCodePluginRequest,
@@ -70,7 +69,7 @@ type MonacoEditorMount = NonNullable<ComponentProps<typeof Editor>['onMount']>;
 type WorkspacePanel = 'debug' | 'input' | 'output';
 type SchemaErrors = Partial<Record<'input' | 'output', string>>;
 interface WorkspaceSnapshot {
-  runtime: CodePluginRuntime;
+  runtime: pluginDevelopCommon.CodePluginRuntime;
   entryFile: string;
   source: string;
   inputSchemaJSON: string;
@@ -90,26 +89,36 @@ const SAFE_LOAD_ERROR = '代码草稿加载失败，请稍后重试';
 const SAFE_SAVE_ERROR = '代码草稿保存失败，请稍后重试';
 const SAFE_DEBUG_ERROR = '试运行失败，请稍后重试';
 
-const DEBUG_STATUS_LABEL: Record<CodePluginDebugStatus, string> = {
-  [CodePluginDebugStatus.Success]: '成功',
-  [CodePluginDebugStatus.RuntimeError]: '运行错误',
-  [CodePluginDebugStatus.Timeout]: '运行超时',
-  [CodePluginDebugStatus.Capacity]: '容量不足',
-  [CodePluginDebugStatus.OutputLimit]: '输出超限',
-  [CodePluginDebugStatus.Canceled]: '已取消',
-  [CodePluginDebugStatus.Unavailable]: '服务不可用',
+const DEBUG_STATUS_LABEL: Record<
+  pluginDevelopCommon.CodePluginDebugStatus,
+  string
+> = {
+  [pluginDevelopCommon.CodePluginDebugStatus.Success]: '成功',
+  [pluginDevelopCommon.CodePluginDebugStatus.RuntimeError]: '运行错误',
+  [pluginDevelopCommon.CodePluginDebugStatus.Timeout]: '运行超时',
+  [pluginDevelopCommon.CodePluginDebugStatus.Capacity]: '容量不足',
+  [pluginDevelopCommon.CodePluginDebugStatus.OutputLimit]: '输出超限',
+  [pluginDevelopCommon.CodePluginDebugStatus.Canceled]: '已取消',
+  [pluginDevelopCommon.CodePluginDebugStatus.Unavailable]: '服务不可用',
 };
 
 const runtimeOptions = [
-  { label: 'Python', value: CodePluginRuntime.Python },
-  { label: 'JavaScript', value: CodePluginRuntime.JavaScript },
+  { label: 'Python', value: pluginDevelopCommon.CodePluginRuntime.Python },
+  {
+    label: 'JavaScript',
+    value: pluginDevelopCommon.CodePluginRuntime.JavaScript,
+  },
 ];
 
-const entryFileForRuntime = (runtime: CodePluginRuntime) =>
-  runtime === CodePluginRuntime.JavaScript ? 'index.js' : 'main.py';
+const entryFileForRuntime = (runtime: pluginDevelopCommon.CodePluginRuntime) =>
+  runtime === pluginDevelopCommon.CodePluginRuntime.JavaScript
+    ? 'index.js'
+    : 'main.py';
 
-const languageForRuntime = (runtime: CodePluginRuntime) =>
-  runtime === CodePluginRuntime.JavaScript ? 'javascript' : 'python';
+const languageForRuntime = (runtime: pluginDevelopCommon.CodePluginRuntime) =>
+  runtime === pluginDevelopCommon.CodePluginRuntime.JavaScript
+    ? 'javascript'
+    : 'python';
 
 const snapshotOf = (snapshot: WorkspaceSnapshot) => JSON.stringify(snapshot);
 
@@ -134,7 +143,7 @@ const safeDebugFailure = (
   reason = SAFE_DEBUG_ERROR,
 ): CodePluginDebugData => ({
   success: false,
-  status: CodePluginDebugStatus.Unavailable,
+  status: pluginDevelopCommon.CodePluginDebugStatus.Unavailable,
   result: '',
   reason,
   duration_ms: 0,
@@ -153,7 +162,9 @@ export const CodePluginWorkspace = ({
   canEdit,
   onPublishReadyChange,
 }: CodePluginWorkspaceProps) => {
-  const [runtime, setRuntime] = useState(CodePluginRuntime.Python);
+  const [runtime, setRuntime] = useState(
+    pluginDevelopCommon.CodePluginRuntime.Python,
+  );
   const [entryFile, setEntryFile] = useState('main.py');
   const [source, setSource] = useState('');
   const [inputSchemaJSON, setInputSchemaJSON] = useState(
@@ -223,7 +234,8 @@ export const CodePluginWorkspace = ({
 
   const applyDraft = useCallback(
     (draft: CodePluginDraftData, owner: string) => {
-      const nextRuntime = draft.runtime ?? CodePluginRuntime.Python;
+      const nextRuntime =
+        draft.runtime ?? pluginDevelopCommon.CodePluginRuntime.Python;
       const nextEntryFile =
         draft.entry_file || entryFileForRuntime(nextRuntime);
       const nextSource = draft.files?.[0]?.content ?? '';
@@ -453,7 +465,9 @@ export const CodePluginWorkspace = ({
     });
   }, []);
 
-  const handleRuntimeChange = (nextRuntime: CodePluginRuntime) => {
+  const handleRuntimeChange = (
+    nextRuntime: pluginDevelopCommon.CodePluginRuntime,
+  ) => {
     setRuntime(nextRuntime);
     setEntryFile(entryFileForRuntime(nextRuntime));
     setServerDebugReady(false);
@@ -517,7 +531,8 @@ export const CodePluginWorkspace = ({
       setDebugResult(response.data);
       if (
         response.data.success &&
-        response.data.status === CodePluginDebugStatus.Success
+        response.data.status ===
+          pluginDevelopCommon.CodePluginDebugStatus.Success
       ) {
         if (response.data.revision !== debugRevision) {
           setDebugResult(
@@ -663,7 +678,9 @@ export const CodePluginWorkspace = ({
               optionList={runtimeOptions}
               disabled={!canEdit || saving || running}
               onChange={value =>
-                handleRuntimeChange(value as CodePluginRuntime)
+                handleRuntimeChange(
+                  value as pluginDevelopCommon.CodePluginRuntime,
+                )
               }
             />
             <code>{entryFile}</code>

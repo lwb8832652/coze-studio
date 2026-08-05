@@ -44,15 +44,17 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@coze-studio/api-schema/plugin-develop', () => ({
-  CodePluginRuntime: { Python: 1, JavaScript: 2 },
-  CodePluginDebugStatus: {
-    Success: 1,
-    RuntimeError: 2,
-    Timeout: 3,
-    Capacity: 4,
-    OutputLimit: 5,
-    Canceled: 6,
-    Unavailable: 7,
+  plugin_develop_common: {
+    CodePluginRuntime: { Python: 1, JavaScript: 2 },
+    CodePluginDebugStatus: {
+      Success: 1,
+      RuntimeError: 2,
+      Timeout: 3,
+      Capacity: 4,
+      OutputLimit: 5,
+      Canceled: 6,
+      Unavailable: 7,
+    },
   },
   GetCodePluginDraft: apiMocks.getDraft,
   SaveCodePluginDraft: apiMocks.saveDraft,
