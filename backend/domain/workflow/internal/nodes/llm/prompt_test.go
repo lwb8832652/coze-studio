@@ -87,6 +87,20 @@ func literalLLMParam(name string, content any) *vo.Param {
 	}
 }
 
+func TestValidatePromptPair(t *testing.T) {
+	require.Error(t, validatePromptPair("", ""))
+	require.Error(t, validatePromptPair(" \n", "\t"))
+	require.NoError(t, validatePromptPair("role", ""))
+	require.NoError(t, validatePromptPair("", "{{input}}"))
+}
+
+func TestValidatePromptMessages(t *testing.T) {
+	require.Error(t, validatePromptMessages(nil, nil))
+	require.Error(t, validatePromptMessages(schema.SystemMessage(""), schema.UserMessage("")))
+	require.NoError(t, validatePromptMessages(schema.SystemMessage("role"), nil))
+	require.NoError(t, validatePromptMessages(nil, schema.UserMessage("question")))
+}
+
 func TestTransformMessagePart(t *testing.T) {
 	mockey.PatchConvey("TestTransformMessagePart", t, func() {
 		tests := []struct {

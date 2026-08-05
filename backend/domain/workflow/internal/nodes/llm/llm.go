@@ -206,6 +206,9 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 	c.LLMParams = convertedLLMParam
 	c.SystemPrompt = convertedLLMParam.SystemPrompt
 	c.UserPrompt = convertedLLMParam.Prompt
+	if err = validatePromptPair(c.SystemPrompt, c.UserPrompt); err != nil {
+		return nil, err
+	}
 
 	if convertedLLMParam.EnableChatHistory {
 		c.ChatHistorySetting = &vo.ChatHistorySetting{

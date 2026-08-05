@@ -19,6 +19,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/schema"
@@ -45,6 +46,27 @@ type promptsWithChatHistory struct {
 	prompts *prompts
 	cfg     *vo.ChatHistorySetting
 	mwi     ModelWithInfo
+}
+
+func validatePromptPair(systemPrompt, userPrompt string) error {
+	if strings.TrimSpace(systemPrompt) == "" && strings.TrimSpace(userPrompt) == "" {
+		return fmt.Errorf("system prompt or user prompt is required")
+	}
+	return nil
+}
+
+func validatePromptMessages(systemMsg, userMsg *schema.Message) error {
+	if hasPromptMessage(systemMsg) || hasPromptMessage(userMsg) {
+		return nil
+	}
+	return validatePromptPair("", "")
+}
+
+func hasPromptMessage(msg *schema.Message) bool {
+	if msg == nil {
+		return false
+	}
+	return strings.TrimSpace(msg.Content) != "" || len(msg.MultiContent) > 0
 }
 
 func withReservedKeys(keys []string) func(tpl *promptTpl) {
@@ -382,6 +404,10 @@ func (p *prompts) Format(ctx context.Context, vs map[string]any, _ ...prompt.Opt
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if err = validatePromptMessages(systemMsg, userMsg); err != nil {
+		return nil, err
 	}
 
 	if userMsg == nil {
