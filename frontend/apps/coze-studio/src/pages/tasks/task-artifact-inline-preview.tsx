@@ -50,10 +50,22 @@ export interface ArtifactPDFPreviewState extends ArtifactPreviewBaseState {
   url: string;
 }
 
+export interface ArtifactAudioPreviewState extends ArtifactPreviewBaseState {
+  previewRenderer: 'audio';
+  url: string;
+}
+
+export interface ArtifactVideoPreviewState extends ArtifactPreviewBaseState {
+  previewRenderer: 'video';
+  url: string;
+}
+
 export type ArtifactInlinePreviewState =
   | ArtifactContentPreviewState
   | ArtifactImagePreviewState
-  | ArtifactPDFPreviewState;
+  | ArtifactPDFPreviewState
+  | ArtifactAudioPreviewState
+  | ArtifactVideoPreviewState;
 
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps preview branches together.
 export const TaskArtifactInlinePreview = ({
@@ -203,6 +215,27 @@ export const TaskArtifactInlinePreview = ({
           src={inlinePreview.url}
           title={`预览 ${name}`}
         />
+      ) : inlinePreview.previewRenderer === 'audio' ? (
+        <audio
+          className="coze-prototype-artifact-preview-audio"
+          controls
+          data-testid="task-artifact-inline-preview-audio"
+          preload="metadata"
+          src={inlinePreview.url}
+        >
+          当前浏览器不支持音频预览。
+        </audio>
+      ) : inlinePreview.previewRenderer === 'video' ? (
+        <video
+          className="coze-prototype-artifact-preview-video"
+          controls
+          data-testid="task-artifact-inline-preview-video"
+          playsInline
+          preload="metadata"
+          src={inlinePreview.url}
+        >
+          当前浏览器不支持视频预览。
+        </video>
       ) : contentPreview?.kind === 'table' && contentPreview.columns?.length ? (
         <Table
           className="coze-prototype-artifact-preview-table"

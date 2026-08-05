@@ -2042,6 +2042,10 @@ describe('Journal production state boundaries', () => {
     await flushReact();
   };
 
+  it('keeps Follow closed until the user explicitly opens it', () => {
+    expect(requireExperience().panelOpen).toBe(false);
+  });
+
   it('ignores a stale snapshot response after the user advances to a newer event', async () => {
     const first = deferred<WorkbenchJournalSnapshot>();
     const second = deferred<WorkbenchJournalSnapshot>();
@@ -2068,6 +2072,7 @@ describe('Journal production state boundaries', () => {
       target: '验收文档',
     });
 
+    act(() => requireExperience().openPanel());
     await receiveEvents([eventA]);
     await receiveEvents([eventB]);
     second.resolve(documentSnapshot('snapshot-b', 'event-b'));
@@ -2103,6 +2108,7 @@ describe('Journal production state boundaries', () => {
       target: '受限文档',
     });
 
+    act(() => requireExperience().openPanel());
     await receiveEvents([eventA]);
     expect(requireExperience().state.content.snapshot?.snapshot_id).toBe(
       'snapshot-a',
@@ -2124,6 +2130,7 @@ describe('Journal production state boundaries', () => {
       .spyOn(HTMLAnchorElement.prototype, 'click')
       .mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    act(() => requireExperience().openPanel());
     await receiveEvents([
       action({
         actionId: 'action-a',
@@ -2155,6 +2162,7 @@ describe('Journal production state boundaries', () => {
     journalMocks.getSnapshot.mockResolvedValue(
       documentSnapshot('snapshot-a', 'event-a'),
     );
+    act(() => requireExperience().openPanel());
     await receiveEvents([
       action({
         actionId: 'action-a',

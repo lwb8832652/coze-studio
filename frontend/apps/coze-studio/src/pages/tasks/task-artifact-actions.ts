@@ -46,6 +46,7 @@ export interface TaskArtifactActions {
   clearInlinePreview: () => void;
   clearRemovedArtifact: (artifactId?: string) => void;
   error: string;
+  errorArtifactId: string;
   handleArtifactAction: (
     artifact: TaskThreadArtifact,
     mode: ArtifactActionMode,
@@ -165,23 +166,17 @@ const runTaskArtifactAction = async ({
     throw new Error('生成任务产物签名链接失败');
   }
 
-  if (previewFamily === 'image') {
+  if (
+    previewFamily === 'image' ||
+    previewFamily === 'pdf' ||
+    previewFamily === 'audio' ||
+    previewFamily === 'video'
+  ) {
     setInlinePreview({
       artifactId: artifact.artifact_id,
       contentType: response.data?.content_type || artifact.content_type,
       name: artifactFileName(artifact),
-      previewRenderer: 'image',
-      url: signedURL,
-    });
-    return;
-  }
-
-  if (previewFamily === 'pdf') {
-    setInlinePreview({
-      artifactId: artifact.artifact_id,
-      contentType: response.data?.content_type || artifact.content_type,
-      name: artifactFileName(artifact),
-      previewRenderer: 'pdf',
+      previewRenderer: previewFamily,
       url: signedURL,
     });
     return;
@@ -198,6 +193,7 @@ const runTaskArtifactAction = async ({
 interface TaskArtifactActionState {
   activeAction: string;
   error: string;
+  errorArtifactId: string;
   inlinePreview: ArtifactInlinePreviewState | null;
   removedArtifact: RemovedArtifactNotice | null;
   scope: string;
@@ -208,6 +204,7 @@ const createEmptyArtifactActionState = (
 ): TaskArtifactActionState => ({
   activeAction: '',
   error: '',
+  errorArtifactId: '',
   inlinePreview: null,
   removedArtifact: null,
   scope,
@@ -275,6 +272,7 @@ export const useTaskArtifactActions = ({
         ...current,
         activeAction: actionKey,
         error: '',
+        errorArtifactId: '',
         inlinePreview: clearPreview ? null : current.inlinePreview,
       }));
 
@@ -348,6 +346,7 @@ export const useTaskArtifactActions = ({
         updateCurrentState(submittedScope, generation, current => ({
           ...current,
           error: artifactActionErrorMessage(mode, err),
+          errorArtifactId: artifact.artifact_id,
         }));
       } finally {
         finishOperation(submittedScope, generation);
@@ -393,6 +392,7 @@ export const useTaskArtifactActions = ({
         updateCurrentState(submittedScope, generation, current => ({
           ...current,
           error: err instanceof Error ? err.message : '删除任务产物失败',
+          errorArtifactId: artifact.artifact_id,
         }));
       } finally {
         finishOperation(submittedScope, generation);
@@ -437,6 +437,7 @@ export const useTaskArtifactActions = ({
       updateCurrentState(submittedScope, generation, current => ({
         ...current,
         error: err instanceof Error ? err.message : '恢复任务产物失败',
+        errorArtifactId: removedArtifact.artifactId,
       }));
     } finally {
       finishOperation(submittedScope, generation);
@@ -486,6 +487,7 @@ export const useTaskArtifactActions = ({
         updateCurrentState(submittedScope, generation, current => ({
           ...current,
           error: err instanceof Error ? err.message : '审核产物扫描状态失败',
+          errorArtifactId: artifact.artifact_id,
         }));
       } finally {
         finishOperation(submittedScope, generation);
@@ -517,6 +519,7 @@ export const useTaskArtifactActions = ({
             : current.removedArtifact,
       })),
     error: visibleState.error,
+    errorArtifactId: visibleState.errorArtifactId,
     handleArtifactAction,
     handleDeleteArtifact,
     handleRestoreArtifact,

@@ -34,6 +34,7 @@ import { useUserInfo } from '@coze-arch/foundation-sdk';
 import type {
   HumanInteractionResponse,
   WorkbenchArtifact,
+  WorkbenchJournalContentType,
   WorkbenchJournalEvent,
   WorkbenchJournalRecoveryCapability,
   WorkbenchMessage,
@@ -80,12 +81,10 @@ import { TaskDetailHeader } from './task-detail-header';
 import { TaskAssistantMessageActions } from './task-assistant-message-actions';
 import {
   artifactScanStatus,
-  canPreviewArtifact,
+  artifactFileExtension,
+  isSkillArtifact,
 } from './task-artifacts-helpers';
-import {
-  TaskArtifactFeedback,
-  TaskArtifactMessageList,
-} from './task-artifact-message-list';
+import { TaskArtifactMessageList } from './task-artifact-message-list';
 import {
   type TaskArtifactActions,
   useTaskArtifactActions,
@@ -134,9 +133,6 @@ interface MessageArtifactGroups {
 
 const TASK_DETAIL_SKELETON_STAGGER_MS = 60;
 const TASK_DETAIL_RESPONSIVE_PAGE_CLASS = 'coze-task-detail-responsive-page';
-const ARTIFACT_SPLIT_DEFAULT_WIDTH = 40;
-const ARTIFACT_SPLIT_MIN_WIDTH = 30;
-const ARTIFACT_SPLIT_MAX_WIDTH = 55;
 const PERCENTAGE_SCALE = 100;
 const TASK_DETAIL_SUGGESTION_COUNT = 3;
 const TASK_DETAIL_SUGGESTION_HISTORY_LIMIT = 6;
@@ -174,15 +170,54 @@ const getThreadTranscriptMessageKey = (
   index: number,
 ) => message.message_id || `${message.role}-${index}`;
 
-const getLatestPreviewableArtifactID = (artifacts: TaskThreadArtifact[]) =>
-  [...artifacts]
-    .filter(canPreviewArtifact)
-    .sort(
-      (left, right) =>
-        Number(Boolean(right.is_primary)) - Number(Boolean(left.is_primary)) ||
-        right.created_at - left.created_at ||
-        right.artifact_id.localeCompare(left.artifact_id),
-    )[0]?.artifact_id ?? '';
+const CODE_ARTIFACT_EXTENSIONS = new Set([
+  'c',
+  'cc',
+  'cpp',
+  'cs',
+  'css',
+  'go',
+  'java',
+  'js',
+  'jsx',
+  'php',
+  'py',
+  'rb',
+  'rs',
+  'sh',
+  'sql',
+  'ts',
+  'tsx',
+  'vue',
+  'yaml',
+  'yml',
+]);
+
+const BROWSER_ARTIFACT_EXTENSIONS = new Set(['htm', 'html', 'url', 'webloc']);
+
+const artifactPreviewTab = (
+  artifact?: TaskThreadArtifact,
+): WorkbenchJournalContentType => {
+  if (!artifact) {
+    return 'document';
+  }
+  if (isSkillArtifact(artifact)) {
+    return 'skill';
+  }
+
+  const extension = artifactFileExtension(artifact);
+  const artifactType = artifact.artifact_type.trim().toLowerCase();
+  if (['browser', 'link', 'web'].includes(artifactType)) {
+    return 'browser';
+  }
+  if (BROWSER_ARTIFACT_EXTENSIONS.has(extension)) {
+    return 'browser';
+  }
+  if (artifactType === 'code' || CODE_ARTIFACT_EXTENSIONS.has(extension)) {
+    return 'code';
+  }
+  return 'document';
+};
 
 const BLOCKING_ARTIFACT_SCAN_STATUSES = new Set([
   'blocked',
@@ -551,12 +586,10 @@ const TaskThreadAssistantMessage = ({
 const TaskThreadArtifactCards = ({
   artifactActions,
   artifacts,
-  latestPreviewableArtifactID,
   task,
 }: {
   artifactActions: TaskArtifactActions;
   artifacts: TaskThreadArtifact[];
-  latestPreviewableArtifactID: string;
   task: TaskThreadDetailModel;
 }) => {
   if (!artifacts.length) {
@@ -567,9 +600,6 @@ const TaskThreadArtifactCards = ({
     <TaskArtifactMessageList
       artifactActions={artifactActions}
       artifacts={artifacts}
-      autoPreview={artifacts.some(
-        artifact => artifact.artifact_id === latestPreviewableArtifactID,
-      )}
       renderFeedback={false}
       renderReviewActions={false}
       spaceId={task.space_id}
@@ -681,7 +711,6 @@ const TaskThreadAssistantTurn = ({
   isJournalRunMessage,
   journalFlowProps,
   journalIntroVisible,
-  latestPreviewableArtifactID,
   message,
   messageRunEvents,
   onAssistantMessageRef,
@@ -699,7 +728,6 @@ const TaskThreadAssistantTurn = ({
   isJournalRunMessage: boolean;
   journalFlowProps: JournalConversationFlowProps;
   journalIntroVisible: boolean;
-  latestPreviewableArtifactID: string;
   message: ThreadTranscriptMessage;
   messageRunEvents: TaskThreadDetailEvent[];
   onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
@@ -731,7 +759,6 @@ const TaskThreadAssistantTurn = ({
     <TaskThreadArtifactCards
       artifactActions={artifactActions}
       artifacts={artifactsBeforeAnswer}
-      latestPreviewableArtifactID={latestPreviewableArtifactID}
       task={task}
     />
     <TaskThreadAssistantMessage
@@ -742,7 +769,6 @@ const TaskThreadAssistantTurn = ({
     <TaskThreadArtifactCards
       artifactActions={artifactActions}
       artifacts={artifactsAfterAnswer}
-      latestPreviewableArtifactID={latestPreviewableArtifactID}
       task={task}
     />
   </TaskAssistantTurnShell>
@@ -769,7 +795,6 @@ const TaskThreadConversation = ({
     artifacts,
     transcript,
   );
-  const latestPreviewableArtifactID = getLatestPreviewableArtifactID(artifacts);
   const renderedArtifactIDs = new Set<string>();
   const latestRunID = normalizeThreadRunID(latestTaskRunID);
   const latestRunEvents = getRunEvents(events, latestRunID);
@@ -858,7 +883,6 @@ const TaskThreadConversation = ({
         isJournalRunMessage={isJournalRunMessage}
         journalFlowProps={journalFlowProps}
         journalIntroVisible={journalIntroVisible}
-        latestPreviewableArtifactID={latestPreviewableArtifactID}
         message={message}
         messageRunEvents={messageRunEvents}
         onAssistantMessageRef={onAssistantMessageRef}
@@ -891,7 +915,6 @@ const TaskThreadConversation = ({
       <TaskThreadArtifactCards
         artifactActions={artifactActions}
         artifacts={unmatchedArtifacts}
-        latestPreviewableArtifactID={latestPreviewableArtifactID}
         task={task}
       />
     </>
@@ -1013,7 +1036,6 @@ const TaskTranscript = ({
             <TaskArtifactMessageList
               artifactActions={artifactActions}
               artifacts={artifacts}
-              autoPreview={true}
               renderFeedback={false}
               renderReviewActions={false}
               spaceId={task.space_id}
@@ -1219,20 +1241,27 @@ const TaskDetailPage = () => {
   const journalCloseButtonRef = useRef<HTMLButtonElement>(null);
   const journalRestoreButtonRef = useRef<HTMLButtonElement>(null);
   const journalFocusTargetRef = useRef<'close' | 'restore'>();
-  const [artifactPanelWidth, setArtifactPanelWidth] = useState(
-    ARTIFACT_SPLIT_DEFAULT_WIDTH,
-  );
   const artifactActions = useTaskArtifactActions({
     onArtifactsChanged: refreshArtifacts,
     spaceId: space_id,
     threadId: loadedTaskDetailCurrent ? activeTaskDetailId : undefined,
   });
-  const artifactPanelOpen = Boolean(artifactActions.inlinePreview);
-  const journalPanelOpen = journalVisible && journal.panelOpen;
-  const sidePanelOpen = artifactPanelOpen || journalPanelOpen;
-  const sidePanelWidth = artifactPanelOpen
-    ? artifactPanelWidth
-    : (1 - journal.splitRatio) * PERCENTAGE_SCALE;
+  const artifactPreview = artifactActions.inlinePreview;
+  const artifactPreviewArtifact = useMemo(
+    () =>
+      artifactPreview
+        ? artifacts.find(
+            artifact => artifact.artifact_id === artifactPreview.artifactId,
+          )
+        : undefined,
+    [artifactPreview, artifacts],
+  );
+  const artifactPreviewTabValue = artifactPreviewTab(artifactPreviewArtifact);
+  const artifactPreviewOpen = Boolean(artifactPreview);
+  const journalPanelOpen =
+    journal.panelOpen && (journalVisible || artifactPreviewOpen);
+  const sidePanelOpen = journalPanelOpen;
+  const sidePanelWidth = (1 - journal.splitRatio) * PERCENTAGE_SCALE;
   const artifactSplitStyle: CSSProperties = {
     '--coze-prototype-artifact-side-preview-width': `${sidePanelWidth}%`,
   };
@@ -1341,6 +1370,18 @@ const TaskDetailPage = () => {
     }
   }, [artifactActions, artifacts]);
 
+  useEffect(() => {
+    if (!artifactPreview) {
+      return;
+    }
+    if (!journal.panelOpen) {
+      journal.openPanel();
+    }
+    if (journal.activeTab !== artifactPreviewTabValue) {
+      journal.setActiveTab(artifactPreviewTabValue);
+    }
+  }, [artifactPreview, artifactPreviewTabValue, journal]);
+
   const handleArtifactResizePointerDown = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
       const container = splitRef.current;
@@ -1356,17 +1397,6 @@ const TaskDetailPage = () => {
         if (rect.width <= 0) {
           return;
         }
-        if (artifactPanelOpen) {
-          const nextWidth =
-            ((rect.right - moveEvent.clientX) / rect.width) * PERCENTAGE_SCALE;
-          setArtifactPanelWidth(
-            Math.min(
-              ARTIFACT_SPLIT_MAX_WIDTH,
-              Math.max(ARTIFACT_SPLIT_MIN_WIDTH, nextWidth),
-            ),
-          );
-          return;
-        }
         latestJournalRatio = Math.min(
           0.7,
           Math.max(0.4, (moveEvent.clientX - rect.left) / rect.width),
@@ -1376,10 +1406,7 @@ const TaskDetailPage = () => {
       const handlePointerUp = () => {
         document.removeEventListener('pointermove', handlePointerMove);
         document.removeEventListener('pointerup', handlePointerUp);
-        if (
-          !artifactPanelOpen &&
-          Math.abs(latestJournalRatio - startJournalRatio) > 0.01
-        ) {
+        if (Math.abs(latestJournalRatio - startJournalRatio) > 0.01) {
           void journal.commitSplitRatio(latestJournalRatio);
         }
       };
@@ -1387,7 +1414,7 @@ const TaskDetailPage = () => {
       document.addEventListener('pointermove', handlePointerMove);
       document.addEventListener('pointerup', handlePointerUp);
     },
-    [artifactPanelOpen, journal],
+    [journal],
   );
 
   return (
@@ -1407,10 +1434,8 @@ const TaskDetailPage = () => {
         ref={splitRef}
         className="coze-prototype-detail-split"
         data-artifact-open={sidePanelOpen}
-        data-journal-maximized={
-          journalPanelOpen && !artifactPanelOpen && journal.maximized
-        }
-        data-journal-open={journalPanelOpen && !artifactPanelOpen}
+        data-journal-maximized={journalPanelOpen && journal.maximized}
+        data-journal-open={journalPanelOpen}
         style={artifactSplitStyle}
       >
         <section className="coze-prototype-detail-inner">
@@ -1523,21 +1548,16 @@ const TaskDetailPage = () => {
         {sidePanelOpen && !journal.maximized ? (
           <button
             type="button"
-            aria-label={
-              artifactPanelOpen ? '调整产物面板宽度' : '调整执行详情宽度'
-            }
+            aria-label="调整执行详情宽度"
             className="coze-prototype-artifact-resize-handle"
             onPointerDown={handleArtifactResizePointerDown}
           />
         ) : null}
-        <TaskArtifactFeedback
-          clearInlinePreview={artifactActions.clearInlinePreview}
-          error={artifactActions.error}
-          inlinePreview={artifactActions.inlinePreview}
-        />
-        {journalPanelOpen && !artifactPanelOpen ? (
+        {journalPanelOpen ? (
           <JournalPanel
             activeTab={journal.activeTab}
+            artifactPreview={artifactPreview}
+            artifactPreviewTab={artifactPreviewTabValue}
             artifacts={artifacts}
             attempts={journal.state.execution.attempts}
             closeButtonRef={journalCloseButtonRef}
@@ -1556,8 +1576,10 @@ const TaskDetailPage = () => {
             onArtifactDownload={artifact =>
               artifactActions.handleArtifactAction(artifact, 'download')
             }
+            onArtifactPreviewClose={artifactActions.clearInlinePreview}
             onClose={() => {
               journalFocusTargetRef.current = 'restore';
+              artifactActions.clearInlinePreview();
               journal.closePanel();
             }}
             onScrollPositionChange={journal.rememberScrollPosition}
@@ -1568,7 +1590,7 @@ const TaskDetailPage = () => {
             onViewModeChange={journal.setViewMode}
           />
         ) : null}
-        {journalVisible && !journal.panelOpen && !artifactPanelOpen ? (
+        {journalVisible && !journal.panelOpen && !artifactPreviewOpen ? (
           <JournalRestoreButton
             buttonRef={journalRestoreButtonRef}
             onRestore={() => {

@@ -190,7 +190,7 @@ export const useJournalExperience = ({
   const initialState = useMemo(() => createInitialJournalState(), []);
   const stateRef = useRef(initialState);
   const [state, setState] = useState(initialState);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string>();
   const [activeTab, setActiveTab] =
@@ -233,7 +233,7 @@ export const useJournalExperience = ({
     }
     stateRef.current = createInitialJournalState();
     setState(stateRef.current);
-    setPanelOpen(true);
+    setPanelOpen(false);
     setMaximized(false);
     setSelectedEventId(undefined);
     setActiveTab('document');
