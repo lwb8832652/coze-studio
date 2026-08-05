@@ -1084,19 +1084,19 @@ func loadCanonicalThreadMessagesWithBudget(
 	if err != nil {
 		return nil, err
 	}
-	type visibleAssistantKey struct {
-		runID   int64
-		content string
-	}
-	persistedAssistantContents := make(map[visibleAssistantKey]struct{}, len(messages))
+	latestPersistedAssistantByRunID := make(map[int64]*appagentthread.MessageSummary, len(messages))
 	for _, message := range messages {
 		if message == nil || message.ThreadID != threadID ||
 			message.RunID <= 0 || message.Role != appagentthread.MessageRoleAssistant {
 			continue
 		}
-		content := canonicalCleanString(message.Content, canonicalMaxPublicValueRunes)
-		if content != "" {
-			persistedAssistantContents[visibleAssistantKey{runID: message.RunID, content: content}] = struct{}{}
+		if canonicalCleanString(message.Content, canonicalMaxPublicValueRunes) == "" {
+			continue
+		}
+		latest := latestPersistedAssistantByRunID[message.RunID]
+		if latest == nil || message.CreatedAt > latest.CreatedAt ||
+			(message.CreatedAt == latest.CreatedAt && message.MessageID > latest.MessageID) {
+			latestPersistedAssistantByRunID[message.RunID] = message
 		}
 	}
 	events, err := loadAllCanonicalThreadRunEvents(ctx, threadID, budget)
@@ -1104,6 +1104,22 @@ func loadCanonicalThreadMessagesWithBudget(
 		return nil, err
 	}
 	journal := appagentthread.ProjectThreadRunJournalMessages(runs, messages, events)
+	latestEventAssistantByRunID := make(map[int64]*appagentthread.RunJournalMessage)
+	for _, message := range journal {
+		if message == nil || message.Role != appagentthread.MessageRoleAssistant ||
+			message.SourceEventID <= 0 ||
+			canonicalCleanString(message.Content, canonicalMaxPublicValueRunes) == "" {
+			continue
+		}
+		if latestPersistedAssistantByRunID[message.RunID] != nil {
+			continue
+		}
+		latest := latestEventAssistantByRunID[message.RunID]
+		if latest == nil || message.CreatedAt > latest.CreatedAt ||
+			(message.CreatedAt == latest.CreatedAt && message.SourceEventID > latest.SourceEventID) {
+			latestEventAssistantByRunID[message.RunID] = message
+		}
+	}
 	projected := make([]*canonicalMessage, 0, len(journal))
 	for _, message := range journal {
 		if message == nil || message.ThreadID != threadID || message.RunID <= 0 {
@@ -1117,11 +1133,16 @@ func loadCanonicalThreadMessagesWithBudget(
 		if content == "" {
 			continue
 		}
-		// Canonical Message omits event-only details, so prefer the durable reply
-		// when both sources collapse to the same visible assistant content.
-		if message.Role == appagentthread.MessageRoleAssistant && strings.HasPrefix(message.ID, "event-") {
-			key := visibleAssistantKey{runID: message.RunID, content: content}
-			if _, duplicated := persistedAssistantContents[key]; duplicated {
+		if message.Role == appagentthread.MessageRoleAssistant {
+			latestPersisted := latestPersistedAssistantByRunID[message.RunID]
+			if message.SourceEventID == 0 && latestPersisted != nil &&
+				message.ID != strconv.FormatInt(latestPersisted.MessageID, 10) {
+				continue
+			}
+			if message.SourceEventID > 0 && latestPersisted != nil {
+				continue
+			}
+			if message.SourceEventID > 0 && latestEventAssistantByRunID[message.RunID] != message {
 				continue
 			}
 		}

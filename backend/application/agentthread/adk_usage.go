@@ -43,16 +43,18 @@ const (
 )
 
 type adkUsageCall struct {
-	agentName     string
-	callID        string
-	retry         int
-	usageKind     string
-	modelName     string
-	provider      string
-	component     string
-	componentName string
-	finishReason  string
-	modelConfig   adkUsageModelConfig
+	agentName        string
+	callbackID       string
+	parentCallbackID string
+	callID           string
+	retry            int
+	usageKind        string
+	modelName        string
+	provider         string
+	component        string
+	componentName    string
+	finishReason     string
+	modelConfig      adkUsageModelConfig
 }
 
 type adkUsageModelConfig struct {
@@ -68,11 +70,12 @@ type ADKUsageBridge struct {
 	leadAgent string
 	traceID   string
 
-	mu                sync.Mutex
-	callSequences     map[string]uint64
-	seen              map[string]struct{}
-	eventSuppressions map[string]int
-	err               error
+	mu                      sync.Mutex
+	callSequences           map[string]uint64
+	seen                    map[string]struct{}
+	eventSuppressions       map[string]int
+	nestedUsageSuppressions map[string]map[string]int
+	err                     error
 }
 
 func NewADKUsageBridge(run *RunSummary, collector UsageCollector) *ADKUsageBridge {
@@ -84,13 +87,14 @@ func NewADKUsageBridge(run *RunSummary, collector UsageCollector) *ADKUsageBridg
 	}
 
 	return &ADKUsageBridge{
-		run:               run,
-		collector:         collector,
-		leadAgent:         leadAgent,
-		traceID:           adkUsageTraceID(run),
-		callSequences:     make(map[string]uint64),
-		seen:              make(map[string]struct{}),
-		eventSuppressions: make(map[string]int),
+		run:                     run,
+		collector:               collector,
+		leadAgent:               leadAgent,
+		traceID:                 adkUsageTraceID(run),
+		callSequences:           make(map[string]uint64),
+		seen:                    make(map[string]struct{}),
+		eventSuppressions:       make(map[string]int),
+		nestedUsageSuppressions: make(map[string]map[string]int),
 	}
 }
 
@@ -185,19 +189,24 @@ func (b *ADKUsageBridge) newCall(
 	if agentName == "" {
 		agentName = b.leadAgent
 	}
+	parentCall, _ := ctx.Value(adkUsageCallContextKey).(adkUsageCall)
 	b.mu.Lock()
 	b.callSequences[agentName]++
 	sequence := b.callSequences[agentName]
 	b.mu.Unlock()
+	generatedCallID := "callback-" + strconv.FormatUint(sequence, 10)
+	callbackID := agentName + ":" + generatedCallID
 
 	call := adkUsageCall{
-		agentName: agentName,
-		callID:    usageExtraString(extra, "model_call_id"),
-		retry:     usageExtraInt(extra, "retry_attempt"),
-		usageKind: usageExtraString(extra, "usage_kind"),
+		agentName:        agentName,
+		callbackID:       callbackID,
+		parentCallbackID: parentCall.callbackID,
+		callID:           usageExtraString(extra, "model_call_id"),
+		retry:            usageExtraInt(extra, "retry_attempt"),
+		usageKind:        usageExtraString(extra, "usage_kind"),
 	}
 	if call.callID == "" {
-		call.callID = "callback-" + strconv.FormatUint(sequence, 10)
+		call.callID = generatedCallID
 	}
 	if call.usageKind == "" {
 		call.usageKind = adkUsageKindFromContext(ctx)
@@ -311,11 +320,51 @@ func (b *ADKUsageBridge) recordModelOutput(
 		RawUsage:     string(rawJSON),
 		Metadata:     string(metadata),
 	}
+	fingerprint := adkUsageFingerprint(record)
+	if b.consumeNestedUsage(call, fingerprint) {
+		return
+	}
 	if b.record(ctx, idempotencyKey, record) {
 		b.mu.Lock()
-		b.eventSuppressions[adkUsageFingerprint(record)]++
+		b.eventSuppressions[fingerprint]++
+		b.addNestedUsageSuppressionLocked(call.parentCallbackID, fingerprint)
 		b.mu.Unlock()
 	}
+}
+
+func (b *ADKUsageBridge) consumeNestedUsage(call adkUsageCall, fingerprint string) bool {
+	if b == nil || call.callbackID == "" || fingerprint == "" {
+		return false
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	counts := b.nestedUsageSuppressions[call.callbackID]
+	if counts[fingerprint] == 0 {
+		return false
+	}
+	counts[fingerprint]--
+	if counts[fingerprint] == 0 {
+		delete(counts, fingerprint)
+	}
+	if len(counts) == 0 {
+		delete(b.nestedUsageSuppressions, call.callbackID)
+	}
+	b.addNestedUsageSuppressionLocked(call.parentCallbackID, fingerprint)
+
+	return true
+}
+
+func (b *ADKUsageBridge) addNestedUsageSuppressionLocked(parentCallbackID string, fingerprint string) {
+	if parentCallbackID == "" || fingerprint == "" {
+		return
+	}
+	counts := b.nestedUsageSuppressions[parentCallbackID]
+	if counts == nil {
+		counts = make(map[string]int)
+		b.nestedUsageSuppressions[parentCallbackID] = counts
+	}
+	counts[fingerprint]++
 }
 
 func (b *ADKUsageBridge) RecordEvent(ctx context.Context, usage AgentTokenUsage) error {
