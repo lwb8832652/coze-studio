@@ -49,6 +49,15 @@ type DatabaseApplicationService struct {
 
 var DatabaseApplicationSVC = DatabaseApplicationService{}
 
+func hasSpaceAccess(spaces []*crossuser.EntitySpace, spaceID int64) bool {
+	for _, space := range spaces {
+		if space != nil && space.ID == spaceID {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *DatabaseApplicationService) GetModeConfig(ctx context.Context, req *knowledge.GetModeConfigRequest) (*knowledge.GetModeConfigResponse, error) {
 	return &knowledge.GetModeConfigResponse{
 		Code:          0,
@@ -76,7 +85,7 @@ func (d *DatabaseApplicationService) ListDatabase(ctx context.Context, req *tabl
 	if err != nil {
 		return nil, err
 	}
-	if len(spaces) == 0 || spaces[0].ID != *req.SpaceID {
+	if !hasSpaceAccess(spaces, *req.SpaceID) {
 		return nil, errorx.New(errno.ErrMemoryPermissionCode, errorx.KV("msg", "space id is invalid"))
 	}
 
@@ -156,7 +165,7 @@ func (d *DatabaseApplicationService) AddDatabase(ctx context.Context, req *table
 	if err != nil {
 		return nil, err
 	}
-	if len(spaces) == 0 || spaces[0].ID != req.SpaceID {
+	if !hasSpaceAccess(spaces, req.SpaceID) {
 		return nil, errorx.New(errno.ErrMemoryPermissionCode, errorx.KV("msg", "space id is invalid"))
 	}
 
