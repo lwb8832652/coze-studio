@@ -721,8 +721,69 @@
 }
 
 .coze-prototype-task-detail-page .coze-prototype-user-turn {
+  position: relative;
+
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
   justify-content: flex-end;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-turn:hover
+  .coze-prototype-user-meta,
+.coze-prototype-task-detail-page .coze-prototype-user-turn:focus-within
+  .coze-prototype-user-meta {
+  pointer-events: auto;
+  max-height: 24px;
+  visibility: visible;
+  opacity: 1;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-identity {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: flex-end;
+
+  width: fit-content;
+  max-width: min(78%, 620px);
+  min-height: 24px;
+  padding-inline-end: 2px;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--newx-color-text-secondary, #66736b);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-name {
+  overflow: hidden;
+
+  min-width: 0;
+
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+
+  width: 24px;
+  height: 24px;
+
+  color: #fff;
+
+  background: var(--newx-color-accent, #14804a);
+  border-radius: 50%;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-avatar svg {
+  width: 14px;
+  height: 14px;
 }
 
 .coze-prototype-task-detail-page .coze-prototype-user-bubble {
@@ -745,10 +806,69 @@
   min-width: 0;
 }
 
+.coze-prototype-task-detail-page .coze-prototype-user-meta {
+  pointer-events: none;
+
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 6px);
+  right: 0;
+
+  overflow: hidden;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: flex-end;
+
+  width: fit-content;
+  max-width: min(78%, 620px);
+  max-height: 0;
+
+  visibility: hidden;
+  opacity: 0;
+
+  transition:
+    max-height 120ms ease,
+    opacity 120ms ease;
+}
+
 .coze-prototype-task-detail-page .coze-prototype-turn-time {
   flex: none;
   font-size: 11px;
   color: var(--newx-color-text-tertiary, #98a29b);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-copy {
+  cursor: pointer;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+
+  color: var(--newx-color-text-tertiary, #98a29b);
+
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-copy:hover {
+  color: var(--newx-color-text-secondary, #66736b);
+  background: var(--newx-color-surface-muted, #f0f3f0);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-copy:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-user-copy svg {
+  width: 14px;
+  height: 14px;
 }
 
 .coze-prototype-task-detail-page .coze-prototype-user-delivery {
@@ -909,12 +1029,6 @@
   .coze-prototype-journal-intro
   p {
   margin: 0;
-}
-
-.coze-prototype-task-detail-page
-  .coze-prototype-chat-transcript[data-journal-active='true']
-  .coze-prototype-user-turn {
-  display: none;
 }
 
 .coze-prototype-task-detail-page .coze-prototype-answer,
@@ -1649,6 +1763,10 @@
   }
 
   .coze-prototype-task-detail-page .coze-prototype-user-bubble {
+    max-width: 88%;
+  }
+
+  .coze-prototype-task-detail-page .coze-prototype-user-identity {
     max-width: 88%;
   }
 
