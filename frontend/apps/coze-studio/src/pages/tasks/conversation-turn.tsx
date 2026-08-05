@@ -17,9 +17,16 @@
 import { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
 
 import { useCommonConfigStore } from '@coze-foundation/global-store';
-import { IconCozCheckMark } from '@coze-arch/coze-design/icons';
+import { useUserInfo } from '@coze-arch/foundation-sdk';
+import {
+  IconCozCheckMark,
+  IconCozCopy,
+  IconCozPeopleFill,
+} from '@coze-arch/coze-design/icons';
+import { CozAvatar } from '@coze-arch/coze-design';
 
 import { WorkspaceMark } from '../../components/workspace-mark';
+import { copyTextToClipboard } from './task-clipboard';
 
 const normalizeTimestamp = (value?: number) => {
   if (!value) {
@@ -42,6 +49,33 @@ const formatTimestamp = (value?: number) => {
   }).format(timestamp);
 };
 
+const formatFullTimestamp = (value?: number) => {
+  const timestamp = normalizeTimestamp(value);
+
+  if (!timestamp) {
+    return undefined;
+  }
+
+  const dateParts = new Intl.DateTimeFormat('en-GB', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(timestamp)
+    .reduce<Record<string, string>>((parts, part) => {
+      parts[part.type] = part.value;
+      return parts;
+    }, {});
+
+  const date = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  const time = `${dateParts.hour}:${dateParts.minute}:${dateParts.second}`;
+  return `${date} ${time}`;
+};
+
 const formatDateTime = (value?: number) => {
   const timestamp = normalizeTimestamp(value);
 
@@ -61,21 +95,49 @@ export const TaskUserTurn = ({
   children: ReactNode;
   createdAt?: number;
 }) => {
-  const timestamp = formatTimestamp(createdAt);
+  const userInfo = useUserInfo();
+  const userDisplayName = userInfo?.screen_name || '';
+  const fullTimestamp = formatFullTimestamp(createdAt);
   const dateTime = formatDateTime(createdAt);
+  const userMessageText = typeof children === 'string' ? children : '';
 
   return (
     <article className="coze-prototype-user-turn">
+      <div className="coze-prototype-user-identity">
+        {userDisplayName ? (
+          <span className="coze-prototype-user-name">{userDisplayName}</span>
+        ) : null}
+        <CozAvatar
+          className="coze-prototype-user-avatar"
+          src={userInfo?.avatar_url}
+          type="person"
+          aria-hidden="true"
+        >
+          <IconCozPeopleFill />
+        </CozAvatar>
+      </div>
       <div className="coze-prototype-user-bubble">
         <div className="coze-prototype-user-bubble-content">{children}</div>
-        {timestamp ? (
-          <time className="coze-prototype-turn-time" dateTime={dateTime}>
-            {timestamp}
-          </time>
-        ) : null}
         <span className="coze-prototype-user-delivery" aria-label="已发送">
           <IconCozCheckMark />
         </span>
+      </div>
+      <div className="coze-prototype-user-meta">
+        {fullTimestamp ? (
+          <time className="coze-prototype-turn-time" dateTime={dateTime}>
+            {fullTimestamp}
+          </time>
+        ) : null}
+        <button
+          type="button"
+          className="coze-prototype-user-copy"
+          aria-label="复制用户消息"
+          title="复制用户消息"
+          disabled={!userMessageText}
+          onClick={() => void copyTextToClipboard(userMessageText)}
+        >
+          <IconCozCopy />
+        </button>
       </div>
     </article>
   );

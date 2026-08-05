@@ -52,18 +52,45 @@ describe('task detail approved visual contract', () => {
     expect(header).not.toContain('IconCozArrowLeft');
   });
 
-  it('keeps user metadata inside the bubble and uses library icons for todos', () => {
+  it('reveals user metadata below the bubble on hover and uses library icons', () => {
     const conversation = taskSource('conversation-turn.tsx');
     const todos = taskSource('task-execution-todo-dock.tsx');
+    const styles = taskSource('newx-task-ui.less');
 
+    expect(conversation).toContain('coze-prototype-user-meta');
+    expect(conversation).toContain('formatFullTimestamp');
+    expect(conversation).toContain('aria-label="复制用户消息"');
     expect(conversation).toMatch(
-      /coze-prototype-user-bubble[\s\S]*?coze-prototype-turn-time/,
+      /coze-prototype-user-delivery[\s\S]*?<\/div>\s*<div className="coze-prototype-user-meta">/,
+    );
+    expect(styles).toMatch(
+      /coze-prototype-user-meta[\s\S]*?max-height:\s*0[\s\S]*?visibility:\s*hidden[\s\S]*?opacity:\s*0/,
+    );
+    expect(styles).toMatch(
+      /coze-prototype-user-turn:hover[\s\S]*?coze-prototype-user-meta[\s\S]*?visibility:\s*visible[\s\S]*?opacity:\s*1/,
+    );
+    expect(styles).toMatch(
+      /\.coze-prototype-user-turn\s*\{[\s\S]*?position:\s*relative/,
+    );
+    expect(styles).toMatch(
+      /\.coze-prototype-user-meta\s*\{[\s\S]*?position:\s*absolute/,
     );
     expect(conversation).toContain('IconCozCheckMark');
     expect(todos).toContain('IconCozListDisorder');
     expect(todos).toContain('IconCozArrowDown');
     expect(todos).not.toContain('☷');
     expect(todos).not.toMatch(/>\s*\^\s*</);
+  });
+
+  it('shows the current user identity above user messages', () => {
+    const conversation = taskSource('conversation-turn.tsx');
+
+    expect(conversation).toContain('useUserInfo');
+    expect(conversation).toContain('coze-prototype-user-identity');
+    expect(conversation).toContain('coze-prototype-user-avatar');
+    expect(conversation).toContain('avatar_url');
+    expect(conversation).toContain("userInfo?.screen_name || ''");
+    expect(conversation).not.toContain('userInfo?.name ||');
   });
 
   it('uses the configured project identity in the approved compact Journal shell', () => {
@@ -90,7 +117,7 @@ describe('task detail approved visual contract', () => {
     expect(styles).toMatch(
       /coze-prototype-assistant-turn-journal[\s\S]*?display:\s*block/,
     );
-    expect(styles).toMatch(
+    expect(styles).not.toMatch(
       /data-journal-active='true'[\s\S]*?coze-prototype-user-turn[\s\S]*?display:\s*none/,
     );
   });

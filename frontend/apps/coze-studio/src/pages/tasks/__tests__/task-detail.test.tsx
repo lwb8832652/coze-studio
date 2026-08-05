@@ -34,7 +34,12 @@ const mockUseParams = vi.hoisted(() =>
 );
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockUseUserInfo = vi.hoisted(() =>
-  vi.fn(() => ({ user_id_str: 'user-1' })),
+  vi.fn(() => ({
+    user_id_str: 'user-1',
+    name: '刘文波',
+    screen_name: '小刘',
+    avatar_url: 'https://example.com/user-avatar.png',
+  })),
 );
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
@@ -264,6 +269,19 @@ vi.mock('@coze-arch/coze-design', () => ({
       {icon}
       {children}
     </button>
+  ),
+  CozAvatar: ({
+    children,
+    className,
+    src,
+  }: {
+    children?: ReactNode;
+    className?: string;
+    src?: string;
+  }) => (
+    <span className={className} data-avatar-src={src}>
+      {children}
+    </span>
   ),
   Empty: ({
     description,
@@ -525,6 +543,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozOriginalSize: () => <span />,
   IconCozPlus: () => <span />,
   IconCozPlugin: () => <span />,
+  IconCozPeopleFill: () => <span />,
   IconCozRefresh: () => <span />,
   IconCozRocketFill: () => <span />,
   IconCozSendFill: () => <span />,
@@ -575,6 +594,7 @@ import {
   saveTaskTokenUsageViewMode,
 } from '../task-message-token-usage';
 import TaskDetailPage from '../detail';
+import { TaskUserTurn } from '../conversation-turn';
 import type { WorkbenchRunEvent } from '../../workbench/thread-client';
 import type * as SystemService from '../../system/service';
 
@@ -777,7 +797,12 @@ describe('TaskDetailPage', () => {
       space_id: 'space-1',
       thread_id: 'thread-1',
     });
-    mockUseUserInfo.mockReturnValue({ user_id_str: 'user-1' });
+    mockUseUserInfo.mockReturnValue({
+      user_id_str: 'user-1',
+      name: '刘文波',
+      screen_name: '小刘',
+      avatar_url: 'https://example.com/user-avatar.png',
+    });
     mockGetTaskThread.mockReset();
     mockListTaskThreadMessages.mockReset();
     mockListTaskThreadRuns.mockReset();
@@ -1361,6 +1386,10 @@ describe('TaskDetailPage', () => {
       container.querySelector('.coze-prototype-conversation-column'),
     ).toBeTruthy();
     expect(container.querySelector('.coze-prototype-user-turn')).toBeTruthy();
+    expect(
+      container.querySelector('.coze-prototype-user-identity'),
+    ).toBeTruthy();
+    expect(container.textContent).toContain('小刘');
     const turnTime = container.querySelector('.coze-prototype-turn-time');
     expect(turnTime).toBeTruthy();
     expect(
@@ -1390,6 +1419,58 @@ describe('TaskDetailPage', () => {
       root?.unmount();
     });
     container.remove();
+  });
+
+  it('reveals full user message metadata on hover and copies the message text', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const previousClipboard = navigator.clipboard;
+    const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: clipboardWriteText },
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(
+          <TaskUserTurn createdAt={new Date(2026, 7, 5, 13, 52, 0).getTime()}>
+            给我制定Agent学习路线
+          </TaskUserTurn>,
+        );
+        await Promise.resolve();
+      });
+
+      const userMeta = container.querySelector('.coze-prototype-user-meta');
+      const time = userMeta?.querySelector('.coze-prototype-turn-time');
+      const copyButton = userMeta?.querySelector(
+        'button[aria-label="复制用户消息"]',
+      );
+
+      expect(userMeta).toBeTruthy();
+      expect(time?.textContent).toBe('2026-08-05 13:52:00');
+      expect(copyButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(clipboardWriteText).toHaveBeenCalledWith('给我制定Agent学习路线');
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: previousClipboard,
+      });
+    }
   });
 
   it('restores the authorized Journal view state after closing and reopening the task panel', async () => {
@@ -3761,6 +3842,66 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('Canonical 新建任务');
     expect(container.textContent).toContain('请用一句话回复 smoke OK');
     expect(container.textContent).not.toContain('Request failed');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders the task input when the canonical message page omits the user turn', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-missing-user',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-missing-user',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '缺少用户消息的任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请展示这条用户问题',
+        last_agent_message: '已完成任务',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-missing-user-assistant',
+            thread_id: 'thread-missing-user',
+            run_id: 'run-missing-user',
+            role: 'assistant',
+            content: '已完成任务',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('请展示这条用户问题');
+    expect(container.textContent).toContain('已完成任务');
 
     act(() => {
       root?.unmount();

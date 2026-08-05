@@ -406,6 +406,48 @@ const getThreadTranscriptMessages = (
   return transcript;
 };
 
+const ensureTaskInputInTranscript = (
+  transcript: ThreadTranscriptMessage[],
+  task: TaskThreadDetailModel,
+): ThreadTranscriptMessage[] => {
+  const taskInput = (getTaskInputText(task.input) || task.title).trim();
+  if (!taskInput) {
+    return transcript;
+  }
+
+  const latestUser = [...transcript]
+    .reverse()
+    .find(message => message.role === 'user');
+  if (latestUser?.content.trim() === taskInput) {
+    return transcript;
+  }
+
+  const fallbackUserMessage: ThreadTranscriptMessage = {
+    message_id: `task-input-${task.id}`,
+    thread_id: task.id,
+    run_id: '',
+    role: 'user',
+    content: taskInput,
+    metadata: '',
+    created_at: task.created_at,
+  };
+  const latestAssistantIndex = transcript.reduce(
+    (latestIndex, message, index) =>
+      message.role === 'assistant' ? index : latestIndex,
+    -1,
+  );
+
+  if (latestAssistantIndex < 0) {
+    return [...transcript, fallbackUserMessage];
+  }
+
+  return [
+    ...transcript.slice(0, latestAssistantIndex),
+    fallbackUserMessage,
+    ...transcript.slice(latestAssistantIndex),
+  ];
+};
+
 const getLatestAssistantTranscriptKey = (
   transcript: ThreadTranscriptMessage[],
 ) => {
@@ -789,7 +831,10 @@ const TaskThreadConversation = ({
   onRecoverJournal,
   task,
 }: TaskThreadConversationProps) => {
-  const transcript = getThreadTranscriptMessages(messages);
+  const transcript = ensureTaskInputInTranscript(
+    getThreadTranscriptMessages(messages),
+    task,
+  );
   const artifactsByRunID = groupTaskArtifactsByRunID(artifacts);
   const fallbackArtifactsByMessageKey = groupFallbackTaskArtifactsByMessageKey(
     artifacts,
