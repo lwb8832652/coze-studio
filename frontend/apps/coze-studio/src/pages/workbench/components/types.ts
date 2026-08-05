@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-export const WORKBENCH_MODES = ['flash', 'thinking', 'pro', 'ultra'] as const;
-
-export type WorkbenchMode = (typeof WORKBENCH_MODES)[number];
-
 export type WorkbenchComposerVariant = 'home' | 'detail';
+
+export const WORKBENCH_REQUESTED_POLICY = 'auto' as const;
 
 export interface WorkbenchResourceSelection {
   enable_skills: string[];
@@ -118,7 +116,6 @@ export interface WorkbenchComposerSubmitPayload
   > {
   enable_skills?: string[];
   message: string;
-  mode: WorkbenchMode;
   taskId?: string;
   modelType?: number;
   modelName?: string;
@@ -128,7 +125,6 @@ export interface WorkbenchComposerSubmitPayload
 
 export interface CreateWorkbenchSubmitPayloadInput {
   message: string;
-  mode: WorkbenchMode;
   taskId?: string;
   selectedModel?: WorkbenchLLMModel;
   models: WorkbenchLLMModel[];
@@ -136,36 +132,6 @@ export interface CreateWorkbenchSubmitPayloadInput {
   runtimeSettings: WorkbenchRuntimeSettings;
   files?: File[];
 }
-
-export const DEFAULT_WORKBENCH_MODE: WorkbenchMode = 'pro';
-
-export const WORKBENCH_MODE_PROMPTS: Record<WorkbenchMode, string> = {
-  flash: 'Hi,我会快速完成任务,尽量给你直接结果~',
-  thinking: 'Hi,我会先思考再行动,在速度和准确性之间取得平衡~',
-  pro: 'Hi,我会先计划再执行,帮你获得更精准的结果~',
-  ultra: 'Hi,我会用更强的多步骤处理方式,帮你完成复杂任务~',
-};
-
-export const WORKBENCH_MODE_SYMBOLS: Record<WorkbenchMode, string> = {
-  flash: '↯',
-  thinking: '?',
-  pro: 'P',
-  ultra: 'U',
-};
-
-export const WORKBENCH_MODE_LABELS: Record<WorkbenchMode, string> = {
-  flash: '闪速',
-  thinking: '思考',
-  pro: 'Pro',
-  ultra: 'Ultra',
-};
-
-export const WORKBENCH_MODE_DESCRIPTIONS: Record<WorkbenchMode, string> = {
-  flash: '快速且高效的完成任务，但可能不够精准',
-  thinking: '思考后再行动，在时间与准确性之间取得平衡',
-  pro: '思考、计划再执行，获得更精准的结果，可能需要更多时间',
-  ultra: '继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务',
-};
 
 export const workbenchModelTypeToNumber = (model: WorkbenchLLMModel) =>
   Number(model.model_type);
@@ -303,7 +269,6 @@ export const cloneWorkbenchRuntimeSettings = (
 
 export const createWorkbenchSubmitPayload = ({
   message,
-  mode,
   taskId,
   selectedModel,
   models,
@@ -346,7 +311,6 @@ export const createWorkbenchSubmitPayload = ({
 
   return {
     message,
-    mode,
     taskId,
     modelType,
     modelName: selectedModel?.model_name || selectedModel?.name,
@@ -365,7 +329,6 @@ export const createWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => {
   const { runtimeSettings } = payload;
-  const modeRuntimeContext = getWorkbenchModeRuntimeContext(payload.mode);
   const modelRetry = runtimeSettings.model_retry.enabled
     ? {
         max_retries: runtimeSettings.model_retry.max_retries,
@@ -405,12 +368,9 @@ export const createWorkbenchRunConfig = (
 
   return {
     runtime: runtimeSettings.runtime,
-    mode: payload.mode,
+    requested_policy: WORKBENCH_REQUESTED_POLICY,
     model_type: payload.modelType,
     model_name: payload.modelName,
-    thinking_enabled: modeRuntimeContext.thinking_enabled,
-    is_plan_mode: modeRuntimeContext.is_plan_mode,
-    subagent_enabled: modeRuntimeContext.subagent_enabled,
     ...(runtimeSettings.reasoning.enabled
       ? {
           reasoning_effort: runtimeSettings.reasoning.effort,
@@ -433,9 +393,3 @@ export const createWorkbenchRunConfig = (
 export const stringifyWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => JSON.stringify(createWorkbenchRunConfig(payload));
-
-export const getWorkbenchModeRuntimeContext = (mode: WorkbenchMode) => ({
-  thinking_enabled: mode !== 'flash',
-  is_plan_mode: mode === 'pro' || mode === 'ultra',
-  subagent_enabled: mode === 'ultra',
-});

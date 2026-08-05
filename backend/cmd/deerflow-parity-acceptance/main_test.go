@@ -43,7 +43,7 @@ func TestParseConfigReadsSecretsOnlyFromEnvironment(t *testing.T) {
 		"DEERFLOW_PARITY_NEWX_SPACE_ID":             "7656103552997130240",
 	}
 	config, err := parseConfig([]string{
-		"-cases", "core.flash.direct,core.stream.reconnect",
+		"-cases", "core.pro.direct,core.stream.reconnect",
 		"-format", "json",
 		"-out", "report.json",
 	}, func(key string) string { return environment[key] })
@@ -53,7 +53,7 @@ func TestParseConfigReadsSecretsOnlyFromEnvironment(t *testing.T) {
 	require.True(t, config.deerFlowRuntimeAttested)
 	require.Equal(t, "local_deerflow", config.deerFlowEnvironment)
 	require.Equal(t, "newx_debug", config.newXEnvironment)
-	require.Equal(t, []string{"core.flash.direct", "core.stream.reconnect"}, config.caseIDs)
+	require.Equal(t, []string{"core.pro.direct", "core.stream.reconnect"}, config.caseIDs)
 	require.Equal(t, "json", config.format)
 	require.Equal(t, "report.json", config.outputPath)
 }

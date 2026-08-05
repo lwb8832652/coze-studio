@@ -76,7 +76,8 @@ func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {
 	}`, domainSVC.createRunReq.Input)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"mode":"flash",
+		"requested_policy":"pro",
+		"mode":"pro",
 		"thinking_enabled":false,
 		"is_plan_mode":false,
 		"subagent_enabled":false,

@@ -144,7 +144,8 @@ func buildADKSingleAgentSubagentRunSummary(
 
 	configPayload := map[string]any{
 		"runtime":           string(RuntimeModeEinoADK),
-		"mode":              string(DeerFlowModeFlash),
+		"requested_policy":  string(DeerFlowRequestedPolicyPro),
+		"mode":              string(DeerFlowModePro),
 		"thinking_enabled":  false,
 		"is_plan_mode":      false,
 		"subagent_enabled":  false,

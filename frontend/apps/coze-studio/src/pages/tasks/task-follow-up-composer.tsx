@@ -23,14 +23,10 @@ import {
   WorkbenchComposer,
   type WorkbenchComposerCapabilities,
 } from '../workbench/components/workbench-composer';
-import {
-  type WorkbenchComposerSubmitPayload,
-  type WorkbenchMode,
-} from '../workbench/components/types';
+import type { WorkbenchComposerSubmitPayload } from '../workbench/components/types';
 
 export const TaskFollowUpComposer = ({
   value,
-  mode,
   loading,
   error,
   spaceId,
@@ -47,12 +43,10 @@ export const TaskFollowUpComposer = ({
   onDismissSuggestions,
   onSuggestionClick,
   onValueChange,
-  onModeChange,
   onStop,
   onSubmit,
 }: {
   value: string;
-  mode: WorkbenchMode;
   loading: boolean;
   error?: string;
   spaceId?: string;
@@ -69,7 +63,6 @@ export const TaskFollowUpComposer = ({
   onDismissSuggestions?: () => void;
   onSuggestionClick?: (suggestion: string) => void;
   onValueChange: (value: string) => void;
-  onModeChange: (mode: WorkbenchMode) => void;
   onStop?: () => void | Promise<void>;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
 }) => {
@@ -121,7 +114,6 @@ export const TaskFollowUpComposer = ({
         ) : null}
         <WorkbenchComposer
           value={value}
-          mode={mode}
           loading={loading}
           error={error}
           variant="detail"
@@ -135,7 +127,6 @@ export const TaskFollowUpComposer = ({
           stopMode={stopMode}
           modelLoader={getWorkbenchLLMModels}
           onValueChange={onValueChange}
-          onModeChange={onModeChange}
           onStop={onStop}
           onSubmit={onSubmit}
         />

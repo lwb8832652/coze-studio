@@ -239,7 +239,7 @@ func TestADKSemanticCoreAcceptanceTodoStateSurvivesReload(t *testing.T) {
 }
 
 func TestADKSemanticCoreAcceptanceLifecycleContracts(t *testing.T) {
-	for _, caseID := range []string{"core.flash.direct", "core.thinking.direct"} {
+	for _, caseID := range []string{"core.pro.direct", "core.ultra.direct"} {
 		testCase := semanticCoreContractCase(t, caseID)
 		observation := runRuntimeContract(t, RuntimeModeEinoADK, &contractChatModel{
 			message: contractAssistantMessage("contract answer"),

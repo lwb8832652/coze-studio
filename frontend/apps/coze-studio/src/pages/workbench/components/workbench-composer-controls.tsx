@@ -23,19 +23,14 @@ import {
   useRef,
   type CompositionEventHandler,
   type KeyboardEventHandler,
-  type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from 'react';
 
 import {
-  IconCozArrowDown,
   IconCozAt,
-  IconCozCheckMark,
   IconCozCross,
   IconCozLink,
-  IconCozLightbulbFill,
-  IconCozDiamondFill,
   IconCozSendFill,
   IconCozUpload,
 } from '@coze-arch/coze-design/icons';
@@ -49,10 +44,8 @@ import {
   WorkbenchModelSelector,
 } from './workbench-model-selector';
 import {
-  DeerFlowFlashIcon,
   DeerFlowSendIcon,
   DeerFlowStopIcon,
-  DeerFlowUltraIcon,
 } from './workbench-deerflow-mode-icons';
 import { WorkbenchAtSegments } from './workbench-composer-at-segments';
 import type {
@@ -62,15 +55,9 @@ import type {
 } from './workbench-composer-at-menu';
 import { WorkbenchAtInline } from './workbench-composer-at-inline';
 import {
-  DEFAULT_WORKBENCH_MODE,
-  WORKBENCH_MODE_DESCRIPTIONS,
-  WORKBENCH_MODE_LABELS,
-  WORKBENCH_MODE_PROMPTS,
-  WORKBENCH_MODES,
   workbenchModelTypeToNumber,
   type WorkbenchComposerVariant,
   type WorkbenchLLMModel,
-  type WorkbenchMode,
   type WorkbenchResourceSelection,
   type WorkbenchRuntimeSettings,
 } from './types';
@@ -91,8 +78,6 @@ interface WorkbenchComposerToolbarProps {
   modelMenuOpen: boolean;
   models: WorkbenchLLMModel[];
   modelsLoading: boolean;
-  mode: WorkbenchMode;
-  modeMenuOpen: boolean;
   overlayPlacement: WorkbenchComposerOverlayPlacement;
   presentation: WorkbenchComposerPresentation;
   resourceSelection: WorkbenchResourceSelection;
@@ -106,36 +91,12 @@ interface WorkbenchComposerToolbarProps {
   onExtensionsOpenChange: (open: boolean) => void;
   onModelMenuOpenChange: (open: boolean) => void;
   onReloadModels: () => void | Promise<void>;
-  onModeMenuOpenChange: (open: boolean) => void;
-  onModeChange: (mode: WorkbenchMode) => void;
   onResourceSelectionChange: (selection: WorkbenchResourceSelection) => void;
   onRuntimeSettingsChange: WorkbenchRuntimeSettingsChange;
   onSelectedModelTypeChange: (modelType: number) => void;
   onAttachClick?: () => void;
   onSubmit: () => void;
 }
-
-const DEERFLOW_MODE_OPTIONS: Array<{
-  icon: ReactNode;
-  value: WorkbenchMode;
-}> = [
-  {
-    value: 'flash',
-    icon: <DeerFlowFlashIcon />,
-  },
-  {
-    value: 'thinking',
-    icon: <IconCozLightbulbFill />,
-  },
-  {
-    value: 'pro',
-    icon: <IconCozDiamondFill />,
-  },
-  {
-    value: 'ultra',
-    icon: <DeerFlowUltraIcon />,
-  },
-];
 
 const WorkbenchComposerAttachments = ({
   disabled,
@@ -179,7 +140,6 @@ export const WorkbenchComposerBody = ({
   files,
   variant = 'home',
   value,
-  mode,
   presentation,
   showSkillSuggestions,
   skillSuggestionPlacement = 'top',
@@ -206,7 +166,6 @@ export const WorkbenchComposerBody = ({
   files?: File[];
   variant?: WorkbenchComposerVariant;
   value: string;
-  mode: WorkbenchMode;
   presentation: WorkbenchComposerPresentation;
   showSkillSuggestions?: boolean;
   skillSuggestionPlacement?: WorkbenchComposerOverlayPlacement;
@@ -341,185 +300,6 @@ export const WorkbenchComposerBody = ({
           className="chat-workbench-input"
         />
       </div>
-      {!value && !isDeerFlow && !hasRichContent ? (
-        <div
-          className="chat-workbench-composer-prompt"
-          aria-label="当前模式提示"
-        >
-          <span aria-hidden="true">
-            {DEERFLOW_MODE_OPTIONS.find(option => option.value === mode)?.icon}
-          </span>
-          <span>{WORKBENCH_MODE_PROMPTS[mode]}</span>
-        </div>
-      ) : null}
-    </div>
-  );
-};
-
-const WorkbenchModeSelector = ({
-  disabled,
-  mode,
-  onModeChange,
-}: {
-  disabled?: boolean;
-  mode: WorkbenchMode;
-  onModeChange: (mode: WorkbenchMode) => void;
-}) => (
-  <div className="chat-workbench-mode" aria-label="模式选择">
-    {WORKBENCH_MODES.map(item => (
-      <button
-        key={item}
-        type="button"
-        className="chat-workbench-mode-button"
-        data-active={mode === item}
-        aria-pressed={mode === item}
-        disabled={disabled}
-        onClick={() => {
-          if (!disabled) {
-            onModeChange(item);
-          }
-        }}
-      >
-        {item}
-      </button>
-    ))}
-  </div>
-);
-
-const WorkbenchDeerFlowModeSelector = ({
-  disabled,
-  mode,
-  open,
-  placement,
-  onOpenChange,
-  onModeChange,
-}: {
-  disabled?: boolean;
-  mode: WorkbenchMode;
-  open: boolean;
-  placement: WorkbenchComposerOverlayPlacement;
-  onOpenChange: (open: boolean) => void;
-  onModeChange: (mode: WorkbenchMode) => void;
-}) => {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const activeOption =
-    DEERFLOW_MODE_OPTIONS.find(option => option.value === mode) ??
-    DEERFLOW_MODE_OPTIONS.find(
-      option => option.value === DEFAULT_WORKBENCH_MODE,
-    ) ??
-    DEERFLOW_MODE_OPTIONS[0];
-
-  useEffect(() => {
-    if (!open || disabled) {
-      return;
-    }
-
-    const closeAndRestoreFocus = () => {
-      onOpenChange(false);
-      queueMicrotask(() => triggerRef.current?.focus());
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeAndRestoreFocus();
-      }
-    };
-    const handleMouseDown = (event: MouseEvent) => {
-      if (
-        event.target instanceof Node &&
-        !rootRef.current?.contains(event.target)
-      ) {
-        closeAndRestoreFocus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('mousedown', handleMouseDown);
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [disabled, onOpenChange, open]);
-
-  return (
-    <div ref={rootRef} className="chat-workbench-deerflow-mode">
-      <button
-        ref={triggerRef}
-        type="button"
-        className="chat-workbench-deerflow-mode-trigger"
-        aria-label="选择模式"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => {
-          if (!disabled) {
-            onOpenChange(!open);
-          }
-        }}
-      >
-        <span aria-hidden="true">{activeOption.icon}</span>
-        <span className="chat-workbench-deerflow-mode-label">
-          {WORKBENCH_MODE_LABELS[activeOption.value]}
-        </span>
-        <IconCozArrowDown className="chat-workbench-deerflow-mode-arrow" />
-      </button>
-      {open ? (
-        <div
-          className="chat-workbench-deerflow-mode-menu"
-          data-placement={placement}
-          role="menu"
-          onKeyDown={event => {
-            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
-              return;
-            }
-            event.preventDefault();
-            const items = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                '[role="menuitemradio"]:not(:disabled)',
-              ),
-            );
-            if (!items.length) {
-              return;
-            }
-            const currentIndex = items.indexOf(
-              document.activeElement as HTMLButtonElement,
-            );
-            const step = event.key === 'ArrowDown' ? 1 : -1;
-            items[(currentIndex + step + items.length) % items.length]?.focus();
-          }}
-        >
-          <div className="chat-workbench-deerflow-mode-title">选择模式</div>
-          {DEERFLOW_MODE_OPTIONS.map(option => (
-            <button
-              key={option.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={option.value === mode}
-              disabled={disabled}
-              className="chat-workbench-deerflow-mode-option"
-              data-active={option.value === mode}
-              onClick={() => {
-                if (!disabled) {
-                  onModeChange(option.value);
-                  onOpenChange(false);
-                }
-              }}
-            >
-              <span className="chat-workbench-deerflow-mode-option-icon">
-                {option.icon}
-              </span>
-              <span className="chat-workbench-deerflow-mode-option-copy">
-                <span>{WORKBENCH_MODE_LABELS[option.value]}</span>
-                <span>{WORKBENCH_MODE_DESCRIPTIONS[option.value]}</span>
-              </span>
-              <span className="chat-workbench-deerflow-mode-option-check">
-                {option.value === mode ? <IconCozCheckMark /> : null}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 };
@@ -578,8 +358,6 @@ export const WorkbenchComposerToolbar = ({
   modelMenuOpen,
   models,
   modelsLoading,
-  mode,
-  modeMenuOpen,
   overlayPlacement,
   presentation,
   resourceSelection,
@@ -593,8 +371,6 @@ export const WorkbenchComposerToolbar = ({
   onExtensionsOpenChange,
   onModelMenuOpenChange,
   onReloadModels,
-  onModeMenuOpenChange,
-  onModeChange,
   onResourceSelectionChange,
   onRuntimeSettingsChange,
   onSelectedModelTypeChange,
@@ -662,22 +438,6 @@ export const WorkbenchComposerToolbar = ({
           >
             <IconCozUpload />
           </button>
-          <WorkbenchDeerFlowModeSelector
-            disabled={disabled}
-            mode={mode}
-            open={modeMenuOpen}
-            placement={overlayPlacement}
-            onOpenChange={open => {
-              if (!disabled) {
-                onModeMenuOpenChange(open);
-              }
-            }}
-            onModeChange={nextMode => {
-              if (!disabled) {
-                onModeChange(nextMode);
-              }
-            }}
-          />
           <ExtensionsPopover
             disabled={disabled}
             open={extensionsOpen}
@@ -731,12 +491,6 @@ export const WorkbenchComposerToolbar = ({
       data-disabled={disabled || undefined}
     >
       <div className="chat-workbench-toolbar-left">
-        <WorkbenchModeSelector
-          disabled={disabled}
-          mode={mode}
-          onModeChange={onModeChange}
-        />
-
         <ExtensionsPopover
           disabled={disabled}
           placement={overlayPlacement}

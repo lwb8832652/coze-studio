@@ -94,8 +94,8 @@ import { useJournalExperience } from './journal/use-journal-experience';
 import type { JournalViewMode } from './journal/journal-reducer';
 import type { JournalRecoveryHandler } from './journal/journal-recovery-dialog';
 import { JournalPanel, JournalRestoreButton } from './journal/journal-panel';
-import { JournalConversationFlow } from './journal/journal-conversation-flow';
 import { journalExecutionIntro } from './journal/journal-event-model';
+import { JournalConversationFlow } from './journal/journal-conversation-flow';
 import {
   getTaskExecutionType,
   getTaskInputText,
@@ -802,8 +802,11 @@ const TaskThreadConversation = ({
   const hasCanonicalJournalIntro = Boolean(
     journalExecutionIntro(journalEvents),
   );
-  const { hasLatestAssistantMessage, latestAssistantCount, latestAssistantIndex } =
-    getConversationMessageState(transcript, latestRunID);
+  const {
+    hasLatestAssistantMessage,
+    latestAssistantCount,
+    latestAssistantIndex,
+  } = getConversationMessageState(transcript, latestRunID);
   let latestEventsRendered = false;
   let journalFlowRendered = false;
   const isRunningAssistantMessage = (runID: string, index: number) =>
@@ -836,10 +839,8 @@ const TaskThreadConversation = ({
     const isJournalRunMessage =
       journalEvents.length > 0 &&
       (latestRunID ? runID === latestRunID : index === latestAssistantIndex);
-    const shouldRenderJournalFlow =
-      isJournalRunMessage && !journalFlowRendered;
-    const isJournalContinuation =
-      isJournalRunMessage && journalFlowRendered;
+    const shouldRenderJournalFlow = isJournalRunMessage && !journalFlowRendered;
+    const isJournalContinuation = isJournalRunMessage && journalFlowRendered;
     const runningAssistantMessage = isRunningAssistantMessage(runID, index);
     const isJournalIntroMessage =
       shouldRenderJournalFlow &&
@@ -1199,7 +1200,6 @@ const TaskDetailPage = () => {
   const {
     followUpError,
     followUpLoading,
-    followUpMode,
     followUpResetKey,
     followUpValue,
     handleFollowUpSubmit,
@@ -1210,7 +1210,6 @@ const TaskDetailPage = () => {
     humanInteractionError,
     humanInteractionLoading,
     retryingSubagentRunId,
-    setFollowUpMode,
     setFollowUpValue,
     subagentRetryError,
     taskRunActionError,
@@ -1486,7 +1485,6 @@ const TaskDetailPage = () => {
             <TaskFollowUpComposer
               key={activeTaskDetailId}
               value={followUpValue}
-              mode={followUpMode}
               loading={followUpLoading}
               error={followUpError}
               spaceId={space_id}
@@ -1539,7 +1537,6 @@ const TaskDetailPage = () => {
                 setFollowUpSuggestionsHidden(true);
               }}
               onValueChange={setFollowUpValue}
-              onModeChange={setFollowUpMode}
               onStop={() => handleCancelTaskRun(latestTaskRunID)}
               onSubmit={handleFollowUpSubmit}
             />

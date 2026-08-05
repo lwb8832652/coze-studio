@@ -387,11 +387,9 @@ describe('Workbench async resource scopes', () => {
           />
           <WorkbenchComposer
             loading={false}
-            mode="pro"
             modelLoader={modelLoader}
             spaceId={spaceId}
             value={value}
-            onModeChange={vi.fn()}
             onSubmit={payload => payloads.push(payload)}
             onValueChange={setValue}
           />
@@ -459,11 +457,9 @@ describe('Workbench async resource scopes', () => {
     const { container } = renderElement(
       <WorkbenchComposer
         loading={false}
-        mode="pro"
         modelLoader={modelLoader}
         spaceId="space-old"
         value=""
-        onModeChange={vi.fn()}
         onSubmit={vi.fn()}
         onValueChange={vi.fn()}
       />,

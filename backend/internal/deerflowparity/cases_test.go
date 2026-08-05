@@ -45,7 +45,7 @@ func TestSemanticCoreCoverage(t *testing.T) {
 	for _, testCase := range suite.Cases {
 		require.NotEmpty(t, testCase.InputPrompt)
 		require.NotEmpty(t, testCase.Actions)
-		require.Contains(t, []Mode{ModeFlash, ModeThinking, ModePro, ModeUltra}, testCase.Mode)
+		require.Contains(t, []Mode{ModePro, ModeUltra}, testCase.Mode)
 		require.NotEmpty(t, testCase.Expect.RequiredTerminal)
 		require.NotEmpty(t, testCase.Expect.RequiredEvents)
 		require.NotEmpty(t, testCase.Expect.EventOrder)
@@ -92,8 +92,8 @@ func TestDecodeCasesRejectsInvalidContracts(t *testing.T) {
 			"scope":"semantic_core",
 			"deerflow_revision":"5851f8250eb150ca23134c79b11ebc5073ac2789",
 			"cases":[
-				{"id":"core.flash.direct","mode":"flash","input_prompt":"a","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}},
-				{"id":"core.flash.direct","mode":"flash","input_prompt":"b","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}}
+				{"id":"core.pro.direct","mode":"pro","input_prompt":"a","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}},
+				{"id":"core.pro.direct","mode":"pro","input_prompt":"b","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}}
 			]
 		}`,
 		"invalid mode": `{
@@ -101,7 +101,7 @@ func TestDecodeCasesRejectsInvalidContracts(t *testing.T) {
 			"scope":"semantic_core",
 			"deerflow_revision":"5851f8250eb150ca23134c79b11ebc5073ac2789",
 			"cases":[
-				{"id":"core.flash.direct","mode":"auto","input_prompt":"a","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}}
+				{"id":"core.pro.direct","mode":"auto","input_prompt":"a","actions":[{"type":"run"}],"expect":{"required_terminal":["success"],"required_events":["run.started"],"event_order":[["run.started","run.completed"]]}}
 			]
 		}`,
 	}

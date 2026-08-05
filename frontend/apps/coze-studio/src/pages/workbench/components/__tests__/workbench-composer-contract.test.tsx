@@ -251,10 +251,8 @@ beforeEach(() => {
 });
 
 const baseProps = {
-  mode: 'default',
   selectedModelId: 'test-model',
   selectedModelName: '测试模型',
-  onModeChange: vi.fn(),
   onModelChange: vi.fn(),
   onStop: vi.fn(),
 } as unknown as Partial<ComponentProps<typeof WorkbenchComposer>>;
@@ -355,8 +353,8 @@ describe('WorkbenchComposer interaction contract', () => {
     expect(
       container.querySelector<HTMLButtonElement>(
         'button[aria-label="选择模式"]',
-      )?.disabled,
-    ).toBe(true);
+      ),
+    ).toBeNull();
     const stopButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="停止任务"]',
     );
@@ -422,7 +420,6 @@ describe('WorkbenchComposer interaction contract', () => {
     const container = renderElement(
       <WorkbenchComposerBody
         disabled
-        mode="pro"
         presentation="deerflow"
         showSkillSuggestions
         skillSuggestionIndex={0}

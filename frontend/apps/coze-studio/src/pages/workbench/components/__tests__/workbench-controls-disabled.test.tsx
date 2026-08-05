@@ -320,9 +320,7 @@ describe('Workbench editing controls disabled contract', () => {
   it('disables recommended follow-ups during submitting and streaming', () => {
     const baseProps = {
       error: '',
-      mode: 'flash' as const,
       onDismissSuggestions: vi.fn(),
-      onModeChange: vi.fn(),
       onSubmit: vi.fn(),
       onSuggestionClick: vi.fn(),
       onValueChange: vi.fn(),

@@ -34,11 +34,7 @@ import type {
   WorkbenchRunEvent,
   WorkbenchTodo,
 } from '../workbench/thread-client';
-import {
-  DEFAULT_WORKBENCH_MODE,
-  type WorkbenchComposerSubmitPayload,
-  type WorkbenchMode,
-} from '../workbench/components/types';
+import type { WorkbenchComposerSubmitPayload } from '../workbench/components/types';
 import { useTaskUsageData } from './task-usage-loader';
 import { useTaskThreadTitleSync } from './task-title-sync';
 import {
@@ -977,9 +973,6 @@ export const useTaskDetailActions = ({
   taskDetailId,
 }: TaskDetailActionsOptions) => {
   const [followUpValue, setFollowUpValue] = useState('');
-  const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>(
-    DEFAULT_WORKBENCH_MODE,
-  );
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpResetKey, setFollowUpResetKey] = useState(0);
   const [followUpError, setFollowUpError] = useState('');
@@ -1028,7 +1021,6 @@ export const useTaskDetailActions = ({
 
   useEffect(() => {
     setFollowUpValue('');
-    setFollowUpMode(DEFAULT_WORKBENCH_MODE);
     setFollowUpLoading(false);
     setFollowUpResetKey(0);
     setFollowUpError('');
@@ -1040,7 +1032,6 @@ export const useTaskDetailActions = ({
   const getFollowUpFingerprint = (payload: WorkbenchComposerSubmitPayload) =>
     JSON.stringify({
       message: payload.message,
-      mode: payload.mode,
       modelType: payload.modelType,
       modelName: payload.modelName,
       taskId: payload.taskId,
@@ -1221,14 +1212,12 @@ export const useTaskDetailActions = ({
   return {
     followUpError,
     followUpLoading,
-    followUpMode,
     followUpResetKey,
     followUpValue,
     handleFollowUpSubmit,
     handleHumanInteractionSubmit,
     humanInteractionError,
     humanInteractionLoading,
-    setFollowUpMode,
     setFollowUpValue,
     ...taskRunActions,
   };

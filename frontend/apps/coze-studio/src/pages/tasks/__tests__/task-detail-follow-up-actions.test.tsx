@@ -66,7 +66,6 @@ const mountedRoots: Array<{ container: HTMLDivElement; root: Root }> = [];
 
 const submitPayload = {
   message: '旧任务消息',
-  mode: 'flash',
   files: [new File(['context'], 'context.txt')],
 } as WorkbenchComposerSubmitPayload;
 

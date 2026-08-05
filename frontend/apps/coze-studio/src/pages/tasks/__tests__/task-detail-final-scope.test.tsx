@@ -155,7 +155,6 @@ import { fetchTaskDetail, type TaskDetail } from '../task-detail-loader';
 import { useTaskDetailData } from '../task-detail-hooks';
 import { listTaskThreadArtifacts } from '../service';
 import type { WorkbenchRunEvent } from '../../workbench/thread-client';
-import { DEFAULT_WORKBENCH_MODE } from '../../workbench/components/types';
 
 const mockSubscribeRunEvents = vi.hoisted(() => vi.fn());
 
@@ -311,10 +310,8 @@ const RouteComposerHarness = ({
       <div data-testid="loaded-task">{data.task?.id ?? 'none'}</div>
       <TaskFollowUpComposer
         value={value}
-        mode={DEFAULT_WORKBENCH_MODE}
         loading={!data.loadedTaskDetailCurrent}
         taskId={taskDetailId}
-        onModeChange={vi.fn()}
         onSubmit={onSubmit}
         onValueChange={setValue}
       />
@@ -459,7 +456,6 @@ describe('task detail final route and revision scope', () => {
         } as never,
         payload: {
           message: 'message-new',
-          mode: DEFAULT_WORKBENCH_MODE,
         } as never,
         threadId: 'thread-a',
       });
@@ -594,7 +590,6 @@ describe('task detail final route and revision scope', () => {
           } as never,
           payload: {
             message: 'message-concurrent',
-            mode: DEFAULT_WORKBENCH_MODE,
           } as never,
           threadId: 'thread-a',
         });

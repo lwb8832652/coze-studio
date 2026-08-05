@@ -64,7 +64,6 @@ describe('sendFollowUpMessage', () => {
     await sendFollowUpMessage({
       payload: {
         message: '继续分析',
-        mode: 'pro',
         runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
       },
       threadId: 'thread-1',
@@ -108,7 +107,6 @@ describe('sendFollowUpMessage', () => {
       payload: {
         files: [file],
         message: '继续分析附件',
-        mode: 'pro' as const,
         runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
       },
       threadId: 'thread-1',

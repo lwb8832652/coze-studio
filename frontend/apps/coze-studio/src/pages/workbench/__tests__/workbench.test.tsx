@@ -318,7 +318,6 @@ import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
   createWorkbenchRunConfig,
-  DEFAULT_WORKBENCH_MODE,
 } from '../components/types';
 
 const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
@@ -664,9 +663,9 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('data-variant="hero"');
     expect(markup).toContain('data-composer-style="deerflow"');
     expect(markup).toContain('placeholder="今天想做什么？"');
-    expect(markup).toContain('chat-workbench-deerflow-mode-trigger');
+    expect(markup).not.toContain('chat-workbench-deerflow-mode-trigger');
     expect(markup).toContain('chat-workbench-send-deerflow');
-    expect(markup).toContain('Pro');
+    expect(markup).not.toContain('选择模式');
     expect(markup).not.toContain('Auto');
     expect(markup).not.toContain('Ask');
     expect(markup).not.toContain('>Agent<');
@@ -817,7 +816,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('opens DeerFlow mode, resource, and extension menus from the prototype', async () => {
+  it('opens resource and extension menus from the prototype', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -827,18 +826,9 @@ describe('WorkbenchPage', () => {
       root.render(<WorkbenchPage />);
     });
 
-    expect(container.textContent).toContain('Pro');
-
-    const modeButton = container.querySelector(
-      '.chat-workbench-deerflow-mode-trigger',
-    ) as HTMLButtonElement;
-    act(() => {
-      modeButton.click();
-    });
-
-    expect(container.textContent).toContain('闪速');
-    expect(container.textContent).toContain('思考');
-    expect(container.textContent).toContain('Ultra');
+    expect(
+      container.querySelector('.chat-workbench-deerflow-mode-trigger'),
+    ).toBeNull();
 
     const resourceButton = container.querySelector(
       'button[aria-label="添加上下文"]',
@@ -1047,13 +1037,11 @@ describe('WorkbenchPage', () => {
       root.render(
         <WorkbenchComposer
           value=""
-          mode={DEFAULT_WORKBENCH_MODE}
           loading={false}
           variant="detail"
           presentation="deerflow"
           spaceId="space-1"
           onValueChange={vi.fn()}
-          onModeChange={vi.fn()}
           onSubmit={vi.fn()}
         />,
       );
@@ -1141,12 +1129,10 @@ describe('WorkbenchPage', () => {
       root.render(
         <WorkbenchComposer
           value="请总结附件"
-          mode={DEFAULT_WORKBENCH_MODE}
           loading={false}
           presentation="deerflow"
           spaceId="space-1"
           onValueChange={vi.fn()}
-          onModeChange={vi.fn()}
           onSubmit={onSubmit}
         />,
       );
@@ -1462,60 +1448,22 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('serializes DeerFlow mode runtime context for every mode', () => {
+  it('serializes only the automatic execution policy', () => {
     const resourceSelection = createDefaultWorkbenchResourceSelection();
     const runtimeSettings =
       createDefaultWorkbenchRuntimeSettings(resourceSelection);
 
-    [
-      [
-        'flash',
-        {
-          thinking_enabled: false,
-          is_plan_mode: false,
-          subagent_enabled: false,
-        },
-      ],
-      [
-        'thinking',
-        {
-          thinking_enabled: true,
-          is_plan_mode: false,
-          subagent_enabled: false,
-        },
-      ],
-      [
-        'pro',
-        {
-          thinking_enabled: true,
-          is_plan_mode: true,
-          subagent_enabled: false,
-        },
-      ],
-      [
-        'ultra',
-        {
-          thinking_enabled: true,
-          is_plan_mode: true,
-          subagent_enabled: true,
-        },
-      ],
-    ].forEach(([mode, expectedContext]) => {
-      const runConfig = createWorkbenchRunConfig({
-        message: '验证模式上下文',
-        mode,
-        runtimeSettings,
-        ...resourceSelection,
-      });
+    const runConfig = createWorkbenchRunConfig({
+      message: '验证自动执行策略',
+      runtimeSettings,
+      ...resourceSelection,
+    } as WorkbenchComposerSubmitPayload);
 
-      expect(runConfig).toMatchObject({
-        mode,
-        ...expectedContext,
-      });
-      expect(
-        Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
-      ).toBe(false);
-    });
+    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
+    expect(runConfig).not.toHaveProperty('mode');
+    expect(runConfig).not.toHaveProperty('thinking_enabled');
+    expect(runConfig).not.toHaveProperty('is_plan_mode');
+    expect(runConfig).not.toHaveProperty('subagent_enabled');
   });
 
   it('serializes reasoning effort only when runtime reasoning is explicitly enabled', () => {
@@ -1528,26 +1476,22 @@ describe('WorkbenchPage', () => {
     expect(
       createWorkbenchRunConfig({
         message: '验证显式推理强度',
-        mode: 'pro',
         runtimeSettings,
         ...resourceSelection,
-      }),
+      } as WorkbenchComposerSubmitPayload),
     ).toMatchObject({
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       reasoning_effort: 'high',
     });
   });
 
-  it('switches DeerFlow mode from the composer and sends the selected runtime context', async () => {
+  it('submits the automatic policy without a mode selector', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockCreateTaskThread.mockResolvedValue(
-      buildCreateTaskThreadResponse('thread-ultra-mode', '验证 Ultra 模式'),
+      buildCreateTaskThreadResponse('thread-auto-policy', '验证自动策略'),
     );
 
     await act(async () => {
@@ -1556,28 +1500,16 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const modeButton = container.querySelector(
-      '.chat-workbench-deerflow-mode-trigger',
-    ) as HTMLButtonElement;
-    act(() => {
-      modeButton.click();
-    });
-
-    const ultraButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('Ultra'),
-    ) as HTMLButtonElement;
-    expect(ultraButton).toBeTruthy();
-    act(() => {
-      ultraButton.click();
-    });
-    expect(modeButton.textContent).toContain('Ultra');
+    expect(
+      container.querySelector('.chat-workbench-deerflow-mode-trigger'),
+    ).toBeNull();
 
     const textarea = container.querySelector(
       'textarea[aria-label="任务描述"]',
     ) as HTMLTextAreaElement;
     act(() => {
       Simulate.change(textarea, {
-        target: { value: '验证 Ultra 模式' },
+        target: { value: '验证自动策略' },
       } as unknown as Event);
     });
 
@@ -1590,12 +1522,11 @@ describe('WorkbenchPage', () => {
     const runConfig = JSON.parse(
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
-    expect(runConfig).toMatchObject({
-      mode: 'ultra',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: true,
-    });
+    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
+    expect(runConfig).not.toHaveProperty('mode');
+    expect(runConfig).not.toHaveProperty('thinking_enabled');
+    expect(runConfig).not.toHaveProperty('is_plan_mode');
+    expect(runConfig).not.toHaveProperty('subagent_enabled');
     expect(
       Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
     ).toBe(false);
@@ -1646,10 +1577,7 @@ describe('WorkbenchPage', () => {
     );
     expect(defaultRunConfig).toMatchObject({
       runtime: 'eino_adk',
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -2097,10 +2025,7 @@ describe('WorkbenchPage', () => {
     expect(
       JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
     ).toMatchObject({
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       model_type: 100002,
       model_name: 'deepseek-v4-pro',
       enable_skills: [],
@@ -2487,10 +2412,7 @@ describe('WorkbenchPage', () => {
     expect(
       JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
     ).toMatchObject({
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       model_type: 100003,
       model_name: 'gpt-4.1',
     });
@@ -2623,10 +2545,7 @@ describe('WorkbenchPage', () => {
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       skills: {
         enabled: true,
         allowed_skills: [],

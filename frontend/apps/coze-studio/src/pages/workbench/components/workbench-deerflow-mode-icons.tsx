@@ -16,14 +16,10 @@
 
 import {
   IconCozArrowUp,
-  IconCozLightningFill,
-  IconCozRocketFill,
   IconCozSkill,
   IconCozStopCircle,
 } from '@coze-arch/coze-design/icons';
 
-export const DeerFlowFlashIcon = IconCozLightningFill;
 export const DeerFlowSkillIcon = IconCozSkill;
-export const DeerFlowUltraIcon = IconCozRocketFill;
 export const DeerFlowSendIcon = IconCozArrowUp;
 export const DeerFlowStopIcon = IconCozStopCircle;

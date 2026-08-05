@@ -20,6 +20,7 @@ import type {
 } from '../workbench/thread-client';
 import {
   stringifyWorkbenchRunConfig,
+  WORKBENCH_REQUESTED_POLICY,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import {
@@ -55,7 +56,7 @@ const getThreadFollowUpRunMetadata = (
 ) =>
   JSON.stringify({
     source: 'workbench_detail_followup',
-    mode: payload.mode,
+    requested_policy: WORKBENCH_REQUESTED_POLICY,
   });
 
 export const createFollowUpIdempotencyKey = (threadId: string) => {

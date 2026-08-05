@@ -88,7 +88,12 @@ func TestADKMiddlewareOmitsDisabledOptionalCapabilities(t *testing.T) {
 	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
 
 	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-		Run:   &RunSummary{RunID: 20, Config: `{"mode":"flash"}`},
+		Run: &RunSummary{RunID: 20, Config: `{
+			"mode":"pro",
+			"thinking_enabled":false,
+			"is_plan_mode":false,
+			"subagent_enabled":false
+		}`},
 		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 	})
 
@@ -380,7 +385,10 @@ func TestADKMiddlewareDoesNotBuildPlanBackendOutsidePlanMode(t *testing.T) {
 	})
 
 	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-		Run:   &RunSummary{RunID: 20, Config: `{"mode":"thinking"}`},
+		Run: &RunSummary{RunID: 20, Config: `{
+			"mode":"pro",
+			"is_plan_mode":false
+		}`},
 		Model: &recordingChatModel{},
 	})
 

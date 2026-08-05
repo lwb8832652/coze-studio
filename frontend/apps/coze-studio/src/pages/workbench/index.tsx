@@ -51,10 +51,9 @@ import {
 } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
-  DEFAULT_WORKBENCH_MODE,
   stringifyWorkbenchRunConfig,
+  WORKBENCH_REQUESTED_POLICY,
   type WorkbenchComposerSubmitPayload,
-  type WorkbenchMode,
 } from './components/types';
 
 const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as const;
@@ -107,10 +106,10 @@ const buildNewTaskRunInput = ({
     uploaded_files: uploadedFiles ?? [],
   });
 
-const getNewTaskRunMetadata = ({ mode }: { mode: WorkbenchMode }) =>
+const getNewTaskRunMetadata = () =>
   JSON.stringify({
     source: 'workbench_new_task',
-    mode,
+    requested_policy: WORKBENCH_REQUESTED_POLICY,
   });
 
 const createNewTaskRunIdempotencyKey = (threadId: string) => {
@@ -362,7 +361,6 @@ const WorkbenchPage = () => {
     : undefined;
   const isSkillCreationMode = Boolean(skillCreationState);
   const [value, setValue] = useState(skillCreationState?.initialMessage ?? '');
-  const [mode, setMode] = useState<WorkbenchMode>(DEFAULT_WORKBENCH_MODE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -412,9 +410,7 @@ const WorkbenchPage = () => {
             uploadedFiles: uploadResponse.data?.files,
           }),
           config: stringifyWorkbenchRunConfig(submitPayload),
-          metadata: getNewTaskRunMetadata({
-            mode: submitPayload.mode,
-          }),
+          metadata: getNewTaskRunMetadata(),
           message_content: submitPayload.message,
           message_metadata: stringifyWorkbenchRunConfig(submitPayload),
           idempotency_key: createNewTaskRunIdempotencyKey(thread.thread_id),
@@ -468,14 +464,12 @@ const WorkbenchPage = () => {
 
         <WorkbenchComposer
           value={value}
-          mode={mode}
           loading={loading}
           error={error}
           presentation="deerflow"
           spaceId={space_id}
           modelLoader={getWorkbenchLLMModels}
           onValueChange={setValue}
-          onModeChange={setMode}
           onSubmit={handleSend}
         />
 

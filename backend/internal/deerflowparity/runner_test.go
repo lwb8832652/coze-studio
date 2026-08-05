@@ -34,7 +34,7 @@ import (
 func TestRunnerExecutesOrdinaryCaseAndProducesAlignedReport(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := newPassingFakePlatform(ProductDeerFlow, testCase)
 	candidate := newPassingFakePlatform(ProductNewX, testCase)
 	runner, err := NewRunner(reference, candidate, RunnerOptions{
@@ -59,7 +59,7 @@ func TestRunnerExecutesOrdinaryCaseAndProducesAlignedReport(t *testing.T) {
 func TestNewRunnerRejectsMissingRevisionProvenance(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	_, err := NewRunner(
 		newPassingFakePlatform(ProductDeerFlow, testCase),
 		newPassingFakePlatform(ProductNewX, testCase),
@@ -133,7 +133,7 @@ func TestRunnerExecutesCancelResumeAndReconnectActions(t *testing.T) {
 func TestRunnerClassifiesPrerequisiteFailuresAsBlocked(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := newPassingFakePlatform(ProductDeerFlow, testCase)
 	candidate := newPassingFakePlatform(ProductNewX, testCase)
 	candidate.createErr = NewPrerequisiteError("newx_schema_migration_missing")
@@ -179,7 +179,7 @@ func TestRunnerReloadStateRequiresDurableStateAndCheckpointHistory(t *testing.T)
 func TestRunnerDoesNotClassifyCaseDeadlineAsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := newPassingFakePlatform(ProductDeerFlow, testCase)
 	candidate := newPassingFakePlatform(ProductNewX, testCase)
 	candidate.createErr = context.DeadlineExceeded
@@ -200,7 +200,7 @@ func TestRunnerDoesNotClassifyCaseDeadlineAsUnavailable(t *testing.T) {
 func TestRunnerReadsEveryMessagePageWithoutRepeatingCursor(t *testing.T) {
 	t.Parallel()
 
-	platform := newPassingFakePlatform(ProductNewX, mustAcceptanceCase(t, "core.flash.direct"))
+	platform := newPassingFakePlatform(ProductNewX, mustAcceptanceCase(t, "core.pro.direct"))
 	platform.paginateMessages = true
 	messages, usage, err := readAllRunMessages(context.Background(), platform, "newx-thread", "newx-run-1")
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestRunnerReadsEveryMessagePageWithoutRepeatingCursor(t *testing.T) {
 func TestSuiteReportWritersContainOnlySanitizedObservations(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := newPassingFakePlatform(ProductDeerFlow, testCase)
 	candidate := newPassingFakePlatform(ProductNewX, testCase)
 	reference.privateMessage = "PRIVATE_REFERENCE_COMPLETION"
@@ -240,7 +240,7 @@ func TestSuiteReportWritersContainOnlySanitizedObservations(t *testing.T) {
 	require.NoError(t, WriteMarkdownReport(&markdownOutput, report))
 
 	combined := jsonOutput.String() + markdownOutput.String()
-	require.Contains(t, combined, "core.flash.direct")
+	require.Contains(t, combined, "core.pro.direct")
 	require.Contains(t, combined, "aligned")
 	require.Contains(t, markdownOutput.String(), "local_deerflow")
 	require.Contains(t, markdownOutput.String(), "local_newx")
@@ -545,17 +545,17 @@ func TestNewPrerequisiteErrorRejectsUnsafeCodes(t *testing.T) {
 func TestBuildRunInputUsesLockedModeProjection(t *testing.T) {
 	t.Parallel()
 
-	for _, caseID := range []string{"core.flash.direct", "core.thinking.direct", "core.pro.todo", "core.ultra.subagents"} {
+	for _, caseID := range []string{"core.pro.direct", "core.ultra.direct", "core.pro.todo", "core.ultra.subagents"} {
 		testCase := mustAcceptanceCase(t, caseID)
 		input := BuildRunInput(testCase)
 		require.Equal(t, "lead_agent", input.AssistantID)
 		require.Equal(t, string(testCase.Mode), input.Context["mode"])
-		require.Equal(t, testCase.Mode != ModeFlash, input.Context["thinking_enabled"])
-		require.Equal(t, testCase.Mode == ModePro || testCase.Mode == ModeUltra, input.Context["is_plan_mode"])
+		require.Equal(t, true, input.Context["thinking_enabled"])
+		require.Equal(t, true, input.Context["is_plan_mode"])
 		require.Equal(t, testCase.Mode == ModeUltra, input.Context["subagent_enabled"])
 		require.Equal(t, string(testCase.Mode), input.Config["mode"])
-		require.Equal(t, testCase.Mode != ModeFlash, input.Config["thinking_enabled"])
-		require.Equal(t, testCase.Mode == ModePro || testCase.Mode == ModeUltra, input.Config["is_plan_mode"])
+		require.Equal(t, true, input.Config["thinking_enabled"])
+		require.Equal(t, true, input.Config["is_plan_mode"])
 		require.Equal(t, testCase.Mode == ModeUltra, input.Config["subagent_enabled"])
 		require.Equal(t, "eino_adk", input.Config["runtime"])
 		require.Equal(t, []string{"events"}, input.StreamMode)
@@ -845,7 +845,7 @@ func TestWriteMarkdownReportRejectsUnsafeBlocker(t *testing.T) {
 		ReferenceEnvironment: "deerflow",
 		CandidateEnvironment: "newx",
 		Cases: []CaseReport{{
-			CaseID: "core.flash.direct",
+			CaseID: "core.pro.direct",
 			Comparison: ComparisonResult{
 				Status:  StatusBlocked,
 				Blocker: strings.Repeat("x", 200) + " secret",

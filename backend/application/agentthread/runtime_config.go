@@ -27,11 +27,15 @@ var ErrInvalidRuntimeConfig = errors.New("invalid agent runtime config")
 
 type DeerFlowMode string
 
+type DeerFlowRequestedPolicy string
+
 const (
-	DeerFlowModeFlash    DeerFlowMode = "flash"
-	DeerFlowModeThinking DeerFlowMode = "thinking"
-	DeerFlowModePro      DeerFlowMode = "pro"
-	DeerFlowModeUltra    DeerFlowMode = "ultra"
+	DeerFlowModePro   DeerFlowMode = "pro"
+	DeerFlowModeUltra DeerFlowMode = "ultra"
+
+	DeerFlowRequestedPolicyAuto  DeerFlowRequestedPolicy = "auto"
+	DeerFlowRequestedPolicyPro   DeerFlowRequestedPolicy = "pro"
+	DeerFlowRequestedPolicyUltra DeerFlowRequestedPolicy = "ultra"
 
 	defaultDeerFlowMaxConcurrentSubagents = 3
 	minDeerFlowMaxConcurrentSubagents     = 2
@@ -40,6 +44,7 @@ const (
 
 var deerFlowRuntimeContextKeys = []string{
 	"model_name",
+	"requested_policy",
 	"mode",
 	"thinking_enabled",
 	"reasoning_effort",
@@ -52,12 +57,14 @@ var deerFlowRuntimeContextKeys = []string{
 
 type DeerFlowRuntimeConfig struct {
 	Runtime                 RuntimeMode
+	RequestedPolicy         DeerFlowRequestedPolicy
 	Mode                    DeerFlowMode
 	ThinkingEnabled         bool
 	ReasoningEffort         string
 	IsPlanMode              bool
 	SubagentEnabled         bool
 	MaxConcurrentSubagents  int
+	RequestedPolicyExplicit bool
 	ModeExplicit            bool
 	ThinkingExplicit        bool
 	ReasoningEffortExplicit bool
@@ -73,8 +80,8 @@ func ParseDeerFlowRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error)
 		return DeerFlowRuntimeConfig{}, err
 	}
 
-	config := defaultDeerFlowRuntimeConfig(DeerFlowModeThinking)
-	config.ReasoningEffort = ""
+	config := defaultDeerFlowRuntimeConfig(DeerFlowModeUltra)
+	config.RequestedPolicy = DeerFlowRequestedPolicyAuto
 	config.resolved = true
 
 	runtimeValue, runtimeSet, err := optionalDeerFlowConfigString(payload, "runtime")
@@ -93,6 +100,28 @@ func ParseDeerFlowRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error)
 		}
 	}
 
+	requestedPolicyValue, requestedPolicySet, err := optionalDeerFlowConfigString(
+		payload,
+		"requested_policy",
+	)
+	if err != nil {
+		return DeerFlowRuntimeConfig{}, err
+	}
+	if requestedPolicySet && requestedPolicyValue != "" {
+		requestedPolicy, resolvedMode, normalizeErr := normalizeDeerFlowRequestedPolicy(
+			requestedPolicyValue,
+		)
+		if normalizeErr != nil {
+			return DeerFlowRuntimeConfig{}, normalizeErr
+		}
+		config = defaultDeerFlowRuntimeConfig(resolvedMode)
+		config.Runtime = RuntimeMode(strings.ToLower(runtimeValue))
+		config.RequestedPolicy = requestedPolicy
+		config.RequestedPolicyExplicit = true
+		config.ModeExplicit = true
+		config.resolved = true
+	}
+
 	modeValue, modeSet, err := optionalDeerFlowConfigString(payload, "mode")
 	if err != nil {
 		return DeerFlowRuntimeConfig{}, err
@@ -102,8 +131,18 @@ func ParseDeerFlowRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error)
 		if normalizeErr != nil {
 			return DeerFlowRuntimeConfig{}, normalizeErr
 		}
-		config = defaultDeerFlowRuntimeConfig(mode)
-		config.Runtime = RuntimeMode(strings.ToLower(runtimeValue))
+		if config.RequestedPolicyExplicit && mode != config.Mode {
+			return DeerFlowRuntimeConfig{}, invalidRuntimeConfigf(
+				"mode %s conflicts with requested_policy %s",
+				mode,
+				config.RequestedPolicy,
+			)
+		}
+		if !config.RequestedPolicyExplicit {
+			config = defaultDeerFlowRuntimeConfig(mode)
+			config.Runtime = RuntimeMode(strings.ToLower(runtimeValue))
+			config.RequestedPolicy = requestedPolicyForMode(mode)
+		}
 		config.ModeExplicit = true
 		config.resolved = true
 	}
@@ -270,6 +309,7 @@ func normalizeNewDeerFlowRunConfig(
 	config.ModeExplicit = true
 	config.resolved = true
 	payload["runtime"] = string(RuntimeModeEinoADK)
+	payload["requested_policy"] = string(config.RequestedPolicy)
 	payload["mode"] = string(config.Mode)
 	payload["thinking_enabled"] = config.ThinkingEnabled
 	payload["is_plan_mode"] = config.IsPlanMode
@@ -309,10 +349,6 @@ func mergeDeerFlowRuntimeContext(target, source map[string]any) {
 func defaultDeerFlowRuntimeConfig(mode DeerFlowMode) DeerFlowRuntimeConfig {
 	config := DeerFlowRuntimeConfig{Mode: mode}
 	switch mode {
-	case DeerFlowModeFlash:
-	case DeerFlowModeThinking:
-		config.ThinkingEnabled = true
-		config.ReasoningEffort = "low"
 	case DeerFlowModePro:
 		config.ThinkingEnabled = true
 		config.ReasoningEffort = "medium"
@@ -329,16 +365,38 @@ func defaultDeerFlowRuntimeConfig(mode DeerFlowMode) DeerFlowRuntimeConfig {
 
 func normalizeDeerFlowMode(value string) (DeerFlowMode, error) {
 	switch strings.TrimSpace(value) {
-	case string(DeerFlowModeFlash), "Auto":
-		return DeerFlowModeFlash, nil
-	case string(DeerFlowModeThinking), "Ask":
-		return DeerFlowModeThinking, nil
-	case string(DeerFlowModePro), "Agent":
+	case string(DeerFlowModePro):
 		return DeerFlowModePro, nil
 	case string(DeerFlowModeUltra):
 		return DeerFlowModeUltra, nil
 	default:
 		return "", invalidRuntimeConfigf("unsupported DeerFlow mode: %s", value)
+	}
+}
+
+func normalizeDeerFlowRequestedPolicy(
+	value string,
+) (DeerFlowRequestedPolicy, DeerFlowMode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(DeerFlowRequestedPolicyAuto):
+		return DeerFlowRequestedPolicyAuto, DeerFlowModeUltra, nil
+	case string(DeerFlowRequestedPolicyPro):
+		return DeerFlowRequestedPolicyPro, DeerFlowModePro, nil
+	case string(DeerFlowRequestedPolicyUltra):
+		return DeerFlowRequestedPolicyUltra, DeerFlowModeUltra, nil
+	default:
+		return "", "", invalidRuntimeConfigf("unsupported requested_policy: %s", value)
+	}
+}
+
+func requestedPolicyForMode(mode DeerFlowMode) DeerFlowRequestedPolicy {
+	switch mode {
+	case DeerFlowModePro:
+		return DeerFlowRequestedPolicyPro
+	case DeerFlowModeUltra:
+		return DeerFlowRequestedPolicyUltra
+	default:
+		return ""
 	}
 }
 

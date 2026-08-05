@@ -127,8 +127,6 @@ func TestJournalFeatureGateEnrollsOnlyProAndUltraRootTasks(t *testing.T) {
 		parentID int64
 		want     bool
 	}{
-		{name: "flash", mode: DeerFlowModeFlash, runKind: domainentity.RunKindTask},
-		{name: "thinking", mode: DeerFlowModeThinking, runKind: domainentity.RunKindTask},
 		{name: "pro", mode: DeerFlowModePro, runKind: domainentity.RunKindTask, want: true},
 		{name: "ultra", mode: DeerFlowModeUltra, runKind: domainentity.RunKindTask, want: true},
 		{name: "child pro", mode: DeerFlowModePro, runKind: domainentity.RunKindTask, parentID: 9},
@@ -149,6 +147,23 @@ func TestJournalFeatureGateEnrollsOnlyProAndUltraRootTasks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJournalFeatureGateEnrollsAutomaticRootTasks(t *testing.T) {
+	gate := NewJournalFeatureGate(
+		&journalConfigProviderStub{configuration: enabledJournalConfiguration()},
+		JournalFeatureGateOptions{},
+	)
+
+	decision, err := gate.DecideEnrollment(context.Background(), JournalEnrollmentInput{
+		SpaceID:   42,
+		RunKind:   domainentity.RunKindTask,
+		RunConfig: `{"runtime":"eino_adk","requested_policy":"auto"}`,
+	})
+
+	require.NoError(t, err)
+	require.True(t, decision.Enrolled)
+	require.True(t, decision.SnapshotsEnabled)
 }
 
 func TestApplicationCreateTaskThreadPersistsJournalEnrollmentInAtomicBundle(t *testing.T) {

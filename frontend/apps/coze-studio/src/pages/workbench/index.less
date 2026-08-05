@@ -513,23 +513,8 @@ textarea.chat-workbench-input {
   min-width: 0;
 }
 
-.chat-workbench-mode {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-
-  height: 28px;
-  padding: 2px;
-
-  background: #fff;
-  border: 1px solid rgb(77 101 148 / 20%);
-  border-radius: 6px;
-}
-
-.chat-workbench-mode-button,
 .chat-workbench-icon-action,
 .chat-workbench-extension,
-.chat-workbench-deerflow-mode-trigger,
 .chat-workbench-model-trigger,
 .chat-workbench-runtime-trigger,
 .chat-workbench-toolbar-actions > button {
@@ -553,255 +538,14 @@ textarea.chat-workbench-input {
 }
 
 .chat-workbench-icon-action:focus-visible,
-.chat-workbench-deerflow-mode-trigger:focus-visible,
 .chat-workbench-model-trigger:focus-visible,
 .chat-workbench-toolbar-actions > button:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 2px rgb(218 187 94 / 22%);
 }
 
-.chat-workbench-mode-button[data-active='true'] {
-  color: #2a9e06;
-  background: rgb(91 100 117 / 10%);
-}
-
-.chat-workbench-deerflow-mode {
-  position: relative;
-}
-
-.chat-workbench-deerflow-mode-trigger {
-  height: 28px;
-  color: #d59b08;
-}
-
-.chat-workbench-deerflow-mode-trigger span:last-child {
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.chat-workbench-deerflow-mode-menu {
-  position: absolute;
-  z-index: 120;
-  left: 0;
-
-  display: flex;
-  flex-direction: column;
-
-  width: 320px;
-  padding: 8px;
-
-  background: #fff;
-  border: 1px solid #e5e7ef;
-  border-radius: 8px;
-  box-shadow: 0 12px 30px rgb(36 45 73 / 14%);
-}
-
-.chat-workbench-deerflow-mode-menu[data-placement='top'] {
-  bottom: 36px;
-}
-
-.chat-workbench-deerflow-mode-menu[data-placement='bottom'] {
-  top: 36px;
-}
-
-.chat-workbench-deerflow-mode-option-icon svg,
-.chat-workbench-deerflow-mode-trigger svg {
-  width: 14px;
-  height: 14px;
-
-  fill: none;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-
-.chat-workbench-deerflow-mode-title {
-  padding: 2px 4px 8px;
-  font-size: 12px;
-  line-height: 18px;
-  color: #535b6b;
-}
-
-.chat-workbench-deerflow-mode-option {
-  cursor: pointer;
-
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-
-  width: 100%;
-  min-height: 58px;
-  padding: 8px 4px;
-
-  font-family: inherit;
-  text-align: left;
-
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-}
-
-.chat-workbench-deerflow-mode-option:hover,
-.chat-workbench-deerflow-mode-option[data-active='true'] {
-  background: rgb(77 101 148 / 6%);
-}
-
-.chat-workbench-deerflow-mode-option-icon {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-
-  width: 18px;
-  margin-top: 2px;
-
-  color: #535b6b;
-}
-
-.chat-workbench-deerflow-mode-option-copy {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 4px;
-
-  min-width: 0;
-}
-
-.chat-workbench-deerflow-mode-option-copy span:first-child {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  color: #535b6b;
-}
-
-.chat-workbench-deerflow-mode-option-copy span:last-child {
-  font-size: 12px;
-  line-height: 18px;
-  color: #8b93a4;
-}
-
-.chat-workbench-deerflow-mode-option[data-active='true']
-  .chat-workbench-deerflow-mode-option-copy
-  span:first-child {
-  color: #d59b08;
-}
-
-.chat-workbench-deerflow-mode-option-check {
-  flex: 0 0 auto;
-
-  width: 16px;
-
-  font-size: 13px;
-  line-height: 18px;
-  color: #535b6b;
-  text-align: center;
-}
-
 .chat-workbench-model {
   position: relative;
-}
-
-/* Nuwax-aligned mode trigger and menu. Runtime semantics stay unchanged. */
-.chat-workbench-deerflow-mode-trigger {
-  gap: 6px;
-
-  height: 30px;
-  padding: 0 8px 0 5px;
-
-  color: var(--newx-color-text-primary);
-
-  background: #f7f9f7;
-  border: 1px solid var(--newx-color-border);
-  border-radius: 8px;
-}
-
-.chat-workbench-deerflow-mode-trigger > span:first-child {
-  display: grid;
-  place-items: center;
-
-  width: 20px;
-  height: 20px;
-
-  color: #b47a05;
-
-  background: #fff6d9;
-  border-radius: 6px;
-}
-
-.chat-workbench-deerflow-mode-label {
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.chat-workbench-deerflow-mode-arrow {
-  width: 12px !important;
-  height: 12px !important;
-  color: var(--newx-color-text-tertiary);
-  transition: transform 160ms ease;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true']
-  .chat-workbench-deerflow-mode-arrow {
-  transform: rotate(180deg);
-}
-
-.chat-workbench-deerflow-mode-menu {
-  width: 336px;
-  padding: 10px;
-
-  background: var(--newx-color-bg-elevated, #fff);
-  border-color: var(--newx-color-border);
-  border-radius: 12px;
-  box-shadow: 0 16px 42px rgb(23 32 26 / 14%);
-}
-
-.chat-workbench-deerflow-mode-title {
-  padding: 2px 6px 9px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--newx-color-text-primary);
-}
-
-.chat-workbench-deerflow-mode-option {
-  align-items: center;
-  min-height: 60px;
-  padding: 8px 9px;
-  border-radius: 9px;
-}
-
-.chat-workbench-deerflow-mode-option:hover {
-  background: var(--newx-color-bg-hover);
-}
-
-.chat-workbench-deerflow-mode-option[data-active='true'] {
-  background: #edf8f1;
-}
-
-.chat-workbench-deerflow-mode-option-icon {
-  width: 30px;
-  height: 30px;
-  margin-top: 0;
-
-  color: #58635c;
-
-  background: #f1f4f2;
-  border-radius: 8px;
-}
-
-.chat-workbench-deerflow-mode-option-copy span:first-child {
-  color: var(--newx-color-text-primary);
-}
-
-.chat-workbench-deerflow-mode-option-copy span:last-child {
-  color: var(--newx-color-text-secondary);
-}
-
-.chat-workbench-deerflow-mode-option[data-active='true']
-  .chat-workbench-deerflow-mode-option-copy
-  span:first-child,
-.chat-workbench-deerflow-mode-option-check {
-  color: var(--newx-color-accent);
 }
 
 .chat-workbench-model-trigger {
@@ -1537,9 +1281,7 @@ textarea.chat-workbench-input {
 }
 
 .chat-workbench-toolbar-actions > button:hover,
-.chat-workbench-mode-button:hover,
-.chat-workbench-icon-action:hover,
-.chat-workbench-deerflow-mode-trigger:hover {
+.chat-workbench-icon-action:hover {
   background: rgb(91 100 117 / 6%);
 }
 
@@ -2263,10 +2005,6 @@ textarea.chat-workbench-input {
     margin-left: 0;
   }
 
-  .chat-workbench-mode {
-    flex: 1 1 auto;
-  }
-
   .chat-workbench-toolbar[data-presentation='deerflow'] {
     flex-wrap: wrap;
   }
@@ -2288,16 +2026,6 @@ textarea.chat-workbench-input {
   .chat-workbench-toolbar[data-presentation='deerflow']
     .chat-workbench-model-trigger {
     max-width: 100%;
-  }
-
-  .chat-workbench-deerflow-mode-menu {
-    right: 0;
-    left: auto;
-    width: min(320px, calc(100vw - 40px));
-  }
-
-  .chat-workbench-mode-button {
-    flex: 1 1 0;
   }
 
   .chat-workbench-at-menu {
@@ -2408,9 +2136,7 @@ textarea.chat-workbench-input {
 
 .chat-workbench-extension.chat-workbench-extension-deerflow:hover,
 .chat-workbench-toolbar-actions > button:hover,
-.chat-workbench-mode-button:hover,
-.chat-workbench-icon-action:hover,
-.chat-workbench-deerflow-mode-trigger:hover {
+.chat-workbench-icon-action:hover {
   background: var(--newx-color-bg-hover) !important;
 }
 
@@ -2694,222 +2420,4 @@ textarea.chat-workbench-input {
     padding-right: 4px;
     padding-left: 4px;
   }
-}
-
-/* Keep the mode switch visually level with the surrounding composer actions. */
-.chat-workbench-deerflow-mode-trigger {
-  gap: 5px !important;
-
-  min-width: 0 !important;
-  height: 28px !important;
-  padding: 0 6px !important;
-
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  color: #59655d !important;
-
-  background: transparent !important;
-  border: 1px solid transparent !important;
-  border-radius: 7px !important;
-  box-shadow: none !important;
-}
-
-.chat-workbench-deerflow-mode-trigger >
-  .chat-workbench-deerflow-mode-icon,
-.chat-workbench-deerflow-mode-trigger >
-  svg:not(.chat-workbench-deerflow-mode-trigger-arrow) {
-  display: none !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:hover {
-  color: #257747 !important;
-  background: #f3f7f4 !important;
-  border-color: #e2ebe5 !important;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true'] {
-  color: #21894f !important;
-  background: #edf7f0 !important;
-  border-color: #d7e8dc !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:focus-visible {
-  border-color: #bcd9c5 !important;
-  outline: none !important;
-  box-shadow: 0 0 0 2px rgb(33 137 79 / 12%) !important;
-}
-
-.chat-workbench-deerflow-mode-trigger-label {
-  line-height: 20px !important;
-}
-
-.chat-workbench-deerflow-mode-trigger-arrow {
-  width: 12px !important;
-  height: 12px !important;
-  color: #8a948d !important;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true']
-  .chat-workbench-deerflow-mode-trigger-arrow {
-  color: #21894f !important;
-}
-
-.chat-workbench-deerflow-mode-trigger > span[aria-hidden='true'] {
-  display: none !important;
-}
-
-.chat-workbench-deerflow-mode-label {
-  line-height: 20px !important;
-}
-
-.chat-workbench-deerflow-mode-arrow {
-  width: 12px !important;
-  height: 12px !important;
-  color: #8a948d !important;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true']
-  .chat-workbench-deerflow-mode-arrow {
-  color: #21894f !important;
-}
-
-.chat-workbench-deerflow-mode-arrow {
-  display: block !important;
-  flex: none !important;
-  transition: transform 160ms ease, color 160ms ease !important;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true']
-  .chat-workbench-deerflow-mode-arrow {
-  transform: rotate(180deg) !important;
-}
-
-.chat-workbench-deerflow-mode-trigger >
-  svg.chat-workbench-deerflow-mode-arrow {
-  display: block !important;
-}
-
-/* Balanced mode switch: recognizable, but consistent with the green workbench. */
-.chat-workbench-deerflow-mode-trigger {
-  gap: 6px !important;
-
-  height: 30px !important;
-  padding: 0 7px 0 6px !important;
-
-  color: #334039 !important;
-
-  background: #f8faf8 !important;
-  border-color: #dce6df !important;
-  border-radius: 8px !important;
-  box-shadow: 0 1px 2px rgb(34 76 49 / 6%) !important;
-}
-
-.chat-workbench-deerflow-mode-trigger > span[aria-hidden='true'] {
-  display: inline-flex !important;
-  flex: none !important;
-  align-items: center !important;
-  justify-content: center !important;
-
-  width: 18px !important;
-  height: 18px !important;
-
-  color: #21894f !important;
-
-  background: #e6f3ea !important;
-  border-radius: 5px !important;
-}
-
-.chat-workbench-deerflow-mode-trigger > span[aria-hidden='true'] svg {
-  width: 12px !important;
-  height: 12px !important;
-}
-
-.chat-workbench-deerflow-mode-label {
-  font-weight: 600 !important;
-  color: inherit !important;
-}
-
-.chat-workbench-deerflow-mode-trigger >
-  svg.chat-workbench-deerflow-mode-arrow {
-  display: block !important;
-  width: 11px !important;
-  height: 11px !important;
-  color: #7f8b83 !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:hover {
-  color: #1f7244 !important;
-  background: #f2f8f4 !important;
-  border-color: #c6dbcd !important;
-  box-shadow: 0 2px 6px rgb(34 76 49 / 8%) !important;
-}
-
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true'] {
-  color: #1f7f49 !important;
-  background: #eef7f1 !important;
-  border-color: #b7d6c0 !important;
-  box-shadow: 0 0 0 2px rgb(33 137 79 / 9%) !important;
-}
-
-/* Final compact mode treatment: icon-led, frameless, and calm. */
-.chat-workbench-deerflow-mode-trigger {
-  height: 28px !important;
-  padding: 0 5px !important;
-
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-
-.chat-workbench-deerflow-mode-trigger > span[aria-hidden='true'] {
-  width: 16px !important;
-  height: 16px !important;
-
-  color: #47745a !important;
-
-  background: transparent !important;
-  border-radius: 0 !important;
-}
-
-.chat-workbench-deerflow-mode-trigger > span[aria-hidden='true'] svg {
-  width: 14px !important;
-  height: 14px !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:hover,
-.chat-workbench-deerflow-mode-trigger[aria-expanded='true'] {
-  background: #eef6f0 !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:focus-visible {
-  border-color: transparent !important;
-  box-shadow: 0 0 0 2px rgb(33 137 79 / 11%) !important;
-}
-
-.chat-workbench-deerflow-mode-option-icon {
-  width: 24px !important;
-  height: 24px !important;
-
-  color: #6d7971 !important;
-
-  background: transparent !important;
-  border-radius: 6px !important;
-}
-
-.chat-workbench-deerflow-mode-option-icon svg {
-  width: 15px !important;
-  height: 15px !important;
-}
-
-.chat-workbench-deerflow-mode-option[aria-checked='true']
-  .chat-workbench-deerflow-mode-option-icon {
-  color: #21894f !important;
-}
-
-.chat-workbench-deerflow-mode-trigger:focus-visible {
-  background: #eef6f0 !important;
-  outline: none !important;
-  box-shadow: none !important;
 }

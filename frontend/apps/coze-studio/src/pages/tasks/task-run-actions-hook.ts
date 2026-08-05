@@ -22,7 +22,6 @@ import type { WorkbenchRun } from '../workbench/thread-client';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
-  DEFAULT_WORKBENCH_MODE,
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
@@ -43,7 +42,6 @@ const getTaskRetryPayload = (
 
   return {
     message,
-    mode: DEFAULT_WORKBENCH_MODE,
     runtimeSettings: createDefaultWorkbenchRuntimeSettings(resourceSelection),
     ...resourceSelection,
   };

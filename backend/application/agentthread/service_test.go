@@ -496,18 +496,20 @@ func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *tes
 		SpaceID: 1,
 		UserID:  2,
 		Message: "请分析客户反馈",
-		Config:  `{"mode":"thinking","skills":{"enabled":true}}`,
+		Config:  `{"requested_policy":"auto","skills":{"enabled":true}}`,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, domainSVC.createThreadRunMessageReq)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"mode":"thinking",
+		"requested_policy":"auto",
+		"mode":"ultra",
 		"thinking_enabled":true,
-		"reasoning_effort":"low",
-		"is_plan_mode":false,
-		"subagent_enabled":false,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":3,
 		"skills":{"enabled":true}
 	}`, domainSVC.createThreadRunMessageReq.Run.Config)
 }
@@ -1871,17 +1873,19 @@ func TestApplicationCreateRunCanonicalizesLangGraphRuntimeContext(t *testing.T) 
 	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
 		ThreadID: 10,
 		Config:   `{}`,
-		Context:  `{"mode":"flash","model_name":"deepseek-v4-pro"}`,
+		Context:  `{"requested_policy":"pro","model_name":"deepseek-v4-pro"}`,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, domainSVC.createRunBundleReq)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"mode":"flash",
+		"requested_policy":"pro",
+		"mode":"pro",
 		"model_name":"deepseek-v4-pro",
-		"thinking_enabled":false,
-		"is_plan_mode":false,
+		"thinking_enabled":true,
+		"reasoning_effort":"medium",
+		"is_plan_mode":true,
 		"subagent_enabled":false
 	}`, domainSVC.createRunBundleReq.Run.Config)
 }

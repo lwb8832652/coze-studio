@@ -152,7 +152,6 @@ const createRun = (runID: string, createdAt: number): WorkbenchRun => ({
 
 const submitPayload = {
   message: '并发追问',
-  mode: 'pro',
   runtimeSettings: {
     runtime: 'eino_adk',
   },

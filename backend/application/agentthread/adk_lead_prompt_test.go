@@ -24,7 +24,9 @@ import (
 )
 
 func TestADKLeadPromptBuildsStableDefaultContract(t *testing.T) {
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig(`{"mode":"thinking"}`)
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(
+		`{"mode":"pro","is_plan_mode":false}`,
+	)
 	require.NoError(t, err)
 
 	prompt, err := NewDefaultADKLeadPromptComposer().Compose(
@@ -71,7 +73,10 @@ func TestADKLeadPromptProjectsConditionalCapabilitySections(t *testing.T) {
 		wantDeferred     bool
 		wantConcurrency  string
 	}{
-		{name: "flash", config: `{"mode":"flash"}`},
+		{
+			name:   "pro capabilities disabled",
+			config: `{"mode":"pro","is_plan_mode":false}`,
+		},
 		{name: "pro", config: `{"mode":"pro"}`, wantPlan: true},
 		{
 			name:             "ultra",

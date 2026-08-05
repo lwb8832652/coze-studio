@@ -27,7 +27,6 @@ import (
 	"gorm.io/gorm"
 
 	adminconfig "github.com/coze-dev/coze-studio/backend/api/model/admin/config"
-	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
 
 func TestJournalIntegrationEnrollsProjectsAndServesAuthorizedProRun(t *testing.T) {
@@ -87,19 +86,19 @@ func TestJournalIntegrationEnrollsProjectsAndServesAuthorizedProRun(t *testing.T
 	require.NotContains(t, bootstrap.Events[1].Payload, "secret-value")
 }
 
-func TestJournalIntegrationDoesNotCreateEmptyJournalForFlashRun(t *testing.T) {
+func TestJournalIntegrationKeepsAutomaticRunEmptyBeforePublicEvents(t *testing.T) {
 	app := newJournalIntegrationApplication(t)
 	ctx := context.Background()
 
 	thread, err := app.CreateThread(ctx, &CreateThreadRequest{
-		SpaceID: 9, UserID: 2, Title: "Flash integration",
+		SpaceID: 9, UserID: 2, Title: "Automatic integration",
 	})
 	require.NoError(t, err)
 	run, err := app.CreateRun(ctx, &CreateRunRequest{
 		ThreadID: thread.Thread.ThreadID,
 		Status:   RunStatusQueued,
 		Input:    `{"messages":[{"role":"user","content":"直接回答"}]}`,
-		Config:   `{"runtime":"eino_adk","mode":"flash"}`,
+		Config:   `{"runtime":"eino_adk","requested_policy":"auto"}`,
 	})
 	require.NoError(t, err)
 
@@ -107,8 +106,9 @@ func TestJournalIntegrationDoesNotCreateEmptyJournalForFlashRun(t *testing.T) {
 		ViewerID: 2, SpaceID: 9, ThreadID: thread.Thread.ThreadID,
 		RunID: run.Run.RunID, Limit: 20,
 	})
-	require.ErrorIs(t, err, domainrepo.ErrJournalNotEnrolled)
-	require.Nil(t, bootstrap)
+	require.NoError(t, err)
+	require.True(t, bootstrap.JournalEnabled)
+	require.Empty(t, bootstrap.Events)
 }
 
 func newJournalIntegrationApplication(t *testing.T) *ApplicationService {

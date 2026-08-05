@@ -28,8 +28,8 @@ func TestNormalizeCaptureCanonicalizesProductEventAliases(t *testing.T) {
 
 	deerFlow, err := NormalizeCapture(RawCapture{
 		Product: ProductDeerFlow,
-		CaseID:  "core.flash.direct",
-		Mode:    ModeFlash,
+		CaseID:  "core.pro.direct",
+		Mode:    ModePro,
 		Events: []RawEvent{
 			{ID: "df-1", Type: "run.started"},
 			{ID: "df-2", Type: "assistant.completed"},
@@ -44,8 +44,8 @@ func TestNormalizeCaptureCanonicalizesProductEventAliases(t *testing.T) {
 
 	newX, err := NormalizeCapture(RawCapture{
 		Product: ProductNewX,
-		CaseID:  "core.flash.direct",
-		Mode:    ModeFlash,
+		CaseID:  "core.pro.direct",
+		Mode:    ModePro,
 		Events: []RawEvent{
 			{ID: "101", Type: "run.created"},
 			{ID: "102", Type: "message.completed", Payload: map[string]any{"role": "assistant"}},
@@ -70,8 +70,8 @@ func TestNormalizeCaptureCanonicalizesNewXTokenUsageSnapshot(t *testing.T) {
 
 	observation, err := NormalizeCapture(RawCapture{
 		Product: ProductNewX,
-		CaseID:  "core.flash.direct",
-		Mode:    ModeFlash,
+		CaseID:  "core.pro.direct",
+		Mode:    ModePro,
 		Events: []RawEvent{
 			{ID: "101", Type: "token_usage.snapshot"},
 		},
@@ -107,8 +107,8 @@ func TestNormalizeCaptureUsesEffectiveThinkingCapabilityWithoutReasoningText(t *
 
 	observation, err := NormalizeCapture(RawCapture{
 		Product: ProductNewX,
-		CaseID:  "core.thinking.direct",
-		Mode:    ModeThinking,
+		CaseID:  "core.ultra.direct",
+		Mode:    ModeUltra,
 		Events: []RawEvent{{
 			ID:   "102",
 			Type: "model.capability_downgraded",
@@ -167,8 +167,8 @@ func TestNormalizeCaptureRejectsCredentialAndCheckpointPayloads(t *testing.T) {
 			t.Parallel()
 			_, err := NormalizeCapture(RawCapture{
 				Product:  ProductNewX,
-				CaseID:   "core.flash.direct",
-				Mode:     ModeFlash,
+				CaseID:   "core.pro.direct",
+				Mode:     ModePro,
 				Events:   []RawEvent{{ID: "1", Type: "run.started", Payload: payload}},
 				Terminal: "success",
 			})
@@ -182,8 +182,8 @@ func TestNormalizeCaptureDoesNotSerializeModelOrToolContent(t *testing.T) {
 
 	observation, err := NormalizeCapture(RawCapture{
 		Product: ProductNewX,
-		CaseID:  "core.flash.direct",
-		Mode:    ModeFlash,
+		CaseID:  "core.pro.direct",
+		Mode:    ModePro,
 		Events: []RawEvent{{
 			ID:   "1",
 			Type: "message.completed",
@@ -215,8 +215,8 @@ func TestNormalizeCaptureCollapsesUnknownWireSymbolsToAllowlistedValues(t *testi
 
 	observation, err := NormalizeCapture(RawCapture{
 		Product: ProductNewX,
-		CaseID:  "core.flash.direct",
-		Mode:    ModeFlash,
+		CaseID:  "core.pro.direct",
+		Mode:    ModePro,
 		Events: []RawEvent{{
 			ID: "1", Type: "private.secret.event", Payload: map[string]any{},
 		}},

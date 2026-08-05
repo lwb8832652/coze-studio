@@ -4,12 +4,12 @@
   "deerflow_revision": "5851f8250eb150ca23134c79b11ebc5073ac2789",
   "cases": [
     {
-      "id": "core.flash.direct",
-      "mode": "flash",
+      "id": "core.pro.direct",
+      "mode": "pro",
       "input_prompt": "请仅回复：语义核心直答已收到。",
       "actions": [{ "type": "run" }],
       "expect": {
-        "capabilities": { "plan": false, "subagent": false },
+        "capabilities": { "thinking": true, "plan": false, "subagent": false },
         "assistant_message_required": true,
         "token_usage_required": true,
         "required_terminal": ["success"],
@@ -26,8 +26,8 @@
       }
     },
     {
-      "id": "core.thinking.direct",
-      "mode": "thinking",
+      "id": "core.ultra.direct",
+      "mode": "ultra",
       "input_prompt": "计算 37 乘以 19，只给出结果。",
       "actions": [{ "type": "run" }],
       "expect": {
@@ -141,7 +141,7 @@
     },
     {
       "id": "core.stream.reconnect",
-      "mode": "flash",
+      "mode": "pro",
       "input_prompt": "按顺序输出数字 1、2、3。",
       "actions": [
         { "type": "run" },

@@ -102,7 +102,7 @@ func TestADKAgentFactoryBuildsVersionedLeadPromptWithoutClientPrompt(t *testing.
 	)
 
 	agent, err := factory.Build(context.Background(), &RunSummary{
-		Config: `{"mode":"flash"}`,
+		Config: `{"mode":"pro"}`,
 	})
 	require.NoError(t, err)
 
@@ -155,7 +155,6 @@ func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
 		wantPlan     bool
 		wantSubagent bool
 	}{
-		{mode: "flash"},
 		{mode: "pro", wantPlan: true},
 		{mode: "ultra", wantPlan: true, wantSubagent: true},
 	}
@@ -516,7 +515,14 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 		}),
 	)
 
-	agent, err := factory.Build(context.Background(), &RunSummary{Config: `{"mode":"flash"}`})
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"mode":"pro",
+			"thinking_enabled":false,
+			"reasoning_effort":"",
+			"is_plan_mode":false
+		}`,
+	})
 
 	require.NoError(t, err)
 	require.NotNil(t, agent)
@@ -527,7 +533,7 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.File)
 	require.True(t, got.ModelCapabilities.Audio)
 	require.True(t, got.ModelCapabilities.Video)
-	require.Equal(t, DeerFlowModeFlash, got.RuntimeConfig.Mode)
+	require.Equal(t, DeerFlowModePro, got.RuntimeConfig.Mode)
 	require.False(t, got.RuntimeConfig.ThinkingEnabled)
 }
 

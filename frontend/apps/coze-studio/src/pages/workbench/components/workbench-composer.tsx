@@ -61,18 +61,12 @@ import {
   type WorkbenchLLMModel,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchComposerVariant,
-  type WorkbenchMode,
   type WorkbenchResourceSelection,
   type WorkbenchRuntimeSettings,
 } from './types';
 
 type Skill = workbenchSkill.Skill;
-type WorkbenchComposerActiveOverlay =
-  | 'at'
-  | 'extensions'
-  | 'mode'
-  | 'model'
-  | null;
+type WorkbenchComposerActiveOverlay = 'at' | 'extensions' | 'model' | null;
 
 const MAX_SLASH_SKILL_SUGGESTIONS = 6;
 const EXTENSION_USAGE_STORAGE_VERSION = 1;
@@ -245,7 +239,6 @@ const getMatchingSkillSuggestions = (
 
 export interface WorkbenchComposerProps {
   value: string;
-  mode: WorkbenchMode;
   loading: boolean;
   error?: string;
   variant?: WorkbenchComposerVariant;
@@ -259,7 +252,6 @@ export interface WorkbenchComposerProps {
   stopMode?: boolean;
   modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
   onValueChange: (value: string) => void;
-  onModeChange: (mode: WorkbenchMode) => void;
   onStop?: () => void | Promise<void>;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
 }
@@ -597,7 +589,6 @@ const useWorkbenchSkillSuggestions = ({
 
 const createSubmitHandler = ({
   loading,
-  mode,
   models,
   onStop,
   onSubmit,
@@ -611,7 +602,6 @@ const createSubmitHandler = ({
   value,
 }: {
   loading: boolean;
-  mode: WorkbenchMode;
   models: WorkbenchLLMModel[];
   onStop?: () => void | Promise<void>;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
@@ -640,7 +630,6 @@ const createSubmitHandler = ({
   onSubmit(
     createWorkbenchSubmitPayload({
       message,
-      mode,
       taskId,
       selectedModel,
       models,
@@ -769,7 +758,6 @@ const getMessageResourceSelection = (
 
 export const WorkbenchComposer = ({
   value,
-  mode,
   loading,
   error,
   variant = 'home',
@@ -783,7 +771,6 @@ export const WorkbenchComposer = ({
   stopMode,
   modelLoader,
   onValueChange,
-  onModeChange,
   onStop,
   onSubmit,
 }: WorkbenchComposerProps) => {
@@ -837,7 +824,6 @@ export const WorkbenchComposer = ({
   const overlayPlacement = variant === 'detail' ? 'top' : 'bottom';
   const atMenuOpen = activeOverlay === 'at';
   const extensionsOpen = activeOverlay === 'extensions';
-  const modeMenuOpen = activeOverlay === 'mode';
   const modelMenuOpen = activeOverlay === 'model';
   const {
     models,
@@ -1155,7 +1141,6 @@ export const WorkbenchComposer = ({
     createSubmitHandler({
       files,
       loading: loading || !resourceSelectionReady,
-      mode,
       models,
       onStop,
       onSubmit,
@@ -1241,7 +1226,6 @@ export const WorkbenchComposer = ({
           atSegments={atSegments}
           variant={variant}
           value={value}
-          mode={mode}
           presentation={presentation}
           showSkillSuggestions={showSkillSuggestions}
           skillSuggestionPlacement={overlayPlacement}
@@ -1297,8 +1281,6 @@ export const WorkbenchComposer = ({
           modelMenuOpen={modelMenuOpen}
           models={models}
           modelsLoading={modelsLoading}
-          mode={mode}
-          modeMenuOpen={modeMenuOpen}
           overlayPlacement={overlayPlacement}
           presentation={presentation}
           resourceSelection={scopedResourceSelection}
@@ -1324,8 +1306,6 @@ export const WorkbenchComposer = ({
             setActiveOverlay(open ? 'model' : null);
           }}
           onReloadModels={reloadModels}
-          onModeMenuOpenChange={open => setActiveOverlay(open ? 'mode' : null)}
-          onModeChange={onModeChange}
           onResourceSelectionChange={nextSelection => {
             if (resourceSelectionReady) {
               setResourceSelection(nextSelection);

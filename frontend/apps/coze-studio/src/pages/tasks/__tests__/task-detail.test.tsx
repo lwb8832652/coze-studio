@@ -697,7 +697,6 @@ const expectDeerFlowTaskComposer = (
   followUpComposer: Element | null | undefined,
 ) => {
   const composer = followUpComposer?.querySelector('.chat-workbench-composer');
-  const segmentedMode = followUpComposer?.querySelector('.chat-workbench-mode');
   const deerflowMode = followUpComposer?.querySelector(
     '.chat-workbench-deerflow-mode-trigger',
   );
@@ -707,16 +706,8 @@ const expectDeerFlowTaskComposer = (
   const attachmentButtons = followUpComposer?.querySelectorAll(
     'button[aria-label="添加附件"]',
   );
-  const modeButtonLabels = Array.from(
-    followUpComposer?.querySelectorAll('.chat-workbench-mode-button') ?? [],
-  ).map(button => button.textContent?.trim());
-
   expect(composer?.getAttribute('data-composer-style')).toBe('deerflow');
-  expect(segmentedMode).toBeNull();
-  expect(deerflowMode?.textContent).toContain('Pro');
-  expect(modeButtonLabels).not.toContain('Auto');
-  expect(modeButtonLabels).not.toContain('Ask');
-  expect(modeButtonLabels).not.toContain('Agent');
+  expect(deerflowMode).toBeNull();
   expect(followUpComposer?.textContent).toContain('DeepSeek V4 Pro (Thinking)');
   expect(followUpComposer?.textContent).toContain('拓展');
   expect(
@@ -1797,9 +1788,8 @@ describe('TaskDetailPage', () => {
 
       const journalFlow = container.querySelector('.journal-conversation-flow');
       const journalIntro = container.querySelector('.journal-execution-intro');
-      const firstJournalMilestone = container.querySelector(
-        '.journal-milestone',
-      );
+      const firstJournalMilestone =
+        container.querySelector('.journal-milestone');
       const assistantHeaders = container.querySelectorAll(
         '.coze-prototype-assistant-turn-header',
       );
@@ -1832,7 +1822,9 @@ describe('TaskDetailPage', () => {
       expect(assistantHeaders).toHaveLength(1);
       expect(assistantHeaders[0]?.textContent).toContain('NewX AI');
       expect(assistantHeaders[0]?.textContent).not.toContain('· Agent');
-      expect(container.querySelector('.coze-prototype-execution-feed')).toBeNull();
+      expect(
+        container.querySelector('.coze-prototype-execution-feed'),
+      ).toBeNull();
       expect(container.textContent).not.toContain('可用技能目录');
       expect(container.textContent).toContain('文档已生成。');
       expect(
@@ -2000,9 +1992,7 @@ describe('TaskDetailPage', () => {
       expect(container.textContent).toContain(
         '我会先规划执行路径，再逐步完成任务。',
       );
-      expect(container.textContent).not.toContain(
-        '收到，我会开始执行任务。',
-      );
+      expect(container.textContent).not.toContain('收到，我会开始执行任务。');
     } finally {
       act(() => {
         root?.unmount();
@@ -2065,10 +2055,7 @@ describe('TaskDetailPage', () => {
       msg: '',
     });
     mockTopLevelRun({
-      ...createMockRunningRun(
-        'thread-journal-final-1',
-        'run-journal-final-1',
-      ),
+      ...createMockRunningRun('thread-journal-final-1', 'run-journal-final-1'),
       status: 'failed',
     });
     mockListTaskThreadRunEvents.mockResolvedValue({
@@ -2211,7 +2198,9 @@ describe('TaskDetailPage', () => {
       expect(journalFlow).toBeTruthy();
       expect(finalAnswer).toBeTruthy();
       expect(artifactList).toBeTruthy();
-      expect(container.querySelector('.coze-prototype-journal-intro')).toBeNull();
+      expect(
+        container.querySelector('.coze-prototype-journal-intro'),
+      ).toBeNull();
       expect(
         journalFlow && finalAnswer
           ? journalFlow.compareDocumentPosition(finalAnswer) &
@@ -3116,22 +3105,6 @@ describe('TaskDetailPage', () => {
         ?.getAttribute('data-placement'),
     ).toBe('top');
 
-    const deerflowMode = followUpComposer?.querySelector(
-      '.chat-workbench-deerflow-mode-trigger',
-    );
-    await act(async () => {
-      Simulate.click(deerflowMode!);
-      await Promise.resolve();
-    });
-    expect(
-      followUpComposer?.querySelector('.chat-workbench-at-menu'),
-    ).toBeNull();
-    expect(
-      followUpComposer
-        ?.querySelector('.chat-workbench-deerflow-mode-menu')
-        ?.getAttribute('data-placement'),
-    ).toBe('top');
-
     const extensionsButton = followUpComposer?.querySelector(
       'button[aria-label="拓展"]',
     );
@@ -3140,9 +3113,6 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(
-      followUpComposer?.querySelector('.chat-workbench-deerflow-mode-menu'),
-    ).toBeNull();
     expect(
       followUpComposer
         ?.querySelector('.chat-workbench-extensions')
@@ -5490,9 +5460,9 @@ describe('TaskDetailPage', () => {
       );
       expect(journalPanel).toBeTruthy();
       expect(
-        journalPanel?.querySelector('button[aria-label="文档"]')?.getAttribute(
-          'aria-selected',
-        ),
+        journalPanel
+          ?.querySelector('button[aria-label="文档"]')
+          ?.getAttribute('aria-selected'),
       ).toBe('true');
       expect(
         journalPanel?.querySelector(
@@ -9747,10 +9717,7 @@ describe('TaskDetailPage', () => {
     });
     expect(JSON.parse(retryRequest.config)).toMatchObject({
       runtime: 'eino_adk',
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       token_usage: {
         enabled: true,
       },
@@ -10302,10 +10269,7 @@ describe('TaskDetailPage', () => {
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     const messageMetadata = JSON.parse(runRequest.message_metadata);
     expect(messageMetadata).toMatchObject({
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
@@ -10338,10 +10302,7 @@ describe('TaskDetailPage', () => {
     const runConfig = JSON.parse(runRequest.config);
     expect(runConfig).toMatchObject({
       runtime: 'eino_adk',
-      mode: 'pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
+      requested_policy: 'auto',
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],

@@ -159,7 +159,7 @@ func validateAction(action Action) error {
 
 func validMode(mode Mode) bool {
 	switch mode {
-	case ModeFlash, ModeThinking, ModePro, ModeUltra:
+	case ModePro, ModeUltra:
 		return true
 	default:
 		return false

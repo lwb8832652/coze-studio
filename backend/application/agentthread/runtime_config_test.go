@@ -32,8 +32,6 @@ func TestParseDeerFlowRuntimeConfigProjectsModes(t *testing.T) {
 		effort     string
 		concurrent int
 	}{
-		{mode: DeerFlowModeFlash},
-		{mode: DeerFlowModeThinking, thinking: true, effort: "low"},
 		{mode: DeerFlowModePro, thinking: true, plan: true, effort: "medium"},
 		{mode: DeerFlowModeUltra, thinking: true, plan: true, subagent: true, effort: "high", concurrent: 3},
 	}
@@ -56,18 +54,84 @@ func TestParseDeerFlowRuntimeConfigProjectsModes(t *testing.T) {
 	}
 }
 
-func TestParseDeerFlowRuntimeConfigSupportsHistoricalModeAliases(t *testing.T) {
-	tests := map[string]DeerFlowMode{
-		"Auto":  DeerFlowModeFlash,
-		"Ask":   DeerFlowModeThinking,
-		"Agent": DeerFlowModePro,
+func TestNormalizeNewDeerFlowRunConfigResolvesRequestedPolicies(t *testing.T) {
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	tests := []struct {
+		name            string
+		requestedPolicy string
+		wantMode        DeerFlowMode
+		wantSubagent    bool
+		wantEffort      string
+		wantConcurrency int
+	}{
+		{
+			name:            "auto",
+			requestedPolicy: "auto",
+			wantMode:        DeerFlowModeUltra,
+			wantSubagent:    true,
+			wantEffort:      "high",
+			wantConcurrency: defaultDeerFlowMaxConcurrentSubagents,
+		},
+		{
+			name:            "pro override",
+			requestedPolicy: "pro",
+			wantMode:        DeerFlowModePro,
+			wantEffort:      "medium",
+		},
+		{
+			name:            "ultra override",
+			requestedPolicy: "ultra",
+			wantMode:        DeerFlowModeUltra,
+			wantSubagent:    true,
+			wantEffort:      "high",
+			wantConcurrency: defaultDeerFlowMaxConcurrentSubagents,
+		},
 	}
 
-	for alias, want := range tests {
-		t.Run(alias, func(t *testing.T) {
-			config, err := ParseDeerFlowRuntimeConfig(`{"mode":"` + alias + `"}`)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			normalized, config, err := normalizeNewDeerFlowRunConfig(
+				`{"requested_policy":"`+test.requestedPolicy+`"}`,
+				policy,
+			)
+
 			require.NoError(t, err)
-			require.Equal(t, want, config.Mode)
+			require.Equal(t, test.wantMode, config.Mode)
+			require.True(t, config.ThinkingEnabled)
+			require.True(t, config.IsPlanMode)
+			require.Equal(t, test.wantSubagent, config.SubagentEnabled)
+			require.Equal(t, test.wantEffort, config.ReasoningEffort)
+			require.Equal(t, test.wantConcurrency, config.MaxConcurrentSubagents)
+
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(normalized), &payload))
+			require.Equal(t, test.requestedPolicy, payload["requested_policy"])
+			require.Equal(t, string(test.wantMode), payload["mode"])
+		})
+	}
+}
+
+func TestNormalizeNewDeerFlowRunConfigRejectsRemovedRequestedPolicies(t *testing.T) {
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+
+	for _, requestedPolicy := range []string{"flash", "thinking"} {
+		t.Run(requestedPolicy, func(t *testing.T) {
+			_, _, err := normalizeNewDeerFlowRunConfig(
+				`{"requested_policy":"`+requestedPolicy+`"}`,
+				policy,
+			)
+
+			require.ErrorContains(t, err, "unsupported requested_policy")
+		})
+	}
+}
+
+func TestParseDeerFlowRuntimeConfigRejectsRemovedModes(t *testing.T) {
+	for _, mode := range []string{"flash", "thinking", "Auto", "Ask", "Agent"} {
+		t.Run(mode, func(t *testing.T) {
+			_, err := ParseDeerFlowRuntimeConfig(`{"mode":"` + mode + `"}`)
+
+			require.ErrorContains(t, err, "unsupported DeerFlow mode")
 		})
 	}
 }
@@ -132,42 +196,48 @@ func TestNormalizeNewDeerFlowRunConfigCanonicalizesEinoAndPreservesFeatures(t *t
 	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 
 	normalized, config, err := normalizeNewDeerFlowRunConfig(`{
-		"mode":"Auto",
+		"requested_policy":"auto",
 		"skills":{"enabled":true},
 		"thinking_enabled":true
 	}`, policy)
 
 	require.NoError(t, err)
 	require.Equal(t, RuntimeModeEinoADK, config.Runtime)
-	require.Equal(t, DeerFlowModeFlash, config.Mode)
+	require.Equal(t, DeerFlowModeUltra, config.Mode)
 	require.True(t, config.ThinkingEnabled)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"mode":"flash",
+		"requested_policy":"auto",
+		"mode":"ultra",
 		"thinking_enabled":true,
-		"is_plan_mode":false,
-		"subagent_enabled":false,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":3,
 		"skills":{"enabled":true}
 	}`, normalized)
 }
 
-func TestNormalizeNewDeerFlowRunConfigUsesDeerFlowDefaultWhenModeIsMissing(t *testing.T) {
+func TestNormalizeNewDeerFlowRunConfigUsesAutomaticPolicyByDefault(t *testing.T) {
 	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 
 	normalized, config, err := normalizeNewDeerFlowRunConfig(`{}`, policy)
 
 	require.NoError(t, err)
-	require.Equal(t, DeerFlowModeThinking, config.Mode)
+	require.Equal(t, DeerFlowModeUltra, config.Mode)
 	require.True(t, config.ThinkingEnabled)
-	require.False(t, config.IsPlanMode)
-	require.False(t, config.SubagentEnabled)
-	require.Empty(t, config.ReasoningEffort)
+	require.True(t, config.IsPlanMode)
+	require.True(t, config.SubagentEnabled)
+	require.Equal(t, "high", config.ReasoningEffort)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"mode":"thinking",
+		"requested_policy":"auto",
+		"mode":"ultra",
 		"thinking_enabled":true,
-		"is_plan_mode":false,
-		"subagent_enabled":false
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":3
 	}`, normalized)
 }
 
@@ -184,10 +254,10 @@ func TestNormalizeNewDeerFlowRunConfigMergesDeerFlowContextWhitelist(t *testing.
 	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 
 	normalized, config, err := normalizeNewDeerFlowRunConfig(
-		`{"mode":"flash","system_prompt":"keep"}`,
+		`{"requested_policy":"pro","system_prompt":"keep"}`,
 		policy,
 		`{
-			"mode":"ultra",
+			"requested_policy":"ultra",
 			"model_name":"deepseek-v4-pro",
 			"max_concurrent_subagents":4,
 			"unknown_context_key":"drop"
@@ -208,10 +278,10 @@ func TestNormalizeNewDeerFlowRunConfigUsesNestedLangGraphContextPrecedence(t *te
 	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 
 	_, config, err := normalizeNewDeerFlowRunConfig(`{
-		"configurable":{"mode":"flash"},
-		"context":{"mode":"thinking"}
-	}`, policy, `{"mode":"ultra"}`)
+		"configurable":{"requested_policy":"pro"},
+		"context":{"requested_policy":"pro"}
+	}`, policy, `{"requested_policy":"ultra"}`)
 
 	require.NoError(t, err)
-	require.Equal(t, DeerFlowModeThinking, config.Mode)
+	require.Equal(t, DeerFlowModePro, config.Mode)
 }

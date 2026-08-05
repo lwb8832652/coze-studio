@@ -37,9 +37,15 @@ Thread
 
 ## Journal 执行体验
 
-- Journal 只为通过 feature gate 的 Pro、Ultra 顶层 Task Run 建立投影；Flash、
-  Thinking、子任务和 Subagent Run 不建立公共 Journal。简单直答即使属于 Pro 或
-  Ultra，也只保留生命周期事实，前端不展示空步骤或 Journal 外壳。
+- 公开前端不再暴露 Flash、Thinking、Pro、Ultra 模式选择，新任务、追问和
+  重试统一提交 `requested_policy=auto`。后端只保留 `auto`、`pro`、`ultra`
+  策略；`pro` 和 `ultra` 是内部显式覆盖，不是公开页面交互。
+- `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
+  协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
+  强制创建计划或子代理。
+- Journal 只为通过 feature gate 的顶层 Task Run 建立投影；子任务和
+  Subagent Run 不建立公共 Journal。简单直答只保留生命周期事实，前端不展示
+  空步骤或 Journal 外壳。
 - `journal.intro` 是任务执行开场语的权威事件，位于第一个可见大步骤之前。后端可接收
   经过脱敏和长度限制的 `metadata.execution_intro`，但不得要求模型为了 Journal 改变
   原执行提示词；通常由完整计划标题生成安全兜底。它不是额外的聊天消息，也不得包含

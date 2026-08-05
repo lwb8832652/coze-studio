@@ -277,7 +277,8 @@ func buildADKBuiltinSubagentRunSummary(
 		copyADKBuiltinSubagentToolConfig(configPayload, parentConfig)
 	}
 	configPayload["runtime"] = string(RuntimeModeEinoADK)
-	configPayload["mode"] = string(DeerFlowModeFlash)
+	configPayload["requested_policy"] = string(DeerFlowRequestedPolicyPro)
+	configPayload["mode"] = string(DeerFlowModePro)
 	configPayload["thinking_enabled"] = false
 	configPayload["is_plan_mode"] = false
 	configPayload["subagent_enabled"] = false

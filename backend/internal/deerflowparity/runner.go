@@ -464,8 +464,8 @@ func hasCanonicalEvent(events []RawEvent, expected string) bool {
 func BuildRunInput(testCase Case) RunInput {
 	contextValues := map[string]any{
 		"mode":             string(testCase.Mode),
-		"thinking_enabled": testCase.Mode != ModeFlash,
-		"is_plan_mode":     testCase.Mode == ModePro || testCase.Mode == ModeUltra,
+		"thinking_enabled": true,
+		"is_plan_mode":     true,
 		"subagent_enabled": testCase.Mode == ModeUltra,
 	}
 	configValues := map[string]any{
@@ -477,8 +477,6 @@ func BuildRunInput(testCase Case) RunInput {
 		"subagent_enabled": contextValues["subagent_enabled"],
 	}
 	switch testCase.Mode {
-	case ModeThinking:
-		contextValues["reasoning_effort"] = "low"
 	case ModePro:
 		contextValues["reasoning_effort"] = "medium"
 	case ModeUltra:

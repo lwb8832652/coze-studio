@@ -24,10 +24,8 @@ const (
 type Mode string
 
 const (
-	ModeFlash    Mode = "flash"
-	ModeThinking Mode = "thinking"
-	ModePro      Mode = "pro"
-	ModeUltra    Mode = "ultra"
+	ModePro   Mode = "pro"
+	ModeUltra Mode = "ultra"
 )
 
 type ActionType string
@@ -224,8 +222,8 @@ type ComparisonCheck struct {
 
 func SemanticCoreCaseIDs() []string {
 	return []string{
-		"core.flash.direct",
-		"core.thinking.direct",
+		"core.pro.direct",
+		"core.ultra.direct",
 		"core.pro.todo",
 		"core.ultra.subagents",
 		"core.clarify.followup",

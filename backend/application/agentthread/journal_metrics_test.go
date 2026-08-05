@@ -77,12 +77,6 @@ func TestJournalMetricsCompletenessDenominatorExcludesNonEnrolledAndNonJournalMo
 	incomplete := base
 	incomplete.FinalSequenceContinuous = false
 	collector.RecordCompletedTask(context.Background(), incomplete)
-	flash := base
-	flash.Mode = DeerFlowModeFlash
-	collector.RecordCompletedTask(context.Background(), flash)
-	thinking := base
-	thinking.Mode = DeerFlowModeThinking
-	collector.RecordCompletedTask(context.Background(), thinking)
 	unEnrolled := base
 	unEnrolled.Enrolled = false
 	collector.RecordCompletedTask(context.Background(), unEnrolled)

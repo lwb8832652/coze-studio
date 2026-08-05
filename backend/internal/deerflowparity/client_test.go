@@ -1008,10 +1008,11 @@ func testRunInput() RunInput {
 		},
 		Config: map[string]any{"recursion_limit": 50},
 		Context: map[string]any{
-			"mode":             "flash",
-			"thinking_enabled": false,
-			"is_plan_mode":     false,
-			"subagent_enabled": false,
+			"requested_policy": "auto",
+			"mode":             "ultra",
+			"thinking_enabled": true,
+			"is_plan_mode":     true,
+			"subagent_enabled": true,
 		},
 		StreamMode: []string{"events"},
 	}

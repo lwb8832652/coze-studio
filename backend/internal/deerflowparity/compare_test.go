@@ -26,7 +26,7 @@ import (
 func TestCompareCaseAligned(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	candidate := passingObservation(ProductNewX, testCase)
 
@@ -41,7 +41,7 @@ func TestCompareCaseAligned(t *testing.T) {
 func TestCompareCaseDifferentWhenRequiredEventIsMissing(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	candidate := passingObservation(ProductNewX, testCase)
 	candidate.EventFamilies = []string{"run.started", "run.completed"}
@@ -54,7 +54,7 @@ func TestCompareCaseDifferentWhenRequiredEventIsMissing(t *testing.T) {
 func TestCompareCaseDifferentWhenReferenceViolatesLockedContract(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	reference.EventFamilies = []string{"run.started", "run.completed"}
 	candidate := passingObservation(ProductNewX, testCase)
@@ -80,7 +80,7 @@ func TestCompareCaseDifferentWhenCancellationFenceIsViolated(t *testing.T) {
 func TestCompareCaseDifferentWhenTerminalIsNotExactlyOncePerRun(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	candidate := passingObservation(ProductNewX, testCase)
 	candidate.TerminalEvents = 2
@@ -118,7 +118,7 @@ func TestCompareCaseReportsMissingTerminalWithoutInvalidatingReport(t *testing.T
 func TestCompareCaseMarksBoundedExtraDiagnosticsStronger(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	candidate := passingObservation(ProductNewX, testCase)
 	candidate.EventFamilies = append(candidate.EventFamilies, "runtime.diagnostic")
@@ -130,7 +130,7 @@ func TestCompareCaseMarksBoundedExtraDiagnosticsStronger(t *testing.T) {
 func TestCompareCasePropagatesSafeBlocker(t *testing.T) {
 	t.Parallel()
 
-	testCase := mustAcceptanceCase(t, "core.flash.direct")
+	testCase := mustAcceptanceCase(t, "core.pro.direct")
 	reference := passingObservation(ProductDeerFlow, testCase)
 	candidate := passingObservation(ProductNewX, testCase)
 	candidate.Blocker = "newx_schema_migration_missing"

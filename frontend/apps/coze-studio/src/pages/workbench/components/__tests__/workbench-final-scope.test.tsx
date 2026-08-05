@@ -156,7 +156,6 @@ vi.mock('../workbench-runtime-settings-control', () => ({
 import { WorkbenchModelSelector } from '../workbench-model-selector';
 import { WorkbenchComposer } from '../workbench-composer';
 import {
-  DEFAULT_WORKBENCH_MODE,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchLLMModel,
 } from '../types';
@@ -189,11 +188,9 @@ const SlashComposer = ({ spaceId }: { spaceId: string }) => {
   return (
     <WorkbenchComposer
       value={value}
-      mode={DEFAULT_WORKBENCH_MODE}
       loading={false}
       spaceId={spaceId}
       onValueChange={setValue}
-      onModeChange={vi.fn()}
       onSubmit={vi.fn()}
     />
   );
@@ -372,11 +369,9 @@ describe('Workbench composer final scope contracts', () => {
     const renderComposer = (spaceId: string) => (
       <WorkbenchComposer
         value="发送当前空间消息"
-        mode={DEFAULT_WORKBENCH_MODE}
         loading={false}
         spaceId={spaceId}
         onValueChange={vi.fn()}
-        onModeChange={vi.fn()}
         onSubmit={onSubmit}
       />
     );
