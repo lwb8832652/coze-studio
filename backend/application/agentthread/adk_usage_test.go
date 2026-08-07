@@ -176,6 +176,87 @@ func TestADKUsageDoesNotDoubleCountCallbackAndEventUsage(t *testing.T) {
 	require.Len(t, collector.usages, 1)
 }
 
+func TestADKUsageDoesNotDoubleCountNestedWrapperProviderAndEvent(t *testing.T) {
+	collector := &recordingADKUsageCollector{}
+	bridge := NewADKUsageBridge(&RunSummary{
+		RunID:  20,
+		Config: `{"agent_name":"lead"}`,
+	}, collector)
+	handler := bridge.Handler()
+
+	ctx := handler.OnStart(context.Background(), &callbacks.RunInfo{
+		Name:      "lead",
+		Component: adk.ComponentOfAgent,
+	}, &adk.AgentCallbackInput{})
+	outerCtx := handler.OnStart(ctx, &callbacks.RunInfo{
+		Name:      "chat",
+		Type:      "billingGuardChatModel",
+		Component: components.ComponentOfChatModel,
+	}, &model.CallbackInput{Config: &model.Config{}})
+	innerCtx := handler.OnStart(outerCtx, &callbacks.RunInfo{
+		Name:      "chat",
+		Type:      "DeepSeek",
+		Component: components.ComponentOfChatModel,
+	}, &model.CallbackInput{Config: &model.Config{Model: "deepseek-v4-pro"}})
+	usage := &model.TokenUsage{
+		PromptTokens:     10,
+		CompletionTokens: 4,
+		TotalTokens:      14,
+		PromptTokenDetails: model.PromptTokenDetails{
+			CachedTokens: 2,
+		},
+		CompletionTokensDetails: model.CompletionTokensDetails{
+			ReasoningTokens: 1,
+		},
+	}
+
+	handler.OnEnd(innerCtx, &callbacks.RunInfo{
+		Name:      "chat",
+		Type:      "DeepSeek",
+		Component: components.ComponentOfChatModel,
+	}, &model.CallbackOutput{
+		Config:     &model.Config{Model: "deepseek-v4-pro"},
+		TokenUsage: usage,
+	})
+	handler.OnEnd(outerCtx, &callbacks.RunInfo{
+		Name:      "chat",
+		Type:      "billingGuardChatModel",
+		Component: components.ComponentOfChatModel,
+	}, &model.CallbackOutput{
+		Config:     &model.Config{},
+		TokenUsage: usage,
+	})
+	err := bridge.RecordEvent(context.Background(), AgentTokenUsage{
+		Source:       TokenUsageSourceLeadAgent,
+		StepName:     "lead",
+		InputTokens:  10,
+		OutputTokens: 4,
+		TotalTokens:  14,
+		RawUsage:     `{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cached_tokens":2,"reasoning_tokens":1}`,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, collector.usages, 1)
+	require.Equal(t, "deepseek-v4-pro", collector.usages[0].ModelName)
+	require.Equal(t, "DeepSeek", collector.usages[0].Provider)
+}
+
+func TestADKUsageKeepsIndependentCallsWithIdenticalUsage(t *testing.T) {
+	collector := &recordingADKUsageCollector{}
+	bridge := NewADKUsageBridge(&RunSummary{
+		RunID:  20,
+		Config: `{"agent_name":"lead"}`,
+	}, collector)
+
+	recordADKModelUsage(t, bridge, "lead", "call-1", 0, "chat", "DeepSeek", 10, 4, 2, 1)
+	recordADKModelUsage(t, bridge, "lead", "call-2", 0, "chat", "DeepSeek", 10, 4, 2, 1)
+
+	require.NoError(t, bridge.Err())
+	require.Len(t, collector.usages, 2)
+	require.Equal(t, "call-1", collector.usages[0].StepID)
+	require.Equal(t, "call-2", collector.usages[1].StepID)
+}
+
 func TestADKUsageStreamingRecordsFinalUsageOnce(t *testing.T) {
 	collector := &recordingADKUsageCollector{}
 	bridge := NewADKUsageBridge(&RunSummary{

@@ -8392,6 +8392,74 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('uses the canonical thread title when generated artifact names differ', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-title-artifact-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-title-artifact-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成武汉3日游攻略',
+        last_agent_message: '行程已生成，请查看文档。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [
+          {
+            artifact_id: 'artifact-title-source-1',
+            artifact_type: 'document',
+            content_type: 'text/markdown; charset=utf-8',
+            created_at: 1717000300000,
+            file_id: 'file-title-source-1',
+            metadata: '{"scan_status":"clean"}',
+            preview_mode: 'text',
+            run_id: 'run-title-source-1',
+            size_bytes: 1024,
+            thread_id: 'thread-title-artifact-1',
+            title: 'travel-itinerary.md',
+            updated_at: 1717000300000,
+            virtual_path: '/mnt/user-data/outputs/travel-itinerary.md',
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const title = container.querySelector('.coze-prototype-task-top-title');
+    expect(title?.textContent).toContain('武汉3日游攻略');
+    expect(title?.textContent).not.toContain('travel-itinerary');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('updates thread title from hidden title sync events without rendering them as steps', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

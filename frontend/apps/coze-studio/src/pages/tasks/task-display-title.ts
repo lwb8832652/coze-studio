@@ -14,21 +14,10 @@
  * limitations under the License.
  */
 
-import type { WorkbenchArtifact } from '../workbench/thread-client';
-import type { TaskThreadDetailModel } from './task-thread-detail-model';
-import { artifactFileName } from './task-artifacts-helpers';
-
-type TaskThreadArtifact = WorkbenchArtifact;
-
 const TITLE_MAX_LENGTH = 48;
-const KNOWN_FILE_EXTENSION_RE =
-  /\.(?:csv|html?|json|md|markdown|pdf|txt|xlsx?)$/i;
 
 const compactTitle = (value: string) =>
   value.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX_LENGTH);
-
-const stripKnownFileExtension = (value: string) =>
-  compactTitle(value.replace(KNOWN_FILE_EXTENSION_RE, ''));
 
 const extractPromptSubject = (value: string) => {
   const bookTitle = /《([^》]{2,64})》/.exec(value);
@@ -62,27 +51,4 @@ export const getTaskThreadDisplayTitle = (task: TaskTitleSource) => {
   const compactCandidate = candidates.map(compactTitle).find(Boolean);
 
   return compactCandidate || '未命名任务';
-};
-
-export const getTaskDisplayTitle = ({
-  artifacts,
-  task,
-}: {
-  artifacts?: TaskThreadArtifact[];
-  task: TaskThreadDetailModel;
-}) => {
-  const sortedArtifacts = [...(artifacts ?? [])].sort(
-    (left, right) =>
-      left.created_at - right.created_at ||
-      left.artifact_id.localeCompare(right.artifact_id),
-  );
-  const artifactTitle = sortedArtifacts
-    .map(artifact => stripKnownFileExtension(artifactFileName(artifact)))
-    .find(Boolean);
-
-  if (artifactTitle) {
-    return artifactTitle;
-  }
-
-  return getTaskThreadDisplayTitle(task);
 };

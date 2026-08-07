@@ -1018,6 +1018,150 @@ func TestListCanonicalThreadMessagesPrefersPersistedAssistantOverVisibleEventDup
 	require.Equal(t, 1, strings.Count(string(response.Result().Body()), "deduplicated output"))
 }
 
+func TestListCanonicalThreadMessagesPrefersPersistedAssistantOverIntermediateEvent(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "single public reply", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"create a report"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	_, err = appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"I will write the report now.","tool_calls":[{"id":"call-1","name":"write_file","arguments":{}}]}`,
+		},
+	)
+	require.NoError(t, err)
+	persisted, err := appagentthread.SVC.AppendMessage(
+		context.Background(),
+		&appagentthread.AppendMessageRequest{
+			ThreadID: thread.ThreadID,
+			RunID:    runResponse.Run.RunID,
+			Role:     appagentthread.MessageRoleAssistant,
+			Content:  "The report is ready.",
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.NotNil(t, persisted.Message)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, appagentthread.MessageRoleUser, appagentthread.MessageRole(page.Data[0].Role))
+	require.Equal(t, appagentthread.MessageRoleAssistant, appagentthread.MessageRole(page.Data[1].Role))
+	require.Equal(t, "The report is ready.", page.Data[1].Content)
+	require.Equal(t, strconv.FormatInt(persisted.Message.MessageID, 10), page.Data[1].MessageID)
+	require.NotContains(t, string(response.Result().Body()), "I will write the report now.")
+}
+
+func TestListCanonicalThreadMessagesKeepsLatestPersistedAssistantPerRun(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "latest durable reply", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"create a report"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	for _, content := range []string{"Obsolete durable reply.", "Authoritative durable reply."} {
+		_, err = appagentthread.SVC.AppendMessage(
+			context.Background(),
+			&appagentthread.AppendMessageRequest{
+				ThreadID: thread.ThreadID,
+				RunID:    runResponse.Run.RunID,
+				Role:     appagentthread.MessageRoleAssistant,
+				Content:  content,
+			},
+		)
+		require.NoError(t, err)
+	}
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, appagentthread.MessageRoleUser, appagentthread.MessageRole(page.Data[0].Role))
+	require.Equal(t, appagentthread.MessageRoleAssistant, appagentthread.MessageRole(page.Data[1].Role))
+	require.Equal(t, "Authoritative durable reply.", page.Data[1].Content)
+	require.NotContains(t, string(response.Result().Body()), "Obsolete durable reply.")
+}
+
+func TestListCanonicalThreadMessagesKeepsLatestEventAssistantWithoutPersistedReply(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "event reply fallback", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"need clarification"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	for _, content := range []string{"Checking the request.", "Which format should I use?"} {
+		_, err = appagentthread.SVC.AppendRunEvent(
+			context.Background(),
+			&appagentthread.AppendRunEventRequest{
+				ThreadID:  thread.ThreadID,
+				RunID:     runResponse.Run.RunID,
+				EventType: "message.completed",
+				Payload:   fmt.Sprintf(`{"role":"assistant","content":%q}`, content),
+			},
+		)
+		require.NoError(t, err)
+	}
+	_, err = appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"\u0001"}`,
+		},
+	)
+	require.NoError(t, err)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, appagentthread.MessageRoleUser, appagentthread.MessageRole(page.Data[0].Role))
+	require.Equal(t, appagentthread.MessageRoleAssistant, appagentthread.MessageRole(page.Data[1].Role))
+	require.Equal(t, "Which format should I use?", page.Data[1].Content)
+	require.NotContains(t, string(response.Result().Body()), "Checking the request.")
+}
+
 func performCanonicalThreadJSONRequest(
 	t *testing.T,
 	h *server.Hertz,
