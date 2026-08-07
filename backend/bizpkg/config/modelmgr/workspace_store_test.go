@@ -31,6 +31,7 @@ import (
 	config "github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
 	workbenchmodel "github.com/coze-dev/coze-studio/backend/api/model/workbench/model"
+	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
 type workspaceModelTestCodec struct{}
@@ -209,6 +210,13 @@ func newWorkspaceModelTestConfig(t *testing.T) *ModelConfig {
 	require.NoError(t, err)
 
 	statements := []string{
+		`CREATE TABLE kv_entries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			namespace TEXT NOT NULL,
+			key_data TEXT NOT NULL,
+			value_data BLOB NOT NULL,
+			UNIQUE(namespace, key_data)
+		)`,
 		`CREATE TABLE model_instance (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			type INTEGER NOT NULL DEFAULT 0,
@@ -265,6 +273,7 @@ func newWorkspaceModelTestConfig(t *testing.T) *ModelConfig {
 
 	return &ModelConfig{
 		db:              db,
+		kv:              kvstore.New[struct{}](db),
 		credentialCodec: workspaceModelTestCodec{},
 		ModelMetaConf: &ModelMetaConf{Provider2Models: map[string]map[string]ModelMeta{
 			developer_api.ModelClass_DeekSeek.String(): {

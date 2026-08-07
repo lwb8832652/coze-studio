@@ -397,6 +397,9 @@ func (c *ModelConfig) UpsertSystemModel(
 	if err != nil {
 		return 0, err
 	}
+	if err := c.SetDoNotUseOldModelConf(ctx); err != nil {
+		return 0, fmt.Errorf("enable database model list: %w", err)
+	}
 	return persistedID, nil
 }
 

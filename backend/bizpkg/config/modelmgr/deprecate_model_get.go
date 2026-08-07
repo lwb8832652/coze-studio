@@ -213,7 +213,7 @@ func strProtocolToModelClass(protocol Protocol) developer_api.ModelClass {
 
 func (c *ModelConfig) UseOldModelConf(ctx context.Context) (bool, error) {
 	useOldModelList, ok := ctxcache.Get[bool](ctx, doNotUseOldModelFlagContextKey)
-	if ok {
+	if ok && !useOldModelList {
 		return useOldModelList, nil
 	}
 
@@ -221,7 +221,6 @@ func (c *ModelConfig) UseOldModelConf(ctx context.Context) (bool, error) {
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			logs.CtxInfof(ctx, "[UseOldModelConf] will use old model")
-			ctxcache.Store(ctx, doNotUseOldModelFlagContextKey, true)
 			return true, nil
 		}
 
@@ -239,9 +238,19 @@ func (c *ModelConfig) SetDoNotUseOldModelConf(ctx context.Context) error {
 	}
 
 	if useOldModelList {
-		return c.kv.Save(ctx, consts.ModelConfigSpace, doNotUseOldModelFlagKey, &struct{}{})
+		_, err = c.kv.CompareAndSwap(
+			ctx,
+			consts.ModelConfigSpace,
+			doNotUseOldModelFlagKey,
+			kvstore.MissingRevision,
+			&struct{}{},
+		)
+		if err != nil && !errors.Is(err, kvstore.ErrVersionConflict) {
+			return err
+		}
 	}
 
+	ctxcache.Store(ctx, doNotUseOldModelFlagContextKey, false)
 	return nil
 }
 

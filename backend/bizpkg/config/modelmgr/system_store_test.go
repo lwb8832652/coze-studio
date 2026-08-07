@@ -24,6 +24,7 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
+	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 )
 
@@ -80,6 +81,22 @@ func TestSystemModelManagementPersistsEncryptedEndpointsAndAccessGrants(t *testi
 	}())
 	_, err = cfg.GetSystemModelDetail(ctx, modelID)
 	require.ErrorIs(t, err, ErrSystemModelNotFound)
+}
+
+func TestSystemModelManagementEnablesDatabaseModelList(t *testing.T) {
+	cfg := newWorkspaceModelTestConfig(t)
+	staleReaderCtx := ctxcache.Init(context.Background())
+
+	useOldModels, err := cfg.UseOldModelConf(staleReaderCtx)
+	require.NoError(t, err)
+	require.True(t, useOldModels)
+
+	_, err = cfg.UpsertSystemModel(context.Background(), 9, nil, newSystemModelTestInput("system-secret"))
+	require.NoError(t, err)
+
+	useOldModels, err = cfg.UseOldModelConf(staleReaderCtx)
+	require.NoError(t, err)
+	require.False(t, useOldModels)
 }
 
 func TestSystemModelUpdatePreservesWriteOnlyCredential(t *testing.T) {
