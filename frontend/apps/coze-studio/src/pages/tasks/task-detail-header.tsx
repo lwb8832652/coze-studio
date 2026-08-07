@@ -30,7 +30,7 @@ import { buildTaskThreadListPath } from '../chats/task-thread-routes';
 import { WorkspaceHeaderActions } from '../../components/workspace-header-actions';
 import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { TaskExportAction } from './task-export-action';
-import { getTaskDisplayTitle } from './task-display-title';
+import { getTaskThreadDisplayTitle } from './task-display-title';
 import { TaskDetailInspector } from './task-detail-inspector';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 
@@ -101,7 +101,7 @@ export const TaskDetailHeader = ({
         <div className="coze-prototype-task-title-copy">
           <div className="coze-prototype-task-title-line">
             <h1 className="coze-prototype-task-top-title">
-              {getTaskDisplayTitle({ artifacts, task }) || task.title}
+              {getTaskThreadDisplayTitle(task) || task.title}
             </h1>
             <button
               type="button"
