@@ -2064,6 +2064,76 @@ table "model_instance" {
     comment        = "id"
     auto_increment = true
   }
+  column "provider_key" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "model_identifier" {
+    null    = false
+    type    = varchar(256)
+    default = ""
+  }
+  column "description" {
+    null    = false
+    type    = varchar(1024)
+    default = ""
+  }
+  column "status" {
+    null    = false
+    type    = bool
+    default = 1
+    comment = "1 enabled, 0 disabled"
+  }
+  column "sort_order" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "creator_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "protocol" {
+    null    = false
+    type    = varchar(32)
+    default = ""
+  }
+  column "routing_strategy" {
+    null    = false
+    type    = varchar(32)
+    default = "round_robin"
+  }
+  column "access_mode" {
+    null    = false
+    type    = varchar(16)
+    default = "all"
+  }
+  column "scenario_json" {
+    null = true
+    type = json
+  }
+  column "reasoning_mode" {
+    null    = false
+    type    = varchar(32)
+    default = "default"
+  }
+  column "function_call_mode" {
+    null    = false
+    type    = varchar(32)
+    default = "auto"
+  }
+  column "max_context_tokens" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "max_output_tokens" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   column "type" {
     null    = false
     type    = tinyint
@@ -2120,6 +2190,134 @@ table "model_instance" {
   }
   primary_key {
     columns = [column.id]
+  }
+  index "idx_model_instance_creator" {
+    columns = [column.creator_id, column.deleted_at]
+  }
+  index "idx_model_instance_management" {
+    columns = [column.status, column.sort_order, column.deleted_at]
+  }
+  index "idx_model_instance_provider" {
+    columns = [column.provider_key, column.status, column.deleted_at]
+  }
+}
+table "model_instance_endpoint" {
+  schema = schema.opencoze
+  column "id" {
+    null           = false
+    type           = bigint
+    auto_increment = true
+  }
+  column "model_id" {
+    null = false
+    type = bigint
+  }
+  column "base_url" {
+    null    = false
+    type    = varchar(2048)
+    default = ""
+  }
+  column "api_key_envelope" {
+    null = false
+    type = mediumtext
+  }
+  column "api_key_fingerprint" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "weight" {
+    null    = false
+    type    = int
+    default = 1
+  }
+  column "enabled" {
+    null    = false
+    type    = bool
+    default = 1
+  }
+  column "sort_order" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "created_at" {
+    null    = false
+    type    = datetime(3)
+    default = sql("CURRENT_TIMESTAMP(3)")
+  }
+  column "updated_at" {
+    null    = false
+    type    = datetime(3)
+    default = sql("CURRENT_TIMESTAMP(3)")
+  }
+  column "deleted_at" {
+    null = true
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_model_endpoint_order" {
+    columns = [column.model_id, column.enabled, column.sort_order, column.deleted_at]
+  }
+  index "idx_model_endpoint_updated" {
+    columns = [column.model_id, column.updated_at]
+  }
+}
+table "model_instance_grant" {
+  schema = schema.opencoze
+  column "id" {
+    null           = false
+    type           = bigint
+    auto_increment = true
+  }
+  column "model_id" {
+    null = false
+    type = bigint
+  }
+  column "subject_type" {
+    null = false
+    type = varchar(16)
+  }
+  column "subject_id" {
+    null = false
+    type = bigint
+  }
+  column "created_at" {
+    null    = false
+    type    = datetime(3)
+    default = sql("CURRENT_TIMESTAMP(3)")
+  }
+  column "updated_at" {
+    null    = false
+    type    = datetime(3)
+    default = sql("CURRENT_TIMESTAMP(3)")
+  }
+  column "deleted_at" {
+    null = true
+    type = datetime(3)
+  }
+  column "active_key" {
+    null = true
+    type = tinyint
+    as {
+      expr = "(case when (`deleted_at` is null) then 1 else NULL end)"
+      type = STORED
+    }
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_model_grant_model" {
+    columns = [column.model_id, column.deleted_at]
+  }
+  index "idx_model_grant_subject" {
+    columns = [column.subject_type, column.subject_id, column.deleted_at]
+  }
+  index "uniq_model_subject" {
+    unique  = true
+    columns = [column.model_id, column.subject_type, column.subject_id, column.active_key]
   }
 }
 table "model_meta" {
