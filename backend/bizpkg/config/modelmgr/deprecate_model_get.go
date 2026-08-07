@@ -232,25 +232,29 @@ func (c *ModelConfig) UseOldModelConf(ctx context.Context) (bool, error) {
 }
 
 func (c *ModelConfig) SetDoNotUseOldModelConf(ctx context.Context) error {
-	useOldModelList, err := c.UseOldModelConf(ctx)
-	if err != nil {
-		logs.CtxWarnf(ctx, "set use new model list failed, err: %v , will try to set use new model flag", err)
-	}
-
-	if useOldModelList {
-		_, err = c.kv.CompareAndSwap(
-			ctx,
-			consts.ModelConfigSpace,
-			doNotUseOldModelFlagKey,
-			kvstore.MissingRevision,
-			&struct{}{},
-		)
-		if err != nil && !errors.Is(err, kvstore.ErrVersionConflict) {
-			return err
-		}
+	if err := ensureDatabaseModelListEnabled(ctx, c.kv); err != nil {
+		return err
 	}
 
 	ctxcache.Store(ctx, doNotUseOldModelFlagContextKey, false)
+	return nil
+}
+
+func ensureDatabaseModelListEnabled(
+	ctx context.Context,
+	store *kvstore.KVStore[struct{}],
+) error {
+	_, err := store.CompareAndSwap(
+		ctx,
+		consts.ModelConfigSpace,
+		doNotUseOldModelFlagKey,
+		kvstore.MissingRevision,
+		&struct{}{},
+	)
+	if err != nil && !errors.Is(err, kvstore.ErrVersionConflict) {
+		return err
+	}
+
 	return nil
 }
 

@@ -99,6 +99,28 @@ func TestSystemModelManagementEnablesDatabaseModelList(t *testing.T) {
 	require.False(t, useOldModels)
 }
 
+func TestSystemModelManagementRollsBackWhenModelListActivationFails(t *testing.T) {
+	cfg := newWorkspaceModelTestConfig(t)
+	require.NoError(t, cfg.db.Exec("DROP TABLE kv_entries").Error)
+
+	modelID, err := cfg.UpsertSystemModel(
+		context.Background(),
+		9,
+		nil,
+		newSystemModelTestInput("system-secret"),
+	)
+	require.Error(t, err)
+	require.Zero(t, modelID)
+
+	var modelCount int64
+	require.NoError(t, cfg.db.Table(modelInstanceTable).Count(&modelCount).Error)
+	require.Zero(t, modelCount)
+
+	var endpointCount int64
+	require.NoError(t, cfg.db.Table(modelEndpointTable).Count(&endpointCount).Error)
+	require.Zero(t, endpointCount)
+}
+
 func TestSystemModelUpdatePreservesWriteOnlyCredential(t *testing.T) {
 	ctx := context.Background()
 	cfg := newWorkspaceModelTestConfig(t)

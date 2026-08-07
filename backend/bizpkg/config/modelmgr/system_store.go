@@ -33,6 +33,8 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
+	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
+	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
 var (
@@ -392,14 +394,15 @@ func (c *ModelConfig) UpsertSystemModel(
 				return err
 			}
 		}
+		if err := ensureDatabaseModelListEnabled(ctx, kvstore.New[struct{}](tx)); err != nil {
+			return fmt.Errorf("enable database model list: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	if err := c.SetDoNotUseOldModelConf(ctx); err != nil {
-		return 0, fmt.Errorf("enable database model list: %w", err)
-	}
+	ctxcache.Store(ctx, doNotUseOldModelFlagContextKey, false)
 	return persistedID, nil
 }
 
