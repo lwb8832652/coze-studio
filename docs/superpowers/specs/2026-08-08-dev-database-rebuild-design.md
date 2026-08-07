@@ -45,4 +45,3 @@ schema 不一致造成的 Workbench 新任务 500。后续本地调试统一连�
 - 后端启动日志不再出现这些表不存在的错误。
 - `http://localhost:8080` 使用共享 dev 数据库完成登录/初始化后，新建简单任务不再返回
   `Internal server error`；Pro/Ultra 根任务能创建 Run 与 Journal Attempt。
-

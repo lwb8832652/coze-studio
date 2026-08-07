@@ -123,4 +123,3 @@ expected Run identity. Keep snapshots and checkpoint recovery disabled.
 
 Record the Atlas status, required table checks, backend health, browser URL/account/space,
 visible task result, and any unverified items without including credentials or DSNs.
-
