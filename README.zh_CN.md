@@ -67,7 +67,7 @@ NewX AI 的后端采用 Golang 开发，前端使用 React + TypeScript，整体
 
    **启动失败常见问题可参考[常见问题](https://github.com/coze-dev/coze-studio/wiki/9.-%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98)**。
 3. 注册账号，访问 `http://localhost:8888/sign` 输入用户名、密码点击注册按钮。
-4. 配置模型：访问 `http://localhost:8888/admin/#model-management` 新增模型。（镜像版本需要大于等于 0.5.0）。
+4. 配置模型：访问 `http://localhost:8888/system/models` 新增模型。（镜像版本需要大于等于 0.5.0）。
 5. 访问 NewX AI `http://localhost:8888/`。
 
 > [!WARNING]

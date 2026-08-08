@@ -439,12 +439,6 @@
                             </a>
                         </li>
                         <li class="submenu-item">
-                            <a href="#" class="submenu-link" data-page="model-management">
-                                <span class="submenu-icon">🤖</span>
-                                模型管理
-                            </a>
-                        </li>
-                        <li class="submenu-item">
                             <a href="#" class="submenu-link" data-page="knowledge-config">
                                 <span class="submenu-icon">📚</span>
                                 知识库配置
@@ -500,13 +494,10 @@
             'zh-CN': {
                 'nav.config': '配置管理',
                 'nav.basic': '基础配置',
-                'nav.model': '模型管理',
                 'nav.knowledge': '知识库配置',
 
                 'page.basic.title': '基础配置',
                 'page.basic.desc': '系统基础配置管理',
-                'page.model.title': '模型管理',
-                'page.model.desc': 'AI模型配置和管理',
                 'page.knowledge.title': '知识库配置',
                 'page.knowledge.desc': '知识库设置和管理',
                 'page.default.title': '页面',
@@ -586,7 +577,6 @@
                 'help.quickstart.step4': '开始使用您的 AI 助手',
                 'help.features.title': '📚 功能说明',
                 'help.features.basic': '基础配置：系统设置、API 配置、安全设置',
-                'help.features.model': '模型管理：添加、编辑、删除 AI 模型',
                 'help.features.kb': '知识库：文档上传、索引管理、检索配置',
                 'help.support.title': '🔧 技术支持',
                 'help.support.contact': '如果您遇到问题，请联系技术支持团队',
@@ -607,77 +597,6 @@
                 'common.not_configured': '未配置',
                 'common.unknown_error': '未知错误',
 
-                // 模型管理
-                'model.list.title': '模型列表',
-                'model.provider.count': '提供方数量：{count}',
-                'model.provider.model_count': '模型数量：{count}',
-                'model.actions.add': '添加模型',
-                'model.provider.unnamed': '未命名提供方',
-                'model.provider.unknown': '未知提供方',
-                'model.unnamed': '未命名模型',
-
-                'model.field.id': 'ID',
-                'model.field.model': 'Model',
-                'model.field.api_key': 'API Key',
-                'model.field.base64_url': 'Base64URL',
-                'model.field.region': 'Region',
-                'model.field.backend': 'Backend',
-                'model.field.project': 'Project',
-                'model.field.location': 'Location',
-                'model.field.azure': 'By Azure',
-                'model.field.api_version': 'API Version',
-                'model.field.endpoint': '接口地址',
-                'model.field.thinking_type': 'Thinking Type',
-                'model.thinking_type.default': 'Default',
-                'model.thinking_type.enable': 'Enable',
-                'model.thinking_type.disable': 'Disable',
-                'model.thinking_type.auto': 'Auto',
-
-                'model.error.load_list_failed': '加载模型列表失败',
-                'model.error.render_page_failed': '渲染模型页面失败',
-                'model.error.delete_missing_id': '删除模型失败: 缺少模型ID',
-                'model.confirm.delete': '确认删除该模型？删除后不可恢复',
-                'model.error.delete_invalid_json': '删除模型失败: 返回结果不是有效 JSON',
-                'model.error.delete_failed': '删除模型失败',
-                'model.error.open_modal_failed': '无法打开添加模型表单：组件未渲染',
-                'model.error.provider_unrecognized': '无法识别模型提供方，请从提供方卡片点击“添加模型”。',
-                'model.error.missing_required_with_api': '请填写必填项：模型展示名称、model、api_key',
-                'model.error.missing_required': '请填写必填项：模型展示名称、model',
-                'model.error.create_read_failed': '创建模型失败: 无法读取响应内容',
-                'model.create.success': '创建成功',
-                'model.error.create_failed': '创建模型失败',
-
-                // 添加模型弹窗
-                'model.modal.add.title': '添加模型',
-                'model.modal.display_name.label': '模型显示名称',
-                'model.modal.display_name.placeholder': '例如：Doubao Seed 1.6',
-                'model.modal.model.label': 'Model',
-                'model.modal.model.placeholder': '例如：doubao-seed-1-6-250615',
-                'model.modal.api_key.label': 'API Key',
-                'model.modal.api_key.placeholder': '密钥',
-                'model.modal.base_url.label': 'Base URL',
-                'model.modal.base_url.placeholder': '选填',
-                'model.modal.enable_base64_url.label': '启用 Base64 URL',
-                'model.modal.enable_base64_url.help': '使用 base64 编码图片、文件、音频、视频 URL 给模型',
-                'model.modal.ark_region.label': 'Region（Ark）',
-                'model.modal.ark_region.placeholder': '选填，例如：cn-beijing',
-                'model.modal.azure.label': '使用 Azure',
-                'model.modal.azure.help': 'OpenAI 设置：勾选表示通过 Azure 使用',
-                'model.modal.openai_api_version.label': 'OpenAI API Version',
-                'model.modal.openai_api_version.placeholder': '选填，例如：2024-06-01',
-                'model.modal.gemini_backend.label': 'Backend',
-                'model.modal.gemini_backend.unspecified': '未指定',
-                'model.modal.gemini_backend.gemini_api': 'Gemini API',
-                'model.modal.gemini_backend.vertex_ai': 'Vertex AI',
-                'model.modal.gemini_project.label': 'Project',
-                'model.modal.gemini_project.placeholder': '选填，例如：my-project',
-                'model.modal.gemini_location.label': 'Location',
-                'model.modal.gemini_location.placeholder': '选填，例如：us-central1',
-                'model.modal.thinking_type.label': 'Thinking Type',
-                'model.modal.thinking_type.enable': 'Enable',
-                'model.modal.thinking_type.disable': 'Disable',
-                'model.modal.thinking_type.auto': 'Auto',
-                
                 // 知识库配置
                 'knowledge.error.load_failed_json': '加载知识库配置失败: 返回结果不是有效 JSON',
                 'knowledge.error.load_failed_msg': '加载知识库配置失败: {msg}',
@@ -704,13 +623,10 @@
             'en-US': {
                 'nav.config': 'Configuration',
                 'nav.basic': 'Basic Config',
-                'nav.model': 'Model Management',
                 'nav.knowledge': 'Knowledge Config',
 
                 'page.basic.title': 'Basic Config',
                 'page.basic.desc': 'System basic configuration',
-                'page.model.title': 'Model Management',
-                'page.model.desc': 'AI model configuration and management',
                 'page.knowledge.title': 'Knowledge Config',
                 'page.knowledge.desc': 'Knowledge base settings and management',
                 'page.default.title': 'Page',
@@ -790,7 +706,6 @@
                 'help.quickstart.step4': 'Start using your AI assistant',
                 'help.features.title': '📚 Feature Overview',
                 'help.features.basic': 'Basic Config: system settings, API config, security settings',
-                'help.features.model': 'Model Management: add, edit, and delete AI models',
                 'help.features.kb': 'Knowledge Base: document upload, indexing, retrieval config',
                 'help.support.title': '🔧 Technical Support',
                 'help.support.contact': 'If you encounter issues, contact the support team',
@@ -811,77 +726,6 @@
                 'common.not_configured': 'Not configured',
                 'common.unknown_error': 'Unknown error',
 
-                // Model Management
-                'model.list.title': 'Model List',
-                'model.provider.count': 'Providers: {count}',
-                'model.provider.model_count': 'Model count: {count}',
-                'model.actions.add': 'Add Model',
-                'model.provider.unnamed': 'Unnamed provider',
-                'model.provider.unknown': 'Unknown provider',
-                'model.unnamed': 'Unnamed model',
-
-                'model.field.id': 'ID',
-                'model.field.model': 'Model',
-                'model.field.api_key': 'API Key',
-                'model.field.base64_url': 'Base64URL',
-                'model.field.region': 'Region',
-                'model.field.backend': 'Backend',
-                'model.field.project': 'Project',
-                'model.field.location': 'Location',
-                'model.field.azure': 'By Azure',
-                'model.field.api_version': 'API Version',
-                'model.field.endpoint': 'Endpoint',
-                'model.field.thinking_type': 'Thinking Type',
-                'model.thinking_type.default': 'Default',
-                'model.thinking_type.enable': 'Enable',
-                'model.thinking_type.disable': 'Disable',
-                'model.thinking_type.auto': 'Auto',
-
-                'model.error.load_list_failed': 'Failed to load model list',
-                'model.error.render_page_failed': 'Failed to render model page',
-                'model.error.delete_missing_id': 'Delete model failed: missing model ID',
-                'model.confirm.delete': 'Delete this model? This cannot be undone',
-                'model.error.delete_invalid_json': 'Delete model failed: invalid JSON response',
-                'model.error.delete_failed': 'Delete model failed',
-                'model.error.open_modal_failed': 'Cannot open add-model form: component not rendered',
-                'model.error.provider_unrecognized': 'Unrecognized provider; click “Add Model” on a provider card.',
-                'model.error.missing_required_with_api': 'Please fill required: display name, model, api_key',
-                'model.error.missing_required': 'Please fill required: display name, model',
-                'model.error.create_read_failed': 'Create model failed: cannot read response',
-                'model.create.success': 'Created successfully',
-                'model.error.create_failed': 'Create model failed',
-
-                // Add Model Modal
-                'model.modal.add.title': 'Add Model',
-                'model.modal.display_name.label': 'Display Name',
-                'model.modal.display_name.placeholder': 'e.g., Doubao Seed 1.6',
-                'model.modal.model.label': 'Model',
-                'model.modal.model.placeholder': 'e.g., doubao-seed-1-6-250615',
-                'model.modal.api_key.label': 'API Key',
-                'model.modal.api_key.placeholder': 'Secret',
-                'model.modal.base_url.label': 'Base URL',
-                'model.modal.base_url.placeholder': 'Optional',
-                'model.modal.enable_base64_url.label': 'Enable Base64 URL',
-                'model.modal.enable_base64_url.help': 'Use base64-encoded URLs for images, files, audio, video',
-                'model.modal.ark_region.label': 'Region (Ark)',
-                'model.modal.ark_region.placeholder': 'Optional, e.g., cn-beijing',
-                'model.modal.azure.label': 'Use Azure',
-                'model.modal.azure.help': 'OpenAI settings: check to use via Azure',
-                'model.modal.openai_api_version.label': 'OpenAI API Version',
-                'model.modal.openai_api_version.placeholder': 'Optional, e.g., 2024-06-01',
-                'model.modal.gemini_backend.label': 'Backend',
-                'model.modal.gemini_backend.unspecified': 'Unspecified',
-                'model.modal.gemini_backend.gemini_api': 'Gemini API',
-                'model.modal.gemini_backend.vertex_ai': 'Vertex AI',
-                'model.modal.gemini_project.label': 'Project',
-                'model.modal.gemini_project.placeholder': 'Optional, e.g., my-project',
-                'model.modal.gemini_location.label': 'Location',
-                'model.modal.gemini_location.placeholder': 'Optional, e.g., us-central1',
-                'model.modal.thinking_type.label': 'Thinking Type',
-                'model.modal.thinking_type.enable': 'Enable',
-                'model.modal.thinking_type.disable': 'Disable',
-                'model.modal.thinking_type.auto': 'Auto',
-                
                 // Knowledge Config
                 'knowledge.error.load_failed_json': 'Load knowledge config failed: invalid JSON response',
                 'knowledge.error.load_failed_msg': 'Load knowledge config failed: {msg}',
@@ -940,8 +784,6 @@
             setNavLinkText(document.querySelector('[data-page="config"]'), t('nav.config'));
             const basicLink = document.querySelector('[data-page="basic-config"]');
             if (basicLink) basicLink.innerHTML = '<span class="submenu-icon">🔧</span>' + t('nav.basic');
-            const modelLink = document.querySelector('[data-page="model-management"]');
-            if (modelLink) modelLink.innerHTML = '<span class="submenu-icon">🤖</span>' + t('nav.model');
             const knowledgeLink = document.querySelector('[data-page="knowledge-config"]');
             if (knowledgeLink) knowledgeLink.innerHTML = '<span class="submenu-icon">📚</span>' + t('nav.knowledge');
 
@@ -949,7 +791,6 @@
             const hash = window.location.hash.substring(1) || 'basic-config';
             const map = {
                 'basic-config': { title: t('page.basic.title'), desc: t('page.basic.desc') },
-                'model-management': { title: t('page.model.title'), desc: t('page.model.desc') },
                 'knowledge-config': { title: t('page.knowledge.title'), desc: t('page.knowledge.desc') },
             };
             const meta = map[hash] || { title: t('page.default.title'), desc: t('page.default.desc') };
@@ -1029,7 +870,6 @@
         function loadPageFromHash(hash) {
             const pageConfig = {
                 'basic-config': { title: t('page.basic.title'), description: t('page.basic.desc') },
-                'model-management': { title: t('page.model.title'), description: t('page.model.desc') },
                 'knowledge-config': { title: t('page.knowledge.title'), description: t('page.knowledge.desc') }
             };
 
@@ -1187,7 +1027,6 @@
         function loadPageContent(pageName) {
             const pageConfig = {
                 'basic-config': { title: t('page.basic.title'), description: t('page.basic.desc') },
-                'model-management': { title: t('page.model.title'), description: t('page.model.desc') },
                 'knowledge-config': { title: t('page.knowledge.title'), description: t('page.knowledge.desc') }
             };
             
@@ -1226,11 +1065,6 @@
                 return;
             }
 
-            // 如果是模型管理页面，加载模型列表
-            if (pageName === 'model-management') {
-                loadModelManagementPage();
-                return;
-            }
 
             // 如果是知识库配置页面，加载知识库配置
             if (pageName === 'knowledge-config') {
@@ -1902,15 +1736,6 @@
                             <button onclick="loadPageContent('basic-config')" style="background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.3s;">${t('workspace.card.basic.cta')}</button>
                         </div>
                         
-                        <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid #2ecc71;">
-                            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                                <div style="background: #2ecc71; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px; font-size: 18px;">🤖</div>
-                                <h3 style="margin: 0; color: #2c3e50;">${t('workspace.card.model.title')}</h3>
-                            </div>
-                            <p style="color: #7f8c8d; margin-bottom: 15px; line-height: 1.6;">${t('workspace.card.model.desc')}</p>
-                            <button onclick="loadPageContent('model-management')" style="background: #2ecc71; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.3s;">${t('workspace.card.model.cta')}</button>
-                        </div>
-                        
                         <div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid #f39c12;">
                             <div style="display: flex; align-items: center; margin-bottom: 15px;">
                                 <div style="background: #f39c12; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px; font-size: 18px;">📚</div>
@@ -1927,440 +1752,6 @@
                 </div>
             `;
         }
-
-        // 模型管理页面：加载与渲染
-        async function loadModelManagementPage() {
-            try {
-                showLoading();
-                const currentHost = window.location.origin;
-                const apiUrl = `${currentHost}/api/admin/config/model/list`;
-                const response = await fetch(apiUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
-                }
-                const data = await response.json();
-                if (handleApiCode(data)) {
-                    return;
-                }
-                renderModelManagement(data);
-            } catch (error) {
-                console.error(t('model.error.load_list_failed'), error);
-                showError(t('model.error.load_list_failed') + ': ' + error.message);
-            }
-        }
-
-        function sanitizeUrl(url) {
-            if (!url) return '';
-            return String(url).replace(/`/g, '').trim();
-        }
-
-        function maskApiKey(key) {
-            if (!key) return t('common.not_configured');
-            const s = String(key);
-            if (s.length <= 10) return '***';
-            return s.slice(0, 6) + '***' + s.slice(-4);
-        }
-
-        function getThinkingTypeText(thinkingTypeValue) {
-            const thinkingType = Number(thinkingTypeValue);
-            switch (thinkingType) {
-                case 0: return t('model.thinking_type.default');
-                case 1: return t('model.thinking_type.enable');
-                case 2: return t('model.thinking_type.disable');
-                case 3: return t('model.thinking_type.auto');
-                default: return '-';
-            }
-        }
-
-        function renderModelManagement(payload) {
-            try {
-                const providers = Array.isArray(payload?.provider_model_list) ? payload.provider_model_list : [];
-                const html = `
-                    <div style="padding: 30px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                            <div>
-                                <h2 style="color:#2c3e50;margin:0 0 8px;">${t('model.list.title')}</h2>
-                            </div>
-                            <div style="font-size:12px;color:#95a5a6;">${t('model.provider.count', { count: providers.length })}</div>
-                        </div>
-
-                        <!-- 添加模型弹窗 -->
-                        <div id="addModelModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;z-index:9999;">
-                            <div style="background:#fff;width:480px;max-width:90vw;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.2);overflow:hidden;">
-                                <div style="padding:16px 20px;border-bottom:1px solid #f1f3f4;display:flex;justify-content:space-between;align-items:center;">
-                                    <div style="font-weight:600;color:#2c3e50;">${t('model.modal.add.title')}</div>
-                                    <button onclick="closeAddModelModal()" style="background:transparent;border:none;font-size:20px;color:#6c757d;cursor:pointer;">×</button>
-                                </div>
-                                <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
-                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                                        <img id="modalProviderIcon" src="" alt="" style="width:24px;height:24px;border-radius:6px;object-fit:cover;display:none;">
-                                        <div id="modalProviderName" style="font-size:12px;color:#6c757d;"></div>
-                                    </div>
-                                    <label style="font-size:12px;color:#374151;">${t('model.modal.display_name.label')}<span style="display:inline-block;width:6px;height:6px;background:#e74c3c;border-radius:50%;margin-left:6px;"></span></label>
-                                    <input id="newModelDisplayName" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;" placeholder="${t('model.modal.display_name.placeholder')}">
-                                    <label style="font-size:12px;color:#374151;">${t('model.modal.model.label')}<span style="display:inline-block;width:6px;height:6px;background:#e74c3c;border-radius:50%;margin-left:6px;"></span></label>
-                                    <input id="newModelModel" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;" placeholder="${t('model.modal.model.placeholder')}">
-                                    <label id="newModelApiKeyLabel" style="font-size:12px;color:#374151;">${t('model.modal.api_key.label')}<span style="display:inline-block;width:6px;height:6px;background:#e74c3c;border-radius:50%;margin-left:6px;"></span></label>
-                                    <input id="newModelApiKey" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;" placeholder="${t('model.modal.api_key.placeholder')}">
-                                    <label style="font-size:12px;color:#374151;">${t('model.modal.base_url.label')}</label>
-                                    <input id="newModelBaseUrl" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;" placeholder="${t('model.modal.base_url.placeholder')}">
-                                    <label style="font-size:12px;color:#374151;">${t('model.modal.enable_base64_url.label')}</label>
-                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                                        <input id="newModelEnableBase64Url" type="checkbox">
-                                        <span style="font-size:12px;color:#6c757d;">${t('model.modal.enable_base64_url.help')}</span>
-                                    </div>
-                                    <label id="newModelArkRegionLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.ark_region.label')}</label>
-                                    <input id="newModelArkRegion" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;" placeholder="${t('model.modal.ark_region.placeholder')}">
-                                    <label id="newModelOpenAIByAzureLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.azure.label')}</label>
-                                    <div id="newModelOpenAIByAzureWrapper" style="display:none;align-items:center;gap:8px;margin-bottom:4px;">
-                                        <input id="newModelOpenAIByAzure" type="checkbox">
-                                        <span style="font-size:12px;color:#6c757d;">${t('model.modal.azure.help')}</span>
-                                    </div>
-                                    <label id="newModelOpenAIApiVersionLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.openai_api_version.label')}</label>
-                                     <input id="newModelOpenAIApiVersion" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;" placeholder="${t('model.modal.openai_api_version.placeholder')}">
-                                     <label id="newModelGeminiBackendLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.gemini_backend.label')}</label>
-                                       <select id="newModelGeminiBackend" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;">
-                                           <option value="0" selected>${t('model.modal.gemini_backend.unspecified')}</option>
-                    <option value="1">${t('model.modal.gemini_backend.gemini_api')}</option>
-                    <option value="2">${t('model.modal.gemini_backend.vertex_ai')}</option>
-                                       </select>
-                                     <label id="newModelGeminiProjectLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.gemini_project.label')}</label>
-                                     <input id="newModelGeminiProject" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;" placeholder="${t('model.modal.gemini_project.placeholder')}">
-                                     <label id="newModelGeminiLocationLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.gemini_location.label')}</label>
-                                     <input id="newModelGeminiLocation" type="text" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;" placeholder="${t('model.modal.gemini_location.placeholder')}">
-                                     <label id="newModelThinkingTypeLabel" style="font-size:12px;color:#374151;display:none;">${t('model.modal.thinking_type.label')}</label>
-                                     <select id="newModelThinkingType" style="padding:8px;border:1px solid #e1e8ed;border-radius:8px;width:100%;display:none;">
-                                       <option value="2" selected>${t('model.modal.thinking_type.disable')}</option>
-                                       <option value="1">${t('model.modal.thinking_type.enable')}</option>
-                                       <option id="thinkingTypeAutoOption" value="3" style="display:none;">${t('model.modal.thinking_type.auto')}</option>
-                                     </select>
-                                </div>
-                                <div style="padding:12px 20px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #f1f3f4;">
-                                    <button onclick="closeAddModelModal()" style="background:#ecf0f1;color:#2c3e50;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">${t('common.cancel')}</button>
-                                    <button id="addModelSubmitBtn" onclick="saveNewModel()" style="background:#667eea;color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">${t('common.save')}</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style="display:grid;grid-template-columns:1fr;gap:20px;">
-                            ${providers.map(pm => {
-                                const p = pm.provider || {};
-                                const name = p.name?.zh_cn || p.name?.en_us || t('model.provider.unnamed');
-                                const desc = p.description?.zh_cn || p.description?.en_us || '';
-                                const icon = p.icon_url || p.icon_uri || '';
-                                const models = Array.isArray(pm.model_list) ? pm.model_list : [];
-                                return `
-                                    <div style="background:white;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.08);border:1px solid #e1e8ed;overflow:hidden;">
-                                        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #f1f3f4;background:#f8f9fa;">
-                                            <div style="display:flex;align-items:center;gap:12px;">
-                                                <img src="${icon}" alt="${name}" onerror="this.style.display='none'" style="width:36px;height:36px;border-radius:8px;object-fit:cover;">
-                                                <div>
-                                                    <div style="font-weight:600;color:#2c3e50;">${name}</div>
-                                                    <div style="color:#6c757d;font-size:12px;">${desc}</div>
-                                                </div>
-                                            </div>
-                                            <button onclick="openAddModelModalWithProvider(this)" data-provider-name="${name}" data-provider-icon="${icon}" data-provider-class="${p.model_class}" style="background:#3498db;color:#fff;border:none;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;">${t('model.actions.add')}</button>
-                                        </div>
-                                        <div style="padding:16px;">
-                                            <div style="color:#7f8c8d;font-size:12px;margin-bottom:12px;">${t('model.provider.model_count', { count: models.length })}</div>
-                                            ${models.map(m => {
-                                                const di = m.display_info || {};
-                                                const conn = m.connection?.base_conn_info || {};
-                                                const modelName = di.name || conn.model || t('model.unnamed');
-                                                const baseUrl = sanitizeUrl(conn.base_url || '');
-                                                const apiKeyMasked = maskApiKey(conn.api_key || '');
-                                                const outputTokens = di.output_tokens ?? '-';
-                                                const maxTokens = di.max_tokens ?? '-';
-                                                const statusText = m.status === 1 ? t('common.enabled') : t('common.disabled');
-                                                const statusColor = m.status === 1 ? '#2ecc71' : '#e74c3c';
-                                                const modelId = m.id ?? m.model_id ?? '';
-                                                return `
-                                                    <div style="border:1px solid #e1e8ed;border-radius:10px;padding:12px;margin-bottom:12px;background:#ffffff;">
-                                                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                                                            <div style="font-weight:500;color:#2c3e50;">${modelName}</div>
-                                                            <div style="display:flex;align-items:center;gap:8px;">
-                                                                <span style="font-size:12px;color:${statusColor};">${statusText}</span>
-                                                                <button onclick="deleteModel('${modelId}')" style="background:#e74c3c;color:#fff;border:none;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;">${t('common.delete')}</button>
-                                                            </div>
-                                                        </div>
-                                                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:10px;font-size:12px;color:#374151;">
-                                                            <div>${t('model.field.id')}：${m.id ?? m.model_id ?? '-'}</div>
-                                                            <div>${t('model.field.model')}：${conn.model || '-'}</div>
-                                                            ${p?.model_class === 20 ? '' : `<div>${t('model.field.api_key')}：${apiKeyMasked}</div>`}
-                                                            <div>${t('model.field.base64_url')}：${m.enable_base64_url ? t('common.on') : t('common.off')}</div>
-                                                            ${[2, 3, 11, 15, 20].includes(p?.model_class) ? `<div>${t('model.field.thinking_type')}：${getThinkingTypeText(conn.thinking_type ?? 0)}</div>` : ''}
-                                                            ${p?.model_class === 2 ? `<div>${t('model.field.region')}：${m?.connection?.ark?.region || ''}</div>` : ''}
-                                                            ${p?.model_class === 11 ? `<div>${t('model.field.backend')}：${m?.connection?.gemini?.backend ?? ''}</div><div>${t('model.field.project')}：${m?.connection?.gemini?.project || ''}</div><div>${t('model.field.location')}：${m?.connection?.gemini?.location || ''}</div>` : ''}
-                                                            ${p?.model_class === 1 ? `<div>${t('model.field.azure')}：${(m?.connection?.openai?.by_azure === undefined) ? '' : (m?.connection?.openai?.by_azure ? 'true' : 'false')}</div><div>${t('model.field.api_version')}：${m?.connection?.openai?.api_version || ''}</div>` : ''}
-                                                        </div>
-                                                        <div style="margin-top:8px;font-size:12px;color:#374151;word-break:break-all;">
-                                                            ${t('model.field.endpoint')}：<span style="color:#3498db;">${baseUrl || '-'}</span>
-                                                        </div>
-                                                    </div>
-                                                `;
-                                            }).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-                `;
-                pageContent.innerHTML = html;
-            } catch (e) {
-                console.error(t('model.error.render_page_failed'), e);
-                showError(t('model.error.render_page_failed') + ': ' + e.message);
-            }
-        }
-
-        async function deleteModel(id) {
-             try {
-                 if (!id) {
-                     showError(t('model.error.delete_missing_id'));
-                     return;
-                 }
-                 const confirmed = window.confirm(t('model.confirm.delete'));
-                 if (!confirmed) {
-                     return; // 用户取消
-                 }
-                 const resp = await fetch('/api/admin/config/model/delete', {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ id: String(id) })
-                 });
-                 if (!resp.ok) {
-                     throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-                 }
-                 let data;
-                 try {
-                    data = await resp.json();
-                } catch (err) {
-                    showError(t('model.error.delete_invalid_json'));
-                    return;
-                }
-                if (handleApiCode(data)) {
-                    return;
-                }
-                if (data?.code !== 0) {
-                     showError(t('model.error.delete_failed') + ': ' + (data?.msg || t('common.unknown_error')));
-                     return;
-                 }
-                 // 刷新模型列表
-                 await loadModelManagementPage();
-             } catch (error) {
-                 showError(t('model.error.delete_failed') + ': ' + error.message);
-             }
-         }
- 
-         function openAddModelModalWithProvider(btn) {
-              const modal = document.getElementById('addModelModal');
-              if (!modal) { showError(t('model.error.open_modal_failed')); return; }
-              const nameEl = document.getElementById('modalProviderName');
-              const iconEl = document.getElementById('modalProviderIcon');
-              const providerName = btn?.dataset?.providerName || t('model.provider.unknown');
-              const providerIcon = btn?.dataset?.providerIcon || '';
-              const providerClassStr = btn?.dataset?.providerClass;
-              const providerClass = providerClassStr ? Number(providerClassStr) : undefined;
-              window.__selectedProvider = { name: providerName, icon: providerIcon, model_class: providerClass };
-              if (nameEl) nameEl.textContent = providerName;
-              if (iconEl) {
-                  if (providerIcon) {
-                      iconEl.src = providerIcon; iconEl.alt = providerName; iconEl.style.display = 'block';
-                  } else {
-                      iconEl.src = ''; iconEl.style.display = 'none';
-                  }
-              }
-              // 根据 provider 隐藏或显示 API Key 字段（Ollama 不需要）
-              const apiLabel = document.getElementById('newModelApiKeyLabel');
-              const apiInput = document.getElementById('newModelApiKey');
-              const isOllama = providerClass === 20; // developer_api.ModelClass_Llama
-              if (apiLabel) apiLabel.style.display = isOllama ? 'none' : '';
-              if (apiInput) apiInput.style.display = isOllama ? 'none' : '';
-              // 根据 provider 显示 Ark 的 Region 字段（仅 Doubao/Ark，class=2）
-              const arkLabel = document.getElementById('newModelArkRegionLabel');
-              const arkInput = document.getElementById('newModelArkRegion');
-              const isArk = providerClass === 2;
-              if (arkLabel) arkLabel.style.display = isArk ? '' : 'none';
-              if (arkInput) arkInput.style.display = isArk ? '' : 'none';
-              // 根据 provider 显示 OpenAI 的 Azure 与 API Version 字段（仅 OpenAI，class=1）
-              const openaiByAzureLabel = document.getElementById('newModelOpenAIByAzureLabel');
-              const openaiByAzureWrapper = document.getElementById('newModelOpenAIByAzureWrapper');
-              const openaiApiVersionLabel = document.getElementById('newModelOpenAIApiVersionLabel');
-              const openaiApiVersionInput = document.getElementById('newModelOpenAIApiVersion');
-              const isOpenAI = providerClass === 1;
-              if (openaiByAzureLabel) openaiByAzureLabel.style.display = isOpenAI ? '' : 'none';
-              if (openaiByAzureWrapper) openaiByAzureWrapper.style.display = isOpenAI ? 'flex' : 'none';
-              if (openaiApiVersionLabel) openaiApiVersionLabel.style.display = isOpenAI ? '' : 'none';
-              if (openaiApiVersionInput) openaiApiVersionInput.style.display = isOpenAI ? '' : 'none';
-              // 根据 provider 显示 Gemini 的后端、项目、位置（仅 Gemini，class=11）
-              const geminiBackendLabel = document.getElementById('newModelGeminiBackendLabel');
-              const geminiBackendInput = document.getElementById('newModelGeminiBackend');
-              const geminiProjectLabel = document.getElementById('newModelGeminiProjectLabel');
-              const geminiProjectInput = document.getElementById('newModelGeminiProject');
-              const geminiLocationLabel = document.getElementById('newModelGeminiLocationLabel');
-              const geminiLocationInput = document.getElementById('newModelGeminiLocation');
-              const isGemini = providerClass === 11;
-              if (geminiBackendLabel) geminiBackendLabel.style.display = isGemini ? '' : 'none';
-              if (geminiBackendInput) geminiBackendInput.style.display = isGemini ? '' : 'none';
-              if (geminiProjectLabel) geminiProjectLabel.style.display = isGemini ? '' : 'none';
-              if (geminiProjectInput) geminiProjectInput.style.display = isGemini ? '' : 'none';
-              if (geminiLocationLabel) geminiLocationLabel.style.display = isGemini ? '' : 'none';
-              if (geminiLocationInput) geminiLocationInput.style.display = isGemini ? '' : 'none';
-              
-              // Show/hide ThinkingType dropdown
-              const thinkingTypeLabel = document.getElementById('newModelThinkingTypeLabel');
-              const thinkingTypeSelect = document.getElementById('newModelThinkingType');
-              const thinkingTypeAutoOption = document.getElementById('thinkingTypeAutoOption');
-              const hasThinkingType = [2, 3, 11, 15, 20].includes(providerClass); // Ark, Claude, Gemini, Qwen, Ollama
-              const isArkProvider = providerClass === 2;
-              if (thinkingTypeLabel) thinkingTypeLabel.style.display = hasThinkingType ? '' : 'none';
-              if (thinkingTypeSelect) {
-                  thinkingTypeSelect.style.display = hasThinkingType ? '' : 'none';
-                  thinkingTypeSelect.value = '2'; // Reset to Disable
-              }
-              if (thinkingTypeAutoOption) thinkingTypeAutoOption.style.display = isArkProvider ? '' : 'none';
-              
-              modal.style.display = 'flex';
-          }
-          function closeAddModelModal() {
-              const modal = document.getElementById('addModelModal');
-              if (modal) modal.style.display = 'none';
-          }
-          async function saveNewModel() {
-              const name = document.getElementById('newModelDisplayName')?.value?.trim() || '';
-              const model = document.getElementById('newModelModel')?.value?.trim() || '';
-              const apiKey = document.getElementById('newModelApiKey')?.value?.trim() || '';
-              const baseUrl = document.getElementById('newModelBaseUrl')?.value?.trim() || '';
-              // 允许 Base URL 为空；仅对必填项做校验，并在保存期间禁用按钮与显示提示
-              const submitBtn = document.getElementById('addModelSubmitBtn');
-              const restoreSavingState = () => {
-                  if (submitBtn) {
-                      submitBtn.disabled = false;
-                      if (submitBtn.dataset.originalText) submitBtn.textContent = submitBtn.dataset.originalText;
-                      submitBtn.style.opacity = '';
-                      submitBtn.style.cursor = 'pointer';
-                  }
-              };
-              if (submitBtn) {
-                  submitBtn.disabled = true;
-                  submitBtn.dataset.originalText = submitBtn.textContent;
-                  submitBtn.textContent = t('common.saving');
-                  submitBtn.style.opacity = '0.7';
-                  submitBtn.style.cursor = 'not-allowed';
-              }
-              const providerClass = window.__selectedProvider?.model_class;
-              if (typeof providerClass !== 'number') {
-                  showError(t('model.error.provider_unrecognized'));
-                  restoreSavingState();
-                  return;
-              }
-              const requireApiKey = providerClass !== 20; // Ollama 不需要 API Key
-              if (!name || !model || (requireApiKey && !apiKey)) {
-                  const missingMsg = requireApiKey ? t('model.error.missing_required_with_api') : t('model.error.missing_required');
-                  showError(missingMsg);
-                  restoreSavingState();
-                  return;
-              }
-              // 构造 payload，Base URL 为空时不传该字段；Ollama 不传 api_key
-              const baseConn = { model: model };
-              if (baseUrl) baseConn.base_url = baseUrl;
-              if (requireApiKey && apiKey) baseConn.api_key = apiKey;
-              
-              // 读取 ThinkingType（仅 Ark, Claude, Gemini, Qwen, Ollama）
-              const thinkingTypeSelect = document.getElementById('newModelThinkingType');
-              const hasThinkingType = [2, 3, 11, 15, 20].includes(providerClass);
-              if (hasThinkingType && thinkingTypeSelect) {
-                  const thinkingTypeValue = parseInt(thinkingTypeSelect.value, 10);
-                  if (!Number.isNaN(thinkingTypeValue)) {
-                      baseConn.thinking_type = thinkingTypeValue;
-                  }
-              }
-              // 读取“启用 Base64 URL”复选框，默认 false
-              const enableBase64UrlEl = document.getElementById('newModelEnableBase64Url');
-              const enableBase64Url = !!(enableBase64UrlEl && enableBase64UrlEl.checked);
-              const arkRegionInput = document.getElementById('newModelArkRegion');
-              const arkRegion = arkRegionInput ? arkRegionInput.value.trim() : '';
-              const connection = { base_conn_info: baseConn };
-              if (providerClass === 2) {
-                  connection.ark = { region: arkRegion };
-              }
-              // 读取 OpenAI 扩展字段（仅 providerClass=1）
-              const openaiByAzureEl = document.getElementById('newModelOpenAIByAzure');
-              const openaiByAzure = !!(openaiByAzureEl && openaiByAzureEl.checked);
-              const openaiApiVersionEl = document.getElementById('newModelOpenAIApiVersion');
-              const openaiApiVersion = openaiApiVersionEl ? openaiApiVersionEl.value.trim() : '';
-              if (providerClass === 1 && (openaiByAzure || openaiApiVersion)) {
-                  const openaiObj = {};
-                  // 如果任一字段有值，则组装 openai 对象；by_azure 始终按当前开关状态传递
-                  openaiObj.by_azure = openaiByAzure;
-                  if (openaiApiVersion) openaiObj.api_version = openaiApiVersion;
-                  connection.openai = openaiObj;
-              }
-              // 读取 Gemini 扩展字段（仅 providerClass=11），按需写入
-              const geminiBackendEl = document.getElementById('newModelGeminiBackend');
-              const geminiProjectEl = document.getElementById('newModelGeminiProject');
-              const geminiLocationEl = document.getElementById('newModelGeminiLocation');
-              const geminiBackendRaw = geminiBackendEl ? geminiBackendEl.value.trim() : '';
-              const hasGeminiBackend = geminiBackendRaw !== '';
-              const geminiBackend = hasGeminiBackend ? parseInt(geminiBackendRaw, 10) : NaN;
-              const geminiProject = geminiProjectEl ? geminiProjectEl.value.trim() : '';
-              const geminiLocation = geminiLocationEl ? geminiLocationEl.value.trim() : '';
-              if (providerClass === 11 && (hasGeminiBackend || geminiProject || geminiLocation)) {
-                  const geminiObj = {};
-                  if (hasGeminiBackend && !Number.isNaN(geminiBackend)) geminiObj.backend = geminiBackend;
-                  if (geminiProject) geminiObj.project = geminiProject;
-                  if (geminiLocation) geminiObj.location = geminiLocation;
-                  connection.gemini = geminiObj;
-              }
-              const payload = {
-                  model_name: name,
-                  model_class: providerClass,
-                  enable_base64_url: enableBase64Url,
-                  connection
-              };
-              try {
-                  const resp = await fetch('/api/admin/config/model/create', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload)
-                  });
-                  // 不依赖 resp.ok，统一按“JSON 优先，文本兜底”处理
-                  let rawText = '';
-                  try {
-                      rawText = await resp.text();
-                  } catch (e) {
-                      showError(t('model.error.create_read_failed'));
-                      return;
-                  }
-                  let data = null;
-                  try {
-                      data = JSON.parse(rawText);
-                  } catch (e) {
-                      data = null;
-                  }
-                  if (data && typeof data === 'object') {
-                      if (handleApiCode(data)) {
-                          return;
-                      }
-                      const code = Number(data.code);
-                      if (code === 0) {
-                          closeAddModelModal();
-                          showSuccess(t('model.create.success'));
-                          await loadModelManagementPage();
-                          return;
-                      }
-                      showError(t('model.error.create_failed') + ': ' + (data?.msg || `HTTP ${resp.status}`));
-                      return;
-                  } else {
-                      showError(`${t('model.error.create_failed')}: HTTP ${resp.status} ${rawText || ''}`);
-                      return;
-                  }
-              } catch (error) {
-                  showError(t('model.error.create_failed') + ': ' + error.message);
-              } finally {
-                  restoreSavingState();
-              }
-          }
 
           // 知识库配置页面：加载与渲染（支持本地预览示例数据兜底）
           async function loadKnowledgeConfigPage() {
@@ -3458,7 +2849,6 @@
                         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                             <h3 style="color: #667eea; margin-top: 0;">${t('help.features.title')}</h3>
                             <p><strong>${t('page.basic.title')}：</strong>${t('help.features.basic')}</p>
-                            <p><strong>${t('page.model.title')}：</strong>${t('help.features.model')}</p>
                             <p><strong>${t('page.knowledge.title')}：</strong>${t('help.features.kb')}</p>
                         </div>
                         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">

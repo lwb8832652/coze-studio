@@ -64,7 +64,7 @@ Deployment steps:
 
    For common startup failure issues, **please refer to the [FAQ](https://github.com/coze-dev/coze-studio/wiki/9.-FAQ)**.
 3.	Register an account by visiting `http://localhost:8888/sign`, entering your username and password, and clicking the Register button.
-4.	Configure the model at `http://localhost:8888/admin/#model-management` by adding a new model. (The image version must be greater than or equal to 0.5.0.)
+4.	Configure the model at `http://localhost:8888/system/models` by adding a new model. (The image version must be greater than or equal to 0.5.0.)
 5.	Visit NewX AI at `http://localhost:8888/`.
 
 > [!WARNING]
