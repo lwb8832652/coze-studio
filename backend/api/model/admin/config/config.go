@@ -5210,6 +5210,442 @@ func (p *ModelEndpointView) String() string {
 
 }
 
+type ModelProviderOptions struct {
+	ArkRegion        *string `thrift:"ark_region,1,optional" form:"ark_region" json:"ark_region,omitempty" query:"ark_region"`
+	OpenaiByAzure    *bool   `thrift:"openai_by_azure,2,optional" form:"openai_by_azure" json:"openai_by_azure,omitempty" query:"openai_by_azure"`
+	OpenaiAPIVersion *string `thrift:"openai_api_version,3,optional" form:"openai_api_version" json:"openai_api_version,omitempty" query:"openai_api_version"`
+	GeminiBackend    *int32  `thrift:"gemini_backend,4,optional" form:"gemini_backend" json:"gemini_backend,omitempty" query:"gemini_backend"`
+	GeminiProject    *string `thrift:"gemini_project,5,optional" form:"gemini_project" json:"gemini_project,omitempty" query:"gemini_project"`
+	GeminiLocation   *string `thrift:"gemini_location,6,optional" form:"gemini_location" json:"gemini_location,omitempty" query:"gemini_location"`
+}
+
+func NewModelProviderOptions() *ModelProviderOptions {
+	return &ModelProviderOptions{}
+}
+
+func (p *ModelProviderOptions) InitDefault() {
+}
+
+var ModelProviderOptions_ArkRegion_DEFAULT string
+
+func (p *ModelProviderOptions) GetArkRegion() (v string) {
+	if !p.IsSetArkRegion() {
+		return ModelProviderOptions_ArkRegion_DEFAULT
+	}
+	return *p.ArkRegion
+}
+
+var ModelProviderOptions_OpenaiByAzure_DEFAULT bool
+
+func (p *ModelProviderOptions) GetOpenaiByAzure() (v bool) {
+	if !p.IsSetOpenaiByAzure() {
+		return ModelProviderOptions_OpenaiByAzure_DEFAULT
+	}
+	return *p.OpenaiByAzure
+}
+
+var ModelProviderOptions_OpenaiAPIVersion_DEFAULT string
+
+func (p *ModelProviderOptions) GetOpenaiAPIVersion() (v string) {
+	if !p.IsSetOpenaiAPIVersion() {
+		return ModelProviderOptions_OpenaiAPIVersion_DEFAULT
+	}
+	return *p.OpenaiAPIVersion
+}
+
+var ModelProviderOptions_GeminiBackend_DEFAULT int32
+
+func (p *ModelProviderOptions) GetGeminiBackend() (v int32) {
+	if !p.IsSetGeminiBackend() {
+		return ModelProviderOptions_GeminiBackend_DEFAULT
+	}
+	return *p.GeminiBackend
+}
+
+var ModelProviderOptions_GeminiProject_DEFAULT string
+
+func (p *ModelProviderOptions) GetGeminiProject() (v string) {
+	if !p.IsSetGeminiProject() {
+		return ModelProviderOptions_GeminiProject_DEFAULT
+	}
+	return *p.GeminiProject
+}
+
+var ModelProviderOptions_GeminiLocation_DEFAULT string
+
+func (p *ModelProviderOptions) GetGeminiLocation() (v string) {
+	if !p.IsSetGeminiLocation() {
+		return ModelProviderOptions_GeminiLocation_DEFAULT
+	}
+	return *p.GeminiLocation
+}
+
+var fieldIDToName_ModelProviderOptions = map[int16]string{
+	1: "ark_region",
+	2: "openai_by_azure",
+	3: "openai_api_version",
+	4: "gemini_backend",
+	5: "gemini_project",
+	6: "gemini_location",
+}
+
+func (p *ModelProviderOptions) IsSetArkRegion() bool {
+	return p.ArkRegion != nil
+}
+
+func (p *ModelProviderOptions) IsSetOpenaiByAzure() bool {
+	return p.OpenaiByAzure != nil
+}
+
+func (p *ModelProviderOptions) IsSetOpenaiAPIVersion() bool {
+	return p.OpenaiAPIVersion != nil
+}
+
+func (p *ModelProviderOptions) IsSetGeminiBackend() bool {
+	return p.GeminiBackend != nil
+}
+
+func (p *ModelProviderOptions) IsSetGeminiProject() bool {
+	return p.GeminiProject != nil
+}
+
+func (p *ModelProviderOptions) IsSetGeminiLocation() bool {
+	return p.GeminiLocation != nil
+}
+
+func (p *ModelProviderOptions) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_ModelProviderOptions[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ArkRegion = _field
+	return nil
+}
+func (p *ModelProviderOptions) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.OpenaiByAzure = _field
+	return nil
+}
+func (p *ModelProviderOptions) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.OpenaiAPIVersion = _field
+	return nil
+}
+func (p *ModelProviderOptions) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.GeminiBackend = _field
+	return nil
+}
+func (p *ModelProviderOptions) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.GeminiProject = _field
+	return nil
+}
+func (p *ModelProviderOptions) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.GeminiLocation = _field
+	return nil
+}
+
+func (p *ModelProviderOptions) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ModelProviderOptions"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetArkRegion() {
+		if err = oprot.WriteFieldBegin("ark_region", thrift.STRING, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.ArkRegion); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetOpenaiByAzure() {
+		if err = oprot.WriteFieldBegin("openai_by_azure", thrift.BOOL, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.OpenaiByAzure); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetOpenaiAPIVersion() {
+		if err = oprot.WriteFieldBegin("openai_api_version", thrift.STRING, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.OpenaiAPIVersion); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetGeminiBackend() {
+		if err = oprot.WriteFieldBegin("gemini_backend", thrift.I32, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.GeminiBackend); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetGeminiProject() {
+		if err = oprot.WriteFieldBegin("gemini_project", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.GeminiProject); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetGeminiLocation() {
+		if err = oprot.WriteFieldBegin("gemini_location", thrift.STRING, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.GeminiLocation); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *ModelProviderOptions) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ModelProviderOptions(%+v)", *p)
+
+}
+
 type ModelManagementInput struct {
 	ProviderKey      string                `thrift:"provider_key,1,required" form:"provider_key,required" json:"provider_key,required" query:"provider_key,required"`
 	Name             string                `thrift:"name,2,required" form:"name,required" json:"name,required" query:"name,required"`
@@ -5227,6 +5663,7 @@ type ModelManagementInput struct {
 	AccessMode       ModelAccessMode       `thrift:"access_mode,14,required,ModelAccessMode" form:"access_mode,required" json:"access_mode,required" query:"access_mode,required"`
 	Endpoints        []*ModelEndpointInput `thrift:"endpoints,15,required,list<ModelEndpointInput>" form:"endpoints,required" json:"endpoints,required" query:"endpoints,required"`
 	EnableBase64URL  *bool                 `thrift:"enable_base64_url,16,optional" form:"enable_base64_url" json:"enable_base64_url,omitempty" query:"enable_base64_url"`
+	ProviderOptions  *ModelProviderOptions `thrift:"provider_options,17,optional" form:"provider_options" json:"provider_options,omitempty" query:"provider_options"`
 }
 
 func NewModelManagementInput() *ModelManagementInput {
@@ -5310,6 +5747,15 @@ func (p *ModelManagementInput) GetEnableBase64URL() (v bool) {
 	return *p.EnableBase64URL
 }
 
+var ModelManagementInput_ProviderOptions_DEFAULT *ModelProviderOptions
+
+func (p *ModelManagementInput) GetProviderOptions() (v *ModelProviderOptions) {
+	if !p.IsSetProviderOptions() {
+		return ModelManagementInput_ProviderOptions_DEFAULT
+	}
+	return p.ProviderOptions
+}
+
 var fieldIDToName_ModelManagementInput = map[int16]string{
 	1:  "provider_key",
 	2:  "name",
@@ -5327,6 +5773,7 @@ var fieldIDToName_ModelManagementInput = map[int16]string{
 	14: "access_mode",
 	15: "endpoints",
 	16: "enable_base64_url",
+	17: "provider_options",
 }
 
 func (p *ModelManagementInput) IsSetDescription() bool {
@@ -5335,6 +5782,10 @@ func (p *ModelManagementInput) IsSetDescription() bool {
 
 func (p *ModelManagementInput) IsSetEnableBase64URL() bool {
 	return p.EnableBase64URL != nil
+}
+
+func (p *ModelManagementInput) IsSetProviderOptions() bool {
+	return p.ProviderOptions != nil
 }
 
 func (p *ModelManagementInput) Read(iprot thrift.TProtocol) (err error) {
@@ -5507,6 +5958,14 @@ func (p *ModelManagementInput) Read(iprot thrift.TProtocol) (err error) {
 		case 16:
 			if fieldTypeId == thrift.BOOL {
 				if err = p.ReadField16(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 17:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField17(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -5824,6 +6283,14 @@ func (p *ModelManagementInput) ReadField16(iprot thrift.TProtocol) error {
 	p.EnableBase64URL = _field
 	return nil
 }
+func (p *ModelManagementInput) ReadField17(iprot thrift.TProtocol) error {
+	_field := NewModelProviderOptions()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.ProviderOptions = _field
+	return nil
+}
 
 func (p *ModelManagementInput) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -5893,6 +6360,10 @@ func (p *ModelManagementInput) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField16(oprot); err != nil {
 			fieldId = 16
+			goto WriteFieldError
+		}
+		if err = p.writeField17(oprot); err != nil {
+			fieldId = 17
 			goto WriteFieldError
 		}
 	}
@@ -6211,6 +6682,25 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 16 end error: ", p), err)
+}
+
+func (p *ModelManagementInput) writeField17(oprot thrift.TProtocol) (err error) {
+	if p.IsSetProviderOptions() {
+		if err = oprot.WriteFieldBegin("provider_options", thrift.STRUCT, 17); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.ProviderOptions.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 17 end error: ", p), err)
 }
 
 func (p *ModelManagementInput) String() string {
@@ -7034,16 +7524,17 @@ func (p *ModelManagementItem) String() string {
 }
 
 type ModelDetail struct {
-	Summary          *ModelManagementItem `thrift:"summary,1,required" form:"summary,required" json:"summary,required" query:"summary,required"`
-	ReasoningMode    string               `thrift:"reasoning_mode,2,required" form:"reasoning_mode,required" json:"reasoning_mode,required" query:"reasoning_mode,required"`
-	MaxContextTokens int64                `thrift:"max_context_tokens,3,required" form:"max_context_tokens,required" json:"max_context_tokens,required" query:"max_context_tokens,required"`
-	MaxOutputTokens  int64                `thrift:"max_output_tokens,4,required" form:"max_output_tokens,required" json:"max_output_tokens,required" query:"max_output_tokens,required"`
-	FunctionCallMode string               `thrift:"function_call_mode,5,required" form:"function_call_mode,required" json:"function_call_mode,required" query:"function_call_mode,required"`
-	UsageScenarios   []string             `thrift:"usage_scenarios,6,required,list<string>" form:"usage_scenarios,required" json:"usage_scenarios,required" query:"usage_scenarios,required"`
-	Protocol         string               `thrift:"protocol,7,required" form:"protocol,required" json:"protocol,required" query:"protocol,required"`
-	RoutingStrategy  ModelRoutingStrategy `thrift:"routing_strategy,8,required,ModelRoutingStrategy" form:"routing_strategy,required" json:"routing_strategy,required" query:"routing_strategy,required"`
-	Endpoints        []*ModelEndpointView `thrift:"endpoints,9,required,list<ModelEndpointView>" form:"endpoints,required" json:"endpoints,required" query:"endpoints,required"`
-	EnableBase64URL  bool                 `thrift:"enable_base64_url,10,required" form:"enable_base64_url,required" json:"enable_base64_url,required" query:"enable_base64_url,required"`
+	Summary          *ModelManagementItem  `thrift:"summary,1,required" form:"summary,required" json:"summary,required" query:"summary,required"`
+	ReasoningMode    string                `thrift:"reasoning_mode,2,required" form:"reasoning_mode,required" json:"reasoning_mode,required" query:"reasoning_mode,required"`
+	MaxContextTokens int64                 `thrift:"max_context_tokens,3,required" form:"max_context_tokens,required" json:"max_context_tokens,required" query:"max_context_tokens,required"`
+	MaxOutputTokens  int64                 `thrift:"max_output_tokens,4,required" form:"max_output_tokens,required" json:"max_output_tokens,required" query:"max_output_tokens,required"`
+	FunctionCallMode string                `thrift:"function_call_mode,5,required" form:"function_call_mode,required" json:"function_call_mode,required" query:"function_call_mode,required"`
+	UsageScenarios   []string              `thrift:"usage_scenarios,6,required,list<string>" form:"usage_scenarios,required" json:"usage_scenarios,required" query:"usage_scenarios,required"`
+	Protocol         string                `thrift:"protocol,7,required" form:"protocol,required" json:"protocol,required" query:"protocol,required"`
+	RoutingStrategy  ModelRoutingStrategy  `thrift:"routing_strategy,8,required,ModelRoutingStrategy" form:"routing_strategy,required" json:"routing_strategy,required" query:"routing_strategy,required"`
+	Endpoints        []*ModelEndpointView  `thrift:"endpoints,9,required,list<ModelEndpointView>" form:"endpoints,required" json:"endpoints,required" query:"endpoints,required"`
+	EnableBase64URL  bool                  `thrift:"enable_base64_url,10,required" form:"enable_base64_url,required" json:"enable_base64_url,required" query:"enable_base64_url,required"`
+	ProviderOptions  *ModelProviderOptions `thrift:"provider_options,11,optional" form:"provider_options" json:"provider_options,omitempty" query:"provider_options"`
 }
 
 func NewModelDetail() *ModelDetail {
@@ -7098,6 +7589,15 @@ func (p *ModelDetail) GetEnableBase64URL() (v bool) {
 	return p.EnableBase64URL
 }
 
+var ModelDetail_ProviderOptions_DEFAULT *ModelProviderOptions
+
+func (p *ModelDetail) GetProviderOptions() (v *ModelProviderOptions) {
+	if !p.IsSetProviderOptions() {
+		return ModelDetail_ProviderOptions_DEFAULT
+	}
+	return p.ProviderOptions
+}
+
 var fieldIDToName_ModelDetail = map[int16]string{
 	1:  "summary",
 	2:  "reasoning_mode",
@@ -7109,10 +7609,15 @@ var fieldIDToName_ModelDetail = map[int16]string{
 	8:  "routing_strategy",
 	9:  "endpoints",
 	10: "enable_base64_url",
+	11: "provider_options",
 }
 
 func (p *ModelDetail) IsSetSummary() bool {
 	return p.Summary != nil
+}
+
+func (p *ModelDetail) IsSetProviderOptions() bool {
+	return p.ProviderOptions != nil
 }
 
 func (p *ModelDetail) Read(iprot thrift.TProtocol) (err error) {
@@ -7231,6 +7736,14 @@ func (p *ModelDetail) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetEnableBase64URL = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -7445,6 +7958,14 @@ func (p *ModelDetail) ReadField10(iprot thrift.TProtocol) error {
 	p.EnableBase64URL = _field
 	return nil
 }
+func (p *ModelDetail) ReadField11(iprot thrift.TProtocol) error {
+	_field := NewModelProviderOptions()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.ProviderOptions = _field
+	return nil
+}
 
 func (p *ModelDetail) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -7490,6 +8011,10 @@ func (p *ModelDetail) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField10(oprot); err != nil {
 			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
 			goto WriteFieldError
 		}
 	}
@@ -7694,6 +8219,25 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *ModelDetail) writeField11(oprot thrift.TProtocol) (err error) {
+	if p.IsSetProviderOptions() {
+		if err = oprot.WriteFieldBegin("provider_options", thrift.STRUCT, 11); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.ProviderOptions.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
 }
 
 func (p *ModelDetail) String() string {

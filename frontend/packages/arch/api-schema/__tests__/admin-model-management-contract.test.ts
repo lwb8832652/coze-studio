@@ -81,4 +81,26 @@ describe('admin model management api contract source', () => {
     expect(source).toContain('struct ModelDependencySample');
     expect(source).toContain('list<ModelDependencySummary> dependencies');
   });
+
+  it('exposes only safe legacy runtime provider options', () => {
+    const source = readContract();
+    const options = source.match(
+      /struct\s+ModelProviderOptions\s*\{(?<body>[\s\S]*?)\n\s*\}/,
+    )?.groups?.body;
+
+    expect(options).toBeDefined();
+    expect(options).toContain('ark_region');
+    expect(options).toContain('openai_by_azure');
+    expect(options).toContain('openai_api_version');
+    expect(options).toContain('gemini_backend');
+    expect(options).toContain('gemini_project');
+    expect(options).toContain('gemini_location');
+    expect(options).not.toMatch(/api_key|secret|access_key|header/i);
+    expect(source).toMatch(
+      /struct\s+ModelManagementInput[\s\S]*optional\s+ModelProviderOptions\s+provider_options/,
+    );
+    expect(source).toMatch(
+      /struct\s+ModelDetail[\s\S]*optional\s+ModelProviderOptions\s+provider_options/,
+    );
+  });
 });

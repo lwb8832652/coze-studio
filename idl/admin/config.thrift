@@ -141,6 +141,15 @@ enum ThinkingType {
      6: required i32 sort_order
  }
 
+ struct ModelProviderOptions {
+     1: optional string ark_region
+     2: optional bool openai_by_azure
+     3: optional string openai_api_version
+     4: optional i32 gemini_backend
+     5: optional string gemini_project
+     6: optional string gemini_location
+ }
+
  struct ModelManagementInput {
      1: required string provider_key
      2: required string name
@@ -158,6 +167,7 @@ enum ThinkingType {
      14: required ModelAccessMode access_mode
      15: required list<ModelEndpointInput> endpoints
      16: optional bool enable_base64_url
+     17: optional ModelProviderOptions provider_options
  }
 
  struct ModelManagementItem {
@@ -187,6 +197,7 @@ enum ThinkingType {
      8: required ModelRoutingStrategy routing_strategy
      9: required list<ModelEndpointView> endpoints
      10: required bool enable_base64_url
+     11: optional ModelProviderOptions provider_options
  }
 
  struct GetModelDetailReq {

@@ -132,6 +132,14 @@ export interface ModelEndpointView {
   enabled: boolean,
   sort_order: number,
 }
+export interface ModelProviderOptions {
+  ark_region?: string,
+  openai_by_azure?: boolean,
+  openai_api_version?: string,
+  gemini_backend?: number,
+  gemini_project?: string,
+  gemini_location?: string,
+}
 export interface ModelManagementInput {
   provider_key: string,
   name: string,
@@ -149,6 +157,7 @@ export interface ModelManagementInput {
   access_mode: ModelAccessMode,
   endpoints: ModelEndpointInput[],
   enable_base64_url?: boolean,
+  provider_options?: ModelProviderOptions,
 }
 export interface ModelManagementItem {
   id: string,
@@ -176,6 +185,7 @@ export interface ModelDetail {
   routing_strategy: ModelRoutingStrategy,
   endpoints: ModelEndpointView[],
   enable_base64_url: boolean,
+  provider_options?: ModelProviderOptions,
 }
 export interface GetModelDetailReq {
   id: string
