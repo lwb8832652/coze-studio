@@ -18,6 +18,7 @@ package modelmgr
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -204,6 +205,136 @@ func TestSystemModelManagementProjectsAndMigratesLegacyRows(t *testing.T) {
 	plain, err := cfg.credentialCodec.Decrypt(modelID, stored.ID, stored.APIKeyEnvelope)
 	require.NoError(t, err)
 	require.Equal(t, "legacy-system-secret", plain)
+}
+
+func TestSystemModelManagementPreservesProviderOptions(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerKey  string
+		modelClass   developer_api.ModelClass
+		options      *config.ModelProviderOptions
+		assertStored func(t *testing.T, connection *config.Connection)
+	}{
+		{
+			name:        "doubao ark region",
+			providerKey: "doubao",
+			modelClass:  developer_api.ModelClass_SEED,
+			options: &config.ModelProviderOptions{
+				ArkRegion: ptr.Of("cn-beijing"),
+			},
+			assertStored: func(t *testing.T, connection *config.Connection) {
+				require.NotNil(t, connection.Ark)
+				require.Equal(t, "cn-beijing", connection.Ark.Region)
+			},
+		},
+		{
+			name:        "openai azure",
+			providerKey: "openai",
+			modelClass:  developer_api.ModelClass_GPT,
+			options: &config.ModelProviderOptions{
+				OpenaiByAzure:    ptr.Of(true),
+				OpenaiAPIVersion: ptr.Of("2025-04-01-preview"),
+			},
+			assertStored: func(t *testing.T, connection *config.Connection) {
+				require.NotNil(t, connection.Openai)
+				require.True(t, connection.Openai.ByAzure)
+				require.Equal(t, "2025-04-01-preview", connection.Openai.APIVersion)
+			},
+		},
+		{
+			name:        "gemini vertex",
+			providerKey: "gemini",
+			modelClass:  developer_api.ModelClass_Gemini,
+			options: &config.ModelProviderOptions{
+				GeminiBackend:  ptr.Of(int32(2)),
+				GeminiProject:  ptr.Of("newx-dev"),
+				GeminiLocation: ptr.Of("us-central1"),
+			},
+			assertStored: func(t *testing.T, connection *config.Connection) {
+				require.NotNil(t, connection.Gemini)
+				require.Equal(t, int32(2), connection.Gemini.Backend)
+				require.Equal(t, "newx-dev", connection.Gemini.Project)
+				require.Equal(t, "us-central1", connection.Gemini.Location)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg := newWorkspaceModelTestConfig(t)
+			cfg.ModelMetaConf.Provider2Models[tt.modelClass.String()] = map[string]ModelMeta{
+				"default": {
+					DisplayInfo: &config.DisplayInfo{Name: tt.name},
+					Connection:  &config.Connection{BaseConnInfo: &config.BaseConnectionInfo{}},
+					Capability:  &developer_api.ModelAbility{},
+				},
+			}
+			draft := newSystemModelTestInput("system-secret")
+			draft.ProviderKey = tt.providerKey
+			draft.Name = tt.name
+			draft.ModelIdentifier = "provider-model"
+			draft.ProviderOptions = tt.options
+
+			modelID, err := cfg.UpsertSystemModel(ctx, 9, nil, draft)
+			require.NoError(t, err)
+			detail, err := cfg.GetSystemModelDetail(ctx, modelID)
+			require.NoError(t, err)
+			require.Equal(t, tt.options, detail.ProviderOptions)
+			draft.ProviderOptions = detail.ProviderOptions
+			draft.Endpoints[0].ID = ptr.Of(detail.Endpoints[0].ID)
+			draft.Endpoints[0].APIKey = nil
+			_, err = cfg.UpsertSystemModel(ctx, 9, &modelID, draft)
+			require.NoError(t, err)
+
+			var row systemModelRow
+			require.NoError(t, cfg.db.Table(modelInstanceTable).Where("id = ?", modelID).First(&row).Error)
+			var connection config.Connection
+			require.NoError(t, json.Unmarshal([]byte(row.Connection), &connection))
+			tt.assertStored(t, &connection)
+		})
+	}
+}
+
+func TestSystemModelManagementRejectsProviderOptionsForAnotherProvider(t *testing.T) {
+	cfg := newWorkspaceModelTestConfig(t)
+	draft := newSystemModelTestInput("system-secret")
+	draft.ProviderOptions = &config.ModelProviderOptions{ArkRegion: ptr.Of("cn-beijing")}
+
+	_, err := cfg.UpsertSystemModel(context.Background(), 9, nil, draft)
+	require.ErrorIs(t, err, ErrSystemModelInvalid)
+}
+
+func TestSystemModelProvidersExposeRuntimeProtocolDefaults(t *testing.T) {
+	providers, err := (&ModelConfig{}).ListSystemModelProviders(context.Background())
+	require.NoError(t, err)
+
+	protocols := make(map[string]string, len(providers))
+	for _, provider := range providers {
+		protocols[provider.ProviderKey] = provider.Protocol
+	}
+	require.Equal(t, "openai-compatible", protocols["doubao"])
+	require.Equal(t, "anthropic", protocols["claude"])
+	require.Equal(t, "openai-compatible", protocols["deepseek"])
+	require.Equal(t, "gemini", protocols["gemini"])
+	require.Equal(t, "ollama", protocols["ollama"])
+	require.Equal(t, "openai-compatible", protocols["openai"])
+	require.Equal(t, "openai-compatible", protocols["qwen"])
+}
+
+func TestSystemModelProviderOptionsProjectLegacyOpenAIConnection(t *testing.T) {
+	connectionJSON, err := marshalManagedModelJSON(&config.Connection{
+		BaseConnInfo: &config.BaseConnectionInfo{},
+		Openai: &config.OpenAIConnInfo{
+			ByAzure: true, APIVersion: "2025-04-01-preview",
+		},
+	})
+	require.NoError(t, err)
+
+	options := projectSystemModelProviderOptions(connectionJSON, "openai")
+	require.NotNil(t, options)
+	require.True(t, options.GetOpenaiByAzure())
+	require.Equal(t, "2025-04-01-preview", options.GetOpenaiAPIVersion())
 }
 
 func newSystemModelTestInput(secret string) *config.ModelManagementInput {

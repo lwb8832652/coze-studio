@@ -17,6 +17,7 @@
 package modelmgr
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -120,6 +121,18 @@ type SystemModelEndpointTestResult struct {
 	ErrorMessage *string
 }
 
+type systemModelChatProbeMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type systemModelChatProbeRequest struct {
+	Model     string                        `json:"model"`
+	Messages  []systemModelChatProbeMessage `json:"messages"`
+	MaxTokens int                           `json:"max_tokens"`
+	Stream    bool                          `json:"stream"`
+}
+
 func (c *ModelConfig) ListSystemModelProviders(_ context.Context) ([]*config.ModelProviderOption, error) {
 	providers := getModelProviderList()
 	result := make([]*config.ModelProviderOption, 0, len(providers))
@@ -128,11 +141,8 @@ func (c *ModelConfig) ListSystemModelProviders(_ context.Context) ([]*config.Mod
 			continue
 		}
 		key := providerKeyForClass(provider.ModelClass)
-		protocol := "openai-compatible"
+		protocol := systemModelDefaultProtocol(key)
 		defaultURL := systemModelDefaultBaseURL(key)
-		if key == "ollama" {
-			protocol = "ollama"
-		}
 		result = append(result, &config.ModelProviderOption{
 			ProviderKey:           key,
 			Name:                  provider.Name,
@@ -266,6 +276,7 @@ func (c *ModelConfig) GetSystemModelDetail(ctx context.Context, modelID int64) (
 		RoutingStrategy:  systemRoutingStrategyFromString(row.RoutingStrategy),
 		Endpoints:        endpoints,
 		EnableBase64URL:  extra.EnableBase64URL,
+		ProviderOptions:  projectSystemModelProviderOptions(row.Connection, summary.ProviderKey),
 	}, nil
 }
 
@@ -583,12 +594,37 @@ func (c *ModelConfig) TestSystemModelEndpoint(ctx context.Context, req *config.T
 		return nil, fmt.Errorf("%w: API key is required", ErrSystemModelInvalid)
 	}
 
+	method := http.MethodGet
 	targetURL := workspaceModelProbeURL(req.Endpoint.BaseURL, req.Protocol)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	var requestBody io.Reader
+	if isOpenAICompatibleProtocol(req.Protocol) {
+		modelIdentifier := strings.TrimSpace(req.ModelIdentifier)
+		if modelIdentifier == "" {
+			return nil, fmt.Errorf("%w: model identifier is required", ErrSystemModelInvalid)
+		}
+		payload, marshalErr := json.Marshal(systemModelChatProbeRequest{
+			Model: modelIdentifier,
+			Messages: []systemModelChatProbeMessage{{
+				Role: "user", Content: "ping",
+			}},
+			MaxTokens: 1,
+			Stream:    false,
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode model connectivity request: %w", marshalErr)
+		}
+		method = http.MethodPost
+		targetURL = systemModelChatCompletionsURL(req.Endpoint.BaseURL)
+		requestBody = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, targetURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("%w: endpoint URL is invalid", ErrSystemModelInvalid)
 	}
 	request.Header.Set("Accept", "application/json")
+	if method == http.MethodPost {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	request.Header.Set("User-Agent", "Coze-Studio-System-Model-Connectivity/1.0")
 	if apiKey != "" {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
@@ -617,13 +653,40 @@ func (c *ModelConfig) TestSystemModelEndpoint(ctx context.Context, req *config.T
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		code, message := "provider_rejected", "模型服务拒绝了连接，请检查 API Key、模型标识和服务地址"
-		if response.StatusCode >= http.StatusInternalServerError {
-			code, message = "provider_unavailable", "模型服务暂时不可用，请稍后重试"
-		}
+		code, message := systemModelProbeHTTPError(response.StatusCode)
 		return &SystemModelEndpointTestResult{LatencyMS: latency, ErrorCode: &code, ErrorMessage: &message}, nil
 	}
 	return &SystemModelEndpointTestResult{Success: true, LatencyMS: latency}, nil
+}
+
+func isOpenAICompatibleProtocol(protocol string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(protocol)), "openai")
+}
+
+func systemModelChatCompletionsURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(strings.ToLower(baseURL), "/chat/completions") {
+		return baseURL
+	}
+	return baseURL + "/chat/completions"
+}
+
+func systemModelProbeHTTPError(statusCode int) (string, string) {
+	switch statusCode {
+	case http.StatusUnauthorized:
+		return "invalid_credential", "模型服务认证失败，请检查 API Key"
+	case http.StatusForbidden:
+		return "permission_denied", "模型服务拒绝访问，请检查 API Key 权限和模型授权"
+	case http.StatusNotFound:
+		return "model_not_found", "未找到指定模型，请检查模型标识和服务地址"
+	case http.StatusTooManyRequests:
+		return "rate_limited", "模型服务请求受限，请稍后重试或检查配额"
+	default:
+		if statusCode >= http.StatusInternalServerError {
+			return "provider_unavailable", "模型服务暂时不可用，请稍后重试"
+		}
+		return "provider_rejected", "模型服务拒绝了请求，请检查配置后重试"
+	}
 }
 
 func (c *ModelConfig) validateSystemModelInput(input *config.ModelManagementInput, creating bool) (developer_api.ModelClass, error) {
@@ -637,6 +700,9 @@ func (c *ModelConfig) validateSystemModelInput(input *config.ModelManagementInpu
 	modelClass, ok := systemModelClassForProviderKey(providerKey)
 	if !ok {
 		return 0, fmt.Errorf("%w: provider is unsupported", ErrSystemModelInvalid)
+	}
+	if err := validateSystemModelProviderOptions(providerKey, input.ProviderOptions); err != nil {
+		return 0, err
 	}
 	if name := strings.TrimSpace(input.Name); name == "" || len(name) > 128 {
 		return 0, fmt.Errorf("%w: model name is invalid", ErrSystemModelInvalid)
@@ -715,6 +781,7 @@ func (c *ModelConfig) buildSystemModelPayload(modelClass developer_api.ModelClas
 	meta.Connection.BaseConnInfo.BaseURL = strings.TrimSpace(input.Endpoints[0].BaseURL)
 	meta.Connection.BaseConnInfo.APIKey = ""
 	meta.Connection.BaseConnInfo.ThinkingType = systemThinkingType(input.ReasoningMode)
+	applySystemModelProviderOptions(meta.Connection, normalizeProviderKey(input.ProviderKey), input.ProviderOptions)
 	settings := workspaceModelSettings{
 		Capabilities:   normalizeStringList(input.CapabilityTypes),
 		UsageScenarios: normalizeStringList(input.UsageScenarios),
@@ -735,6 +802,138 @@ func (c *ModelConfig) buildSystemModelPayload(modelClass developer_api.ModelClas
 		providerJSON: encoded[0], displayJSON: encoded[1], connectionJSON: encoded[2],
 		capabilityJSON: encoded[3], parametersJSON: encoded[4], extraJSON: encoded[5], settingsJSON: encoded[6],
 	}, nil
+}
+
+func systemModelDefaultProtocol(providerKey string) string {
+	switch normalizeProviderKey(providerKey) {
+	case "claude":
+		return "anthropic"
+	case "gemini":
+		return "gemini"
+	case "ollama":
+		return "ollama"
+	default:
+		return "openai-compatible"
+	}
+}
+
+func validateSystemModelProviderOptions(providerKey string, options *config.ModelProviderOptions) error {
+	if options == nil {
+		return nil
+	}
+	hasArk := options.IsSetArkRegion()
+	hasOpenAI := options.IsSetOpenaiByAzure() || options.IsSetOpenaiAPIVersion()
+	hasGemini := options.IsSetGeminiBackend() || options.IsSetGeminiProject() || options.IsSetGeminiLocation()
+	switch normalizeProviderKey(providerKey) {
+	case "doubao":
+		if hasOpenAI || hasGemini {
+			return fmt.Errorf("%w: provider options do not match provider", ErrSystemModelInvalid)
+		}
+	case "openai":
+		if hasArk || hasGemini {
+			return fmt.Errorf("%w: provider options do not match provider", ErrSystemModelInvalid)
+		}
+	case "gemini":
+		if hasArk || hasOpenAI {
+			return fmt.Errorf("%w: provider options do not match provider", ErrSystemModelInvalid)
+		}
+	default:
+		if hasArk || hasOpenAI || hasGemini {
+			return fmt.Errorf("%w: provider options do not match provider", ErrSystemModelInvalid)
+		}
+	}
+	if len(strings.TrimSpace(options.GetArkRegion())) > 128 ||
+		len(strings.TrimSpace(options.GetOpenaiAPIVersion())) > 64 ||
+		len(strings.TrimSpace(options.GetGeminiProject())) > 256 ||
+		len(strings.TrimSpace(options.GetGeminiLocation())) > 256 {
+		return fmt.Errorf("%w: provider option is too long", ErrSystemModelInvalid)
+	}
+	if options.IsSetGeminiBackend() {
+		backend := options.GetGeminiBackend()
+		if backend < 0 || backend > 2 {
+			return fmt.Errorf("%w: Gemini backend is invalid", ErrSystemModelInvalid)
+		}
+		if backend == 2 && (strings.TrimSpace(options.GetGeminiProject()) == "" || strings.TrimSpace(options.GetGeminiLocation()) == "") {
+			return fmt.Errorf("%w: Gemini Vertex AI project and location are required", ErrSystemModelInvalid)
+		}
+	}
+	return nil
+}
+
+func applySystemModelProviderOptions(connection *config.Connection, providerKey string, options *config.ModelProviderOptions) {
+	if connection == nil || options == nil {
+		return
+	}
+	switch normalizeProviderKey(providerKey) {
+	case "doubao":
+		if options.IsSetArkRegion() {
+			if connection.Ark == nil {
+				connection.Ark = &config.ArkConnInfo{}
+			}
+			connection.Ark.Region = strings.TrimSpace(options.GetArkRegion())
+		}
+	case "openai":
+		if options.IsSetOpenaiByAzure() || options.IsSetOpenaiAPIVersion() {
+			if connection.Openai == nil {
+				connection.Openai = &config.OpenAIConnInfo{}
+			}
+			if options.IsSetOpenaiByAzure() {
+				connection.Openai.ByAzure = options.GetOpenaiByAzure()
+			}
+			if options.IsSetOpenaiAPIVersion() {
+				connection.Openai.APIVersion = strings.TrimSpace(options.GetOpenaiAPIVersion())
+			}
+		}
+	case "gemini":
+		if options.IsSetGeminiBackend() || options.IsSetGeminiProject() || options.IsSetGeminiLocation() {
+			if connection.Gemini == nil {
+				connection.Gemini = &config.GeminiConnInfo{}
+			}
+			if options.IsSetGeminiBackend() {
+				connection.Gemini.Backend = options.GetGeminiBackend()
+			}
+			if options.IsSetGeminiProject() {
+				connection.Gemini.Project = strings.TrimSpace(options.GetGeminiProject())
+			}
+			if options.IsSetGeminiLocation() {
+				connection.Gemini.Location = strings.TrimSpace(options.GetGeminiLocation())
+			}
+		}
+	}
+}
+
+func projectSystemModelProviderOptions(connectionJSON, providerKey string) *config.ModelProviderOptions {
+	var connection config.Connection
+	if err := json.Unmarshal([]byte(connectionJSON), &connection); err != nil {
+		return nil
+	}
+	switch normalizeProviderKey(providerKey) {
+	case "doubao":
+		if connection.Ark == nil {
+			return nil
+		}
+		region := connection.Ark.Region
+		return &config.ModelProviderOptions{ArkRegion: &region}
+	case "openai":
+		if connection.Openai == nil {
+			return nil
+		}
+		byAzure := connection.Openai.ByAzure
+		apiVersion := connection.Openai.APIVersion
+		return &config.ModelProviderOptions{OpenaiByAzure: &byAzure, OpenaiAPIVersion: &apiVersion}
+	case "gemini":
+		if connection.Gemini == nil {
+			return nil
+		}
+		backend := connection.Gemini.Backend
+		project := connection.Gemini.Project
+		location := connection.Gemini.Location
+		return &config.ModelProviderOptions{
+			GeminiBackend: &backend, GeminiProject: &project, GeminiLocation: &location,
+		}
+	default:
+		return nil
+	}
 }
 
 func (c *ModelConfig) replaceSystemModelEndpoints(
