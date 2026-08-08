@@ -773,7 +773,7 @@ describe('system service', () => {
     });
     await expect(
       createAdminManagedModel({
-        model_class: 3,
+        model_class: 1,
         management: {
           access_mode: 1,
           capability_types: ['text'],
@@ -790,10 +790,14 @@ describe('system service', () => {
           function_call_mode: 'native',
           max_context_tokens: 128000,
           max_output_tokens: 8192,
-          model_identifier: 'deepseek-v4-pro',
-          name: 'DeepSeek V4 Pro',
+          model_identifier: 'gpt-4o',
+          name: 'GPT 4o',
           protocol: 'openai-compatible',
-          provider_key: 'deepseek',
+          provider_key: 'openai',
+          provider_options: {
+            openai_api_version: '2024-06-01',
+            openai_by_azure: true,
+          },
           reasoning_mode: 'enabled',
           routing_strategy: 1,
           usage_scenarios: ['chat'],
@@ -810,6 +814,20 @@ describe('system service', () => {
       '/api/admin/config/model/providers',
     );
     expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/admin/config/model/create');
+    const createBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(createBody).toMatchObject({
+      management: {
+        model_identifier: 'gpt-4o',
+        provider_key: 'openai',
+        provider_options: {
+          openai_api_version: '2024-06-01',
+          openai_by_azure: true,
+        },
+      },
+    });
+    expect(JSON.stringify(createBody.management.provider_options)).not.toMatch(
+      /api_key|secret|access_key|header/i,
+    );
   });
 
   it('gets admin knowledge config', async () => {

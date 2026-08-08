@@ -25,6 +25,7 @@ import type {
   AdminModelEndpointInput,
   AdminModelEndpointTestPayload,
   AdminModelManagementInput,
+  AdminModelProviderOptions,
   AdminModelProviderOption,
 } from './service';
 
@@ -51,6 +52,44 @@ const newEndpoint = (baseURL = ''): AdminModelEndpointInput => ({
   weight: 1,
 });
 
+const createProviderOptions = (
+  providerKey: string,
+): AdminModelProviderOptions | undefined => {
+  switch (providerKey) {
+    case 'doubao':
+      return { ark_region: '' };
+    case 'openai':
+      return { openai_api_version: '', openai_by_azure: false };
+    case 'gemini':
+      return { gemini_backend: 0, gemini_location: '', gemini_project: '' };
+    default:
+      return undefined;
+  }
+};
+
+const normalizeProviderOptions = (
+  providerKey: string,
+  options?: AdminModelProviderOptions,
+): AdminModelProviderOptions | undefined => {
+  switch (providerKey) {
+    case 'doubao':
+      return { ark_region: options?.ark_region?.trim() || '' };
+    case 'openai':
+      return {
+        openai_api_version: options?.openai_api_version?.trim() || '',
+        openai_by_azure: Boolean(options?.openai_by_azure),
+      };
+    case 'gemini':
+      return {
+        gemini_backend: Number(options?.gemini_backend || 0),
+        gemini_location: options?.gemini_location?.trim() || '',
+        gemini_project: options?.gemini_project?.trim() || '',
+      };
+    default:
+      return undefined;
+  }
+};
+
 const createInitialValue = (
   providers: AdminModelProviderOption[],
 ): AdminModelManagementInput => {
@@ -69,6 +108,7 @@ const createInitialValue = (
     name: '',
     protocol: provider?.protocol || 'openai-compatible',
     provider_key: provider?.provider_key || '',
+    provider_options: createProviderOptions(provider?.provider_key || ''),
     reasoning_mode: 'default',
     routing_strategy: 1,
     usage_scenarios: USAGE_OPTIONS.map(item => item.value),
@@ -98,6 +138,9 @@ const detailToValue = (
   name: detail.summary.name,
   protocol: detail.protocol,
   provider_key: detail.summary.provider_key,
+  provider_options:
+    detail.provider_options ||
+    createProviderOptions(detail.summary.provider_key),
   reasoning_mode: detail.reasoning_mode,
   routing_strategy: detail.routing_strategy,
   usage_scenarios: detail.usage_scenarios,
@@ -180,6 +223,13 @@ export const ModelConfigDialog = ({
     });
   };
 
+  const updateProviderOptions = (patch: AdminModelProviderOptions) => {
+    setValue(current => ({
+      ...current,
+      provider_options: { ...current.provider_options, ...patch },
+    }));
+  };
+
   const validate = () => {
     if (
       !value.provider_key ||
@@ -211,6 +261,14 @@ export const ModelConfigDialog = ({
     ) {
       return '新建模型时需要填写 API Key';
     }
+    if (
+      value.provider_key === 'gemini' &&
+      value.provider_options?.gemini_backend === 2 &&
+      (!value.provider_options.gemini_project?.trim() ||
+        !value.provider_options.gemini_location?.trim())
+    ) {
+      return '使用 Vertex AI 时请填写 Project 和 Location';
+    }
     return '';
   };
 
@@ -226,6 +284,10 @@ export const ModelConfigDialog = ({
     })),
     model_identifier: value.model_identifier.trim(),
     name: value.name.trim(),
+    provider_options: normalizeProviderOptions(
+      value.provider_key,
+      value.provider_options,
+    ),
   });
 
   const submit = async () => {
@@ -327,6 +389,9 @@ export const ModelConfigDialog = ({
                       ),
                       protocol: provider?.protocol || current.protocol,
                       provider_key: event.target.value,
+                      provider_options: createProviderOptions(
+                        event.target.value,
+                      ),
                     }));
                   }}
                 >
@@ -460,6 +525,103 @@ export const ModelConfigDialog = ({
                 </select>
               </label>
             </div>
+            {value.provider_key === 'doubao' ? (
+              <div className="coze-prototype-model-form-grid">
+                <label>
+                  <span>Ark Region</span>
+                  <input
+                    aria-label="Ark Region"
+                    maxLength={128}
+                    placeholder="例如 cn-beijing"
+                    value={value.provider_options?.ark_region || ''}
+                    onChange={event =>
+                      updateProviderOptions({ ark_region: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
+            {value.provider_key === 'openai' ? (
+              <div className="coze-prototype-model-form-grid">
+                <label className="coze-prototype-model-inline-check">
+                  <input
+                    aria-label="使用 Azure OpenAI"
+                    checked={Boolean(value.provider_options?.openai_by_azure)}
+                    type="checkbox"
+                    onChange={event =>
+                      updateProviderOptions({
+                        openai_by_azure: event.target.checked,
+                      })
+                    }
+                  />
+                  使用 Azure OpenAI
+                </label>
+                <label>
+                  <span>OpenAI API Version</span>
+                  <input
+                    aria-label="OpenAI API Version"
+                    maxLength={64}
+                    placeholder="选填，例如 2025-04-01-preview"
+                    value={value.provider_options?.openai_api_version || ''}
+                    onChange={event =>
+                      updateProviderOptions({
+                        openai_api_version: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
+            {value.provider_key === 'gemini' ? (
+              <div className="coze-prototype-model-form-grid">
+                <label>
+                  <span>Gemini Backend</span>
+                  <select
+                    aria-label="Gemini Backend"
+                    value={value.provider_options?.gemini_backend || 0}
+                    onChange={event =>
+                      updateProviderOptions({
+                        gemini_backend: Number(event.target.value),
+                      })
+                    }
+                  >
+                    <option value={0}>未指定</option>
+                    <option value={1}>Gemini API</option>
+                    <option value={2}>Vertex AI</option>
+                  </select>
+                </label>
+                {value.provider_options?.gemini_backend === 2 ? (
+                  <>
+                    <label>
+                      <span>Vertex AI Project</span>
+                      <input
+                        aria-label="Vertex AI Project"
+                        maxLength={256}
+                        value={value.provider_options?.gemini_project || ''}
+                        onChange={event =>
+                          updateProviderOptions({
+                            gemini_project: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Vertex AI Location</span>
+                      <input
+                        aria-label="Vertex AI Location"
+                        maxLength={256}
+                        value={value.provider_options?.gemini_location || ''}
+                        onChange={event =>
+                          updateProviderOptions({
+                            gemini_location: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
           <section className="coze-prototype-model-form-section">

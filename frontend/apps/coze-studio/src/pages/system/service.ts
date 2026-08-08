@@ -603,6 +603,15 @@ export interface AdminModelEndpointView {
   sort_order: number;
 }
 
+export interface AdminModelProviderOptions {
+  ark_region?: string;
+  openai_by_azure?: boolean;
+  openai_api_version?: string;
+  gemini_backend?: number;
+  gemini_project?: string;
+  gemini_location?: string;
+}
+
 export interface AdminModelManagementInput {
   provider_key: string;
   name: string;
@@ -620,6 +629,7 @@ export interface AdminModelManagementInput {
   access_mode: number;
   endpoints: AdminModelEndpointInput[];
   enable_base64_url?: boolean;
+  provider_options?: AdminModelProviderOptions;
 }
 
 export interface AdminModelDetail {
@@ -633,6 +643,7 @@ export interface AdminModelDetail {
   routing_strategy: number;
   endpoints: AdminModelEndpointView[];
   enable_base64_url: boolean;
+  provider_options?: AdminModelProviderOptions;
 }
 
 export interface AdminModelGrantSubject {

@@ -205,4 +205,167 @@ describe('ModelConfigSection', () => {
       container.querySelector('select[aria-label="供应商"]'),
     ).not.toBeNull();
   });
+
+  it('hydrates and submits OpenAI provider options', async () => {
+    const openAIModel = {
+      ...managedModel,
+      model_class: 1,
+      model_identifier: 'gpt-4.1',
+      name: 'GPT 4.1',
+      provider_key: 'openai',
+    };
+    serviceMocks.listAdminManagedModels.mockResolvedValue({
+      models: [openAIModel],
+      total: 1,
+    });
+    serviceMocks.listAdminModelProviders.mockResolvedValue({
+      providers: [
+        {
+          default_base_url: 'https://api.openai.com/v1',
+          model_class: 1,
+          name: { zh_cn: 'OpenAI 模型' },
+          protocol: 'openai-compatible',
+          provider_key: 'openai',
+          supports_custom_base_url: true,
+          supports_function_call: true,
+          supports_multimodal: true,
+        },
+      ],
+    });
+    serviceMocks.getAdminManagedModelDetail.mockResolvedValue({
+      model: {
+        enable_base64_url: false,
+        endpoints: [
+          {
+            base_url: 'https://api.openai.com/v1',
+            enabled: true,
+            has_api_key: true,
+            id: '22',
+            sort_order: 0,
+            weight: 1,
+          },
+        ],
+        function_call_mode: 'native',
+        max_context_tokens: 128000,
+        max_output_tokens: 8192,
+        protocol: 'openai-compatible',
+        provider_options: {
+          openai_api_version: '2025-04-01-preview',
+          openai_by_azure: true,
+        },
+        reasoning_mode: 'enabled',
+        routing_strategy: 1,
+        summary: openAIModel,
+        usage_scenarios: ['chat', 'agent'],
+      },
+    });
+
+    await renderSection();
+    const editButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '编辑',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      Simulate.click(editButton);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const azureInput = container.querySelector(
+      'input[aria-label="使用 Azure OpenAI"]',
+    ) as HTMLInputElement;
+    const versionInput = container.querySelector(
+      'input[aria-label="OpenAI API Version"]',
+    ) as HTMLInputElement;
+    expect(azureInput.checked).toBe(true);
+    expect(versionInput.value).toBe('2025-04-01-preview');
+
+    act(() => {
+      Simulate.change(azureInput, { target: { checked: false } });
+      Simulate.change(versionInput, { target: { value: '2025-06-01' } });
+    });
+    const confirmButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '确认',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      Simulate.click(confirmButton);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(serviceMocks.updateAdminManagedModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        management: expect.objectContaining({
+          provider_options: {
+            openai_api_version: '2025-06-01',
+            openai_by_azure: false,
+          },
+        }),
+      }),
+    );
+  });
+
+  it('requires Vertex AI project and location before creating a Gemini model', async () => {
+    serviceMocks.listAdminModelProviders.mockResolvedValue({
+      providers: [
+        {
+          default_base_url: 'https://generativelanguage.googleapis.com/v1beta',
+          model_class: 11,
+          name: { zh_cn: 'Gemini 模型' },
+          protocol: 'gemini',
+          provider_key: 'gemini',
+          supports_custom_base_url: true,
+          supports_function_call: true,
+          supports_multimodal: true,
+        },
+      ],
+    });
+    await renderSection();
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '添加模型',
+    ) as HTMLButtonElement;
+    act(() => Simulate.click(addButton));
+
+    const changeInput = (label: string, value: string) => {
+      const input = container.querySelector(
+        `[aria-label="${label}"]`,
+      ) as HTMLInputElement;
+      Simulate.change(input, { target: { value } });
+    };
+    act(() => {
+      changeInput('模型名称', 'Gemini 2.5 Pro');
+      changeInput('模型标识', 'gemini-2.5-pro');
+      changeInput('Endpoint 1 API Key', 'write-only-secret');
+      const backend = container.querySelector(
+        'select[aria-label="Gemini Backend"]',
+      ) as HTMLSelectElement;
+      Simulate.change(backend, { target: { value: '2' } });
+    });
+
+    const confirmButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '确认',
+    ) as HTMLButtonElement;
+    act(() => Simulate.click(confirmButton));
+    expect(container.textContent).toContain(
+      '使用 Vertex AI 时请填写 Project 和 Location',
+    );
+    expect(serviceMocks.createAdminManagedModel).not.toHaveBeenCalled();
+
+    act(() => {
+      changeInput('Vertex AI Project', 'newx-dev');
+      changeInput('Vertex AI Location', 'us-central1');
+    });
+    await act(async () => {
+      Simulate.click(confirmButton);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(serviceMocks.createAdminManagedModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        management: expect.objectContaining({
+          provider_options: {
+            gemini_backend: 2,
+            gemini_location: 'us-central1',
+            gemini_project: 'newx-dev',
+          },
+        }),
+      }),
+    );
+  });
 });
