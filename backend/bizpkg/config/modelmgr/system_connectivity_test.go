@@ -131,6 +131,20 @@ func TestSystemModelEndpointProbeUsesStoredWriteOnlyCredential(t *testing.T) {
 	require.Equal(t, "Bearer stored-secret", <-authorization)
 }
 
+func TestSystemModelEndpointProbeMapsNetworkFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	baseURL := server.URL
+	server.Close()
+
+	result, err := (&ModelConfig{}).TestSystemModelEndpoint(context.Background(), &config.TestModelEndpointReq{
+		ProviderKey: "qwen", ModelIdentifier: "qwen-test", Protocol: "openai-compatible",
+		Endpoint: &config.ModelEndpointInput{BaseURL: baseURL, APIKey: ptr.Of("test-secret")},
+	})
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, "network_error", requireSystemModelTestString(t, result.ErrorCode))
+}
+
 func requireSystemModelTestString(t *testing.T, value *string) string {
 	t.Helper()
 	require.NotNil(t, value)
