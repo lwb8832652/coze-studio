@@ -281,7 +281,9 @@ func TestSystemModelManagementPreservesProviderOptions(t *testing.T) {
 			detail, err := cfg.GetSystemModelDetail(ctx, modelID)
 			require.NoError(t, err)
 			require.Equal(t, tt.options, detail.ProviderOptions)
-			draft.ProviderOptions = detail.ProviderOptions
+			// Older clients do not send provider_options back on update. The
+			// persisted runtime options must survive that compatibility path.
+			draft.ProviderOptions = nil
 			draft.Endpoints[0].ID = ptr.Of(detail.Endpoints[0].ID)
 			draft.Endpoints[0].APIKey = nil
 			_, err = cfg.UpsertSystemModel(ctx, 9, &modelID, draft)
@@ -303,6 +305,42 @@ func TestSystemModelManagementRejectsProviderOptionsForAnotherProvider(t *testin
 
 	_, err := cfg.UpsertSystemModel(context.Background(), 9, nil, draft)
 	require.ErrorIs(t, err, ErrSystemModelInvalid)
+}
+
+func TestSystemModelUpdateDoesNotCarryProviderOptionsAcrossProviders(t *testing.T) {
+	ctx := context.Background()
+	cfg := newWorkspaceModelTestConfig(t)
+	cfg.ModelMetaConf.Provider2Models[developer_api.ModelClass_GPT.String()] = map[string]ModelMeta{
+		"default": {
+			DisplayInfo: &config.DisplayInfo{Name: "Azure OpenAI"},
+			Connection:  &config.Connection{BaseConnInfo: &config.BaseConnectionInfo{}},
+			Capability:  &developer_api.ModelAbility{},
+		},
+	}
+	draft := newSystemModelTestInput("system-secret")
+	draft.ProviderKey = "openai"
+	draft.ModelIdentifier = "gpt-4o"
+	draft.ProviderOptions = &config.ModelProviderOptions{
+		OpenaiByAzure: ptr.Of(true), OpenaiAPIVersion: ptr.Of("2025-04-01-preview"),
+	}
+	modelID, err := cfg.UpsertSystemModel(ctx, 9, nil, draft)
+	require.NoError(t, err)
+	detail, err := cfg.GetSystemModelDetail(ctx, modelID)
+	require.NoError(t, err)
+
+	draft.ProviderKey = "deepseek"
+	draft.ModelIdentifier = "deepseek-v4-pro"
+	draft.ProviderOptions = nil
+	draft.Endpoints[0].ID = ptr.Of(detail.Endpoints[0].ID)
+	draft.Endpoints[0].APIKey = nil
+	_, err = cfg.UpsertSystemModel(ctx, 9, &modelID, draft)
+	require.NoError(t, err)
+
+	var row systemModelRow
+	require.NoError(t, cfg.db.Table(modelInstanceTable).Where("id = ?", modelID).First(&row).Error)
+	var connection config.Connection
+	require.NoError(t, json.Unmarshal([]byte(row.Connection), &connection))
+	require.Nil(t, connection.Openai)
 }
 
 func TestSystemModelProvidersExposeRuntimeProtocolDefaults(t *testing.T) {

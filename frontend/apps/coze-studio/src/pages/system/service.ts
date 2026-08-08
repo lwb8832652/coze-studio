@@ -669,6 +669,7 @@ export interface AdminModelEndpointTestPayload {
   provider_key: string;
   model_identifier: string;
   protocol: string;
+  provider_options?: AdminModelProviderOptions;
 }
 
 export interface AdminKnowledgeConfig {

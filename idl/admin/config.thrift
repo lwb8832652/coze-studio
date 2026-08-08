@@ -251,6 +251,7 @@ enum ThinkingType {
      3: required string provider_key
      4: required string model_identifier
      5: required string protocol
+     6: optional ModelProviderOptions provider_options
      255: optional base.Base Base
  }
 

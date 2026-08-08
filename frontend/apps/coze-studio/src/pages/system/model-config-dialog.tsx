@@ -328,6 +328,10 @@ export const ModelConfigDialog = ({
         model_identifier: value.model_identifier.trim(),
         protocol: value.protocol,
         provider_key: value.provider_key,
+        provider_options: normalizeProviderOptions(
+          value.provider_key,
+          value.provider_options,
+        ),
       });
       setMessage(
         result.success

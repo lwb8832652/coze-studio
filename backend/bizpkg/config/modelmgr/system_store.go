@@ -289,6 +289,11 @@ func (c *ModelConfig) UpsertSystemModel(
 	if c == nil || c.db == nil || !c.workspaceModelSchemaReady() {
 		return 0, ErrSystemModelSchemaUnavailable
 	}
+	effectiveInput, err := c.preserveOmittedSystemModelProviderOptions(ctx, modelID, input)
+	if err != nil {
+		return 0, err
+	}
+	input = effectiveInput
 	modelClass, err := c.validateSystemModelInput(input, modelID == nil)
 	if err != nil {
 		return 0, err
@@ -597,7 +602,18 @@ func (c *ModelConfig) TestSystemModelEndpoint(ctx context.Context, req *config.T
 	method := http.MethodGet
 	targetURL := workspaceModelProbeURL(req.Endpoint.BaseURL, req.Protocol)
 	var requestBody io.Reader
+	var azureOpenAI bool
+	var azureAPIVersion string
 	if isOpenAICompatibleProtocol(req.Protocol) {
+		azureOpenAI, azureAPIVersion, err = c.resolveSystemModelAzureProbeOptions(
+			ctx,
+			req.GetModelID(),
+			req.ProviderKey,
+			req.ProviderOptions,
+		)
+		if err != nil {
+			return nil, err
+		}
 		modelIdentifier := strings.TrimSpace(req.ModelIdentifier)
 		if modelIdentifier == "" {
 			return nil, fmt.Errorf("%w: model identifier is required", ErrSystemModelInvalid)
@@ -614,7 +630,11 @@ func (c *ModelConfig) TestSystemModelEndpoint(ctx context.Context, req *config.T
 			return nil, fmt.Errorf("encode model connectivity request: %w", marshalErr)
 		}
 		method = http.MethodPost
-		targetURL = systemModelChatCompletionsURL(req.Endpoint.BaseURL)
+		if azureOpenAI {
+			targetURL = systemModelAzureChatCompletionsURL(req.Endpoint.BaseURL, modelIdentifier, azureAPIVersion)
+		} else {
+			targetURL = systemModelChatCompletionsURL(req.Endpoint.BaseURL)
+		}
 		requestBody = bytes.NewReader(payload)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, targetURL, requestBody)
@@ -627,8 +647,12 @@ func (c *ModelConfig) TestSystemModelEndpoint(ctx context.Context, req *config.T
 	}
 	request.Header.Set("User-Agent", "Coze-Studio-System-Model-Connectivity/1.0")
 	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-		request.Header.Set("x-api-key", apiKey)
+		if azureOpenAI {
+			request.Header.Set("api-key", apiKey)
+		} else {
+			request.Header.Set("Authorization", "Bearer "+apiKey)
+			request.Header.Set("x-api-key", apiKey)
+		}
 	}
 	client := &http.Client{
 		Timeout: 12 * time.Second,
@@ -669,6 +693,18 @@ func systemModelChatCompletionsURL(baseURL string) string {
 		return baseURL
 	}
 	return baseURL + "/chat/completions"
+}
+
+func systemModelAzureChatCompletionsURL(baseURL, modelIdentifier, apiVersion string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	deployment := strings.NewReplacer(".", "", ":", "").Replace(strings.TrimSpace(modelIdentifier))
+	apiVersion = fallbackString(strings.TrimSpace(apiVersion), "2023-05-15")
+	return fmt.Sprintf(
+		"%s/openai/deployments/%s/chat/completions?api-version=%s",
+		baseURL,
+		deployment,
+		url.QueryEscape(apiVersion),
+	)
 }
 
 func systemModelProbeHTTPError(statusCode int) (string, string) {
@@ -934,6 +970,76 @@ func projectSystemModelProviderOptions(connectionJSON, providerKey string) *conf
 	default:
 		return nil
 	}
+}
+
+func (c *ModelConfig) preserveOmittedSystemModelProviderOptions(
+	ctx context.Context,
+	modelID *int64,
+	input *config.ModelManagementInput,
+) (*config.ModelManagementInput, error) {
+	if input == nil || input.ProviderOptions != nil || modelID == nil || *modelID <= 0 {
+		return input, nil
+	}
+	row, err := c.getSystemModelRow(ctx, *modelID)
+	if err != nil {
+		return nil, err
+	}
+	providerKey := systemModelProviderKey(*row)
+	if providerKey != normalizeProviderKey(input.ProviderKey) {
+		return input, nil
+	}
+	options := projectSystemModelProviderOptions(row.Connection, providerKey)
+	if options == nil {
+		return input, nil
+	}
+	copyInput := *input
+	copyInput.ProviderOptions = options
+	return &copyInput, nil
+}
+
+func (c *ModelConfig) resolveSystemModelAzureProbeOptions(
+	ctx context.Context,
+	modelID int64,
+	providerKey string,
+	requestOptions *config.ModelProviderOptions,
+) (bool, string, error) {
+	providerKey = normalizeProviderKey(providerKey)
+	if requestOptions != nil {
+		if err := validateSystemModelProviderOptions(providerKey, requestOptions); err != nil {
+			return false, "", err
+		}
+		if providerKey != "openai" || !requestOptions.GetOpenaiByAzure() {
+			return false, "", nil
+		}
+		return true, strings.TrimSpace(requestOptions.GetOpenaiAPIVersion()), nil
+	}
+	if modelID <= 0 || providerKey != "openai" {
+		return false, "", nil
+	}
+	row, err := c.getSystemModelRow(ctx, modelID)
+	if err != nil {
+		return false, "", err
+	}
+	if systemModelProviderKey(*row) != "openai" {
+		return false, "", nil
+	}
+	options := projectSystemModelProviderOptions(row.Connection, "openai")
+	if options == nil || !options.GetOpenaiByAzure() {
+		return false, "", nil
+	}
+	return true, strings.TrimSpace(options.GetOpenaiAPIVersion()), nil
+}
+
+func systemModelProviderKey(row systemModelRow) string {
+	providerKey := normalizeProviderKey(row.ProviderKey)
+	if providerKey != "" {
+		return providerKey
+	}
+	var provider config.ModelProvider
+	if json.Unmarshal([]byte(row.Provider), &provider) != nil {
+		return ""
+	}
+	return providerKeyForClass(provider.ModelClass)
 }
 
 func (c *ModelConfig) replaceSystemModelEndpoints(

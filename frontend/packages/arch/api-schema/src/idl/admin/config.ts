@@ -225,6 +225,7 @@ export interface TestModelEndpointReq {
   provider_key: string,
   model_identifier: string,
   protocol: string,
+  provider_options?: ModelProviderOptions,
 }
 export interface TestModelEndpointResp {
   success: boolean,
@@ -688,7 +689,7 @@ export const TestModelEndpoint = /*#__PURE__*/createAPI<TestModelEndpointReq, Te
   "name": "TestModelEndpoint",
   "reqType": "TestModelEndpointReq",
   "reqMapping": {
-    "body": ["model_id", "endpoint", "provider_key", "model_identifier", "protocol"]
+    "body": ["model_id", "endpoint", "provider_key", "model_identifier", "protocol", "provider_options"]
   },
   "resType": "TestModelEndpointResp",
   "schemaRoot": "api://schemas/idl_admin_config",

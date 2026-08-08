@@ -282,6 +282,26 @@ describe('ModelConfigSection', () => {
       Simulate.change(azureInput, { target: { checked: false } });
       Simulate.change(versionInput, { target: { value: '2025-06-01' } });
     });
+    serviceMocks.testAdminManagedModelEndpoint.mockResolvedValue({
+      latency_ms: 15,
+      success: true,
+    });
+    const testButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '模型连通性测试',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      Simulate.click(testButton);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(serviceMocks.testAdminManagedModelEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model_id: '12',
+        provider_options: {
+          openai_api_version: '2025-06-01',
+          openai_by_azure: false,
+        },
+      }),
+    );
     const confirmButton = Array.from(container.querySelectorAll('button')).find(
       button => button.textContent === '确认',
     ) as HTMLButtonElement;

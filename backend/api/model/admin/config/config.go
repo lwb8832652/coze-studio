@@ -10261,12 +10261,13 @@ func (p *SaveModelGrantsResp) String() string {
 }
 
 type TestModelEndpointReq struct {
-	ModelID         *int64              `thrift:"model_id,1,optional" form:"model_id" json:"model_id,string,omitempty" query:"model_id"`
-	Endpoint        *ModelEndpointInput `thrift:"endpoint,2,required" form:"endpoint,required" json:"endpoint,required" query:"endpoint,required"`
-	ProviderKey     string              `thrift:"provider_key,3,required" form:"provider_key,required" json:"provider_key,required" query:"provider_key,required"`
-	ModelIdentifier string              `thrift:"model_identifier,4,required" form:"model_identifier,required" json:"model_identifier,required" query:"model_identifier,required"`
-	Protocol        string              `thrift:"protocol,5,required" form:"protocol,required" json:"protocol,required" query:"protocol,required"`
-	Base            *base.Base          `thrift:"Base,255,optional" form:"Base" json:"Base,omitempty" query:"Base"`
+	ModelID         *int64                `thrift:"model_id,1,optional" form:"model_id" json:"model_id,string,omitempty" query:"model_id"`
+	Endpoint        *ModelEndpointInput   `thrift:"endpoint,2,required" form:"endpoint,required" json:"endpoint,required" query:"endpoint,required"`
+	ProviderKey     string                `thrift:"provider_key,3,required" form:"provider_key,required" json:"provider_key,required" query:"provider_key,required"`
+	ModelIdentifier string                `thrift:"model_identifier,4,required" form:"model_identifier,required" json:"model_identifier,required" query:"model_identifier,required"`
+	Protocol        string                `thrift:"protocol,5,required" form:"protocol,required" json:"protocol,required" query:"protocol,required"`
+	ProviderOptions *ModelProviderOptions `thrift:"provider_options,6,optional" form:"provider_options" json:"provider_options,omitempty" query:"provider_options"`
+	Base            *base.Base            `thrift:"Base,255,optional" form:"Base" json:"Base,omitempty" query:"Base"`
 }
 
 func NewTestModelEndpointReq() *TestModelEndpointReq {
@@ -10306,6 +10307,15 @@ func (p *TestModelEndpointReq) GetProtocol() (v string) {
 	return p.Protocol
 }
 
+var TestModelEndpointReq_ProviderOptions_DEFAULT *ModelProviderOptions
+
+func (p *TestModelEndpointReq) GetProviderOptions() (v *ModelProviderOptions) {
+	if !p.IsSetProviderOptions() {
+		return TestModelEndpointReq_ProviderOptions_DEFAULT
+	}
+	return p.ProviderOptions
+}
+
 var TestModelEndpointReq_Base_DEFAULT *base.Base
 
 func (p *TestModelEndpointReq) GetBase() (v *base.Base) {
@@ -10321,6 +10331,7 @@ var fieldIDToName_TestModelEndpointReq = map[int16]string{
 	3:   "provider_key",
 	4:   "model_identifier",
 	5:   "protocol",
+	6:   "provider_options",
 	255: "Base",
 }
 
@@ -10330,6 +10341,10 @@ func (p *TestModelEndpointReq) IsSetModelID() bool {
 
 func (p *TestModelEndpointReq) IsSetEndpoint() bool {
 	return p.Endpoint != nil
+}
+
+func (p *TestModelEndpointReq) IsSetProviderOptions() bool {
+	return p.ProviderOptions != nil
 }
 
 func (p *TestModelEndpointReq) IsSetBase() bool {
@@ -10400,6 +10415,14 @@ func (p *TestModelEndpointReq) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetProtocol = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -10513,6 +10536,14 @@ func (p *TestModelEndpointReq) ReadField5(iprot thrift.TProtocol) error {
 	p.Protocol = _field
 	return nil
 }
+func (p *TestModelEndpointReq) ReadField6(iprot thrift.TProtocol) error {
+	_field := NewModelProviderOptions()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.ProviderOptions = _field
+	return nil
+}
 func (p *TestModelEndpointReq) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -10546,6 +10577,10 @@ func (p *TestModelEndpointReq) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -10655,6 +10690,25 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *TestModelEndpointReq) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetProviderOptions() {
+		if err = oprot.WriteFieldBegin("provider_options", thrift.STRUCT, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.ProviderOptions.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
 func (p *TestModelEndpointReq) writeField255(oprot thrift.TProtocol) (err error) {

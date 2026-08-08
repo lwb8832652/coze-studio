@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
+	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 )
 
@@ -129,6 +130,117 @@ func TestSystemModelEndpointProbeUsesStoredWriteOnlyCredential(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Equal(t, "Bearer stored-secret", <-authorization)
+}
+
+func TestSystemModelEndpointProbeUsesStoredAzureRuntimeOptions(t *testing.T) {
+	type observedRequest struct {
+		Path          string
+		RawQuery      string
+		APIKey        string
+		Authorization string
+	}
+	observed := make(chan observedRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		observed <- observedRequest{
+			Path: request.URL.Path, RawQuery: request.URL.RawQuery,
+			APIKey: request.Header.Get("api-key"), Authorization: request.Header.Get("Authorization"),
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"pong"}}]}`))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	cfg := newWorkspaceModelTestConfig(t)
+	cfg.ModelMetaConf.Provider2Models[developer_api.ModelClass_GPT.String()] = map[string]ModelMeta{
+		"default": {
+			DisplayInfo: &config.DisplayInfo{Name: "Azure OpenAI"},
+			Connection:  &config.Connection{BaseConnInfo: &config.BaseConnectionInfo{}},
+			Capability:  &developer_api.ModelAbility{},
+		},
+	}
+	draft := newSystemModelTestInput("azure-secret")
+	draft.ProviderKey = "openai"
+	draft.Name = "Azure OpenAI"
+	draft.ModelIdentifier = "gpt-4o:test"
+	draft.Endpoints[0].BaseURL = server.URL
+	draft.ProviderOptions = &config.ModelProviderOptions{
+		OpenaiByAzure: ptr.Of(true), OpenaiAPIVersion: ptr.Of("2025-04-01-preview"),
+	}
+	modelID, err := cfg.UpsertSystemModel(ctx, 9, nil, draft)
+	require.NoError(t, err)
+	detail, err := cfg.GetSystemModelDetail(ctx, modelID)
+	require.NoError(t, err)
+
+	result, err := cfg.TestSystemModelEndpoint(ctx, &config.TestModelEndpointReq{
+		ModelID: &modelID, ProviderKey: "openai", ModelIdentifier: draft.ModelIdentifier,
+		Protocol: draft.Protocol,
+		Endpoint: &config.ModelEndpointInput{
+			ID: ptr.Of(detail.Endpoints[0].ID), BaseURL: detail.Endpoints[0].BaseURL,
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	request := <-observed
+	require.Equal(t, "/openai/deployments/gpt-4otest/chat/completions", request.Path)
+	require.Equal(t, "api-version=2025-04-01-preview", request.RawQuery)
+	require.Equal(t, "azure-secret", request.APIKey)
+	require.Empty(t, request.Authorization)
+
+	overrideResult, err := cfg.TestSystemModelEndpoint(ctx, &config.TestModelEndpointReq{
+		ModelID: &modelID, ProviderKey: "openai", ModelIdentifier: draft.ModelIdentifier,
+		Protocol: draft.Protocol,
+		ProviderOptions: &config.ModelProviderOptions{
+			OpenaiByAzure: ptr.Of(false), OpenaiAPIVersion: ptr.Of("2025-06-01"),
+		},
+		Endpoint: &config.ModelEndpointInput{
+			ID: ptr.Of(detail.Endpoints[0].ID), BaseURL: detail.Endpoints[0].BaseURL,
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, overrideResult.Success)
+
+	overrideRequest := <-observed
+	require.Equal(t, "/chat/completions", overrideRequest.Path)
+	require.Empty(t, overrideRequest.RawQuery)
+	require.Empty(t, overrideRequest.APIKey)
+	require.Equal(t, "Bearer azure-secret", overrideRequest.Authorization)
+}
+
+func TestSystemModelEndpointProbePrefersPendingAzureRuntimeOptions(t *testing.T) {
+	type observedRequest struct {
+		Path          string
+		RawQuery      string
+		APIKey        string
+		Authorization string
+	}
+	observed := make(chan observedRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		observed <- observedRequest{
+			Path: request.URL.Path, RawQuery: request.URL.RawQuery,
+			APIKey: request.Header.Get("api-key"), Authorization: request.Header.Get("Authorization"),
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"pong"}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := (&ModelConfig{}).TestSystemModelEndpoint(context.Background(), &config.TestModelEndpointReq{
+		ProviderKey: "openai", ModelIdentifier: "gpt-4o:pending", Protocol: "openai-compatible",
+		ProviderOptions: &config.ModelProviderOptions{
+			OpenaiByAzure: ptr.Of(true), OpenaiAPIVersion: ptr.Of("2025-06-01"),
+		},
+		Endpoint: &config.ModelEndpointInput{BaseURL: server.URL, APIKey: ptr.Of("pending-secret")},
+	})
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	request := <-observed
+	require.Equal(t, "/openai/deployments/gpt-4opending/chat/completions", request.Path)
+	require.Equal(t, "api-version=2025-06-01", request.RawQuery)
+	require.Equal(t, "pending-secret", request.APIKey)
+	require.Empty(t, request.Authorization)
 }
 
 func TestSystemModelEndpointProbeMapsNetworkFailure(t *testing.T) {

@@ -102,5 +102,8 @@ describe('admin model management api contract source', () => {
     expect(source).toMatch(
       /struct\s+ModelDetail[\s\S]*optional\s+ModelProviderOptions\s+provider_options/,
     );
+    expect(source).toMatch(
+      /struct\s+TestModelEndpointReq[\s\S]*optional\s+ModelProviderOptions\s+provider_options/,
+    );
   });
 });
