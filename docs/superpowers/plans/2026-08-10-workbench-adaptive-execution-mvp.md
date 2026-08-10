@@ -7,12 +7,15 @@
 > checkbox（`- [ ]`）跟踪。
 
 **Goal:** 在现有 Workbench composer → canonical Thread/Run → Eino ADK →
-TaskDetail 主链内增加可恢复的 decision、progress、verification 最小闭环，并用同一候选
-SHA 的 gate-off/on 评测证明复杂任务收益且不损伤简单任务。
+TaskDetail 主链内彻底退休 `auto/pro/ultra/requested_policy` 产品执行模式，以 typed admission 和
+`ExecutionDecision` 建立唯一任务形态权威，再增加可恢复的 progress、verification 最小闭环，
+并用同一候选 SHA 的 gate-off/on 评测证明复杂任务收益且不损伤简单任务。
 
 **Architecture:** 不新增页面、HTTP route、worker、executor 或第二套模型循环。normal 与
-resume 分支在同一个 `ADKExecutor` 内复用 adaptive coordinator；三个类型化事实复用现有
-RunEvent、Checkpoint、Plan、Journal 和公共 SSE 投影。实施采用门禁驱动的渐进展开：本文件
+resume 分支在同一个 `ADKExecutor` 内复用 admission/decision coordinator；gate-on/off 都持久化
+typed admission 与 `ExecutionDecision`，只有 gate-on 启用 progress/replan/verification。三个
+类型化事实复用现有 RunEvent、Checkpoint、Plan、Journal 和公共 SSE 投影；旧模式只允许在隔离
+legacy decoder 中被读取一次并原子转换为 typed snapshot。实施采用门禁驱动的渐进展开：本文件
 固定完整路线和每阶段的小步骤索引，只有当前阶段的执行包展开到 2～5 分钟原子步骤。
 
 **Tech Stack:** Go、GORM/MySQL、Hertz/Thrift、Eino ADK、React、TypeScript、Rush.js、
@@ -25,7 +28,11 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
 **权威规格：**
 `docs/superpowers/specs/2026-08-10-workbench-adaptive-execution-mvp-design.md`
 
-**当前 docs-only 设计提交：** `6500c8b9e379d05693bada1ca627a5937f8841c3`
+**批准的 docs-only 设计提交链：**
+
+- 初始设计：`6500c8b9e379d05693bada1ca627a5937f8841c3`
+- 执行模式退休：`038f7e1a43a22e44143b7970e3f9d94f5ff1b517`
+- 初始实施计划与 P0 包：`1060716f1b327cbd46104f12657dde1483a60830`
 
 **为什么拆包：** 旧计划一次性展开 27 个大任务，把未验证的迁移、运行时、UI 和发布假设都
 提前写死，导致计划本身接近实现规模。本计划先验证最危险的零迁移事务假设，再按已经通过的
@@ -64,8 +71,9 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
 | 包 | 状态 | 入口门 | 退出门 |
 | --- | --- | --- | --- |
 | P0 分支与原子事务 spike | `ready` | 用户批准规格和本计划 | disposable MySQL 证明 fence、attempt、Plan/Item、event、checkpoint、恢复、幂等及 verified success 单事务成立 |
-| P1 decision 纵切 | `locked` | P0 PASS | direct/multi-step 正向链、normal/resume 恢复、最小 TaskDetail 投影通过 |
-| P2 progress/verification 闭环 | `locked` | P1 PASS | repair/replan/clarify/stop、成功门禁、取消/恢复/安全矩阵通过 |
+| P1M 无模式基础 | `locked` | P0 PASS | 新请求/恢复不写旧 mode；生产 gate-off 持久化 admission+baseline decision，共享边界双 producer 合同测试、legacy snapshot、422 拒绝、等价 smoke 通过 |
+| P1D adaptive decision 纵切 | `locked` | P1M PASS | adaptive direct/multi-step、normal/resume 恢复、最小 TaskDetail 投影通过 |
+| P2 progress/verification 闭环 | `locked` | P1D PASS | gate-on repair/replan/clarify/stop、成功门禁、取消/恢复/安全矩阵通过；gate-off 仍走基础终态 |
 | P3 公共投影与当前页面完成态 | `locked` | P2 PASS | list/SSE 等价、未知版本 fail closed、当前页面 Vitest/browser 通过 |
 | P4 评测与候选冻结 | `locked` | P3 PASS、30 开发集净增至少 3/30 | 同 SHA 80 holdout、安全门和全部工程门通过 |
 | P5 本地 `dev` 集成 | `locked` | 用户确认候选 exact SHA 与范围 | 仅本地 `ff-only`，不 push、不发布 |
@@ -76,14 +84,17 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
 ### 工作量护栏
 
 - P0 是唯一立即展开的高风险验证，硬时限为 2 engineer-days；它失败就停止，后续工作量归零。
+- P1M 的执行模式退休为 4～6 engineer-days，包含后端 consumer/recovery、前端 V2 client 和测试；
+  admission/decision 合同冻结后，前端与后端可由 2 人并行，预计 2～3 个工作日完成，不另立项目。
 - P0 通过后按 Week 1 技术纵切、Week 2 完整闭环、Week 3 冻结验收推进。基准配置为 4 名专职
   FTE；只有 3 名时按 3～4 周排期，不以删测试换取两周口径。
 - 后续每个执行包只展开到当周可提交边界，原则上控制在约 200～350 行；超出时按独立 gate 再拆包，
   不能把多个共享状态写任务并发化。
 - 非 MVP：新页面/route、第二套 worker/executor、Subagent、多模型 classifier/planner/verifier 循环、
   默认 migration、深层 options 管理、发布自动化改造。发现这些需求只记录，不进入当前包。
-- 最快效果验证点不是 UI 完成，而是 P0 的真实 MySQL 原子性和 P1 的 direct/multi-step 小型纵切；
-  任何一个不成立都不继续堆页面和评测工程。
+- 最快效果验证点不是 UI 完成，而是 P0 的真实 MySQL 原子性、P1M 的无模式 gate-off 基础和
+  P1D 的 direct/multi-step 小型纵切；基准 4 FTE 时预计第 5～7 个工作日可在现有页面验证，
+  任一门禁不成立都不继续堆页面和评测工程。
 
 ## 1. P0：隔离分支与 Day-2 原子事务 spike
 
@@ -146,21 +157,23 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
   set -euo pipefail
   cd /Users/liuwenbo/code/BuildingAI/coze-studio/.worktrees/workbench-adaptive-mvp
   git cherry-pick 6500c8b9e379d05693bada1ca627a5937f8841c3
-  PLAN_DOCS_COMMIT_SHA="$(
+  git cherry-pick 1060716f1b327cbd46104f12657dde1483a60830
+  git cherry-pick 038f7e1a43a22e44143b7970e3f9d94f5ff1b517
+  PLAN_ALIGNMENT_COMMIT_SHA="$(
     git rev-list --all --max-count=1 --fixed-strings \
-      --grep='docs: add adaptive execution MVP implementation plan'
+      --grep='docs: align adaptive MVP plan with mode retirement'
   )"
-  test -n "$PLAN_DOCS_COMMIT_SHA"
-  test "$(git log -1 --format='%s' "$PLAN_DOCS_COMMIT_SHA")" = \
-    "docs: add adaptive execution MVP implementation plan"
-  git diff-tree --no-commit-id --name-only -r "$PLAN_DOCS_COMMIT_SHA" | \
-    awk 'BEGIN { count = 0 } { count++; if ($0 !~ /^docs\/superpowers\/plans\//) bad = 1 } END { exit count == 0 || bad }'
-  git cherry-pick "$PLAN_DOCS_COMMIT_SHA"
+  test -n "$PLAN_ALIGNMENT_COMMIT_SHA"
+  test "$(git log -1 --format='%s' "$PLAN_ALIGNMENT_COMMIT_SHA")" = \
+    "docs: align adaptive MVP plan with mode retirement"
+  test "$(git diff-tree --no-commit-id --name-only -r "$PLAN_ALIGNMENT_COMMIT_SHA")" = \
+    "docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp.md"
+  git cherry-pick "$PLAN_ALIGNMENT_COMMIT_SHA"
   ```
 
-  Expected: 两个提交都只含 `docs/superpowers/specs/**` 或
-  `docs/superpowers/plans/**`；第二个提交的 subject 精确为
-  `docs: add adaptive execution MVP implementation plan`。若检索为空或文件范围不符则停止。
+  Expected: 四个提交都只含 `docs/superpowers/specs/**` 或
+  `docs/superpowers/plans/**`；最后一个提交的 subject 精确为
+  `docs: align adaptive MVP plan with mode retirement`。若检索为空或文件范围不符则停止。
 
 - [ ] **Step 5: 证明没有带入实验实现。**
 
@@ -198,39 +211,187 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
 P0 为 `FAIL` 时，只允许：
 
 - [ ] 保存失败测试和证据；
-- [ ] 把 P1～P5 保持 `locked`；
+- [ ] 把 P1M～P5 保持 `locked`；
 - [ ] 返回“一张紧凑表”的修订规格评审；
 - [ ] 不增加 004/005 表、不调用后续实现包。
 
-## 2. P1：decision 最小纵切（P0 PASS 后加载）
+## 2. P1：无模式基础与 adaptive decision 纵切（P0 PASS 后加载）
+
+P1 分为两个串行包。P1M 先建立无模式、可恢复的 gate-off 基础；P1D 才接 adaptive producer。
+两包共用同一 `ExecutionDecision` schema，不能并行修改 admission、Run config 或恢复链。
+
+### P1M：退休产品执行模式
 
 **加载时必须创建：**
-`docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp-p1-decision.md`
+`docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp-p1m-mode-retirement.md`
 
-P1 小步骤索引；每一项在 P1 文件中继续拆成 RED/最小实现/GREEN/commit：
+**主要文件边界：**
+
+- Create: `backend/domain/agentthread/entity/adaptive_execution.go`
+- Create: `backend/application/agentthread/adaptive_admission.go`
+- Create: `backend/application/agentthread/adaptive_admission_test.go`
+- Create: `backend/application/agentthread/adaptive_baseline_decision.go`
+- Create: `backend/application/agentthread/adaptive_baseline_decision_test.go`
+- Create: `backend/application/agentthread/adaptive_legacy_admission.go`
+- Create: `backend/application/agentthread/retired_execution_mode_contract_test.go`
+- Modify: P0 已创建的 `backend/domain/agentthread/repository/adaptive_execution.go`
+- Modify: P0 已创建的 `backend/domain/agentthread/repository/mysql_adaptive_execution.go`
+- Modify: P0 已创建的 `backend/domain/agentthread/repository/mysql_adaptive_execution_test.go`
+- Modify: `backend/application/agentthread/runtime_config.go`
+- Modify: `backend/application/agentthread/service.go`
+- Modify: `backend/application/agentthread/adk_executor.go`
+- Modify: `backend/application/agentthread/adk_agent_factory.go`
+- Modify: `backend/application/agentthread/adk_lead_prompt.go`
+- Modify: `backend/application/agentthread/adk_middleware.go`
+- Modify: `backend/application/agentthread/adk_provider_capability.go`
+- Modify: `backend/application/agentthread/adk_subagent_tool_provider.go`
+- Modify: `backend/application/agentthread/adk_builtin_subagent.go`
+- Modify: `backend/application/agentthread/adk_singleagent_subagent_agent_factory.go`
+- Modify: `backend/application/agentthread/adk_subagent_run_recorder.go`
+- Modify: `backend/application/agentthread/journal_feature_gate.go`
+- Modify: `backend/application/agentthread/journal_metrics.go`
+- Modify: `backend/application/agentthread/run_lease_recovery.go`
+- Modify: `backend/application/agentthread/human_interaction_resume.go`
+- Modify: `backend/application/agentthread/subagent_retry.go`
+- Modify: `backend/application/application.go`
+- Modify: `backend/application/agentthread/init.go`
+- Create: `backend/api/handler/coze/workbench_execution_control_validator.go`
+- Create: `backend/api/handler/coze/workbench_execution_control_validator_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_thread_service.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_service.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
+- Modify: `idl/workbench/thread.thrift`
+- Regenerate: `backend/api/model/workbench/thread_contract/thread.go`
+- Regenerate: `frontend/packages/arch/api-schema/src/idl/workbench/thread.ts`
+- Test: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/components/types.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/index.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/service.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/service.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts`
+- Verify/Modify: `frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts`
+- Test: 与上述文件同目录的现有 `*_test.go`、`__tests__/*.test.ts(x)`；不得新建第二套 client。
+
+P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GREEN/commit：
+
+- [ ] 先写 `TestCanonicalAdaptiveEnvelopeRejectsRetiredExecutionControls` 表驱动 RED，逐一覆盖 root、
+      附件、follow-up、retry、resume 的顶层与嵌套 `config/context/configurable` 中
+      `requested_policy`、产品 `mode`、`is_plan_mode`、`subagent_enabled`、`max_concurrent_subagents`
+      及客户端 reasoning 控制，同时证明 `runtime=eino_adk` 仍合法；退休控制精确要求
+      HTTP 422、`unsupported_execution_control`、`retryable=false`、Thread/Message/Run 行数零变化；
+      HTTP handler 必须在 JSON binder 前按结构化控制键检查 raw body，不能扫描正文字符串或误伤
+      其它领域的同名 `mode`；ApplicationService 还要为 IM/scheduled/internal 入口做同义的
+      defense-in-depth 校验，不能把未知字段静默丢掉。
+- [ ] 定义 `AdaptiveAdmissionSnapshot`、`AdaptiveAdmissionSource`、`AdaptiveCapabilities`、
+      `AdaptiveLimits` 与 `ExecutionDecision`；snapshot 只含 gate/schema/capability/limits 及可空
+      source Run/generation/config digest/decoder version，不得定义 product mode 字段。
+- [ ] 写 validation RED：capability 只能接受或拒绝 decision；不匹配必须在 Plan/工具前
+      `blocked_policy` 或产生新 decision revision，禁止静默降级 execution shape。
+- [ ] 扩展 P0 transaction：Run 被 claim 且已有 active Attempt/lease 后，在
+      `ADKExecutor.Execute/Resume` 的 `buildRuntime` 之前一次受 fence 提交 admission snapshot 与
+      typed decision；CreateThread/CreateRunBundle 阶段只保证新 Config 无旧字段，不能提前绕过
+      P0 的 Run/Attempt fence。lost-response retry 只能返回原事实。
+- [ ] 实现 `BaselineDecisionProducer`：固定输出 `execute/multi_step`、服务端固定 safe summary、空
+      deliverables/checks；P1M 生产只安装该 producer，若持久化快照的 gate=true 则明确返回
+      `ErrAdaptiveProducerUnavailable`，直到 P1D 安装 adaptive producer，不能增加第二个隐藏分类器。
+- [ ] 先把 Plan capability、Subagent 禁用、reasoning/model inference、Journal enrollment/metrics
+      切换到 admission、purpose binding 与 server inference config，再删除 mode consumer；
+      `RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
+- [ ] 把 root、附件、follow-up、retry、resume 与 child/retry config 写入全部切到审核后的 canonical
+      typed V2 envelope；先证明 IDL/生成 client 能无损承载现有模型、Skill、MCP、知识库和数据库选择，
+      再删除前端 `WORKBENCH_REQUESTED_POLICY` 与旧 runtime config/mode metadata。缺少 typed 替代字段
+      时 P1M 立即停止，禁止丢弃选择、塞进 `coze:any`/metadata 或另造手写 client。
+- [ ] 先为 `ResumeCanonicalRunRequest` 补齐生成的 `Idempotency-Key` header，并为 mode-free 写入所需的
+      非模式 composer 选择冻结 typed IDL；重新生成 Go/TypeScript 合同，运行
+      `workbench-thread-contract.test.ts`，再改五个前端入口。root 带附件和 follow-up 必须保持
+      upload-before-run，retry 只带 source lineage，resume body 只带 interrupt response。
+- [ ] 为切换前来源实现隔离 `LegacyAdaptiveAdmissionDecoder`：只在来源缺 typed admission 时读取
+      已知旧字符串；recovery/follow-up/retry 创建目标 Run 时先用 server-only sanitizer 去掉旧键并
+      保存 source lineage，目标被 claim 后由 coordinator 优先继承 source typed snapshot，否则读取
+      source Config 并与首次 target baseline decision 一次受 fence 提交 decoder version、source
+      Run/generation/config digest、`feature_gate=false` 和保守能力；decoder 自身不得生成 decision。
+      crash/retry、多跳只继承同一 snapshot，不再次解码。
+- [ ] 写 unknown/conflict、source-generation drift、A→B→C 多跳与并发 recovery RED；decoder
+      不得创建 decision、回写旧字符串或把 legacy value 公开投影。
+- [ ] 删除生产主路径的 `DeerFlowMode`、`DeerFlowRequestedPolicy`、`ModeExplicit`、归一化与 mode
+      metrics；结构扫描只允许专用 legacy decoder 和固定历史 fixture 出现旧 literal。
+- [ ] 运行后端 RED/GREEN：
+
+      ```bash
+      cd backend
+      GOCACHE=/private/tmp/coze-adaptive-p1m-go-cache \
+        go test -p 1 -gcflags="all=-l -N" \
+        ./application/agentthread ./api/handler/coze \
+        -run 'RetiredExecution|AdaptiveAdmission|BaselineDecision|LegacyAdaptiveAdmission|CanonicalAdaptiveEnvelope' \
+        -count=1
+      ```
+
+      Expected: RED 时精确缺少新类型/producer/validator；实现后全部 PASS，不能 SKIP。
+- [ ] 运行前端 RED/GREEN：
+
+      ```bash
+      cd frontend/packages/arch/api-schema
+      rushx test \
+        src/__tests__/workbench-thread-contract.test.ts \
+        -t 'canonical resume idempotency|typed mode-free canonical write'
+
+      cd frontend/apps/coze-studio
+      rushx test \
+        src/pages/workbench/__tests__/workbench.test.tsx \
+        src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts \
+        src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts \
+        src/pages/tasks/__tests__/task-follow-up.test.ts \
+        src/pages/tasks/__tests__/task-run-actions-hook.test.tsx \
+        src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx \
+        src/pages/tasks/__tests__/task-detail.test.tsx \
+        src/pages/tasks/__tests__/canonical-frontend-contract.test.ts
+      rushx lint
+      rushx build
+      ```
+
+      Expected: 目标 Vitest、lint、生产构建全部 PASS；旧 payload snapshot 断言已经由 V2 typed
+      envelope 断言替代，不是直接删除测试。
+- [ ] 运行 `gofmt`、`git diff --check` 和顶层、无 Subagent fixture 的 gate-off 对 `origin/dev`
+      行为等价 smoke；比较 Plan 早于首个 Tool、基础终态、`runtime=eino_adk` 以及无 progress/
+      verification，不要求字节复现旧 auto→Ultra 的 Subagent 行为。smoke 失败即 P1M FAIL，不得用
+      隐藏 mode 分支修补。
+- [ ] 分四个小提交收口：`feat: add mode-free adaptive admission`、
+      `refactor: retire legacy execution modes`、`feat: reject retired execution controls`、
+      `feat: move workbench writes to generated canonical v2`；每个提交都先完成对应 RED、最小实现和 GREEN，
+      记录 `P1M_BASE_SHA/P1M_RESULT/P1M_HEAD_SHA` 后才解锁 P1D。
+
+### P1D：adaptive decision 最小纵切
+
+**加载时必须创建：**
+`docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp-p1d-decision.md`
+
+P1D 小步骤索引；每一项在 P1D 文件中继续拆成 RED/最小实现/GREEN/commit：
 
 - [ ] 由独立评测负责人封存 80 holdout/evaluator，记录 seal hash；实现侧只获得 schema、计数和
       30 开发集，P4 只能复核同一 hash，不能重新冻结。
-- [ ] 冻结 feature eligibility、Journal enrollment、gate-off reason 与 admission metrics 的
-      服务端合同，并证明 gate-off 行为不变。
-- [ ] 定义 `ExecutionDecision`、`ProgressEvaluation`、`VerificationResult` 三个内部类型、codec、
-      有界 schema 与公共版本 DTO；本包只把 decision 接入运行时。
-- [ ] 用 P0 transaction 各持久化并经现有 repository 读回/恢复一个三合同 fixture，先证明零迁移
-      编解码与 checkpoint refs 可行，再接 decision coordinator。
+- [ ] 冻结 feature eligibility、Journal enrollment、gate-off reason 与 admission metrics，证明
+      两组都持久化 admission/decision，gate 只选择 producer 和后续闭环。
+- [ ] 完成 `ExecutionDecision` 有界 codec/公共 DTO，并定义 `ProgressEvaluation`、
+      `VerificationResult` codec；后两者在本包只做零迁移持久化/恢复 fixture，不接运行循环。
 - [ ] 为三种 decision 和 `single_step/multi_step` XOR 写 Go validation RED。
 - [ ] 实现服务端 acceptance-check registry，强制模型提出项为 required。
-- [ ] 在首次模型/工具调用前持久化 gate/schema/limits admission fact。
-- [ ] 把 decision 通过 P0 transaction 写成 typed RunEvent + checkpoint refs。
-- [ ] 在 `ADKExecutor.Execute` 接入 coordinator，但保留现有 RuntimeSelector。
-- [ ] 在 `ADKExecutor.Resume` 恢复同一 coordinator 状态，不新建 resume 实现。
-- [ ] 证明 `direct` 不创建 Plan，也不产生非验证 ToolStarted。
-- [ ] 证明 `multi_step` 的 Plan persisted sequence 小于首个 ToolStarted sequence。
-- [ ] 把 `payload_version` 从持久化事件传到 public list/SSE 和生成 TS 类型。
-- [ ] 在现有 TaskDetail 只展示 planning/executing/final 最小状态，不新建 route/page。
-- [ ] 运行 Week-1 技术纵切门：三个 typed fact 可读回/恢复、Plan 顺序正确、安全硬门为零。
-- [ ] 提交 P1，记录 `P1_BASE_SHA/P1_RESULT/P1_HEAD_SHA` 后才解锁 P2。
+- [ ] 实现 adaptive decision producer；模型只提交候选，服务端校验后通过 P0 transaction 写 typed
+      RunEvent + checkpoint refs，不能读取或重新生成 product mode。
+- [ ] 在 `ADKExecutor.Execute` 接入同一 admission/decision coordinator，但保留现有
+      `RuntimeSelector`；在 `ADKExecutor.Resume` 恢复同一状态，不新建 resume 实现。
+- [ ] 证明 gate-on `direct` 不创建 Plan，也不产生非验证 ToolStarted；证明 gate-on
+      `multi_step` 的 Plan persisted sequence 小于首个 ToolStarted sequence。
+- [ ] 证明 gate-off 仍由 baseline producer 写 fixed multi-step decision，不产生 progress/
+      verification，沿既有终态规则完成且不写伪 verification passed。
+- [ ] 把 `payload_version` 从持久化 decision 传到 public list/SSE 和生成 TS 类型；在现有
+      TaskDetail 只展示 direct/planning/executing/final 最小状态，不新建 route/page。
+- [ ] 运行 Week-1 技术纵切门：三个 typed fact fixture 可读回/恢复、两组 admission/decision
+      可审计、Plan 顺序正确、安全硬门为零；在现有页面完成第一轮 5～7 日效果验证。
+- [ ] 提交 P1D，记录 `P1D_BASE_SHA/P1D_RESULT/P1D_HEAD_SHA` 后才解锁 P2。
 
-## 3. P2：progress、verification 与安全闭环（P1 PASS 后加载）
+## 3. P2：progress、verification 与安全闭环（P1D PASS 后加载）
 
 **加载时必须创建：**
 `docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp-p2-loop.md`
@@ -238,13 +399,15 @@ P1 小步骤索引；每一项在 P1 文件中继续拆成 RED/最小实现/GREE
 P2 小步骤索引：
 
 - [ ] 为 `ProgressEvaluation` 的五种 recommendation 与字段 XOR 写 RED。
-- [ ] 在 terminal tool result、里程碑、状态转换和 verification 前接入 evaluation。
+- [ ] 仅在 gate-on 的 terminal tool result、里程碑、状态转换和 verification 前接入 evaluation；
+      gate-off 不调用 progress/verifier，也不写空壳事件。
 - [ ] 对 evidence lineage、decision/Plan revision、generation/lease 做服务端重校。
 - [ ] 实现最多 2 次 replan、2 次 verification repair、连续 3 次 no-progress。
 - [ ] 把 24 tool calls 和 20 active minutes 按 canonical lineage 累积。
 - [ ] 复用现有 human interaction 实现 clarify/resume，并继承 gate/schema/limits。
 - [ ] 为 `VerificationResult` registry coverage、证据高水位和 stale invalidation 写 RED。
-- [ ] 实现 `passed` 的同事务 terminal gate；无 passed verification 不得 succeeded。
+- [ ] 实现 gate-on `passed` 的同事务 terminal gate；gate-on 无 passed verification 不得 succeeded，
+      gate-off 继续走既有终态事务并禁止伪造 verification passed。
 - [ ] 接入只读验证工具 allowlist；任何写工具仍算非验证动作。
 - [ ] 冻结全部工具的 deterministic read/write/verification 分类；未知工具 fail closed。
 - [ ] 对 Sandbox target 做 canonical workspace/tenant 校验，并复用现有 SideEffect
@@ -263,6 +426,7 @@ P2 小步骤索引：
 P3 小步骤索引：
 
 - [ ] 为 `adaptive.decision/progress/verification` 的公共 allowlist 写后端 RED。
+- [ ] 证明 `adaptive.decision` 对 gate-on/off 都存在，而 progress/verification 只能由 gate-on 产生。
 - [ ] 证明 internal discriminator 决定 `payload_version`，不按当前代码版本猜测。
 - [ ] 证明 canonical list 与 SSE 对同一事件返回相同版本和安全 payload。
 - [ ] 在 frontend adapter 保留 `payload_version`，未知版本不推进执行 reducer。
@@ -273,7 +437,8 @@ P3 小步骤索引：
 - [ ] 用 Vitest 覆盖 direct 无空壳、多步更新、验证失败和 SSE reconnect。
 - [ ] 用 in-app browser 验收现有 Workbench URL；记录账号/空间、可见状态和控制台错误。
 - [ ] 更新 `workbench-execution-chain.md`、`workbench-execution-graph.json` 和必要的
-      `workbench-chat.md`。
+      `workbench-chat.md`；删除后者把 `auto/pro/ultra/requested_policy` 描述为当前产品合同的内容，
+      但保留 `RuntimeModeEinoADK/legacy` 执行内核路由事实。
 - [ ] 运行 execution graph verify/build/verify-derived 并提交 P3。
 
 ## 5. P4：评测、候选冻结与一次性验收（P3 PASS 后加载）
@@ -288,6 +453,8 @@ P4 小步骤索引：
 - [ ] fetch 最新 `origin/dev`，对齐后运行代码审查并冻结 `CANDIDATE_SHA`。
 - [ ] 冻结 model/prompt/tool/catalog/sandbox/source snapshot 指纹。
 - [ ] 对最终 SHA 再跑 gate-off 与最新 `origin/dev` 行为等价 smoke。
+- [ ] 运行模式退休结构门：新 root/follow-up/retry/resume/child payload 无旧字段；生产主路径无
+      product mode enum/branch/metric；旧 literal 仅位于批准的 decoder/fixture allowlist。
 - [ ] 从相同干净 snapshot 成对交错运行 gate-off/on，禁止共享 cache/memory/artifact。
 - [ ] 运行 60 个复杂任务，检查 on≥42 且 on-off≥6、每类 on≥12 且不低于 off-2。
 - [ ] 对 20 个简单任务每 arm 运行 3 次，按 3/3 direct 计算 19/20。
@@ -312,10 +479,15 @@ P4 小步骤索引：
 
 ## 7. 总完成定义
 
-- [ ] P0～P4 全部 `PASS`，没有跳过或事后补写的执行包。
-- [ ] 现有 normal/resume 分支复用同一 adaptive coordinator。
+- [ ] P0、P1M、P1D、P2～P4 全部 `PASS`，没有跳过或事后补写的执行包。
+- [ ] `auto/pro/ultra/requested_policy` 与同语义 product `mode` 已从请求、新持久化、生产分支、
+      consumer 和指标中退休；只读 legacy decoder 不回写、不重解、不公开投影。
+- [ ] gate-on/off 都原子持久化 typed admission 与 `ExecutionDecision`；baseline producer 只有固定
+      `execute/multi_step`，capability 不改写或降级 shape。
+- [ ] 现有 normal/resume 分支复用同一 admission/decision coordinator。
 - [ ] 没有新增页面、公共 endpoint、worker、executor、模型循环或默认 migration。
-- [ ] `direct` 维持快速路径；multi-step Plan 前置；成功全部有当前 passed verification。
+- [ ] gate-on `direct` 维持快速路径、multi-step Plan 前置、成功全部有当前 passed verification；
+      gate-off 无 progress/verification 并沿既有终态规则完成。
 - [ ] 未授权写入、重复副作用、敏感公共投影均为 0。
 - [ ] 80 holdout、12 场景矩阵、工程测试、执行图和当前页面验收绑定同一候选 SHA。
 - [ ] 用户确认前不合并 `dev`；确认后也只执行本地 `ff-only`。
