@@ -103,9 +103,10 @@ TLS 由宝塔独立终止。
 
 ## Workbench Canonical API
 
-`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 47 条 always-on
+`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 52 个
 Thread、Run、Message、Upload、Artifact、Memory、Token Usage、Guardrail 和 MCP
-Runtime Audit 路由。前端页面服务统一委托给进程内唯一
+Runtime Audit method/path pair；另有 2 个 `/api/workbench/journal/settings`
+method/path pair，always-on canonical Workbench 路由合计 54 条。前端页面服务统一委托给进程内唯一
 `canonicalThreadClient`；不存在运行时 client selector、canonical 路由开关或旧 HTTP
 fallback。session principal 和 path resource 决定身份与资源归属，workspace 请求
 使用 `X-Coze-Space-ID` 并由服务端再次授权。

@@ -562,18 +562,14 @@ func lockAdaptiveExecutionScopeRun(tx *gorm.DB, runID int64) (*runPO, error) {
 }
 
 func lockAdaptiveExecutionPlan(tx *gorm.DB, runID int64) (*agentRunPlanPO, error) {
-	query := tx.Where("run_id = ?", runID)
-	if tx.Dialector.Name() != "sqlite" {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	plan, err := lockAgentRunPlanForUpdate(tx, runID)
+	if errors.Is(err, ErrPlanNotFound) {
+		return nil, fmt.Errorf("%w: plan %d not found", ErrAdaptiveExecutionPlanScopeConflict, runID)
 	}
-	var plan agentRunPlanPO
-	if err := query.First(&plan).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: plan %d not found", ErrAdaptiveExecutionPlanScopeConflict, runID)
-		}
+	if err != nil {
 		return nil, err
 	}
-	return &plan, nil
+	return plan, nil
 }
 
 func validateAdaptiveExecutionPlanScope(

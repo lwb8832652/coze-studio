@@ -4285,6 +4285,9 @@ func (r *threadRepository) UpsertPlanItem(
 		created  bool
 	)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockAgentRunPlanForUpdate(tx, item.RunID); err != nil {
+			return err
+		}
 		var existing agentRunPlanItemPO
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("run_id = ? AND task_id = ?", item.RunID, item.TaskID).
@@ -4367,6 +4370,9 @@ func (r *threadRepository) ArchivePlanItem(
 		plan     *entity.AgentRunPlan
 	)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockAgentRunPlanForUpdate(tx, runID); err != nil {
+			return err
+		}
 		var existing agentRunPlanItemPO
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("run_id = ? AND task_id = ?", runID, taskID).
@@ -4413,6 +4419,21 @@ func (r *threadRepository) ArchivePlanItem(
 		return nil, nil, nil, err
 	}
 	return stored, previous, plan, nil
+}
+
+func lockAgentRunPlanForUpdate(tx *gorm.DB, runID int64) (*agentRunPlanPO, error) {
+	query := tx.Where("run_id = ?", runID)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var plan agentRunPlanPO
+	if err := query.First(&plan).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPlanNotFound
+		}
+		return nil, err
+	}
+	return &plan, nil
 }
 
 func incrementPlanRevision(tx *gorm.DB, runID int64, updatedAt int64) error {

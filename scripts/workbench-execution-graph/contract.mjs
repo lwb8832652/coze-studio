@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  'b55f04871f4d85070999dfe49ef54215cf95c7b83bb50d09f0096e6265de2031';
+  '216f56704c517e8c566b5b34b56ec4bc8e7928091e3ea14d91a5ec6878b05616';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -72,6 +72,7 @@ const REQUIRED_EXCLUSION_IDS = [
   'exclude.langgraph_sdk',
   'exclude.deerflow_runtime',
   'exclude.legacy_new_run',
+  'exclude.unwired_adaptive_boundary',
   'exclude.external_queue',
   'exclude.build_tools',
   'exclude.taskthread_v1_routes',

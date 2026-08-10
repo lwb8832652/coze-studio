@@ -749,7 +749,7 @@
     },
     {
       "id": "repository.create_run_event",
-      "label": "MySQL CreateRunEvent",
+      "label": "MySQL RunEvent persistence",
       "layer": "repository",
       "kind": "function",
       "production_status": "current",
@@ -758,12 +758,25 @@
           "path": "backend/domain/agentthread/repository/mysql.go",
           "symbol": "(*threadRepository).CreateRunEvent",
           "locator": "func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.RunEvent)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_journal.go",
+          "symbol": "(*threadRepository).CreateRunEventWithJournalProjection",
+          "locator": "func (r *threadRepository) CreateRunEventWithJournalProjection("
         }
       ],
       "evidence": [
         {
-          "path": "backend/domain/agentthread/repository/mysql_test.go",
-          "locator": "func TestThreadRepositoryCreateAndGetRun"
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "if err := s.persistRunEventWithOptionalJournal("
+        },
+        {
+          "path": "backend/domain/agentthread/service/journal.go",
+          "locator": "_, err := projectionRepo.CreateRunEventWithJournalProjection("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_journal_test.go",
+          "locator": "func TestRunEventJournalProjectionKeepsBaseAndJournalViews"
         }
       ]
     },
@@ -1887,6 +1900,25 @@
       ]
     },
     {
+      "id": "middleware.side_effect",
+      "label": "side_effect",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSideEffect,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
       "id": "middleware.reduction",
       "label": "reduction",
       "layer": "eino_middleware",
@@ -2254,7 +2286,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -2627,7 +2659,7 @@
     },
     {
       "id": "contract.workbench.route_surface",
-      "label": "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
+      "label": "Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired",
       "layer": "transport_contract",
       "kind": "route_snapshot",
       "production_status": "current",
@@ -2656,7 +2688,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "func TestWorkbenchCanonicalThreadRoutes"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -3051,7 +3083,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_executor.go",
-          "locator": "mapped, err := MapADKEvent(ctx, run.ThreadID, run.RunID, event)"
+          "locator": "mapped, err := MapADKEvent(mappingCtx, run.ThreadID, run.RunID, event)"
         }
       ]
     },
@@ -3111,7 +3143,11 @@
       "evidence": [
         {
           "path": "backend/domain/agentthread/service/service_impl.go",
-          "locator": "if err := s.repo.CreateRunEvent(ctx, event); err != nil {"
+          "locator": "if err := s.persistRunEventWithOptionalJournal("
+        },
+        {
+          "path": "backend/domain/agentthread/service/journal.go",
+          "locator": "_, err := projectionRepo.CreateRunEventWithJournalProjection("
         }
       ]
     },
@@ -3686,6 +3722,20 @@
         {
           "path": "backend/application/agentthread/adk_executor.go",
           "locator": "result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_00",
+      "from": "middleware.side_effect",
+      "to": "middleware.reduction",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSideEffect,"
         }
       ]
     },
@@ -4504,7 +4554,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -5227,9 +5277,10 @@
     {
       "id": "framework.eino_middleware_order",
       "name": "Eino middleware assembly order",
-      "entry": "middleware.reduction",
+      "entry": "middleware.side_effect",
       "terminal": "middleware.semantic_loop",
       "ordered_node_ids": [
+        "middleware.side_effect",
         "middleware.reduction",
         "middleware.filesystem",
         "middleware.uploaded_files",
@@ -5250,6 +5301,7 @@
         "middleware.semantic_loop"
       ],
       "ordered_edge_ids": [
+        "edge.middleware_00",
         "edge.middleware_01",
         "edge.middleware_02",
         "edge.middleware_03",
@@ -5527,6 +5579,22 @@
       ]
     },
     {
+      "id": "exclude.unwired_adaptive_boundary",
+      "term": "CommitAdaptiveExecutionBoundary production wiring",
+      "status": "implemented_not_wired",
+      "reason": "P0A1/P0A2 implement and test the repository primitive, but no application or ADK production caller exists before P1D; direct Plan mutations remain reachable and P0A3 only reconciles lock order.",
+      "evidence": [
+        {
+          "path": "docs/superpowers/context/workbench-execution-chain.md",
+          "locator": "P0A 当前只提供 repository primitive"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
+          "locator": "type AdaptiveExecutionRepository interface {"
+        }
+      ]
+    },
+    {
       "id": "exclude.external_queue",
       "term": "Redis Kafka RabbitMQ NATS Asynq queue",
       "status": "not_used",
@@ -5691,14 +5759,16 @@
       "id": "query.middleware_order",
       "question": "Eino middleware 的真实装配顺序是什么？",
       "expanded_terms": [
+        "side_effect",
         "reduction",
         "adkMiddlewareOrder",
         "precedes",
         "handler order",
         "wrapper order"
       ],
-      "smoke_node_ids": ["middleware.reduction"],
+      "smoke_node_ids": ["middleware.side_effect"],
       "required_node_ids": [
+        "middleware.side_effect",
         "middleware.reduction",
         "middleware.filesystem",
         "middleware.uploaded_files",
@@ -5718,7 +5788,7 @@
         "middleware.subagent_limit",
         "middleware.semantic_loop"
       ],
-      "required_edge_ids": ["edge.middleware_01", "edge.middleware_17"]
+      "required_edge_ids": ["edge.middleware_00", "edge.middleware_17"]
     },
     {
       "id": "query.control_recovery",
@@ -5855,9 +5925,9 @@
     },
     {
       "id": "query.canonical_thread_http",
-      "question": "Workbench canonical UI、47 条 HTTP 路由和五组保留/退役边界如何对齐？",
+      "question": "Workbench canonical UI、52 个 `/api/workbench/threads/**` method/path 与 2 个 journal settings（共 54 条 HTTP 路由）和五组保留/退役边界如何对齐？",
       "expanded_terms": [
-        "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
+        "Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired",
         "canonicalThreadClient singleton",
         "Canonical Workbench Thread and product Thrift contract",
         "Always-on canonical Thread HTTP handlers",

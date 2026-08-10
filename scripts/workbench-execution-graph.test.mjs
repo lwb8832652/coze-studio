@@ -593,7 +593,7 @@ test('canonical transport, retired routes, and integration ingress are explicit'
   );
   assert.equal(
     routeSurface?.label,
-    'Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired',
+    'Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired',
   );
   assert.equal(
     contract.nodes.filter(item => item.id === 'frontend.client.singleton')

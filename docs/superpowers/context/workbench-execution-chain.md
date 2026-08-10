@@ -1,6 +1,6 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-07-30
+更新时间：2026-08-10
 状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
@@ -76,7 +76,9 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
   `CanonicalThreadCoreClient.createThread/createRun/subscribeRunEvents`
 - `frontend/packages/arch/api-schema/src/idl/workbench/thread.ts`：canonical 生成类型
 - `idl/workbench/thread.thrift`：`WorkbenchCanonicalThreadService`
-- `backend/api/router/coze/api.go`：47 条 `/api/workbench/threads/**` 路由
+- `backend/api/router/coze/api.go`：52 个 `/api/workbench/threads/**` method/path
+  pair 加 2 个 `/api/workbench/journal/settings` method/path pair，合计 54 条
+  always-on canonical 路由
 - `backend/api/handler/coze/workbench_canonical_thread_service.go`：
   `CreateCanonicalThread`
 - `backend/application/agentthread/service.go`：`CreateTaskThread`
@@ -144,10 +146,20 @@ admission 状态。
 行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
 或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
 
+### P0A 自适应执行事务边界
+
+`P0A 当前只提供 repository primitive`：P0A1/P0A2 已实现并测试
+`AdaptiveExecutionRepository.CommitAdaptiveExecutionBoundary`，但 application/ADK
+生产代码尚无 caller；P1D 完成接线前，现有直接 Plan mutation 仍然可达。
+P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
+`AgentRunPlan`、再锁 `PlanItem`；本阶段不在执行图中制造不存在的生产调用边。
+
 ### Canonical Thread HTTP 契约
 
 `/api/workbench/threads...` 的 Thread create/search/get/patch/delete、state、history
-和 messages handler 以及产品扩展合计 47 条 always-on HTTP 路由。不存在 canonical
+和 messages handler 以及产品扩展合计 52 个 `/api/workbench/threads/**`
+method/path pair，再加 2 个 `/api/workbench/journal/settings` method/path pair，
+共 54 条 always-on canonical HTTP 路由。不存在 canonical
 API 环境开关或运行时路由开关。入口只接受 session
 principal；所有 canonical 请求都必须提交 `X-Coze-Space-ID`，服务端先用认证主体校验
 workspace。create/search 直接在声明空间内执行；其余资源路由还会从 path Thread/Run
@@ -282,6 +294,7 @@ fail closed。
 顺序事实：
 
 ```text
+side_effect
 reduction
 filesystem
 uploaded_files
