@@ -146,12 +146,26 @@ admission 状态。
 行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
 或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
 
-### P0A 自适应执行事务边界
+### P0A/P0B 自适应执行事务边界
 
-`P0A 当前只提供 repository primitive`：P0A1/P0A2 已实现并测试
-`AdaptiveExecutionRepository.CommitAdaptiveExecutionBoundary`，但 application/ADK
-生产代码尚无 caller；P1D 完成接线前，现有直接 Plan mutation 仍然可达。
-P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
+`P0A/P0B 当前只提供 repository primitive`：P0A implementation HEAD 是
+`a1df1789b0b60c0916505711bcc1e5a1fa1410cd`。P0B 已在同一个 private repository
+interface 中实现 `CommitAdaptiveExecutionBoundary` 的 exact-tuple 幂等回放，以及
+`ReadAdaptiveExecutionRecoverySource` 的 recovery source 只读恢复；checkpoint 的
+server-owned metadata 已升级为 `workbench-adaptive-boundary.v2`，并固定 event 与
+checkpoint fingerprint 及 bounded PlanItem refs。Checkpoint fingerprint 覆盖完整物理
+checkpoint、canonical user metadata，以及除 event/checkpoint 两个循环摘要外的全部 typed
+adaptive authority；它同时写入追加式 boundary Event 的 `snapshot_id` 作为跨行锚点。
+Event fingerprint 覆盖完整 event 物理行，回放、恢复和 lineage 都会重算并核对两级摘要，
+因此不能通过改写同一 checkpoint 的 refs、source 或 Plan authority 后重算内层摘要来绕过。
+写事务统一按 logical Journal root、Execution Run、Attempt、exact event tuple、source lineage、
+Plan、PlanItem 的顺序加锁，避免 Attempt 创建与 recovery boundary 形成反向 Run 锁环。两条
+读取路径都直接读取私有 PO 中的持久化 event、checkpoint、Attempt lineage、Plan revision
+和 PlanItem refs 来重建 authority，不经 public `ListRunEvents`、`ListCheckpoints` 或 latest
+checkpoint selector。
+
+application/ADK 生产代码仍无 caller；P1D 完成接线前，现有直接 Plan mutation 仍然
+可达。P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
 `AgentRunPlan`、再锁 `PlanItem`；本阶段不在执行图中制造不存在的生产调用边。
 
 ### Canonical Thread HTTP 契约

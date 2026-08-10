@@ -36,6 +36,8 @@ var (
 	ErrAdaptiveExecutionPlanRevisionConflict    = errors.New("adaptive execution plan revision conflict")
 	ErrAdaptiveExecutionPlanItemVersionConflict = errors.New("adaptive execution plan item version conflict")
 	ErrAdaptiveExecutionSequenceConflict        = errors.New("adaptive execution sequence conflict")
+	ErrAdaptiveExecutionReplayConflict          = errors.New("adaptive execution replay conflict")
+	ErrAdaptiveExecutionRecoveryConflict        = errors.New("adaptive execution recovery conflict")
 )
 
 type AdaptivePlanItemMutation struct {
@@ -56,12 +58,35 @@ type CommitAdaptiveExecutionBoundaryResult struct {
 	Plan                  *entity.AgentRunPlan
 	Items                 []*entity.AgentRunPlanItem
 	LastCommittedSequence uint64
+	Authority             AdaptiveExecutionBoundaryAuthority
+	Replayed              bool
+}
+
+type AdaptiveExecutionBoundaryAuthority struct {
+	ThreadID            int64
+	ExecutionRunID      int64
+	ExecutionGeneration uint64
+	JournalRunID        int64
+	AttemptID           string
+	SourceAttemptID     *string
+	SourceCheckpointID  *int64
+	EventID             int64
+	EventSequence       uint64
+	IdempotencyKey      string
+	CheckpointID        int64
+	PlanScopeRunID      int64
+	PlanRevision        int64
+	PlanItemFingerprint string
 }
 
 type AdaptiveExecutionRepository interface {
 	CommitAdaptiveExecutionBoundary(
 		ctx context.Context,
 		req CommitAdaptiveExecutionBoundaryRequest,
+	) (*CommitAdaptiveExecutionBoundaryResult, error)
+	ReadAdaptiveExecutionRecoverySource(
+		ctx context.Context,
+		req ReadAdaptiveExecutionRecoverySourceRequest,
 	) (*CommitAdaptiveExecutionBoundaryResult, error)
 }
 
@@ -80,11 +105,17 @@ type CommitAdaptiveExecutionBoundaryRequest struct {
 	PlanMutation   *AdaptivePlanMutation
 }
 
+type ReadAdaptiveExecutionRecoverySourceRequest struct {
+	ThreadID        int64
+	JournalRunID    int64
+	TargetAttemptID string
+}
+
 func validateAdaptiveExecutionBoundaryRequest(req CommitAdaptiveExecutionBoundaryRequest) error {
 	if req.ThreadID <= 0 || req.ExecutionRunID <= 0 || req.JournalRunID <= 0 ||
-		strings.TrimSpace(req.AttemptID) == "" || req.Generation == 0 ||
+		strings.TrimSpace(req.AttemptID) == "" || len([]byte(req.AttemptID)) > 64 || req.Generation == 0 ||
 		strings.TrimSpace(req.LeaseOwner) == "" || strings.TrimSpace(req.LeaseToken) == "" ||
-		req.Now <= 0 || strings.TrimSpace(req.IdempotencyKey) == "" ||
+		req.Now <= 0 || strings.TrimSpace(req.IdempotencyKey) == "" || len([]byte(req.IdempotencyKey)) > 191 ||
 		req.Event == nil || req.Checkpoint == nil {
 		return fmt.Errorf("%w: required identity is missing", ErrAdaptiveExecutionBoundaryInvalid)
 	}
@@ -93,6 +124,14 @@ func validateAdaptiveExecutionBoundaryRequest(req CommitAdaptiveExecutionBoundar
 	}
 	if req.Checkpoint.ThreadID != req.ThreadID || req.Checkpoint.RunID != req.ExecutionRunID {
 		return fmt.Errorf("%w: checkpoint identity drift", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	return nil
+}
+
+func validateAdaptiveExecutionRecoverySourceRequest(req ReadAdaptiveExecutionRecoverySourceRequest) error {
+	if req.ThreadID <= 0 || req.JournalRunID <= 0 ||
+		strings.TrimSpace(req.TargetAttemptID) == "" || len([]byte(req.TargetAttemptID)) > 64 {
+		return fmt.Errorf("%w: required recovery identity is missing", ErrAdaptiveExecutionBoundaryInvalid)
 	}
 	return nil
 }
