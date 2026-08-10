@@ -22,6 +22,12 @@
 前端和后端不是两套功能。后端产生同一组类型化执行事实，经过现有公共投影与 SSE
 送达当前页面；前端不解析自然语言猜状态，也不制造只存在于页面中的流程。
 
+本期同时退休现有产品层执行模式合同。`auto`、`pro`、`ultra`、`requested_policy` 和
+同语义 `mode` 不再是用户选择、请求字段、Run 配置或内部隐藏档位；它们也不能改名为
+“profile”后继续存在。`ExecutionDecision.decision + execution_shape` 是任务走澄清、直答、
+单步或多步路径的唯一权威。服务端冻结的 admission/capability facts 只负责功能可用性、权限和
+上限，模型 purpose/inference 配置只负责模型选择与推理参数；两者都不能再次承担任务形态选择。
+
 MVP 优先验证三件事：
 
 1. 多步任务是否比当前基线更容易完成；
@@ -51,6 +57,11 @@ Journal 安全投影、SSE 和 Workbench 页面。原闭环方案仍按平台级
 因此本期应在现有主链上补齐这三个缺口，并用固定任务集验证收益，而不是继续扩大状态表和
 迁移矩阵。
 
+当前实现仍有一层过渡合同：Workbench 请求写入 `requested_policy=auto`，后端将它归一为
+执行 `mode`，并让该值继续影响 Plan、Subagent、推理配置和 Journal enrollment；其中自动值还会
+落到固定高档配置。引入 `ExecutionDecision` 后若保留这层逻辑，同一任务会同时被旧 mode 和新
+decision 决定，形成双权威。模式退休因此是 MVP 的前置工作，不是验收后的可选清理。
+
 ## 3. 目标与成功标准
 
 ### 3.1 产品目标
@@ -59,7 +70,7 @@ Journal 安全投影、SSE 和 Workbench 页面。原闭环方案仍按平台级
 - 让简单问答和单步操作继续走直接路径；
 - 让多步任务在工具执行前形成可见计划；
 - 根据执行证据继续、局部修复、重规划、澄清或停止；
-- 只有验证通过后才允许显示成功；
+- gate-on 只有验证通过后才允许显示成功；
 - 在现有 Workbench composer → TaskDetail 流程展示规划、执行、修复、重规划、验证和最终结果；
 - 通过内部 feature gate 与当前路径做同版本对照。
 
@@ -76,7 +87,9 @@ Journal 安全投影、SSE 和 Workbench 页面。原闭环方案仍按平台级
 - 取消、澄清、修复、重规划、验证失败和 SSE 重连验收全部通过。
 
 以上是内部 MVP 的 operational gate，不宣称统计显著性；报告必须同时给出逐任务结果和
-paired bootstrap 区间。gate-off 保持当前行为，不要求产生三个新合同。
+paired bootstrap 区间。gate-off 也必须持久化 `ExecutionDecision`，但不启用 adaptive
+progress/replan/verification 闭环；两组使用同一套已退休旧模式的基础执行链。`origin/dev` 只作为
+行为等价诊断基线，不能把旧模式带回候选实现。
 
 ## 4. 范围
 
@@ -87,11 +100,18 @@ paired bootstrap 区间。gate-off 保持当前行为，不要求产生三个新
 - `direct` 保持无计划的快速路径；
 - `execute` 支持 `single_step / multi_step`；
 - `multi_step` 复用现有 Plan/Todo；
-- 每个受控执行边界产生进度评估；
-- 支持继续、局部修复、重规划、澄清和停止；
-- 成功前执行与任务相符的测试、工具结果或确定性事实验证；
+- gate-on 在每个受控执行边界产生进度评估；
+- gate-on 支持继续、局部修复、重规划、澄清和停止；
+- gate-on 成功前执行与任务相符的测试、工具结果或确定性事实验证；
 - 只允许只读工具和 Sandbox 内写入；
 - 复用现有权限、工具注册、SideEffect、lease、generation、取消和恢复边界；
+- 停止 root、追问、retry、resume 和 child Run 对 `requested_policy`、同语义 `mode` 及
+  mode-derived `is_plan_mode/subagent_enabled` 的新写入和复制；
+- 从当前产品执行路径移除 `auto/pro/ultra` 枚举、归一化、分支、指标标签和 Journal mode gate；
+- 以服务端冻结的 admission/capability facts 决定工具、Plan 与安全能力是否可用，以
+  `ExecutionDecision` 唯一决定任务形态；
+- 对切换前仍可恢复且缺少 typed admission fact 的任务，只允许隔离、只读、fail-closed 的
+  legacy decoder；不得把旧字段写入目标 Run 或重新暴露为公共合同；
 - 当前页面显示类型化执行状态和验证摘要；
 - 内部 feature gate、对照指标和固定评测集。
 
@@ -103,7 +123,7 @@ paired bootstrap 区间。gate-off 保持当前行为，不要求产生三个新
 - Subagent、协作规划和跨 Agent 汇合；
 - 真实外部写入、L3 审批、自动副作用重放和 unknown resolution；
 - 完整 Policy/Emergency/预算/ModelTransition 平台；
-- Bridge、历史数据迁移、旧链删除、生产切换或全量发布；
+- 通用 Bridge、批量历史数据迁移、整个 legacy runtime 删除、生产切换或全量发布；
 - Chain-of-Thought、原始工具参数/结果、Provider 载荷、Checkpoint bytes、凭据或隐藏配置展示；
 - 以精确百分比进度或 ETA 作为产品承诺。
 
@@ -118,6 +138,10 @@ paired bootstrap 区间。gate-off 保持当前行为，不要求产生三个新
 采用方案不否定长期架构研究，只冻结本期实施优先级。任何需要恢复第二或第三方案的发现，
 都必须用现有主链无法满足的运行时证据重新发起设计评审。
 
+模式退休预计增加 4～6 engineer-days，已包含在第一种方案的 8～12 人周内，并与 decision
+接入共用调用链测试，不另立项目。若把它脱离 MVP 单独先做完，连同兼容恢复和全链验收预计
+需要 8～12 engineer-days，因此不采用独立排期。
+
 ## 6. 架构与数据流
 
 ```mermaid
@@ -129,19 +153,24 @@ flowchart LR
     RW --> RRS["ResumeRunProcessor / RuntimeResumeSelector"]
     RS --> ADK["同一个 ADKExecutor / Eino Runner"]
     RRS --> ADK
-    ADK --> D["ExecutionDecision"]
+    ADK --> G{"冻结的实验 gate"}
+    G -->|"on: adaptive producer"| D["ExecutionDecision"]
+    G -->|"off: baseline producer"| D
     D -->|"clarification"| H["现有 human interaction / resume"]
     D -->|"direct"| V["VerificationResult"]
     D -->|"single_step"| T["受控工具执行"]
     D -->|"multi_step"| P["现有 Plan / Todo"]
     P --> T
-    T --> E["ProgressEvaluation"]
+    T --> C{"gate-on?"}
+    C -->|"no"| B["现有基础终态规则"]
+    B --> R["Run 终态与最终回复"]
+    C -->|"yes"| E["ProgressEvaluation"]
     E -->|"continue"| T
     E -->|"repair"| T
     E -->|"replan"| P
     E -->|"clarify"| H
     E -->|"stop"| V
-    V --> R["Run 终态与最终回复"]
+    V --> R
     D --> F["typed RunEvent"]
     E --> F
     V --> F
@@ -164,8 +193,9 @@ flowchart LR
 - `ADKExecutor` 与 Eino ADK 继续是唯一执行内核；
 - 保留现有 normal 分支 `RunWorker -> RunProcessor -> RuntimeSelector` 和 resume 分支
   `ResumeRunWorker -> ResumeRunProcessor -> RuntimeResumeSelector`；
-- 两个分支都必须在同一个 `ADKExecutor`/Eino lead-agent 层复用同一 adaptive coordinator，
-  `Execute` 与 `Resume` 执行同样的合同恢复、进度评估和 verification gate；
+- 两个分支都必须在同一个 `ADKExecutor`/Eino lead-agent 层复用同一 admission/decision
+  coordinator；`Execute` 与 `Resume` 执行相同的合同恢复，且仅在冻结 gate-on 时执行同样的
+  进度评估和 verification gate；
 - 自适应协调器不得 claim Run、持有独立 lease、新建 adaptive worker/route、独立结算 Run，
   或调用第二套 classifier、planner、verifier 模型循环；
 - Plan、Checkpoint、SideEffect 和 Journal 继续各自承担现有职责，不能反向驱动 Run；
@@ -175,24 +205,72 @@ flowchart LR
   任意历史 RunEvent 通用重建；
 - 页面只消费 canonical client 与上述现有 SSE，不引入浏览器直连或备用 client。
 
-### 6.2 执行顺序
+### 6.2 模式退休与职责拆分
+
+- 退休范围是产品层任务执行模式：`auto/pro/ultra`、`requested_policy`、同语义 `mode`、
+  `ModeExplicit`、`DeerFlowMode` 和 `DeerFlowRequestedPolicy`。除隔离的 legacy decoder 与
+  固定恢复 fixture 外，生产执行路径不得继续声明这些枚举或按这些值分支；
+- `RuntimeModeEinoADK/legacy` 是执行内核路由，不是用户任务模式，继续保留；Artifact、编辑器或
+  其他领域中仅同名但不同语义的 `mode` 也不在本次机械删除范围；
+- `ExecutionDecision.decision/execution_shape` 唯一决定 clarification、direct、single-step 和
+  multi-step。Plan 是否建立只能由该 decision 决定并通过服务端能力校验，不能再由旧 mode 推导；
+- admission/capability facts 由服务端按租户、工具注册、安全策略和 feature gate 冻结，只回答
+  “允许什么、上限是什么”。它不能替模型选择任务路径，也不能被客户端 mode 覆盖；
+- capability 校验只能接受或拒绝 decision，不能默认、改写或把 `multi_step` 静默降级为
+  `single_step/direct`。不匹配时必须在 Plan/工具调用前返回 `blocked_policy`，或要求 producer
+  生成并持久化新的 typed decision revision；旧 revision 不能继续执行；
+- provider、模型 revision、reasoning effort 和 inference options 来自 purpose binding 或服务端
+  模型配置，只回答“用什么模型执行”，不能从任务 mode 或 execution shape 推导；
+- Journal enrollment 只依据顶层 Task、rollout/admission 和公共投影可用性，不再要求某个 mode；
+- MVP 禁止 Subagent。当前主链不能通过 `pro/ultra` 隐式开启它，现有 child/retry/resume 路径也
+  不能硬编码或复制旧 mode；
+- gate-on 使用 adaptive decision producer；gate-off 使用显式的 `BaselineDecisionProducer`，
+  对当前入组的顶层 Task 固定产生 `execute/multi_step`，复现现有 auto→Ultra/PlanMode 的基础
+  路径；它不做任务分类，使用服务端固定 safe summary，并令 `deliverables/acceptance_checks` 为空。
+  两者都持久化同一 schema 的 `ExecutionDecision`，实验 gate 只选择 producer 以及是否
+  启用后续 progress/replan/verification，不形成公共模式或请求参数。gate-off 与 `origin/dev`
+  的行为等价 smoke 失败时必须停止评测并返回设计，不得添加新的隐藏分类分支；
+- 新 canonical 请求若在顶层或嵌套字段显式提交上述已退休控制，服务端必须在创建
+  Thread/Message/Run bundle 前以 HTTP 422、domain code `unsupported_execution_control` 零副作用
+  拒绝。root、带附件、follow-up、retry 和 resume 全部使用同一校验，不能让 JSON binder 静默
+  忽略，也不能由前端继续序列化这些字段；
+- 切换前的可恢复任务仅在“来源没有 typed admission fact 且持久化了 legacy 配置”时进入专用
+  只读 decoder。首次 legacy recovery 必须在目标 Run 可执行前原子写入规范化 typed admission
+  snapshot，至少包含 decoder schema version、source Run、source generation、source config
+  digest、`feature_gate=false`、保守 capability 和 limits；不得写入任何旧字符串。decoder 不得
+  创建或改写 `ExecutionDecision`。后续 hop 只继承该 snapshot，禁止再次调用 decoder；未知、
+  缺失、冲突值或原子提交失败一律 fail closed。待这类任务清零后，decoder 另行审计删除。
+
+### 6.3 执行顺序
 
 1. canonical API 按当前方式创建 Thread/Message/Run：首次无附件使用 `CreateThreadBundle`，
-   带附件、追问和 resume 使用 `CreateRunBundle`，随后都进入同一 canonical 执行链；
-2. Worker 领取 Run，现有运行时解析本 Run 启动时冻结的 feature gate；
-3. 首次 Agent 决策生成 `ExecutionDecision`；
+   带附件、追问和 resume 使用 `CreateRunBundle`；前端不发送旧模式字段，服务端拒绝显式旧模式
+   控制，并为 gate-on/off 的所有新逻辑任务在首次模型或工具调用前持久化 typed
+   admission/capability snapshot；
+2. Worker 领取 Run，读取本逻辑任务冻结的 feature gate、schema、capability 与 limits；
+   follow-up、retry 和 resume 只继承这些 typed facts，不能复制 legacy mode；
+3. 冻结的实验 gate 选择 adaptive 或 baseline decision producer，两者都生成并持久化
+   `ExecutionDecision`；
 4. 澄清任务进入现有 human interaction；直接任务不创建 Plan；
 5. 单步任务执行一个受控动作，多步任务先持久化 Plan 再执行工具；
-6. 每个计划里程碑或受控工具批次后生成 `ProgressEvaluation`；
-7. 控制面校验建议、证据引用、Plan revision、额度和权限后决定下一步；
-8. 结束前生成 `VerificationResult`；
-9. 只有验证通过时 Run 才能进入 succeeded，否则进入部分完成、等待输入、失败、取消或额度耗尽；
-10. 类型化事实分别经公共 RunEvent projector 和可选 Journal projector 形成审核后的页面状态。
+6. gate-on 在每个计划里程碑或受控工具批次后生成 `ProgressEvaluation`；gate-off 不进入该循环；
+7. gate-on 控制面校验建议、证据引用、Plan revision、额度和权限后决定下一步；
+8. gate-on 结束前生成 `VerificationResult`；
+9. gate-on 只有验证通过时 Run 才能进入 succeeded，否则进入部分完成、等待输入、失败、取消或
+   额度耗尽；gate-off 沿当前基础执行链的既有终态规则完成，不伪造 progress 或 verification；
+10. 两组的 `ExecutionDecision` 与 gate-on 的 progress/verification 分别经公共 RunEvent projector
+    和可选 Journal projector 形成审核后的页面状态。
 
 ## 7. 类型化合同
 
 三个合同是后端内部权威事实。模型可以提出结构化建议，但服务端负责 schema 校验、资源绑定、
 状态转换和最终持久化。公开投影只选择安全字段。
+
+gate-on/off 都持久化 `ExecutionDecision`。`ProgressEvaluation` 与 `VerificationResult` 只属于
+gate-on；gate-off 不生成空壳或伪通过结果，也不受 adaptive verification success gate 约束。
+
+其中 `ExecutionDecision` 是任务形态的唯一选择权威。任何请求配置、feature gate、capability、
+模型档位、Prompt 或 Journal enrollment 都不得生成第二份 direct/single/multi 决策。
 
 三个合同共用现有身份模型：
 
@@ -234,6 +312,7 @@ created_at
 - `clarification` 必须有问题，不能有执行形态；
 - `direct` 不能有执行形态或 Plan；
 - `execute` 必须精确选择一个执行形态；
+- schema 中不得出现 `requested_policy`、产品执行 `mode`、`auto`、`pro` 或 `ultra`；
 - `multi_step` 的首个工具调用必须晚于 Plan 持久化；
 - `single_step` 最多产生一个非验证 `ToolStarted`；第二个出现前必须追加新的 decision revision、
   持久化 Plan 并切换为 `multi_step`；verification purpose 只能由服务端只读验证工具 allowlist
@@ -301,8 +380,8 @@ created_at
 唯一且 outcome 为 passed 的结果，且结果绑定当前 active decision、当前 Plan revision、目标
 revision/digest 或产生序列。模型自评或最终回复本身不能作为独立证据。纯直答允许执行不新增
 模型调用的确定性
-`response_contract` 检查；需要外部事实的任务必须转为 `single_step` 获取证据。terminal success
-必须在同一受 fence 的事务边界内重新核对 current generation、active decision、current Plan
+`response_contract` 检查；需要外部事实的任务必须转为 `single_step` 获取证据。gate-on 的
+terminal success 必须在同一受 fence 的事务边界内重新核对 current generation、active decision、current Plan
 revision、`verified_checkpoint_id`、`evidence_head_event_id` 和 passed verification。任何相关工具
 结果、repair、Plan mutation、目标写入或 recovery checkpoint 都会使旧 verification 失效；
 服务端无法证明 mutation 与检查目标无关时必须重新验证，且通过证据必须晚于最后一次相关 mutation。
@@ -327,7 +406,8 @@ payload。
 
 ### 8.1 零迁移候选与 Day 2 spike
 
-- 三个合同以版本化 typed RunEvent 持久化；
+- `ExecutionDecision` 在 gate-on/off 都以版本化 typed RunEvent 持久化；
+- `ProgressEvaluation` 与 `VerificationResult` 只在 gate-on 以版本化 typed RunEvent 持久化；
 - Checkpoint 的 adaptive extension 只保存恢复所需的当前 decision/evaluation/verification 标识、
   Plan revision、计数器和引用，不复制 Plan 或工具结果，也不替换现有 Eino checkpoint
   envelope/runtime bytes；Checkpoint 只进入恢复链，不进入 adaptive UI 投影；
@@ -344,7 +424,8 @@ payload。
    `RunAttempt.ExecutionRunID` 指向当前物理 Run；
 3. 对多步路径 CAS 校验 active Plan revision；
 4. 幂等写入带 schema discriminator 的 typed event 与关联 runtime checkpoint；
-5. 在需要时同事务提交 Plan mutation 或 terminal verification gate；
+5. 在需要时同事务提交 Plan mutation；仅 gate-on 提交 terminal verification gate，gate-off
+   继续使用既有终态事务规则；
 6. 对 crash-before-commit、crash-after-commit、lost-response retry、concurrent replan、
    lease takeover、cancel race、重复 decision 和重复 verification 保持单一结果。
 
@@ -363,6 +444,11 @@ payload。
   来源事实；lease recovery 另校验 `source_execution_generation` 与 source checkpoint；
 - 两类目标 Run 都继承来源 gate/schema/limits 快照，并在 typed admission fact 原子持久化上述
   source identity；
+- 新 root、follow-up、retry、human resume、lease recovery 和 child Run 均不得持久化或复制
+  旧模式字段；恢复得到的任务形态只能来自 active typed decision 与现有 Plan/Checkpoint；
+- 切换前任务若没有 typed admission fact，只能进入 6.2 定义的只读 legacy decoder；首次恢复
+  原子写入带 decoder version、source Run/generation/config digest 与 `feature_gate=false` 的新
+  snapshot，后续多跳只继承它。decoder 绝不能默认或重写 `ExecutionDecision`；
 - Plan 继续归属既有 `plan_scope_run_id`，typed fact 同时绑定既有 `journal_run_id/attempt_id`；
 - 工具、repair、replan、no-progress 与 active-runtime 计数按逻辑 `journal_run_id` lineage 累积，
   resume 或 recovery 不得将额度清零；
@@ -381,8 +467,10 @@ payload。
 - Sandbox 写入每次都校验解析后的 canonical target 位于授权 workspace，不能只按工具名放行；
 - 现有 SideEffect ledger 继续负责幂等和真实副作用事实，本期不增加自动 replay；
 - 禁止 Subagent、宿主机任意写入、生产资源写入和凭据回显。
+- 工具和 Plan 能力由服务端 admission/capability snapshot 判定；不得使用 `pro/ultra` 或其他
+  客户端档位放大权限，缺少所需事实时 fail closed。
 
-### 9.2 运行限制
+### 9.2 Gate-on 运行限制
 
 MVP 默认使用以下可观测的固定上限，不建设新预算平台：
 
@@ -412,6 +500,8 @@ MVP 默认使用以下可观测的固定上限，不建设新预算平台：
 
 ### 9.4 Run 状态映射
 
+下表是 gate-on 的 adaptive 结果映射：
+
 | MVP 结果 | 现有 Run 状态 |
 | --- | --- |
 | verification passed | `succeeded` |
@@ -421,6 +511,8 @@ MVP 默认使用以下可观测的固定上限，不建设新预算平台：
 | tool/verification/budget failure | `failed` + 稳定 error code |
 
 “部分完成”不是新的 Run status，只是 failed/interrupted 的安全摘要与已验证 Artifact 投影。
+gate-off 不产生 `ProgressEvaluation/VerificationResult`，继续使用当前基础执行链的既有 Run
+终态判定；它不能写入伪造的 `verification passed`，也不能绕入 gate-on 的 verification 门禁。
 
 ## 10. 当前页面改造
 
@@ -431,17 +523,20 @@ transcript、Todo dock 与 Journal panel，禁止在 composer 内再造第二套
 ### 10.1 展示规则
 
 - 保留当前输入框、消息流和最终答复；
-- 简单 `direct` 任务沿用当前展示，不出现空计划或执行外壳；
+- gate-on 的简单 `direct` 任务沿用当前展示，不出现空计划或执行外壳；
 - `multi_step` 复用现有 Plan/Todo、工具动作、澄清和里程碑组件；
-- 新增统一状态：正在规划、正在执行、正在修复、正在重规划、正在验证；
+- gate-on 新增统一状态：正在规划、正在执行、正在修复、正在重规划、正在验证；
 - 计划变化在原 Plan 区域更新并标记 revision，不创建第二条时间线；
-- 最终答复增加紧凑验证摘要，区分通过、失败和阻断；
+- gate-on 最终答复增加紧凑验证摘要，区分通过、失败和阻断；
 - 澄清问题出现在当前消息流，回复后继续同一业务任务的现有 resume 语义；
 - 刷新或 SSE 重连后分别从 canonical RunEvent list/SSE 和 Journal list/SSE 恢复显示。
 
 ### 10.2 前端边界
 
 - 只使用 canonical client 和生成合同；
+- 页面不提供执行模式选择器，也不在 root、追问、retry 或 resume 请求中序列化
+  `requested_policy`、同语义 `mode`、`auto/pro/ultra`；
+- 页面只展示服务端投影的 decision/execution shape，不能用默认“自动”值或本地枚举兜底；
 - 不解析 assistant 文本推断 decision、repair、replan 或 verification；
 - 不展示模型思维链、原始工具参数/结果、Provider body、隐藏配置、内部路径或 credential；
 - 保留 loading、empty、error、disabled、readonly、取消、重连、键盘和 ARIA 状态；
@@ -450,6 +545,9 @@ transcript、Todo dock 与 Journal panel，禁止在 composer 内再造第二套
 ### 10.3 加法式公共投影合同
 
 不新增 endpoint；只扩展现有 envelope。精确公共合同如下：
+
+`adaptive.decision` 对 gate-on/off 都存在；`adaptive.progress` 和 `adaptive.verification` 只允许由
+gate-on 产生。页面不得为 gate-off 补造空 progress、空 verification 或“默认通过”。
 
 | 内部事实 | canonical public `event_type` | `payload_version` | 公共 allowlist | Journal 映射 |
 | --- | --- | --- | --- | --- |
@@ -471,8 +569,11 @@ public projector 只能从该持久化 discriminator 映射现有 envelope 的 `
 ## 11. Feature gate 与指标
 
 逻辑 feature 名为 `workbench_adaptive_execution_mvp`。实施时应映射到现有内部配置和灰度
-能力，不新建管理页面。关闭时保持当前行为；开启时同一逻辑任务沿 resume/recovery lineage
-使用首次 admission 时持久化的 gate/schema/limits 快照，不重新读取实时配置。
+能力，不新建管理页面。该 gate 只选择 decision producer 和后续 adaptive coordinator，不控制也
+不恢复已退休的执行模式。关闭时由 `BaselineDecisionProducer` 写入同 schema 的固定
+`execute/multi_step` decision，并在支持的顶层 Task 范围内保持与 `origin/dev` 等价的用户行为；
+开启时使用 adaptive producer。两组同一逻辑任务都沿 resume/recovery lineage 使用首次 admission
+时持久化的 gate/schema/capability/limits 快照，不重新读取实时配置。
 
 MVP 只对当前符合 Journal enrollment 条件的顶层 Task Run 生效；Subagent 和其他入口不进入
 本路径。admission 时若公共投影合同或 Journal enrollment 条件不满足，则在首次 adaptive
@@ -562,6 +663,16 @@ Plan 前置顺序，要求 100% 通过；错误分类仍保留在分母中，不
 ### 12.3 测试层次
 
 - Go 单元测试：合同解析、状态转换、上限、generation fencing、验证门禁；
+- 模式退休合同测试：root/follow-up/retry/resume/child 新配置均不含旧字段，显式旧控制请求被
+  HTTP 422 + `unsupported_execution_control` 且零副作用拒绝，顶层和嵌套别名不能被 binder
+  忽略，Plan/Subagent/reasoning/Journal 不再读取 mode；
+- authority 测试：gate-on/off 均先持久化 admission 和 typed decision；baseline producer 只有
+  固定 `execute/multi_step` 映射；capability 不匹配只能阻断或形成新 decision revision，不能降级；
+- 分支终态测试：只有 gate-on 产生 progress/verification 并要求 passed 后成功；gate-off 不产生
+  这两个合同，沿既有终态规则完成，且不能写伪通过 verification；
+- legacy 恢复测试：切换前已持久化任务只能由隔离 decoder 只读恢复，unknown/conflict
+  fail closed；crash/retry 只原子产生一个带 source digest 的 typed snapshot，多跳恢复不回写、
+  不重新解释旧值，也不由 decoder 生成 decision；
 - Go 集成测试：RunWorker/ADK、Plan、Checkpoint、Journal、取消、恢复和假工具；
 - 前端 Vitest：公共事件映射、直接路径、Plan 状态、修复、验证、错误和重连；
 - 类型检查、相关 lint 和前端构建；
@@ -592,6 +703,8 @@ Plan 前置顺序，要求 100% 通过；错误分类仍保留在分母中，不
 - 评测负责人封存 80 holdout/evaluator 并记录 hash，实施侧只获得 schema 与 30 开发集；
 - Day 2 前完成零迁移原子持久化/恢复 spike，失败即返回设计评审；
 - 测量 `origin/dev` 诊断基线和 gate-off 行为等价 smoke；
+- 在接入 typed decision 前完成产品执行模式退休：停止新写、切换 Plan/Journal/model consumers、
+  移除 child/retry/resume 硬编码，并建立只读 legacy recovery fixture；
 - 接入 feature gate 和三个类型化合同；
 - 打通 decision、直接执行、多步 Plan、RunEvent/Checkpoint 和公共投影；
 - 当前页面显示规划、执行和最终状态；
@@ -644,6 +757,8 @@ Plan 前置顺序，要求 100% 通过；错误分类仍保留在分母中，不
 - 图中必须明确两条现有分支复用同一个 ADKExecutor/Eino/adaptive coordinator，且没有新增第二套
   adaptive worker、executor、route 或模型循环；
 - 公共 Workbench 边界发生变化时同步 `workbench-chat.md`；
+- 实施代码落地时，`workbench-chat.md` 必须删除 `auto/pro/ultra/requested_policy` 仍是当前产品
+  合同的表述；`2026-08-05-auto-execution-policy.md` 仅保留为历史记录，不再作为当前实现授权；
 - 必须运行 `verify --changed-from origin/dev`、`build` 和 `verify-derived` 三个执行图命令；
 - 验收前不合并 `dev`、不推送、不发布；
 - 全部门槛通过后，报告最新远程基准、文件范围、测试、migration 清单和候选 exact SHA；
@@ -653,8 +768,9 @@ Plan 前置顺序，要求 100% 通过；错误分类仍保留在分母中，不
 
 ## 15. 回滚与失败边界
 
-零迁移候选成立时，运行回滚只需要关闭新 Run 的 feature gate；已经启动的 Run 按冻结值完成、取消或
-失败，不能中途换实现。页面收到未知 schema version 时显示稳定错误，不猜测字段。若 30 任务
+零迁移候选成立时，运行回滚只需要关闭新 Run 的 adaptive feature gate；关闭 gate 不得恢复
+`auto/pro/ultra` 或重新写入旧模式，新 Run 进入同一无模式基础路径。已经启动的 Run 按冻结值
+完成、取消或失败，不能中途换实现。页面收到未知 schema version 时显示稳定错误，不猜测字段。若 30 任务
 开发集在完整闭环后未达到净增 3/30，只允许一个不扩 scope、最多 2 engineer-days 的修复 cycle；
 仍失败则停止。任一未授权写入、
 敏感投影、重复副作用或无验证成功都立即停止并作废当轮结果。最终 80 holdout 未达门槛时不合并
@@ -669,6 +785,7 @@ versioned holdout，并对新候选 SHA 完整重验。
 2. 当前大型实验分支保持可追溯且未被清理；
 3. 最新 `origin/dev` 基线、工作区和远程跟踪关系重新审计；
 4. 实施计划先安排零迁移持久化可行性 spike；
-5. spike 失败时回到设计评审，不自行增加表；
-6. 计划明确每个批次的测试、浏览器验收和暂停点；
-7. 合并、migration apply、推送和发布继续分别受 exact SHA 授权约束。
+5. typed decision 接入前先完成执行模式退休，并为切换前任务建立只读恢复边界；
+6. spike 失败时回到设计评审，不自行增加表；
+7. 计划明确每个批次的测试、浏览器验收和暂停点；
+8. 合并、migration apply、推送和发布继续分别受 exact SHA 授权约束。
