@@ -5580,13 +5580,25 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "CommitAdaptiveExecutionBoundary production wiring",
+      "term": "P0A/P0B/P0C adaptive repository production wiring",
       "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. The checkpoint fingerprint binds the complete physical checkpoint, canonical user metadata, and all typed adaptive authority except the two circular digests; it is anchored in the append-only boundary event snapshot_id, while the event fingerprint covers the complete physical event row. Boundary writes lock the logical Journal root before the Execution Run, Attempt, tuple, lineage, Plan, and PlanItems to avoid a reverse Run lock cycle with Attempt creation. Authority is reconstructed through direct private PO reads rather than public list or latest-checkpoint helpers, but no application or ADK production caller exists before P1D; direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order.",
+      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate. A nil gate preserves the existing production finalizer behavior and performs no Decision, Evidence, Plan, or PlanItem reads. Gate-on locks the logical Journal root, locks the Execution Run only when distinct (otherwise reusing the root row), then locks the Thread and Attempt identity before the exact Verification tuple and adaptive authority. Passed Verification precedes Completion on consecutive sequences in the same Attempt and transaction. Exact committed retry current-reads and revalidates the durable result; a non-nil outbox performs only immutable identity comparison with inserted=false, so no terminal row is rewritten or repaired. The optional AdaptiveGate remains implemented but unwired: existing application and ADK production callers of FinalizeRunSuccess do not construct it and continue with nil. P0D owns real MySQL cancel, lease, crash-after-commit, and cross-API Run↔Thread barrier races; P2 owns the full VerificationResult codec, registry, producer, nullable-Plan authority branch, and application/ADK wiring. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
-          "locator": "P0A/P0B 当前只提供 repository primitive"
+          "locator": "P0A/P0B/P0C 当前只提供 repository primitive"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
+          "locator": "type AdaptiveVerifiedSuccessGate struct {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "func (r *threadRepository) FinalizeRunSuccess("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "if req.AdaptiveGate != nil {"
         },
         {
           "path": "backend/domain/agentthread/repository/adaptive_execution.go",
@@ -5599,6 +5611,18 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
           "locator": "func (r *threadRepository) ReadAdaptiveExecutionRecoverySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) finalizeAdaptiveVerifiedRunSuccess("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessNilAdaptiveGateDoesNotRequireAdaptiveTables("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessCommitsAdaptiveVerificationBeforeCompletionAtomically("
         }
       ]
     },

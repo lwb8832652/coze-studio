@@ -304,8 +304,9 @@ type TokenUsageSnapshot struct {
 }
 
 type NotificationOutboxIntent struct {
-	Event  domainnotification.Event
-	Append func(context.Context, *gorm.DB, domainnotification.Event) error
+	Event            domainnotification.Event
+	Append           func(context.Context, *gorm.DB, domainnotification.Event) error
+	AppendWithResult func(context.Context, *gorm.DB, domainnotification.Event) (inserted bool, err error)
 }
 
 type ClaimMemoryFlushJobsRequest struct {
@@ -422,6 +423,7 @@ type FinalizeRunSuccessRequest struct {
 	ExpectedThreadTitle               string
 	ThreadTitle                       string
 	OutboxIntent                      *NotificationOutboxIntent
+	AdaptiveGate                      *AdaptiveVerifiedSuccessGate
 }
 
 type FinalizeRunSuccessResult struct {
@@ -431,6 +433,8 @@ type FinalizeRunSuccessResult struct {
 	CompletionEvent    *entity.RunEvent
 	TerminalCheckpoint *entity.Checkpoint
 	TitleUpdated       bool
+	VerificationEvent  *entity.RunEvent
+	Replayed           bool
 }
 
 type UpdateRunStatusRequest struct {

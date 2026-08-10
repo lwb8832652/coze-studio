@@ -21,14 +21,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 var (
 	ErrAdaptiveExecutionBoundaryInvalid         = errors.New("adaptive execution boundary is invalid")
+	ErrAdaptiveExecutionVerifiedSuccessInvalid  = errors.New("adaptive execution verified success invalid")
+	ErrAdaptiveExecutionVerifiedSuccessConflict = errors.New("adaptive execution verified success conflict")
 	ErrAdaptiveExecutionAttemptConflict         = errors.New("adaptive execution attempt conflict")
 	ErrAdaptiveExecutionLineageConflict         = errors.New("adaptive execution lineage conflict")
 	ErrAdaptiveExecutionPlanScopeConflict       = errors.New("adaptive execution plan scope conflict")
@@ -39,6 +43,8 @@ var (
 	ErrAdaptiveExecutionReplayConflict          = errors.New("adaptive execution replay conflict")
 	ErrAdaptiveExecutionRecoveryConflict        = errors.New("adaptive execution recovery conflict")
 )
+
+const adaptiveVerifiedSuccessMaxPayloadBytes = 64 * 1024
 
 type AdaptivePlanItemMutation struct {
 	ExpectedVersion int64
@@ -77,6 +83,310 @@ type AdaptiveExecutionBoundaryAuthority struct {
 	PlanScopeRunID      int64
 	PlanRevision        int64
 	PlanItemFingerprint string
+}
+
+type AdaptiveVerifiedSuccessGate struct {
+	Decision                   AdaptiveExecutionBoundaryAuthority
+	Evidence                   AdaptiveExecutionBoundaryAuthority
+	DecisionID                 string
+	DecisionRevision           int64
+	VerificationEvent          *entity.RunEvent
+	VerificationIdempotencyKey string
+}
+
+type adaptiveVerifiedSuccessPayload struct {
+	Schema                     string  `json:"schema"`
+	VerificationID             string  `json:"verification_id"`
+	ExecutionRunID             int64   `json:"execution_run_id"`
+	JournalRunID               int64   `json:"journal_run_id"`
+	AttemptID                  string  `json:"attempt_id"`
+	ExecutionGeneration        uint64  `json:"execution_generation"`
+	DecisionID                 string  `json:"decision_id"`
+	DecisionRevision           int64   `json:"decision_revision"`
+	ExpectedPlanRevision       int64   `json:"expected_plan_revision"`
+	ExpectedPlanFingerprint    string  `json:"expected_plan_fingerprint"`
+	VerifiedCheckpointID       int64   `json:"verified_checkpoint_id"`
+	EvidenceHeadEventID        int64   `json:"evidence_head_event_id"`
+	OutboxFingerprint          *string `json:"outbox_fingerprint"`
+	FinalizeRequestFingerprint string  `json:"finalize_request_fingerprint"`
+	Status                     string  `json:"status"`
+	CreatedAt                  int64   `json:"created_at"`
+
+	canonicalFields map[string]any
+}
+
+func validateAdaptiveVerifiedSuccessGate(req FinalizeRunSuccessRequest) error {
+	gate := req.AdaptiveGate
+	if gate == nil {
+		return nil
+	}
+	if req.RunID <= 0 || req.ExecutionGeneration == 0 || req.Now <= 0 {
+		return adaptiveVerifiedSuccessInvalidf("outer success identity is invalid")
+	}
+	if req.OutboxIntent != nil && req.OutboxIntent.AppendWithResult == nil {
+		return adaptiveVerifiedSuccessInvalidf("outbox append-with-result callback is required")
+	}
+	if err := validateAdaptiveVerifiedSuccessAuthority(gate.Decision); err != nil {
+		return err
+	}
+	if err := validateAdaptiveVerifiedSuccessAuthority(gate.Evidence); err != nil {
+		return err
+	}
+	if !sameAdaptiveVerifiedSuccessAuthorityScope(gate.Decision, gate.Evidence) ||
+		gate.Decision.ThreadID != gate.Evidence.ThreadID ||
+		gate.Decision.ExecutionRunID != req.RunID ||
+		gate.Decision.ExecutionGeneration != req.ExecutionGeneration ||
+		gate.Decision.EventSequence > gate.Evidence.EventSequence ||
+		gate.Evidence.EventSequence > math.MaxUint64-3 {
+		return adaptiveVerifiedSuccessInvalidf("decision and evidence authority drift")
+	}
+	decisionID := strings.TrimSpace(gate.DecisionID)
+	verificationKey := strings.TrimSpace(gate.VerificationIdempotencyKey)
+	if decisionID == "" || decisionID != gate.DecisionID || len([]byte(decisionID)) > 191 ||
+		gate.DecisionRevision <= 0 || verificationKey == "" ||
+		verificationKey != gate.VerificationIdempotencyKey || len([]byte(verificationKey)) > 191 {
+		return adaptiveVerifiedSuccessInvalidf("decision or verification identity is invalid")
+	}
+
+	verification := gate.VerificationEvent
+	if verification == nil || verification.ID <= 0 ||
+		verification.ThreadID != gate.Evidence.ThreadID || verification.RunID != req.RunID ||
+		verification.EventType != "adaptive.verification" || verification.CreatedAt != req.Now {
+		return adaptiveVerifiedSuccessInvalidf("verification event is invalid")
+	}
+	payload, err := decodeAdaptiveVerifiedSuccessPayload(verification.Payload, false)
+	if err != nil {
+		return err
+	}
+	if payload.VerificationID != verificationKey ||
+		payload.ExecutionRunID != req.RunID ||
+		payload.JournalRunID != gate.Evidence.JournalRunID ||
+		payload.AttemptID != gate.Evidence.AttemptID ||
+		payload.ExecutionGeneration != req.ExecutionGeneration ||
+		payload.DecisionID != decisionID || payload.DecisionRevision != gate.DecisionRevision ||
+		payload.ExpectedPlanRevision != gate.Evidence.PlanRevision ||
+		payload.VerifiedCheckpointID != gate.Evidence.CheckpointID ||
+		payload.EvidenceHeadEventID != gate.Evidence.EventID || payload.CreatedAt != req.Now {
+		return adaptiveVerifiedSuccessInvalidf("verification payload authority drift")
+	}
+	budgetFields := make(map[string]any, len(payload.canonicalFields)+2)
+	for key, value := range payload.canonicalFields {
+		budgetFields[key] = value
+	}
+	budgetFields["outbox_fingerprint"] = nil
+	if req.OutboxIntent != nil {
+		budgetFields["outbox_fingerprint"] = strings.Repeat("0", 64)
+	}
+	budgetFields["finalize_request_fingerprint"] = strings.Repeat("0", 64)
+	budgetPayload, err := json.Marshal(budgetFields)
+	if err != nil || len(budgetPayload) > adaptiveVerifiedSuccessMaxPayloadBytes {
+		return adaptiveVerifiedSuccessInvalidf("verification payload exceeds durable budget")
+	}
+
+	completion := req.CompletionEvent
+	if completion == nil || completion.ID <= verification.ID ||
+		completion.ThreadID != gate.Evidence.ThreadID || completion.RunID != req.RunID ||
+		completion.EventType != "run.completed" {
+		return adaptiveVerifiedSuccessInvalidf("completion event is invalid")
+	}
+	if _, err := runEventToPO(completion); err != nil {
+		return adaptiveVerifiedSuccessInvalidf("completion event payload is invalid: %v", err)
+	}
+	if req.TitleEvent != nil {
+		title := req.TitleEvent
+		if title.ID <= 0 || title.ID >= verification.ID ||
+			title.ThreadID != gate.Evidence.ThreadID || title.RunID != req.RunID ||
+			title.EventType != "context.thread_title_updated" {
+			return adaptiveVerifiedSuccessInvalidf("title event is invalid")
+		}
+		if _, err := runEventToPO(title); err != nil {
+			return adaptiveVerifiedSuccessInvalidf("title event payload is invalid: %v", err)
+		}
+	}
+
+	journal := req.JournalEvent
+	if journal == nil {
+		return adaptiveVerifiedSuccessInvalidf("completion journal event is required")
+	}
+	journalKey := strings.TrimSpace(journal.IdempotencyKey)
+	if journalKey == "" || len([]byte(journalKey)) > 191 || journalKey == verificationKey {
+		return adaptiveVerifiedSuccessInvalidf("completion journal key is invalid")
+	}
+	journalCandidate := *journal
+	journalCandidate.ID = completion.ID
+	journalCandidate.ThreadID = completion.ThreadID
+	journalCandidate.RunID = completion.RunID
+	journalCandidate.JournalRunID = gate.Evidence.JournalRunID
+	journalCandidate.AttemptID = gate.Evidence.AttemptID
+	if journalCandidate.CreatedAt <= 0 {
+		journalCandidate.CreatedAt = req.Now
+	}
+	if journalCandidate.OccurredAtUnixNano <= 0 {
+		if req.Now > math.MaxInt64/int64(time.Millisecond) {
+			return adaptiveVerifiedSuccessInvalidf("completion journal timestamp overflows nanoseconds")
+		}
+		journalCandidate.OccurredAtUnixNano = req.Now * int64(time.Millisecond)
+	}
+	normalizedJournal, err := normalizeJournalEvent(&journalCandidate)
+	if err != nil {
+		return adaptiveVerifiedSuccessInvalidf("completion journal event is invalid: %v", err)
+	}
+	if err := validateTerminalJournalEvent(normalizedJournal, entity.RunAttemptStatusCompleted); err != nil {
+		return adaptiveVerifiedSuccessInvalidf("completion journal event is invalid: %v", err)
+	}
+
+	if err := validateAdaptiveVerifiedSuccessTerminalCheckpoint(
+		req.TerminalCheckpoint,
+		gate.Evidence,
+	); err != nil {
+		return err
+	}
+	if req.TerminalCheckpointOnTitleConflict != nil {
+		if err := validateAdaptiveVerifiedSuccessTerminalCheckpoint(
+			req.TerminalCheckpointOnTitleConflict,
+			gate.Evidence,
+		); err != nil {
+			return err
+		}
+		if !sameTerminalCheckpointEntityIdentity(
+			req.TerminalCheckpoint,
+			req.TerminalCheckpointOnTitleConflict,
+		) {
+			return adaptiveVerifiedSuccessInvalidf("terminal checkpoint fallback identity drift")
+		}
+	}
+	return nil
+}
+
+func decodeAdaptiveVerifiedSuccessPayload(raw string, durable bool) (*adaptiveVerifiedSuccessPayload, error) {
+	if len([]byte(raw)) > adaptiveVerifiedSuccessMaxPayloadBytes {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload exceeds %d bytes", adaptiveVerifiedSuccessMaxPayloadBytes)
+	}
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(raw)))
+	decoder.UseNumber()
+	var fields map[string]any
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload is not a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload has trailing content")
+	}
+	required := []string{
+		"schema", "verification_id", "execution_run_id", "journal_run_id", "attempt_id",
+		"execution_generation", "decision_id", "decision_revision", "expected_plan_revision",
+		"expected_plan_fingerprint", "verified_checkpoint_id", "evidence_head_event_id",
+		"status", "created_at",
+	}
+	for _, key := range required {
+		if _, exists := fields[key]; !exists {
+			return nil, adaptiveVerifiedSuccessInvalidf("verification payload field %s is missing", key)
+		}
+	}
+	_, outboxPresent := fields["outbox_fingerprint"]
+	_, finalizePresent := fields["finalize_request_fingerprint"]
+	if durable {
+		if !outboxPresent || !finalizePresent {
+			return nil, adaptiveVerifiedSuccessInvalidf("durable verification fingerprints are missing")
+		}
+	} else if outboxPresent || finalizePresent {
+		return nil, adaptiveVerifiedSuccessInvalidf("caller supplied server-owned verification fingerprint")
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil || len(canonical) > adaptiveVerifiedSuccessMaxPayloadBytes {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload canonical form is invalid")
+	}
+	var payload adaptiveVerifiedSuccessPayload
+	if err := json.Unmarshal(canonical, &payload); err != nil {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload fields are invalid: %v", err)
+	}
+	if payload.Schema != "workbench-adaptive-verification.v1" ||
+		strings.TrimSpace(payload.VerificationID) == "" || len([]byte(payload.VerificationID)) > 191 ||
+		payload.ExecutionRunID <= 0 || payload.JournalRunID <= 0 ||
+		strings.TrimSpace(payload.AttemptID) == "" || len([]byte(payload.AttemptID)) > 64 ||
+		payload.ExecutionGeneration == 0 ||
+		strings.TrimSpace(payload.DecisionID) == "" || len([]byte(payload.DecisionID)) > 191 ||
+		payload.DecisionRevision <= 0 || payload.ExpectedPlanRevision <= 0 ||
+		!validAdaptiveExecutionFingerprint(payload.ExpectedPlanFingerprint) ||
+		payload.VerifiedCheckpointID <= 0 || payload.EvidenceHeadEventID <= 0 ||
+		payload.Status != "passed" || payload.CreatedAt <= 0 {
+		return nil, adaptiveVerifiedSuccessInvalidf("verification payload fields are invalid")
+	}
+	if durable {
+		if payload.OutboxFingerprint != nil && !validAdaptiveExecutionFingerprint(*payload.OutboxFingerprint) {
+			return nil, adaptiveVerifiedSuccessInvalidf("durable outbox fingerprint is invalid")
+		}
+		if !validAdaptiveExecutionFingerprint(payload.FinalizeRequestFingerprint) {
+			return nil, adaptiveVerifiedSuccessInvalidf("durable finalize request fingerprint is invalid")
+		}
+	}
+	payload.canonicalFields = fields
+	return &payload, nil
+}
+
+func validateAdaptiveVerifiedSuccessAuthority(authority AdaptiveExecutionBoundaryAuthority) error {
+	sourceAttemptPresent := authority.SourceAttemptID != nil
+	sourceCheckpointPresent := authority.SourceCheckpointID != nil
+	if authority.ThreadID <= 0 || authority.ExecutionRunID <= 0 || authority.ExecutionGeneration == 0 ||
+		authority.JournalRunID <= 0 || strings.TrimSpace(authority.AttemptID) == "" ||
+		len([]byte(authority.AttemptID)) > 64 || authority.EventID <= 0 || authority.EventSequence == 0 ||
+		strings.TrimSpace(authority.IdempotencyKey) == "" || len([]byte(authority.IdempotencyKey)) > 191 ||
+		authority.CheckpointID <= 0 || authority.PlanScopeRunID <= 0 || authority.PlanRevision <= 0 ||
+		!validAdaptiveExecutionFingerprint(authority.PlanItemFingerprint) ||
+		sourceAttemptPresent != sourceCheckpointPresent ||
+		(sourceAttemptPresent && (strings.TrimSpace(*authority.SourceAttemptID) == "" ||
+			len([]byte(*authority.SourceAttemptID)) > 64 || *authority.SourceCheckpointID <= 0)) {
+		return adaptiveVerifiedSuccessInvalidf("adaptive boundary authority is invalid")
+	}
+	return nil
+}
+
+func sameAdaptiveVerifiedSuccessAuthorityScope(
+	decision AdaptiveExecutionBoundaryAuthority,
+	evidence AdaptiveExecutionBoundaryAuthority,
+) bool {
+	return decision.ExecutionRunID == evidence.ExecutionRunID &&
+		decision.ExecutionGeneration == evidence.ExecutionGeneration &&
+		decision.JournalRunID == evidence.JournalRunID &&
+		decision.AttemptID == evidence.AttemptID &&
+		decision.PlanScopeRunID == evidence.PlanScopeRunID &&
+		sameAdaptiveVerifiedSuccessStringPointer(decision.SourceAttemptID, evidence.SourceAttemptID) &&
+		sameAdaptiveVerifiedSuccessInt64Pointer(decision.SourceCheckpointID, evidence.SourceCheckpointID)
+}
+
+func sameAdaptiveVerifiedSuccessStringPointer(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameAdaptiveVerifiedSuccessInt64Pointer(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func validateAdaptiveVerifiedSuccessTerminalCheckpoint(
+	checkpoint *entity.Checkpoint,
+	evidence AdaptiveExecutionBoundaryAuthority,
+) error {
+	if checkpoint == nil || checkpoint.ID <= 0 || checkpoint.ThreadID != evidence.ThreadID ||
+		checkpoint.RunID != evidence.ExecutionRunID || checkpoint.ParentCheckpointID != evidence.CheckpointID ||
+		strings.TrimSpace(checkpoint.CheckpointNS) == "" || checkpoint.RuntimeType != "eino_adk" ||
+		strings.TrimSpace(checkpoint.RuntimeKey) == "" || checkpoint.EnvelopeVersion <= 0 ||
+		checkpoint.RuntimeDeletedAt != 0 {
+		return adaptiveVerifiedSuccessInvalidf("terminal checkpoint is invalid")
+	}
+	if _, err := checkpointToPO(checkpoint); err != nil {
+		return adaptiveVerifiedSuccessInvalidf("terminal checkpoint payload is invalid: %v", err)
+	}
+	return nil
+}
+
+func adaptiveVerifiedSuccessInvalidf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrAdaptiveExecutionVerifiedSuccessInvalid, fmt.Sprintf(format, args...))
 }
 
 type AdaptiveExecutionRepository interface {
@@ -153,6 +463,9 @@ func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundar
 	if _, err := runEventToPO(req.Event); err != nil {
 		return fmt.Errorf("%w: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
 	}
+	if err := rejectAdaptiveVerifiedSuccessOutsideFinalizer(req.Event); err != nil {
+		return err
+	}
 	if req.Checkpoint.ID <= 0 || strings.TrimSpace(req.Checkpoint.CheckpointNS) == "" ||
 		req.Checkpoint.RuntimeType != "eino_adk" || strings.TrimSpace(req.Checkpoint.RuntimeKey) == "" ||
 		req.Checkpoint.EnvelopeVersion <= 0 || req.Checkpoint.RuntimeDeletedAt != 0 ||
@@ -190,6 +503,37 @@ func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundar
 		if _, err := agentRunPlanItemToPO(item); err != nil {
 			return fmt.Errorf("%w: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
 		}
+	}
+	return nil
+}
+
+func rejectAdaptiveVerifiedSuccessOutsideFinalizer(event *entity.RunEvent) error {
+	if event == nil || event.EventType != "adaptive.verification" {
+		return nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(event.Payload)))
+	decoder.UseNumber()
+	var fields map[string]any
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return fmt.Errorf("%w: adaptive verification payload is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: adaptive verification payload has trailing content", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	statusValue, exists := fields["status"]
+	if !exists {
+		return nil
+	}
+	status, ok := statusValue.(string)
+	if !ok {
+		return fmt.Errorf("%w: adaptive verification status is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	if status == "passed" {
+		return fmt.Errorf(
+			"%w: passed adaptive verification is restricted to the success finalizer",
+			ErrAdaptiveExecutionBoundaryInvalid,
+		)
 	}
 	return nil
 }

@@ -146,9 +146,9 @@ admission 状态。
 行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
 或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
 
-### P0A/P0B 自适应执行事务边界
+### P0A/P0B/P0C 自适应执行事务边界
 
-`P0A/P0B 当前只提供 repository primitive`：P0A implementation HEAD 是
+`P0A/P0B/P0C 当前只提供 repository primitive`：P0A implementation HEAD 是
 `a1df1789b0b60c0916505711bcc1e5a1fa1410cd`。P0B 已在同一个 private repository
 interface 中实现 `CommitAdaptiveExecutionBoundary` 的 exact-tuple 幂等回放，以及
 `ReadAdaptiveExecutionRecoverySource` 的 recovery source 只读恢复；checkpoint 的
@@ -164,9 +164,25 @@ Plan、PlanItem 的顺序加锁，避免 Attempt 创建与 recovery boundary 形
 和 PlanItem refs 来重建 authority，不经 public `ListRunEvents`、`ListCheckpoints` 或 latest
 checkpoint selector。
 
-application/ADK 生产代码仍无 caller；P1D 完成接线前，现有直接 Plan mutation 仍然
-可达。P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
-`AgentRunPlan`、再锁 `PlanItem`；本阶段不在执行图中制造不存在的生产调用边。
+P0C 没有新增第二个 finalizer，只在唯一现有 repository `FinalizeRunSuccess` request 上增加
+optional `AdaptiveGate`。nil gate 继续执行原有成功终态路径，返回的
+`VerificationEvent=nil`、`Replayed=false`，也不会新增 Decision、Evidence、Plan 或 PlanItem
+查询；原有 non-nil JournalEvent 的 Attempt projection 语义保持不变。gate-on 路径按 logical
+Journal root → Execution Run → Thread → Attempt identity 加锁；Journal root 与 Execution Run
+相同时复用同一已锁行，随后才读取 exact Verification tuple、Decision/Evidence authority、Plan
+与全部 current PlanItems。passed Verification 与 Completion 在同一个 `FinalizeRunSuccess`
+事务和同一个 Attempt 的连续 sequence 中依次写入（Verification < Completion），任一
+authority drift、写失败或末尾 outbox callback 失败都会回滚整个终态事务。已提交的 exact retry
+在锁内 current-read 并重校原结果；non-nil
+outbox 只做 immutable identity compare 且必须返回 `inserted=false`，不会重写终态或补写缺失行。
+
+P0C 当前状态仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
+`AdaptiveGate` 的 caller，现有 caller 继续使用 nil gate；因此本阶段不在执行图中制造不存在的
+production edge。P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
+`AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan mutation 仍然可达。P0D 负责用真实 MySQL 验证
+cancel、lease、crash-after-commit 以及跨 API Run↔Thread barrier races；P2 负责完整
+VerificationResult codec、registry、producer、nullable-Plan authority 分支和 application/ADK
+接线，在 P0D 竞态门禁通过前不得接入。
 
 ### Canonical Thread HTTP 契约
 

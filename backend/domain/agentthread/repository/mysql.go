@@ -5076,6 +5076,9 @@ func (r *threadRepository) FinalizeRunSuccess(
 	if req.Message.Role != entity.MessageRoleAssistant {
 		return nil, fmt.Errorf("run success message must be assistant role")
 	}
+	if err := validateAdaptiveVerifiedSuccessGate(req); err != nil {
+		return nil, err
+	}
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
 	completionEvent, completionEventPO, err := normalizeTerminalRunEvent(
 		req.CompletionEvent,
@@ -5151,6 +5154,16 @@ func (r *threadRepository) FinalizeRunSuccess(
 			terminalCheckpointOnTitleConflict,
 		)) {
 		return nil, fmt.Errorf("run success terminal title-conflict checkpoint identity is invalid")
+	}
+	if req.AdaptiveGate != nil {
+		return r.finalizeAdaptiveVerifiedRunSuccess(ctx, req, adaptiveVerifiedSuccessNormalizedFinalize{
+			now: now, message: &message, messagePO: messagePO,
+			titleEvent: titleEvent, titleEventPO: titleEventPO,
+			completionEvent: completionEvent, completionEventPO: completionEventPO,
+			terminalCheckpoint: terminalCheckpoint, terminalCheckpointPO: terminalCheckpointPO,
+			terminalCheckpointOnTitleConflict:   terminalCheckpointOnTitleConflict,
+			terminalCheckpointOnTitleConflictPO: terminalCheckpointOnTitleConflictPO,
+		})
 	}
 
 	result := &FinalizeRunSuccessResult{}

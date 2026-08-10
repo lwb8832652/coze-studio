@@ -18,19 +18,3215 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
+
+func TestValidateAdaptiveVerifiedSuccessGate(t *testing.T) {
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(FinalizeRunSuccessRequest{}))
+
+	valid := newValidAdaptiveVerifiedSuccessRequestForTest()
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(valid))
+	atSequenceLimit := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+	atSequenceLimit.AdaptiveGate.Evidence.EventSequence = math.MaxUint64 - 3
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(atSequenceLimit))
+	withoutTitleOrFallback := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+	withoutTitleOrFallback.TitleEvent = nil
+	withoutTitleOrFallback.TerminalCheckpointOnTitleConflict = nil
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(withoutTitleOrFallback))
+
+	t.Run("DurablePayloadStrictDecode", func(t *testing.T) {
+		caller := valid.AdaptiveGate.VerificationEvent.Payload
+		validNull := adaptiveVerifiedSuccessDurablePayloadForTest(
+			t,
+			caller,
+			nil,
+			strings.Repeat("d", 64),
+		)
+		_, err := decodeAdaptiveVerifiedSuccessPayload(validNull, true)
+		require.NoError(t, err)
+
+		validOutbox := adaptiveVerifiedSuccessDurablePayloadForTest(
+			t,
+			caller,
+			strings.Repeat("e", 64),
+			strings.Repeat("d", 64),
+		)
+		_, err = decodeAdaptiveVerifiedSuccessPayload(validOutbox, true)
+		require.NoError(t, err)
+
+		invalid := []struct {
+			name    string
+			payload string
+		}{
+			{
+				name: "missing outbox fingerprint",
+				payload: adaptiveVerifiedSuccessPayloadMutationForTest(t, validNull, func(fields map[string]any) {
+					delete(fields, "outbox_fingerprint")
+				}),
+			},
+			{
+				name: "missing finalize request fingerprint",
+				payload: adaptiveVerifiedSuccessPayloadMutationForTest(t, validNull, func(fields map[string]any) {
+					delete(fields, "finalize_request_fingerprint")
+				}),
+			},
+			{
+				name: "invalid nullable outbox fingerprint",
+				payload: adaptiveVerifiedSuccessPayloadMutationForTest(t, validNull, func(fields map[string]any) {
+					fields["outbox_fingerprint"] = strings.Repeat("A", 64)
+				}),
+			},
+			{
+				name: "invalid finalize request fingerprint",
+				payload: adaptiveVerifiedSuccessPayloadMutationForTest(t, validNull, func(fields map[string]any) {
+					fields["finalize_request_fingerprint"] = strings.Repeat("d", 63)
+				}),
+			},
+			{
+				name: "required field has wrong type",
+				payload: adaptiveVerifiedSuccessPayloadMutationForTest(t, validNull, func(fields map[string]any) {
+					fields["decision_revision"] = "1"
+				}),
+			},
+			{name: "multiple json values", payload: validNull + ` {}`},
+			{name: "raw payload exceeds limit", payload: validNull + strings.Repeat(" ", adaptiveVerifiedSuccessMaxPayloadBytes)},
+		}
+		for _, test := range invalid {
+			t.Run(test.name, func(t *testing.T) {
+				_, decodeErr := decodeAdaptiveVerifiedSuccessPayload(test.payload, true)
+				require.ErrorIs(t, decodeErr, ErrAdaptiveExecutionVerifiedSuccessInvalid)
+			})
+		}
+	})
+
+	t.Run("CallerPayloadBudgetIncludesServerFields", func(t *testing.T) {
+		exact := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+		exact.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessCallerPayloadAtDurableSizeForTest(
+			t,
+			exact.AdaptiveGate.VerificationEvent.Payload,
+			adaptiveVerifiedSuccessMaxPayloadBytes,
+			false,
+		)
+		require.NoError(t, validateAdaptiveVerifiedSuccessGate(exact))
+
+		tooLarge := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+		tooLarge.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessCallerPayloadAtDurableSizeForTest(
+			t,
+			tooLarge.AdaptiveGate.VerificationEvent.Payload,
+			adaptiveVerifiedSuccessMaxPayloadBytes+1,
+			false,
+		)
+		require.ErrorIs(
+			t,
+			validateAdaptiveVerifiedSuccessGate(tooLarge),
+			ErrAdaptiveExecutionVerifiedSuccessInvalid,
+		)
+
+		withOutbox := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+		withOutbox.OutboxIntent = &NotificationOutboxIntent{
+			AppendWithResult: func(context.Context, *gorm.DB, domainnotification.Event) (bool, error) {
+				return true, nil
+			},
+		}
+		withOutbox.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessCallerPayloadAtDurableSizeForTest(
+			t,
+			withOutbox.AdaptiveGate.VerificationEvent.Payload,
+			adaptiveVerifiedSuccessMaxPayloadBytes,
+			true,
+		)
+		require.NoError(t, validateAdaptiveVerifiedSuccessGate(withOutbox))
+
+		withOutboxTooLarge := cloneAdaptiveVerifiedSuccessRequestForTest(withOutbox)
+		withOutboxTooLarge.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessCallerPayloadAtDurableSizeForTest(
+			t,
+			valid.AdaptiveGate.VerificationEvent.Payload,
+			adaptiveVerifiedSuccessMaxPayloadBytes+1,
+			true,
+		)
+		require.ErrorIs(
+			t,
+			validateAdaptiveVerifiedSuccessGate(withOutboxTooLarge),
+			ErrAdaptiveExecutionVerifiedSuccessInvalid,
+		)
+	})
+
+	invalid := []struct {
+		name   string
+		mutate func(*FinalizeRunSuccessRequest)
+	}{
+		{name: "outer now required", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.Now = 0
+		}},
+		{name: "decision thread identity drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Decision.ThreadID++
+		}},
+		{name: "decision execution identity drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Decision.ExecutionRunID++
+		}},
+		{name: "evidence journal identity drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Evidence.JournalRunID++
+		}},
+		{name: "evidence attempt identity drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Evidence.AttemptID = "attempt-2"
+		}},
+		{name: "evidence generation drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Evidence.ExecutionGeneration++
+		}},
+		{name: "evidence plan scope drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Evidence.PlanScopeRunID++
+		}},
+		{name: "evidence source pair incomplete", mutate: func(req *FinalizeRunSuccessRequest) {
+			sourceAttemptID := "source-attempt"
+			req.AdaptiveGate.Evidence.SourceAttemptID = &sourceAttemptID
+		}},
+		{name: "source lineage drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			sourceAttemptID := "source-attempt"
+			sourceCheckpointID := int64(7999)
+			req.AdaptiveGate.Decision.SourceAttemptID = &sourceAttemptID
+			req.AdaptiveGate.Decision.SourceCheckpointID = &sourceCheckpointID
+		}},
+		{name: "decision sequence after evidence", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.Decision.EventSequence = req.AdaptiveGate.Evidence.EventSequence + 1
+		}},
+		{name: "decision id blank", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.DecisionID = " "
+		}},
+		{name: "decision id too long", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.DecisionID = strings.Repeat("d", 192)
+		}},
+		{name: "decision id surrounding whitespace", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.DecisionID = " decision-1 "
+		}},
+		{name: "decision revision", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.DecisionRevision = 0
+		}},
+		{name: "verification key blank", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationIdempotencyKey = " "
+		}},
+		{name: "verification key too long", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationIdempotencyKey = strings.Repeat("v", 192)
+		}},
+		{name: "verification key surrounding whitespace", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationIdempotencyKey = " verification-1 "
+		}},
+		{name: "verification and completion key collide", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.JournalEvent.IdempotencyKey = req.AdaptiveGate.VerificationIdempotencyKey
+		}},
+		{name: "caller spoofs nullable outbox fingerprint", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["outbox_fingerprint"] = nil },
+			)
+		}},
+		{name: "caller spoofs finalize request fingerprint", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["finalize_request_fingerprint"] = strings.Repeat("f", 64) },
+			)
+		}},
+		{name: "caller payload missing required field", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { delete(fields, "attempt_id") },
+			)
+		}},
+		{name: "caller raw payload exceeds limit", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload += strings.Repeat(" ", adaptiveVerifiedSuccessMaxPayloadBytes)
+		}},
+		{name: "verification event missing", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent = nil
+		}},
+		{name: "verification event id", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.ID = 0
+		}},
+		{name: "verification thread identity", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.ThreadID++
+		}},
+		{name: "verification run identity", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.RunID++
+		}},
+		{name: "verification event type", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.EventType = "adaptive.progress"
+		}},
+		{name: "verification created at", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.CreatedAt++
+		}},
+		{name: "verification status", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["status"] = "blocked" },
+			)
+		}},
+		{name: "verification payload schema", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["schema"] = "workbench-adaptive-verification.v0" },
+			)
+		}},
+		{name: "verification payload id", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["verification_id"] = "verification-2" },
+			)
+		}},
+		{name: "verification payload generation", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["execution_generation"] = float64(4) },
+			)
+		}},
+		{name: "verification payload decision id", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["decision_id"] = "decision-2" },
+			)
+		}},
+		{name: "verification payload decision revision", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["decision_revision"] = float64(2) },
+			)
+		}},
+		{name: "verification payload plan revision", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["expected_plan_revision"] = float64(4) },
+			)
+		}},
+		{name: "verification payload plan fingerprint", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["expected_plan_fingerprint"] = strings.Repeat("C", 64) },
+			)
+		}},
+		{name: "verification payload evidence head", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["evidence_head_event_id"] = float64(7001) },
+			)
+		}},
+		{name: "verification payload created at", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["created_at"] = float64(999) },
+			)
+		}},
+		{name: "verification payload authority drift", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["verified_checkpoint_id"] = float64(9999) },
+			)
+		}},
+		{name: "verification does not sort before completion", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.AdaptiveGate.VerificationEvent.ID = req.CompletionEvent.ID
+		}},
+		{name: "title does not sort before verification", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TitleEvent.ID = req.AdaptiveGate.VerificationEvent.ID
+		}},
+		{name: "completion identity", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.CompletionEvent.ThreadID++
+		}},
+		{name: "completion type", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.CompletionEvent.EventType = "run.failed"
+		}},
+		{name: "journal event missing", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.JournalEvent = nil
+		}},
+		{name: "journal terminal invalid", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.JournalEvent.Status = string(entity.RunAttemptStatusFailed)
+		}},
+		{name: "journal timestamp normalization overflows", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.Now = math.MaxInt64/1_000_000 + 1
+			req.AdaptiveGate.VerificationEvent.CreatedAt = req.Now
+			req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+				t,
+				req.AdaptiveGate.VerificationEvent.Payload,
+				func(fields map[string]any) { fields["created_at"] = req.Now },
+			)
+		}},
+		{name: "terminal checkpoint missing", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TerminalCheckpoint = nil
+		}},
+		{name: "terminal checkpoint parent", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TerminalCheckpoint.ParentCheckpointID++
+		}},
+		{name: "terminal checkpoint runtime deleted", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TerminalCheckpoint.RuntimeDeletedAt = req.Now
+		}},
+		{name: "terminal checkpoint runtime type", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TerminalCheckpoint.RuntimeType = "legacy"
+		}},
+		{name: "terminal fallback runtime identity", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.TerminalCheckpointOnTitleConflict.RuntimeKey += ":drift"
+		}},
+		{name: "outbox callback with result required", mutate: func(req *FinalizeRunSuccessRequest) {
+			req.OutboxIntent = &NotificationOutboxIntent{}
+		}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			req := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+			test.mutate(&req)
+			require.ErrorIs(
+				t,
+				validateAdaptiveVerifiedSuccessGate(req),
+				ErrAdaptiveExecutionVerifiedSuccessInvalid,
+			)
+		})
+	}
+
+	for _, exhausted := range []uint64{math.MaxUint64 - 2, math.MaxUint64 - 1, math.MaxUint64} {
+		t.Run(fmt.Sprintf("evidence sequence exhaustion %d", exhausted), func(t *testing.T) {
+			req := cloneAdaptiveVerifiedSuccessRequestForTest(valid)
+			req.AdaptiveGate.Evidence.EventSequence = exhausted
+			require.ErrorIs(
+				t,
+				validateAdaptiveVerifiedSuccessGate(req),
+				ErrAdaptiveExecutionVerifiedSuccessInvalid,
+			)
+		})
+	}
+}
+
+func TestAdaptiveExecutionBoundaryRejectsPassedVerificationOutsideFinalizerWithoutWrites(t *testing.T) {
+	repo, _ := canonicalMySQLMockRepository(t)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	req.Event.EventType = "adaptive.verification"
+	req.Event.Payload = newValidAdaptiveVerifiedSuccessRequestForTest().AdaptiveGate.VerificationEvent.Payload
+
+	result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionBoundaryInvalid)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessNilAdaptiveGateDoesNotRequireAdaptiveTables(t *testing.T) {
+	t.Run("WithoutJournalEventDoesNotRequireAdaptiveTables", func(t *testing.T) {
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+		repo := NewThreadRepository(db)
+		lease := seedNilAdaptiveGateFinalizeRunForTest(t, repo)
+		req := nilAdaptiveGateFinalizeRequestForTest(lease, nil)
+
+		result, finalizeErr := repo.FinalizeRunSuccess(context.Background(), req)
+
+		require.NoError(t, finalizeErr)
+		require.Nil(t, result.VerificationEvent)
+		require.False(t, result.Replayed)
+		require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+		var messageCount, eventCount int64
+		require.NoError(t, db.Model(&messagePO{}).Count(&messageCount).Error)
+		require.NoError(t, db.Model(&runEventPO{}).Count(&eventCount).Error)
+		require.Equal(t, int64(1), messageCount)
+		require.Equal(t, int64(1), eventCount)
+	})
+
+	t.Run("WithJournalEventPreservesLegacyAttemptProjection", func(t *testing.T) {
+		db := newJournalRepositoryTestDB(t)
+		require.NoError(t, db.AutoMigrate(&messagePO{}))
+		repo := NewThreadRepository(db)
+		lease := seedNilAdaptiveGateFinalizeRunForTest(t, repo)
+		activeSlot := uint8(1)
+		startedAt := int64(1_000)
+		require.NoError(t, db.Create(&runAttemptPO{
+			ID: 100, ThreadID: 10, JournalRunID: 1, ExecutionRunID: 1,
+			AttemptID: "attempt-1", Ordinal: 1, Status: string(entity.RunAttemptStatusRunning),
+			ActiveSlot: &activeSlot, NextSequence: 1, LastCommittedSequence: 0,
+			EnrollmentVersion: entity.JournalSchemaVersion,
+			ProjectionState:   string(entity.JournalProjectionStateHealthy),
+			CreatedAt:         1_000, UpdatedAt: 1_000, StartedAt: &startedAt,
+		}).Error)
+		journal := &entity.JournalEvent{
+			ID: 302, ThreadID: 10, RunID: 1, JournalRunID: 1, AttemptID: "attempt-1",
+			IdempotencyKey: "completion-1", EventType: "run.lifecycle",
+			Status: string(entity.RunAttemptStatusCompleted), Visibility: entity.JournalVisibilityUser,
+			Payload: `{"type":"terminal","data":{"status":"completed"}}`, CreatedAt: 2_000,
+		}
+		req := nilAdaptiveGateFinalizeRequestForTest(lease, journal)
+
+		result, finalizeErr := repo.FinalizeRunSuccess(context.Background(), req)
+
+		require.NoError(t, finalizeErr)
+		require.Nil(t, result.VerificationEvent)
+		require.False(t, result.Replayed)
+		var attempt runAttemptPO
+		require.NoError(t, db.Where("id = ?", 100).First(&attempt).Error)
+		require.Equal(t, string(entity.RunAttemptStatusCompleted), attempt.Status)
+		require.Nil(t, attempt.ActiveSlot)
+		require.Equal(t, uint64(2), attempt.NextSequence)
+		require.Equal(t, int64(302), requireInt64PointerForTest(t, attempt.TerminalEventID))
+	})
+}
+
+func newValidAdaptiveVerifiedSuccessRequestForTest() FinalizeRunSuccessRequest {
+	decision := AdaptiveExecutionBoundaryAuthority{
+		ThreadID: 10, ExecutionRunID: 20, ExecutionGeneration: 3,
+		JournalRunID: 30, AttemptID: "attempt-1",
+		EventID: 7001, EventSequence: 1, IdempotencyKey: "decision-boundary-1",
+		CheckpointID: 8001, PlanScopeRunID: 20, PlanRevision: 2,
+		PlanItemFingerprint: strings.Repeat("a", 64),
+	}
+	evidence := decision
+	evidence.EventID = 7002
+	evidence.EventSequence = 2
+	evidence.IdempotencyKey = "evidence-boundary-1"
+	evidence.CheckpointID = 8002
+	evidence.PlanRevision = 3
+	evidence.PlanItemFingerprint = strings.Repeat("b", 64)
+	payload := map[string]any{
+		"schema":                    "workbench-adaptive-verification.v1",
+		"verification_id":           "verification-1",
+		"execution_run_id":          int64(20),
+		"journal_run_id":            int64(30),
+		"attempt_id":                "attempt-1",
+		"execution_generation":      uint64(3),
+		"decision_id":               "decision-1",
+		"decision_revision":         int64(1),
+		"expected_plan_revision":    int64(3),
+		"expected_plan_fingerprint": strings.Repeat("c", 64),
+		"verified_checkpoint_id":    int64(8002),
+		"evidence_head_event_id":    int64(7002),
+		"status":                    "passed",
+		"created_at":                int64(1_000),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	primaryCheckpoint := &entity.Checkpoint{
+		ID: 8003, ThreadID: 10, RunID: 20, ParentCheckpointID: 8002,
+		CheckpointNS: "adaptive", RuntimeType: "eino_adk", RuntimeKey: "runtime-key",
+		EnvelopeVersion: 2, ChannelValues: `{}`, ChannelVersions: `{}`,
+		PendingSends: `[]`, Metadata: `{}`, CreatedAt: 1_000,
+	}
+	fallbackCheckpoint := *primaryCheckpoint
+	fallbackCheckpoint.ChannelValues = `{"title":"preserved"}`
+	return FinalizeRunSuccessRequest{
+		RunID: 20, LeaseOwner: "worker-1", LeaseToken: "lease-1",
+		ExecutionGeneration: 3, Now: 1_000,
+		Message: &entity.Message{
+			ID: 6001, ThreadID: 10, RunID: 20, Role: entity.MessageRoleAssistant,
+			Content: "final answer", Metadata: `{}`, CreatedAt: 1_000,
+		},
+		TitleEvent: &entity.RunEvent{
+			ID: 7003, ThreadID: 10, RunID: 20,
+			EventType: "context.thread_title_updated", Payload: `{"thread_title":"generated"}`, CreatedAt: 1_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 7005, ThreadID: 10, RunID: 20,
+			EventType: "run.completed", Payload: `{"status":"succeeded"}`, CreatedAt: 1_000,
+		},
+		JournalEvent: &entity.JournalEvent{
+			ID: 7005, ThreadID: 10, RunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
+			IdempotencyKey: "completion-1", EventType: "run.lifecycle",
+			Status: string(entity.RunAttemptStatusCompleted), Visibility: entity.JournalVisibilityUser,
+			Payload: `{"type":"terminal","data":{"status":"completed"}}`, CreatedAt: 1_000,
+		},
+		TerminalCheckpoint:                primaryCheckpoint,
+		TerminalCheckpointOnTitleConflict: &fallbackCheckpoint,
+		ExpectedThreadTitle:               "initial",
+		ThreadTitle:                       "generated",
+		AdaptiveGate: &AdaptiveVerifiedSuccessGate{
+			Decision: decision, Evidence: evidence,
+			DecisionID: "decision-1", DecisionRevision: 1,
+			VerificationEvent: &entity.RunEvent{
+				ID: 7004, ThreadID: 10, RunID: 20,
+				EventType: "adaptive.verification", Payload: string(encoded), CreatedAt: 1_000,
+			},
+			VerificationIdempotencyKey: "verification-1",
+		},
+	}
+}
+
+func cloneAdaptiveVerifiedSuccessRequestForTest(req FinalizeRunSuccessRequest) FinalizeRunSuccessRequest {
+	clone := req
+	if req.Message != nil {
+		message := *req.Message
+		clone.Message = &message
+	}
+	if req.TitleEvent != nil {
+		title := *req.TitleEvent
+		clone.TitleEvent = &title
+	}
+	if req.CompletionEvent != nil {
+		completion := *req.CompletionEvent
+		clone.CompletionEvent = &completion
+	}
+	if req.JournalEvent != nil {
+		journal := *req.JournalEvent
+		clone.JournalEvent = &journal
+	}
+	if req.TerminalCheckpoint != nil {
+		checkpoint := *req.TerminalCheckpoint
+		clone.TerminalCheckpoint = &checkpoint
+	}
+	if req.TerminalCheckpointOnTitleConflict != nil {
+		checkpoint := *req.TerminalCheckpointOnTitleConflict
+		clone.TerminalCheckpointOnTitleConflict = &checkpoint
+	}
+	if req.AdaptiveGate != nil {
+		gate := *req.AdaptiveGate
+		gate.Decision = cloneAdaptiveExecutionAuthorityForTest(req.AdaptiveGate.Decision)
+		gate.Evidence = cloneAdaptiveExecutionAuthorityForTest(req.AdaptiveGate.Evidence)
+		if req.AdaptiveGate.VerificationEvent != nil {
+			verification := *req.AdaptiveGate.VerificationEvent
+			gate.VerificationEvent = &verification
+		}
+		clone.AdaptiveGate = &gate
+	}
+	if req.OutboxIntent != nil {
+		intent := *req.OutboxIntent
+		clone.OutboxIntent = &intent
+	}
+	return clone
+}
+
+func cloneAdaptiveExecutionAuthorityForTest(authority AdaptiveExecutionBoundaryAuthority) AdaptiveExecutionBoundaryAuthority {
+	clone := authority
+	if authority.SourceAttemptID != nil {
+		value := *authority.SourceAttemptID
+		clone.SourceAttemptID = &value
+	}
+	if authority.SourceCheckpointID != nil {
+		value := *authority.SourceCheckpointID
+		clone.SourceCheckpointID = &value
+	}
+	return clone
+}
+
+func adaptiveVerifiedSuccessPayloadMutationForTest(
+	t *testing.T,
+	payload string,
+	mutate func(map[string]any),
+) string {
+	t.Helper()
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal([]byte(payload), &fields))
+	require.NotNil(t, fields)
+	mutate(fields)
+	encoded, err := json.Marshal(fields)
+	require.NoError(t, err)
+	return string(encoded)
+}
+
+func adaptiveVerifiedSuccessDurablePayloadForTest(
+	t *testing.T,
+	caller string,
+	outboxFingerprint any,
+	finalizeRequestFingerprint any,
+) string {
+	t.Helper()
+	return adaptiveVerifiedSuccessPayloadMutationForTest(t, caller, func(fields map[string]any) {
+		fields["outbox_fingerprint"] = outboxFingerprint
+		fields["finalize_request_fingerprint"] = finalizeRequestFingerprint
+	})
+}
+
+func adaptiveVerifiedSuccessCallerPayloadAtDurableSizeForTest(
+	t *testing.T,
+	caller string,
+	target int,
+	withOutbox bool,
+) string {
+	t.Helper()
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal([]byte(caller), &fields))
+	fields["padding"] = ""
+	serverFields := make(map[string]any, len(fields)+2)
+	for key, value := range fields {
+		serverFields[key] = value
+	}
+	serverFields["outbox_fingerprint"] = nil
+	if withOutbox {
+		serverFields["outbox_fingerprint"] = strings.Repeat("0", 64)
+	}
+	serverFields["finalize_request_fingerprint"] = strings.Repeat("0", 64)
+	encoded, err := json.Marshal(serverFields)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(encoded), target)
+	fields["padding"] = strings.Repeat("x", target-len(encoded))
+	serverFields["padding"] = fields["padding"]
+	encoded, err = json.Marshal(serverFields)
+	require.NoError(t, err)
+	require.Len(t, encoded, target)
+	callerEncoded, err := json.Marshal(fields)
+	require.NoError(t, err)
+	return string(callerEncoded)
+}
+
+func seedNilAdaptiveGateFinalizeRunForTest(t *testing.T, repo ThreadRepository) *entity.Run {
+	t.Helper()
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(
+		1,
+		10,
+		entity.RunStatusPending,
+		100,
+	)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	return claimed[0]
+}
+
+func nilAdaptiveGateFinalizeRequestForTest(
+	lease *entity.Run,
+	journal *entity.JournalEvent,
+) FinalizeRunSuccessRequest {
+	return FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "final answer", Metadata: `{}`, CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 302, ThreadID: 10, RunID: 1,
+			EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000,
+		},
+		JournalEvent: journal,
+	}
+}
+
+type adaptiveVerifiedSuccessFixtureForTest struct {
+	DB       *gorm.DB
+	Repo     *threadRepository
+	Request  FinalizeRunSuccessRequest
+	Decision *CommitAdaptiveExecutionBoundaryResult
+	Evidence *CommitAdaptiveExecutionBoundaryResult
+}
+
+type adaptiveVerifiedSuccessOutboxPOForTest struct {
+	EventID     string `gorm:"column:event_id;primaryKey"`
+	Fingerprint string `gorm:"column:fingerprint"`
+}
+
+func (adaptiveVerifiedSuccessOutboxPOForTest) TableName() string {
+	return "adaptive_verified_success_outbox_test"
+}
+
+type adaptiveVerifiedSuccessDBSnapshotForTest struct {
+	Threads     []threadPO
+	Runs        []runPO
+	Attempts    []runAttemptPO
+	Messages    []messagePO
+	Events      []runEventPO
+	Checkpoints []checkpointPO
+	Plans       []agentRunPlanPO
+	Items       []agentRunPlanItemPO
+	Outbox      []adaptiveVerifiedSuccessOutboxPOForTest
+}
+
+func snapshotAdaptiveVerifiedSuccessDBForTest(
+	t *testing.T,
+	db *gorm.DB,
+) adaptiveVerifiedSuccessDBSnapshotForTest {
+	t.Helper()
+	var snapshot adaptiveVerifiedSuccessDBSnapshotForTest
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Threads).Error)
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Runs).Error)
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Attempts).Error)
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Messages).Error)
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Events).Error)
+	require.NoError(t, db.Order("id ASC").Find(&snapshot.Checkpoints).Error)
+	require.NoError(t, db.Order("run_id ASC").Find(&snapshot.Plans).Error)
+	require.NoError(t, db.Order("run_id ASC, task_id ASC").Find(&snapshot.Items).Error)
+	require.NoError(t, db.Order("event_id ASC").Find(&snapshot.Outbox).Error)
+	return snapshot
+}
+
+type adaptiveVerifiedSuccessOptionalJSONOracleForTest struct {
+	SQLNull bool            `json:"sql_null"`
+	Value   json.RawMessage `json:"value"`
+}
+
+type adaptiveVerifiedSuccessRunOracleForTest struct {
+	ID                  int64                                            `json:"id"`
+	ThreadID            int64                                            `json:"thread_id"`
+	ParentRunID         int64                                            `json:"parent_run_id"`
+	SpaceID             int64                                            `json:"space_id"`
+	CreatorID           int64                                            `json:"creator_id"`
+	AssistantID         string                                           `json:"assistant_id"`
+	RunKind             string                                           `json:"run_kind"`
+	Status              string                                           `json:"status"`
+	Command             adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"command"`
+	Input               adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"input"`
+	Config              adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"config"`
+	Context             adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"context"`
+	Metadata            adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"metadata"`
+	StreamMode          adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"stream_mode"`
+	MultitaskStrategy   string                                           `json:"multitask_strategy"`
+	OnDisconnect        string                                           `json:"on_disconnect"`
+	Durability          string                                           `json:"durability"`
+	IdempotencyKey      *string                                          `json:"idempotency_key"`
+	WorkerID            string                                           `json:"worker_id"`
+	LeaseOwner          *string                                          `json:"lease_owner"`
+	LeaseToken          *string                                          `json:"lease_token"`
+	LeaseExpiresAt      *int64                                           `json:"lease_expires_at"`
+	HeartbeatAt         *int64                                           `json:"heartbeat_at"`
+	CancelRequestedAt   *int64                                           `json:"cancel_requested_at"`
+	ExecutionGeneration uint64                                           `json:"execution_generation"`
+	ErrorCode           string                                           `json:"error_code"`
+	ErrorMessage        string                                           `json:"error_message"`
+	StartedAt           int64                                            `json:"started_at"`
+	EndedAt             int64                                            `json:"ended_at"`
+	CreatedAt           int64                                            `json:"created_at"`
+	UpdatedAt           int64                                            `json:"updated_at"`
+}
+
+type adaptiveVerifiedSuccessAttemptOracleForTest struct {
+	ID                     int64   `json:"id"`
+	ThreadID               int64   `json:"thread_id"`
+	JournalRunID           int64   `json:"journal_run_id"`
+	ExecutionRunID         int64   `json:"execution_run_id"`
+	AttemptID              string  `json:"attempt_id"`
+	Ordinal                uint32  `json:"ordinal"`
+	Status                 string  `json:"status"`
+	ActiveSlot             *uint8  `json:"active_slot"`
+	NextSequence           uint64  `json:"next_sequence"`
+	LastCommittedSequence  uint64  `json:"last_committed_sequence"`
+	SourceCheckpointID     *int64  `json:"source_checkpoint_id"`
+	SourceAttemptID        *string `json:"source_attempt_id"`
+	RecoveryIdempotencyKey *string `json:"recovery_idempotency_key"`
+	EnrollmentVersion      string  `json:"enrollment_version"`
+	SnapshotsEnabled       bool    `json:"snapshots_enabled"`
+	ProjectionState        string  `json:"projection_state"`
+	ProjectionDegradedAt   *int64  `json:"projection_degraded_at"`
+	TraceID                *string `json:"trace_id"`
+	TerminalEventID        *int64  `json:"terminal_event_id"`
+	CreatedAt              int64   `json:"created_at"`
+	UpdatedAt              int64   `json:"updated_at"`
+	StartedAt              *int64  `json:"started_at"`
+	EndedAt                *int64  `json:"ended_at"`
+}
+
+type adaptiveVerifiedSuccessEventOracleForTest struct {
+	ID                 int64                                            `json:"id"`
+	ThreadID           int64                                            `json:"thread_id"`
+	RunID              int64                                            `json:"run_id"`
+	JournalRunID       *int64                                           `json:"journal_run_id"`
+	AttemptID          *string                                          `json:"attempt_id"`
+	Sequence           *uint64                                          `json:"sequence"`
+	IdempotencyKey     *string                                          `json:"idempotency_key"`
+	ParentEventID      *int64                                           `json:"parent_event_id"`
+	SchemaVersion      *string                                          `json:"schema_version"`
+	Status             *string                                          `json:"status"`
+	OccurredAtUnixNano *int64                                           `json:"occurred_at_unix_nano"`
+	Visibility         *string                                          `json:"visibility"`
+	PayloadVersion     *string                                          `json:"payload_version"`
+	SnapshotID         *string                                          `json:"snapshot_id"`
+	TraceID            *string                                          `json:"trace_id"`
+	ActionID           *string                                          `json:"action_id"`
+	Phase              *string                                          `json:"phase"`
+	Operation          *string                                          `json:"operation"`
+	Target             *string                                          `json:"target"`
+	Milestone          *string                                          `json:"milestone"`
+	EventType          string                                           `json:"event_type"`
+	JournalEventType   *string                                          `json:"journal_event_type"`
+	Payload            json.RawMessage                                  `json:"payload"`
+	JournalPayload     adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"journal_payload"`
+	CreatedAt          int64                                            `json:"created_at"`
+}
+
+type adaptiveVerifiedSuccessAuthorityOracleForTest struct {
+	ThreadID            int64   `json:"thread_id"`
+	ExecutionRunID      int64   `json:"execution_run_id"`
+	ExecutionGeneration uint64  `json:"execution_generation"`
+	JournalRunID        int64   `json:"journal_run_id"`
+	AttemptID           string  `json:"attempt_id"`
+	SourceAttemptID     *string `json:"source_attempt_id"`
+	SourceCheckpointID  *int64  `json:"source_checkpoint_id"`
+	EventID             int64   `json:"event_id"`
+	EventSequence       uint64  `json:"event_sequence"`
+	IdempotencyKey      string  `json:"idempotency_key"`
+	CheckpointID        int64   `json:"checkpoint_id"`
+	PlanScopeRunID      int64   `json:"plan_scope_run_id"`
+	PlanRevision        int64   `json:"plan_revision"`
+	PlanItemFingerprint string  `json:"plan_item_fingerprint"`
+}
+
+type adaptiveVerifiedSuccessMessageOracleForTest struct {
+	ID        int64                                            `json:"id"`
+	ThreadID  int64                                            `json:"thread_id"`
+	RunID     int64                                            `json:"run_id"`
+	Role      string                                           `json:"role"`
+	Content   string                                           `json:"content"`
+	Metadata  adaptiveVerifiedSuccessOptionalJSONOracleForTest `json:"metadata"`
+	CreatedAt int64                                            `json:"created_at"`
+}
+
+type adaptiveVerifiedSuccessCheckpointOracleForTest struct {
+	ID                 int64           `json:"id"`
+	ThreadID           int64           `json:"thread_id"`
+	RunID              int64           `json:"run_id"`
+	ParentCheckpointID int64           `json:"parent_checkpoint_id"`
+	CheckpointNS       string          `json:"checkpoint_ns"`
+	RuntimeType        string          `json:"runtime_type"`
+	RuntimeKey         string          `json:"runtime_key"`
+	EnvelopeVersion    int32           `json:"envelope_version"`
+	RuntimeDeletedAt   int64           `json:"runtime_deleted_at"`
+	ChannelValues      json.RawMessage `json:"channel_values"`
+	ChannelVersions    json.RawMessage `json:"channel_versions"`
+	PendingSends       json.RawMessage `json:"pending_sends"`
+	Metadata           json.RawMessage `json:"metadata"`
+	CreatedAt          int64           `json:"created_at"`
+}
+
+type adaptiveVerifiedSuccessFinalizeOracleForTest struct {
+	RunID                int64                                           `json:"run_id"`
+	ExecutionGeneration  uint64                                          `json:"execution_generation"`
+	Now                  int64                                           `json:"now"`
+	TerminalRun          adaptiveVerifiedSuccessRunOracleForTest         `json:"terminal_run"`
+	TerminalAttempt      adaptiveVerifiedSuccessAttemptOracleForTest     `json:"terminal_attempt"`
+	Decision             adaptiveVerifiedSuccessAuthorityOracleForTest   `json:"decision"`
+	Evidence             adaptiveVerifiedSuccessAuthorityOracleForTest   `json:"evidence"`
+	DecisionID           string                                          `json:"decision_id"`
+	DecisionRevision     int64                                           `json:"decision_revision"`
+	Verification         adaptiveVerifiedSuccessEventOracleForTest       `json:"verification"`
+	Completion           adaptiveVerifiedSuccessEventOracleForTest       `json:"completion"`
+	Message              adaptiveVerifiedSuccessMessageOracleForTest     `json:"message"`
+	TitleEvent           *adaptiveVerifiedSuccessEventOracleForTest      `json:"title_event"`
+	ExpectedThreadTitle  string                                          `json:"expected_thread_title"`
+	ThreadTitle          string                                          `json:"thread_title"`
+	TitleUpdated         bool                                            `json:"title_updated"`
+	CommittedThreadTitle string                                          `json:"committed_thread_title"`
+	PrimaryCheckpoint    adaptiveVerifiedSuccessCheckpointOracleForTest  `json:"primary_checkpoint"`
+	FallbackCheckpoint   *adaptiveVerifiedSuccessCheckpointOracleForTest `json:"fallback_checkpoint"`
+	SelectedCheckpoint   adaptiveVerifiedSuccessCheckpointOracleForTest  `json:"selected_checkpoint"`
+	OutboxFingerprint    *string                                         `json:"outbox_fingerprint"`
+}
+
+type adaptiveVerifiedSuccessOutboxOracleForTest struct {
+	EventID          string                          `json:"event_id"`
+	EventType        string                          `json:"event_type"`
+	AggregateType    string                          `json:"aggregate_type"`
+	AggregateID      string                          `json:"aggregate_id"`
+	AggregateVersion int64                           `json:"aggregate_version"`
+	OccurredAt       int64                           `json:"occurred_at"`
+	ActorID          int64                           `json:"actor_id"`
+	SpaceID          int64                           `json:"space_id"`
+	RecipientPolicy  string                          `json:"recipient_policy"`
+	PayloadSchema    int32                           `json:"payload_schema"`
+	Payload          domainnotification.EventPayload `json:"payload"`
+}
+
+func adaptiveVerifiedSuccessCanonicalJSONOracleForTest(
+	t *testing.T,
+	raw []byte,
+) json.RawMessage {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(string(raw))))
+	decoder.UseNumber()
+	var value any
+	require.NoError(t, decoder.Decode(&value))
+	var trailing any
+	require.ErrorIs(t, decoder.Decode(&trailing), io.EOF)
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	return encoded
+}
+
+func buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(
+	t *testing.T,
+	raw []byte,
+) adaptiveVerifiedSuccessOptionalJSONOracleForTest {
+	t.Helper()
+	if len(raw) == 0 {
+		return adaptiveVerifiedSuccessOptionalJSONOracleForTest{SQLNull: true}
+	}
+	return adaptiveVerifiedSuccessOptionalJSONOracleForTest{
+		Value: adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, raw),
+	}
+}
+
+func adaptiveVerifiedSuccessSHA256OracleForTest(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest[:])
+}
+
+func adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(
+	t *testing.T,
+	event domainnotification.Event,
+) string {
+	t.Helper()
+	canonical, err := domainnotification.CanonicalizeEvent(event)
+	require.NoError(t, err)
+	return adaptiveVerifiedSuccessSHA256OracleForTest(t, adaptiveVerifiedSuccessOutboxOracleForTest{
+		EventID: canonical.EventID, EventType: string(canonical.EventType),
+		AggregateType: canonical.AggregateType, AggregateID: canonical.AggregateID,
+		AggregateVersion: canonical.AggregateVersion, OccurredAt: canonical.OccurredAt.UnixMilli(),
+		ActorID: canonical.ActorID, SpaceID: canonical.SpaceID,
+		RecipientPolicy: string(canonical.RecipientPolicy), PayloadSchema: canonical.PayloadSchema,
+		Payload: canonical.Payload,
+	})
+}
+
+func adaptiveVerifiedSuccessOutboxEventForTest(now int64) domainnotification.Event {
+	return domainnotification.Event{
+		EventID: "adaptive-success-outbox-1", EventType: domainnotification.EventTaskCompleted,
+		AggregateType: "agent_run", AggregateID: "20", AggregateVersion: 3,
+		OccurredAt: time.UnixMilli(now), ActorID: 20, SpaceID: 10,
+		RecipientPolicy: domainnotification.RecipientActor,
+		PayloadSchema:   domainnotification.CurrentPayloadSchema,
+		Payload: domainnotification.EventPayload{
+			ResourceDisplayName: "Adaptive run", ActorDisplayName: "Agent",
+			TargetID: "20",
+		},
+	}
+}
+
+func buildAdaptiveVerifiedSuccessAuthorityOracleForTest(
+	authority AdaptiveExecutionBoundaryAuthority,
+) adaptiveVerifiedSuccessAuthorityOracleForTest {
+	return adaptiveVerifiedSuccessAuthorityOracleForTest{
+		ThreadID: authority.ThreadID, ExecutionRunID: authority.ExecutionRunID,
+		ExecutionGeneration: authority.ExecutionGeneration, JournalRunID: authority.JournalRunID,
+		AttemptID: authority.AttemptID, SourceAttemptID: authority.SourceAttemptID,
+		SourceCheckpointID: authority.SourceCheckpointID, EventID: authority.EventID,
+		EventSequence: authority.EventSequence, IdempotencyKey: authority.IdempotencyKey,
+		CheckpointID: authority.CheckpointID, PlanScopeRunID: authority.PlanScopeRunID,
+		PlanRevision: authority.PlanRevision, PlanItemFingerprint: authority.PlanItemFingerprint,
+	}
+}
+
+func buildAdaptiveVerifiedSuccessRunOracleForTest(
+	t *testing.T,
+	run runPO,
+) adaptiveVerifiedSuccessRunOracleForTest {
+	t.Helper()
+	return adaptiveVerifiedSuccessRunOracleForTest{
+		ID: run.ID, ThreadID: run.ThreadID, ParentRunID: run.ParentRunID,
+		SpaceID: run.SpaceID, CreatorID: run.CreatorID, AssistantID: run.AssistantID,
+		RunKind: run.RunKind, Status: run.Status,
+		Command:           buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.Command),
+		Input:             buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.Input),
+		Config:            buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.Config),
+		Context:           buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.Context),
+		Metadata:          buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.Metadata),
+		StreamMode:        buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, run.StreamMode),
+		MultitaskStrategy: run.MultitaskStrategy, OnDisconnect: run.OnDisconnect,
+		Durability: run.Durability, IdempotencyKey: run.IdempotencyKey,
+		WorkerID: run.WorkerID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+		LeaseExpiresAt: run.LeaseExpiresAt, HeartbeatAt: run.HeartbeatAt,
+		CancelRequestedAt: run.CancelRequestedAt, ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode: run.ErrorCode, ErrorMessage: run.ErrorMessage, StartedAt: run.StartedAt,
+		EndedAt: run.EndedAt, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+	}
+}
+
+func buildAdaptiveVerifiedSuccessAttemptOracleForTest(
+	attempt runAttemptPO,
+) adaptiveVerifiedSuccessAttemptOracleForTest {
+	return adaptiveVerifiedSuccessAttemptOracleForTest{
+		ID: attempt.ID, ThreadID: attempt.ThreadID, JournalRunID: attempt.JournalRunID,
+		ExecutionRunID: attempt.ExecutionRunID, AttemptID: attempt.AttemptID,
+		Ordinal: attempt.Ordinal, Status: attempt.Status, ActiveSlot: attempt.ActiveSlot,
+		NextSequence: attempt.NextSequence, LastCommittedSequence: attempt.LastCommittedSequence,
+		SourceCheckpointID: attempt.SourceCheckpointID, SourceAttemptID: attempt.SourceAttemptID,
+		RecoveryIdempotencyKey: attempt.RecoveryIdempotencyKey,
+		EnrollmentVersion:      attempt.EnrollmentVersion, SnapshotsEnabled: attempt.SnapshotsEnabled,
+		ProjectionState: attempt.ProjectionState, ProjectionDegradedAt: attempt.ProjectionDegradedAt,
+		TraceID: attempt.TraceID, TerminalEventID: attempt.TerminalEventID,
+		CreatedAt: attempt.CreatedAt, UpdatedAt: attempt.UpdatedAt,
+		StartedAt: attempt.StartedAt, EndedAt: attempt.EndedAt,
+	}
+}
+
+func buildAdaptiveVerifiedSuccessCheckpointOracleForTest(
+	t *testing.T,
+	checkpoint *entity.Checkpoint,
+) adaptiveVerifiedSuccessCheckpointOracleForTest {
+	t.Helper()
+	require.NotNil(t, checkpoint)
+	return adaptiveVerifiedSuccessCheckpointOracleForTest{
+		ID: checkpoint.ID, ThreadID: checkpoint.ThreadID, RunID: checkpoint.RunID,
+		ParentCheckpointID: checkpoint.ParentCheckpointID, CheckpointNS: checkpoint.CheckpointNS,
+		RuntimeType: checkpoint.RuntimeType, RuntimeKey: checkpoint.RuntimeKey,
+		EnvelopeVersion: checkpoint.EnvelopeVersion, RuntimeDeletedAt: checkpoint.RuntimeDeletedAt,
+		ChannelValues:   adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(checkpoint.ChannelValues)),
+		ChannelVersions: adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(checkpoint.ChannelVersions)),
+		PendingSends:    adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(checkpoint.PendingSends)),
+		Metadata:        adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(checkpoint.Metadata)),
+		CreatedAt:       checkpoint.CreatedAt,
+	}
+}
+
+func adaptiveVerifiedSuccessBaseEventOracleForTest(
+	t *testing.T,
+	event *entity.RunEvent,
+) adaptiveVerifiedSuccessEventOracleForTest {
+	t.Helper()
+	require.NotNil(t, event)
+	return adaptiveVerifiedSuccessEventOracleForTest{
+		ID: event.ID, ThreadID: event.ThreadID, RunID: event.RunID,
+		EventType:      event.EventType,
+		Payload:        adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(event.Payload)),
+		JournalPayload: buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, nil),
+		CreatedAt:      event.CreatedAt,
+	}
+}
+
+func adaptiveVerifiedSuccessFinalizeFingerprintOracleForTest(
+	t *testing.T,
+	fixture adaptiveVerifiedSuccessFixtureForTest,
+	preRun runPO,
+	preAttempt runAttemptPO,
+	outboxFingerprint *string,
+	healthyCompletionProjection bool,
+) string {
+	t.Helper()
+	req := fixture.Request
+	terminalRun := preRun
+	terminalRun.Status = string(entity.RunStatusSucceeded)
+	terminalRun.ErrorCode = ""
+	terminalRun.ErrorMessage = ""
+	terminalRun.EndedAt = req.Now
+	terminalRun.UpdatedAt = req.Now
+	terminalRun.WorkerID = ""
+	terminalRun.LeaseOwner = nil
+	terminalRun.LeaseToken = nil
+	terminalRun.LeaseExpiresAt = nil
+	terminalRun.HeartbeatAt = nil
+	terminalRun.CancelRequestedAt = nil
+
+	verificationSequence := fixture.Evidence.Authority.EventSequence + 1
+	completionSequence := verificationSequence + 1
+	terminalAttempt := preAttempt
+	terminalAttempt.Status = string(entity.RunAttemptStatusCompleted)
+	terminalAttempt.ActiveSlot = nil
+	terminalAttempt.NextSequence = completionSequence + 1
+	terminalAttempt.LastCommittedSequence = verificationSequence
+	terminalAttempt.TerminalEventID = adaptiveExecutionInt64Pointer(req.CompletionEvent.ID)
+	terminalAttempt.EndedAt = adaptiveExecutionInt64Pointer(req.Now)
+	terminalAttempt.UpdatedAt = req.Now
+
+	verificationPayload := adaptiveVerifiedSuccessPayloadMutationForTest(
+		t,
+		req.AdaptiveGate.VerificationEvent.Payload,
+		func(fields map[string]any) {
+			fields["outbox_fingerprint"] = nil
+			if outboxFingerprint != nil {
+				fields["outbox_fingerprint"] = *outboxFingerprint
+			}
+			fields["finalize_request_fingerprint"] = ""
+		},
+	)
+	verification := adaptiveVerifiedSuccessBaseEventOracleForTest(t, req.AdaptiveGate.VerificationEvent)
+	verification.JournalRunID = adaptiveExecutionInt64Pointer(fixture.Evidence.Authority.JournalRunID)
+	verification.AttemptID = adaptiveExecutionStringPointer(fixture.Evidence.Authority.AttemptID)
+	verification.Sequence = adaptiveExecutionUint64Pointer(verificationSequence)
+	verification.IdempotencyKey = adaptiveExecutionStringPointer(req.AdaptiveGate.VerificationIdempotencyKey)
+	metadata := decodeAdaptiveExecutionMetadataForTest(t, []byte(fixture.Evidence.Checkpoint.Metadata))
+	verification.SnapshotID = adaptiveExecutionStringPointer(metadata.CheckpointFingerprint)
+	verification.Payload = adaptiveVerifiedSuccessCanonicalJSONOracleForTest(t, []byte(verificationPayload))
+
+	completion := adaptiveVerifiedSuccessBaseEventOracleForTest(t, req.CompletionEvent)
+	completion.JournalRunID = adaptiveExecutionInt64Pointer(fixture.Evidence.Authority.JournalRunID)
+	completion.AttemptID = adaptiveExecutionStringPointer(fixture.Evidence.Authority.AttemptID)
+	completion.Sequence = adaptiveExecutionUint64Pointer(completionSequence)
+	completion.IdempotencyKey = adaptiveExecutionStringPointer(
+		strings.TrimSpace(req.JournalEvent.IdempotencyKey),
+	)
+	if healthyCompletionProjection {
+		completion.SchemaVersion = adaptiveExecutionStringPointer(entity.JournalSchemaVersion)
+		completion.Status = adaptiveExecutionStringPointer(string(entity.RunAttemptStatusCompleted))
+		completion.OccurredAtUnixNano = adaptiveExecutionInt64Pointer(req.JournalEvent.OccurredAtUnixNano)
+		completion.Visibility = adaptiveExecutionStringPointer(string(entity.JournalVisibilityUser))
+		completion.PayloadVersion = adaptiveExecutionStringPointer(entity.JournalPayloadVersion)
+		completion.JournalEventType = adaptiveExecutionStringPointer("run.lifecycle")
+		completion.JournalPayload = buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(
+			t,
+			[]byte(req.JournalEvent.Payload),
+		)
+	}
+
+	message := req.Message
+	title := adaptiveVerifiedSuccessBaseEventOracleForTest(t, req.TitleEvent)
+	primary := buildAdaptiveVerifiedSuccessCheckpointOracleForTest(t, req.TerminalCheckpoint)
+	fallback := buildAdaptiveVerifiedSuccessCheckpointOracleForTest(t, req.TerminalCheckpointOnTitleConflict)
+	return adaptiveVerifiedSuccessSHA256OracleForTest(t, adaptiveVerifiedSuccessFinalizeOracleForTest{
+		RunID: req.RunID, ExecutionGeneration: req.ExecutionGeneration, Now: req.Now,
+		TerminalRun:     buildAdaptiveVerifiedSuccessRunOracleForTest(t, terminalRun),
+		TerminalAttempt: buildAdaptiveVerifiedSuccessAttemptOracleForTest(terminalAttempt),
+		Decision:        buildAdaptiveVerifiedSuccessAuthorityOracleForTest(req.AdaptiveGate.Decision),
+		Evidence:        buildAdaptiveVerifiedSuccessAuthorityOracleForTest(req.AdaptiveGate.Evidence),
+		DecisionID:      req.AdaptiveGate.DecisionID, DecisionRevision: req.AdaptiveGate.DecisionRevision,
+		Verification: verification, Completion: completion,
+		Message: adaptiveVerifiedSuccessMessageOracleForTest{
+			ID: message.ID, ThreadID: message.ThreadID, RunID: message.RunID,
+			Role: string(message.Role), Content: message.Content,
+			Metadata:  buildAdaptiveVerifiedSuccessOptionalJSONOracleForTest(t, []byte(message.Metadata)),
+			CreatedAt: message.CreatedAt,
+		},
+		TitleEvent: &title, ExpectedThreadTitle: strings.TrimSpace(req.ExpectedThreadTitle),
+		ThreadTitle: strings.TrimSpace(req.ThreadTitle), TitleUpdated: true,
+		CommittedThreadTitle: strings.TrimSpace(req.ThreadTitle),
+		PrimaryCheckpoint:    primary, FallbackCheckpoint: &fallback,
+		SelectedCheckpoint: primary, OutboxFingerprint: outboxFingerprint,
+	})
+}
+
+func prepareAdaptiveVerifiedSuccessFixtureForTest(t *testing.T) adaptiveVerifiedSuccessFixtureForTest {
+	return prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(t, false)
+}
+
+func prepareAdaptiveVerifiedSuccessFixtureWithNewerDecisionForTest(
+	t *testing.T,
+) adaptiveVerifiedSuccessFixtureForTest {
+	return prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(t, true)
+}
+
+func prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(
+	t *testing.T,
+	withNewerDecision bool,
+) adaptiveVerifiedSuccessFixtureForTest {
+	t.Helper()
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	require.NoError(t, db.AutoMigrate(&messagePO{}, &adaptiveVerifiedSuccessOutboxPOForTest{}))
+	seedAdaptiveExecutionInitialState(t, db)
+	adaptiveRepo := NewAdaptiveExecutionRepository(db)
+
+	decisionReq := adaptiveInitialBoundaryRequest(7001, 8001, 1_000)
+	decisionReq.Event.EventType = "adaptive.decision"
+	decisionReq.Event.Payload = `{"schema":"workbench-adaptive-decision.v1","decision_id":"decision-1","decision_revision":1}`
+	decision, err := adaptiveRepo.CommitAdaptiveExecutionBoundary(context.Background(), decisionReq)
+	require.NoError(t, err)
+	require.NotNil(t, decision)
+	require.Equal(t, uint64(1), decision.Authority.EventSequence)
+	evidenceExpectedRevision := int64(2)
+	evidenceNextRevision := int64(3)
+	evidenceExpectedItemVersion := int64(2)
+	evidenceNextItemVersion := int64(3)
+	evidenceEventSequence := uint64(2)
+	if withNewerDecision {
+		var currentItems []agentRunPlanItemPO
+		require.NoError(t, db.Where("run_id = ?", 20).Order("task_id ASC").Find(&currentItems).Error)
+		decision2Req := cloneAdaptiveExecutionBoundaryRequestForReplayTest(decisionReq)
+		decision2Req.Now = 1_050
+		decision2Req.IdempotencyKey = "decision-boundary-2"
+		decision2Req.Event.ID = 7010
+		decision2Req.Event.Payload = `{"schema":"workbench-adaptive-decision.v1","decision_id":"decision-2","decision_revision":2}`
+		decision2Req.Event.CreatedAt = decision2Req.Now
+		decision2Req.Checkpoint.ID = 8010
+		decision2Req.Checkpoint.CreatedAt = decision2Req.Now
+		decision2Req.PlanMutation = &AdaptivePlanMutation{
+			PlanScopeRunID: 20, ExpectedRevision: 2, NextRevision: 3,
+			Items: make([]AdaptivePlanItemMutation, 0, len(currentItems)),
+		}
+		for index := range currentItems {
+			next := currentItems[index].toEntity()
+			next.Subject += " after decision 2"
+			next.Version++
+			decision2Req.PlanMutation.Items = append(
+				decision2Req.PlanMutation.Items,
+				AdaptivePlanItemMutation{ExpectedVersion: currentItems[index].Version, NextItem: next},
+			)
+		}
+		decision2, err := adaptiveRepo.CommitAdaptiveExecutionBoundary(context.Background(), decision2Req)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), decision2.Authority.EventSequence)
+		evidenceExpectedRevision = 3
+		evidenceNextRevision = 4
+		evidenceExpectedItemVersion = 3
+		evidenceNextItemVersion = 4
+		evidenceEventSequence = 3
+	}
+
+	require.NoError(t, db.Model(&agentRunPlanPO{}).Where("run_id = ?", 20).
+		Update("high_watermark", 4).Error)
+	sentinel, err := agentRunPlanItemToPO(&entity.AgentRunPlanItem{
+		ID: 62, RunID: 20, TaskID: 3, Subject: "completed sentinel",
+		Description: "not referenced by evidence", Status: entity.AgentRunPlanItemStatusCompleted,
+		ActiveForm: "completed", Owner: "agent", Blocks: `[]`, BlockedBy: `[]`,
+		Metadata: `{}`, Active: true, Version: 1, CreatedAt: 1_050, UpdatedAt: 1_050,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(sentinel).Error)
+
+	evidenceReq := cloneAdaptiveExecutionBoundaryRequestForReplayTest(decisionReq)
+	evidenceReq.Now = 1_100
+	evidenceReq.IdempotencyKey = "evidence-boundary-1"
+	evidenceReq.Event.ID = 7002
+	evidenceReq.Event.EventType = "adaptive.evidence"
+	evidenceReq.Event.Payload = `{"schema":"workbench-adaptive-evidence.v1"}`
+	evidenceReq.Event.CreatedAt = evidenceReq.Now
+	evidenceReq.Checkpoint.ID = 8002
+	evidenceReq.Checkpoint.ChannelValues = `{"verified":true}`
+	evidenceReq.Checkpoint.ChannelVersions = `{"state":2}`
+	evidenceReq.Checkpoint.Metadata = `{"runtime_field":"evidence"}`
+	evidenceReq.Checkpoint.CreatedAt = evidenceReq.Now
+	evidenceReq.PlanMutation = &AdaptivePlanMutation{
+		PlanScopeRunID: 20, ExpectedRevision: evidenceExpectedRevision, NextRevision: evidenceNextRevision,
+		Items: []AdaptivePlanItemMutation{{
+			ExpectedVersion: evidenceExpectedItemVersion,
+			NextItem: &entity.AgentRunPlanItem{
+				ID: 60, RunID: 20, TaskID: 1, Subject: "verified major step",
+				Description: "evidence update", Status: entity.AgentRunPlanItemStatusCompleted,
+				ActiveForm: "completed", Owner: "agent", Blocks: `{"a":1,"z":2}`,
+				BlockedBy: `[]`, Metadata: `{"substeps_ref":"lazy:1"}`,
+				Active: true, Version: evidenceNextItemVersion,
+			},
+		}},
+	}
+	evidence, err := adaptiveRepo.CommitAdaptiveExecutionBoundary(context.Background(), evidenceReq)
+	require.NoError(t, err)
+	require.NotNil(t, evidence)
+	require.NotEqual(t, decisionReq.IdempotencyKey, evidenceReq.IdempotencyKey)
+	require.Equal(t, evidenceEventSequence, evidence.Authority.EventSequence)
+
+	var itemRows []agentRunPlanItemPO
+	require.NoError(t, db.Where("run_id = ?", 20).Order("task_id ASC").Find(&itemRows).Error)
+	items := make([]*entity.AgentRunPlanItem, 0, len(itemRows))
+	for index := range itemRows {
+		items = append(items, itemRows[index].toEntity())
+	}
+	currentFingerprint, err := adaptiveExecutionPlanItemFingerprint(items)
+	require.NoError(t, err)
+
+	req := newValidAdaptiveVerifiedSuccessRequestForTest()
+	req.Now = 1_200
+	req.ExpectedThreadTitle = "journal"
+	req.ThreadTitle = "generated"
+	req.Message.CreatedAt = req.Now
+	req.TitleEvent.CreatedAt = req.Now
+	req.CompletionEvent.CreatedAt = req.Now
+	req.JournalEvent.CreatedAt = req.Now
+	req.JournalEvent.OccurredAtUnixNano = req.Now * int64(time.Millisecond)
+	req.TerminalCheckpoint = &entity.Checkpoint{
+		ID: 8003, ThreadID: 10, RunID: 20, ParentCheckpointID: evidence.Checkpoint.ID,
+		CheckpointNS: evidence.Checkpoint.CheckpointNS, RuntimeType: evidence.Checkpoint.RuntimeType,
+		RuntimeKey: evidence.Checkpoint.RuntimeKey, EnvelopeVersion: evidence.Checkpoint.EnvelopeVersion,
+		ChannelValues: `{"terminal":true}`, ChannelVersions: `{"state":3}`,
+		PendingSends: `[]`, Metadata: `{"runtime_field":"terminal"}`, CreatedAt: req.Now,
+	}
+	fallback := *req.TerminalCheckpoint
+	fallback.ChannelValues = `{"terminal":true,"title":"preserved"}`
+	req.TerminalCheckpointOnTitleConflict = &fallback
+	req.AdaptiveGate.Decision = decision.Authority
+	req.AdaptiveGate.Evidence = evidence.Authority
+	req.AdaptiveGate.VerificationEvent.CreatedAt = req.Now
+	req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+		t,
+		req.AdaptiveGate.VerificationEvent.Payload,
+		func(fields map[string]any) {
+			fields["execution_generation"] = decision.Authority.ExecutionGeneration
+			fields["journal_run_id"] = evidence.Authority.JournalRunID
+			fields["attempt_id"] = evidence.Authority.AttemptID
+			fields["expected_plan_revision"] = evidence.Authority.PlanRevision
+			fields["expected_plan_fingerprint"] = currentFingerprint
+			fields["verified_checkpoint_id"] = evidence.Authority.CheckpointID
+			fields["evidence_head_event_id"] = evidence.Authority.EventID
+			fields["created_at"] = req.Now
+		},
+	)
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(req))
+	return adaptiveVerifiedSuccessFixtureForTest{
+		DB: db, Repo: &threadRepository{db: db}, Request: req, Decision: decision, Evidence: evidence,
+	}
+}
+
+func prepareAdaptiveVerifiedSuccessFixtureWithDistinctPlanScopeForTest(
+	t *testing.T,
+) adaptiveVerifiedSuccessFixtureForTest {
+	t.Helper()
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	require.NoError(t, db.AutoMigrate(&messagePO{}, &adaptiveVerifiedSuccessOutboxPOForTest{}))
+	seedAdaptiveExecutionInitialState(t, db)
+	adaptiveRepo := NewAdaptiveExecutionRepository(db)
+
+	sourceReq := adaptiveInitialBoundaryRequest(6990, 7990, 900)
+	sourceReq.IdempotencyKey = "source-boundary-1"
+	source, err := adaptiveRepo.CommitAdaptiveExecutionBoundary(context.Background(), sourceReq)
+	require.NoError(t, err)
+	require.NotNil(t, source)
+	terminalizeAdaptiveAttemptForTest(t, db, 100)
+
+	decisionReq := seedAdaptiveRecoveryTargetForTest(t, db, adaptiveRecoveryTargetForTest{
+		RunID: 21, AttemptRowID: 101, AttemptID: "attempt-2", Generation: 4,
+		SourceAttemptID: "attempt-1", SourceCheckpointID: source.Checkpoint.ID,
+		EventID: 7001, CheckpointID: 8001, ExpectedRevision: 2, ExpectedItemVersion: 2, Now: 1_000,
+	})
+	decisionReq.IdempotencyKey = "decision-boundary-1"
+	decisionReq.Event.EventType = "adaptive.decision"
+	decisionReq.Event.Payload = `{"schema":"workbench-adaptive-decision.v1","decision_id":"decision-1","decision_revision":1}`
+	decision, err := adaptiveRepo.CommitAdaptiveExecutionBoundary(context.Background(), decisionReq)
+	require.NoError(t, err)
+	require.NotNil(t, decision)
+	require.Equal(t, uint64(1), decision.Authority.EventSequence)
+	require.NotEqual(t, decision.Authority.ExecutionRunID, decision.Authority.PlanScopeRunID)
+	evidence := decision
+
+	var itemRows []agentRunPlanItemPO
+	require.NoError(t, db.Where("run_id = ?", evidence.Authority.PlanScopeRunID).
+		Order("task_id ASC").Find(&itemRows).Error)
+	items := make([]*entity.AgentRunPlanItem, 0, len(itemRows))
+	for index := range itemRows {
+		items = append(items, itemRows[index].toEntity())
+	}
+	currentFingerprint, err := adaptiveExecutionPlanItemFingerprint(items)
+	require.NoError(t, err)
+
+	req := newValidAdaptiveVerifiedSuccessRequestForTest()
+	req.RunID = decision.Authority.ExecutionRunID
+	req.LeaseOwner = "worker-21"
+	req.LeaseToken = "lease-21"
+	req.ExecutionGeneration = decision.Authority.ExecutionGeneration
+	req.Now = 1_200
+	req.ExpectedThreadTitle = "journal"
+	req.ThreadTitle = "generated"
+	req.Message.RunID = req.RunID
+	req.Message.CreatedAt = req.Now
+	req.TitleEvent.RunID = req.RunID
+	req.TitleEvent.CreatedAt = req.Now
+	req.CompletionEvent.RunID = req.RunID
+	req.CompletionEvent.CreatedAt = req.Now
+	req.JournalEvent.RunID = req.RunID
+	req.JournalEvent.JournalRunID = evidence.Authority.JournalRunID
+	req.JournalEvent.AttemptID = evidence.Authority.AttemptID
+	req.JournalEvent.CreatedAt = req.Now
+	req.JournalEvent.OccurredAtUnixNano = req.Now * int64(time.Millisecond)
+	req.TerminalCheckpoint = &entity.Checkpoint{
+		ID: 8003, ThreadID: 10, RunID: req.RunID, ParentCheckpointID: evidence.Checkpoint.ID,
+		CheckpointNS: evidence.Checkpoint.CheckpointNS, RuntimeType: evidence.Checkpoint.RuntimeType,
+		RuntimeKey: evidence.Checkpoint.RuntimeKey, EnvelopeVersion: evidence.Checkpoint.EnvelopeVersion,
+		ChannelValues: `{"terminal":true}`, ChannelVersions: `{"state":3}`,
+		PendingSends: `[]`, Metadata: `{"runtime_field":"terminal"}`, CreatedAt: req.Now,
+	}
+	fallback := *req.TerminalCheckpoint
+	fallback.ChannelValues = `{"terminal":true,"title":"preserved"}`
+	req.TerminalCheckpointOnTitleConflict = &fallback
+	req.AdaptiveGate.Decision = decision.Authority
+	req.AdaptiveGate.Evidence = evidence.Authority
+	req.AdaptiveGate.VerificationEvent.RunID = req.RunID
+	req.AdaptiveGate.VerificationEvent.CreatedAt = req.Now
+	req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+		t,
+		req.AdaptiveGate.VerificationEvent.Payload,
+		func(fields map[string]any) {
+			fields["execution_run_id"] = decision.Authority.ExecutionRunID
+			fields["execution_generation"] = decision.Authority.ExecutionGeneration
+			fields["journal_run_id"] = evidence.Authority.JournalRunID
+			fields["attempt_id"] = evidence.Authority.AttemptID
+			fields["expected_plan_revision"] = evidence.Authority.PlanRevision
+			fields["expected_plan_fingerprint"] = currentFingerprint
+			fields["verified_checkpoint_id"] = evidence.Authority.CheckpointID
+			fields["evidence_head_event_id"] = evidence.Authority.EventID
+			fields["created_at"] = req.Now
+		},
+	)
+	require.NoError(t, validateAdaptiveVerifiedSuccessGate(req))
+	return adaptiveVerifiedSuccessFixtureForTest{
+		DB: db, Repo: &threadRepository{db: db}, Request: req, Decision: decision, Evidence: evidence,
+	}
+}
+
+func TestThreadRepositoryFinalizeRunSuccessCommitsAdaptiveVerificationBeforeCompletionAtomically(t *testing.T) {
+	t.Run("HealthyCommit", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		callerPayload := fixture.Request.AdaptiveGate.VerificationEvent.Payload
+		outboxEvent := adaptiveVerifiedSuccessOutboxEventForTest(fixture.Request.Now)
+		outboxFingerprint := adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, outboxEvent)
+		fixture.Request.OutboxIntent = &NotificationOutboxIntent{
+			Event: outboxEvent,
+			Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+				return nil
+			},
+			AppendWithResult: func(_ context.Context, tx *gorm.DB, _ domainnotification.Event) (bool, error) {
+				row := adaptiveVerifiedSuccessOutboxPOForTest{
+					EventID: outboxEvent.EventID, Fingerprint: outboxFingerprint,
+				}
+				if err := tx.Create(&row).Error; err != nil {
+					return false, err
+				}
+				return true, nil
+			},
+		}
+		var preRun runPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.RunID).First(&preRun).Error)
+		var preAttempt runAttemptPO
+		require.NoError(t, fixture.DB.Where("id = ?", 100).First(&preAttempt).Error)
+		var prePlan agentRunPlanPO
+		require.NoError(t, fixture.DB.Where("run_id = ?", fixture.Evidence.Authority.PlanScopeRunID).
+			First(&prePlan).Error)
+		var preItems []agentRunPlanItemPO
+		require.NoError(t, fixture.DB.Where("run_id = ?", prePlan.RunID).
+			Order("task_id ASC").Find(&preItems).Error)
+		expectedFinalizeFingerprint := adaptiveVerifiedSuccessFinalizeFingerprintOracleForTest(
+			t, fixture, preRun, preAttempt, &outboxFingerprint, true,
+		)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+		require.NoError(t, err)
+		require.NotNil(t, result.VerificationEvent)
+		require.Equal(t, callerPayload, fixture.Request.AdaptiveGate.VerificationEvent.Payload)
+		require.False(t, result.Replayed)
+		require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+		require.Equal(t, fixture.Request.Message, result.Message)
+		require.True(t, result.TitleUpdated)
+		require.Less(t, result.VerificationEvent.ID, result.CompletionEvent.ID)
+
+		var verification, completion runEventPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.AdaptiveGate.VerificationEvent.ID).
+			First(&verification).Error)
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.CompletionEvent.ID).
+			First(&completion).Error)
+		require.Equal(t, fixture.Evidence.Authority.JournalRunID, requireInt64PointerForTest(t, verification.JournalRunID))
+		require.Equal(t, fixture.Evidence.Authority.AttemptID, requireStringPointerForTest(t, verification.AttemptID))
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+1, requireUint64PointerForTest(t, verification.Sequence))
+		require.Equal(t, fixture.Request.AdaptiveGate.VerificationIdempotencyKey, requireStringPointerForTest(t, verification.IdempotencyKey))
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+2, requireUint64PointerForTest(t, completion.Sequence))
+		require.Equal(t, fixture.Request.JournalEvent.IdempotencyKey, requireStringPointerForTest(t, completion.IdempotencyKey))
+		require.Less(t, requireUint64PointerForTest(t, verification.Sequence), requireUint64PointerForTest(t, completion.Sequence))
+		require.LessOrEqual(t, len(verification.Payload), adaptiveVerifiedSuccessMaxPayloadBytes)
+		durablePayload, decodeErr := decodeAdaptiveVerifiedSuccessPayload(string(verification.Payload), true)
+		require.NoError(t, decodeErr)
+		require.NotNil(t, durablePayload.OutboxFingerprint)
+		require.Equal(t, outboxFingerprint, *durablePayload.OutboxFingerprint)
+		require.Equal(t, expectedFinalizeFingerprint, durablePayload.FinalizeRequestFingerprint)
+		require.Equal(t, string(verification.Payload), result.VerificationEvent.Payload)
+
+		var attempt runAttemptPO
+		require.NoError(t, fixture.DB.Where("id = ?", 100).First(&attempt).Error)
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+3, attempt.NextSequence)
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+1, attempt.LastCommittedSequence)
+		require.Equal(t, string(entity.RunAttemptStatusCompleted), attempt.Status)
+		require.Nil(t, attempt.ActiveSlot)
+		require.Equal(t, result.CompletionEvent.ID, requireInt64PointerForTest(t, attempt.TerminalEventID))
+		require.Equal(t, fixture.Request.Now, requireInt64PointerForTest(t, attempt.EndedAt))
+		require.Equal(t, fixture.Request.Now, attempt.UpdatedAt)
+
+		var message messagePO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.Message.ID).First(&message).Error)
+		require.Equal(t, fixture.Request.Message.Content, message.Content)
+		var terminal checkpointPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.TerminalCheckpoint.ID).First(&terminal).Error)
+		require.Equal(t, fixture.Evidence.Authority.CheckpointID, terminal.ParentCheckpointID)
+		var plan agentRunPlanPO
+		require.NoError(t, fixture.DB.Where("run_id = ?", fixture.Evidence.Authority.PlanScopeRunID).First(&plan).Error)
+		require.Equal(t, prePlan, plan)
+		var items []agentRunPlanItemPO
+		require.NoError(t, fixture.DB.Where("run_id = ?", plan.RunID).Order("task_id ASC").Find(&items).Error)
+		require.Equal(t, preItems, items)
+		var outboxRows []adaptiveVerifiedSuccessOutboxPOForTest
+		require.NoError(t, fixture.DB.Find(&outboxRows).Error)
+		require.Equal(t, []adaptiveVerifiedSuccessOutboxPOForTest{{
+			EventID: outboxEvent.EventID, Fingerprint: outboxFingerprint,
+		}}, outboxRows)
+	})
+
+	t.Run("MessageMetadataSQLNullRemainsValid", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		fixture.Request.Message.Metadata = ""
+		var preRun runPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.RunID).First(&preRun).Error)
+		var preAttempt runAttemptPO
+		require.NoError(t, fixture.DB.Where("id = ?", 100).First(&preAttempt).Error)
+		expectedFinalizeFingerprint := adaptiveVerifiedSuccessFinalizeFingerprintOracleForTest(
+			t, fixture, preRun, preAttempt, nil, true,
+		)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		var metadataSQLNull bool
+		require.NoError(t, fixture.DB.Raw(
+			"SELECT metadata IS NULL FROM agent_thread_messages WHERE id = ?",
+			fixture.Request.Message.ID,
+		).Row().Scan(&metadataSQLNull))
+		require.True(t, metadataSQLNull)
+		var verification runEventPO
+		require.NoError(t, fixture.DB.Where(
+			"id = ?", fixture.Request.AdaptiveGate.VerificationEvent.ID,
+		).First(&verification).Error)
+		durablePayload, decodeErr := decodeAdaptiveVerifiedSuccessPayload(string(verification.Payload), true)
+		require.NoError(t, decodeErr)
+		require.Equal(t, expectedFinalizeFingerprint, durablePayload.FinalizeRequestFingerprint)
+	})
+
+	t.Run("AllCurrentPlanItemsFingerprintRejectsUnreferencedDrift", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		require.NoError(t, fixture.DB.Model(&agentRunPlanItemPO{}).Where("id = ?", 62).
+			Update("subject", "drifted sentinel").Error)
+		before := snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionVerifiedSuccessConflict)
+		require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB))
+	})
+
+	t.Run("ReservedHighWatermarkGapRemainsValid", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		var plan agentRunPlanPO
+		require.NoError(t, fixture.DB.Where("run_id = ?", 20).First(&plan).Error)
+		require.Equal(t, int64(4), plan.HighWatermark)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+		require.NoError(t, err)
+		require.NotNil(t, result.VerificationEvent)
+	})
+}
+
+func adaptiveVerifiedSuccessRetryableOutboxIntentForDriftTest(
+	t *testing.T,
+	now int64,
+) *NotificationOutboxIntent {
+	t.Helper()
+	event := adaptiveVerifiedSuccessOutboxEventForTest(now)
+	fingerprint := adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, event)
+	return &NotificationOutboxIntent{
+		Event: event,
+		Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+			return fmt.Errorf("legacy append must not be used")
+		},
+		AppendWithResult: func(_ context.Context, tx *gorm.DB, _ domainnotification.Event) (bool, error) {
+			var count int64
+			if err := tx.Model(&adaptiveVerifiedSuccessOutboxPOForTest{}).
+				Where("event_id = ?", event.EventID).Count(&count).Error; err != nil {
+				return false, err
+			}
+			if count != 0 {
+				var row adaptiveVerifiedSuccessOutboxPOForTest
+				if err := tx.Where("event_id = ?", event.EventID).First(&row).Error; err != nil {
+					return false, err
+				}
+				if row.Fingerprint != fingerprint {
+					return false, fmt.Errorf("durable outbox fingerprint drift")
+				}
+				return false, nil
+			}
+			if err := tx.Create(&adaptiveVerifiedSuccessOutboxPOForTest{
+				EventID: event.EventID, Fingerprint: fingerprint,
+			}).Error; err != nil {
+				return false, err
+			}
+			return true, nil
+		},
+	}
+}
+
+func driftAdaptiveVerifiedSuccessEvidenceRuntimeForTest(
+	t *testing.T,
+	fixture adaptiveVerifiedSuccessFixtureForTest,
+) {
+	t.Helper()
+	var event runEventPO
+	require.NoError(t, fixture.DB.Where("id = ?", fixture.Evidence.Authority.EventID).First(&event).Error)
+	var checkpoint checkpointPO
+	require.NoError(t, fixture.DB.Where("id = ?", fixture.Evidence.Authority.CheckpointID).
+		First(&checkpoint).Error)
+	checkpoint.RuntimeKey += ":durable-drift"
+	refreshAdaptiveExecutionCheckpointFingerprintForTest(t, &checkpoint)
+	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	event.SnapshotID = adaptiveExecutionStringPointer(metadata.CheckpointFingerprint)
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(&event)
+	require.NoError(t, err)
+	checkpoint.Metadata = rewriteAdaptiveExecutionCheckpointMetadataForTest(
+		t,
+		checkpoint.Metadata,
+		func(fields map[string]json.RawMessage) {
+			encoded, marshalErr := json.Marshal(eventFingerprint)
+			require.NoError(t, marshalErr)
+			fields["event_fingerprint"] = encoded
+		},
+	)
+	require.NoError(t, fixture.DB.Save(&event).Error)
+	require.NoError(t, fixture.DB.Save(&checkpoint).Error)
+}
+
+func replaceAdaptiveExecutionCheckpointMetadataForTest(
+	t *testing.T,
+	raw []byte,
+	metadata *adaptiveExecutionCheckpointMetadata,
+) []byte {
+	t.Helper()
+	require.NotNil(t, metadata)
+	var envelope map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &envelope))
+	encodedMetadata, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	envelope["adaptive_execution"] = encodedMetadata
+	encodedEnvelope, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	return encodedEnvelope
+}
+
+func resignAdaptiveVerifiedSuccessAuthorityForTest(
+	t *testing.T,
+	fixture adaptiveVerifiedSuccessFixtureForTest,
+	authority AdaptiveExecutionBoundaryAuthority,
+	mutateEvent func(*runEventPO),
+	mutateCheckpoint func(*checkpointPO),
+	mutateMetadata func(*adaptiveExecutionCheckpointMetadata),
+) {
+	t.Helper()
+	var event runEventPO
+	require.NoError(t, fixture.DB.Where("id = ?", authority.EventID).First(&event).Error)
+	var checkpoint checkpointPO
+	require.NoError(t, fixture.DB.Where("id = ?", authority.CheckpointID).First(&checkpoint).Error)
+	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	if mutateEvent != nil {
+		mutateEvent(&event)
+	}
+	if mutateCheckpoint != nil {
+		mutateCheckpoint(&checkpoint)
+	}
+	if mutateMetadata != nil {
+		mutateMetadata(metadata)
+	}
+	checkpoint.Metadata = replaceAdaptiveExecutionCheckpointMetadataForTest(t, checkpoint.Metadata, metadata)
+	refreshAdaptiveExecutionCheckpointFingerprintForTest(t, &checkpoint)
+	metadata, err = decodeAdaptiveExecutionCheckpointMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	event.SnapshotID = adaptiveExecutionStringPointer(metadata.CheckpointFingerprint)
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(&event)
+	require.NoError(t, err)
+	metadata.EventFingerprint = eventFingerprint
+	checkpoint.Metadata = replaceAdaptiveExecutionCheckpointMetadataForTest(t, checkpoint.Metadata, metadata)
+	require.NoError(t, fixture.DB.Save(&event).Error)
+	require.NoError(t, fixture.DB.Save(&checkpoint).Error)
+}
+
+func driftAdaptiveVerifiedSuccessEventAnchorForTest(
+	t *testing.T,
+	fixture adaptiveVerifiedSuccessFixtureForTest,
+	authority AdaptiveExecutionBoundaryAuthority,
+) {
+	t.Helper()
+	var event runEventPO
+	require.NoError(t, fixture.DB.Where("id = ?", authority.EventID).First(&event).Error)
+	var checkpoint checkpointPO
+	require.NoError(t, fixture.DB.Where("id = ?", authority.CheckpointID).First(&checkpoint).Error)
+	event.SnapshotID = adaptiveExecutionStringPointer(strings.Repeat("a", sha256.Size*2))
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(&event)
+	require.NoError(t, err)
+	checkpoint.Metadata = rewriteAdaptiveExecutionCheckpointMetadataForTest(
+		t,
+		checkpoint.Metadata,
+		func(fields map[string]json.RawMessage) {
+			encoded, marshalErr := json.Marshal(eventFingerprint)
+			require.NoError(t, marshalErr)
+			fields["event_fingerprint"] = encoded
+		},
+	)
+	require.NoError(t, fixture.DB.Save(&event).Error)
+	require.NoError(t, fixture.DB.Save(&checkpoint).Error)
+}
+
+func mutateAdaptiveVerifiedSuccessDurableVerificationPayloadForTest(
+	t *testing.T,
+	fixture adaptiveVerifiedSuccessFixtureForTest,
+	mutate func(map[string]any),
+) {
+	t.Helper()
+	var verification runEventPO
+	require.NoError(t, fixture.DB.Where(
+		"id = ?", fixture.Request.AdaptiveGate.VerificationEvent.ID,
+	).First(&verification).Error)
+	verification.Payload = []byte(adaptiveVerifiedSuccessPayloadMutationForTest(
+		t,
+		string(verification.Payload),
+		mutate,
+	))
+	require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("id = ?", verification.ID).
+		UpdateColumn("payload", verification.Payload).Error)
+}
+
+func requireAdaptiveVerifiedSuccessRowCountForTest(
+	t *testing.T,
+	db *gorm.DB,
+	model any,
+	query string,
+	want int64,
+	args ...any,
+) {
+	t.Helper()
+	var count int64
+	require.NoError(t, db.Model(model).Where(query, args...).Count(&count).Error)
+	require.Equal(t, want, count)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessRejectsAdaptiveAuthorityDriftWithoutWrites(t *testing.T) {
+	type driftCase struct {
+		name          string
+		prepare       func(*testing.T) adaptiveVerifiedSuccessFixtureForTest
+		commitFirst   bool
+		expectedCause error
+		errorContains string
+		mutate        func(*testing.T, adaptiveVerifiedSuccessFixtureForTest)
+	}
+	defaultFixture := func(t *testing.T) adaptiveVerifiedSuccessFixtureForTest {
+		return prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+	}
+	cases := []driftCase{
+		{
+			name: "JournalRootMissing", prepare: defaultFixture,
+			expectedCause: ErrRunLeaseLost,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&runPO{}, fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 0,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+			},
+		},
+		{
+			name: "ExecutionRunMissing", prepare: defaultFixture,
+			expectedCause: ErrRunLeaseLost,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(&runPO{}, fixture.Request.RunID).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 0, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+			},
+		},
+		{
+			name: "ThreadMissing", prepare: defaultFixture,
+			errorContains: "thread",
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&threadPO{}, fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 0,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+			},
+		},
+		{
+			name: "AttemptMissing", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionAttemptConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Where(
+					"journal_run_id = ? AND attempt_id = ?",
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				).Delete(&runAttemptPO{}).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 0,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+			},
+		},
+		{
+			name:          "DistinctPlanScopeRunMissing",
+			prepare:       prepareAdaptiveVerifiedSuccessFixtureWithDistinctPlanScopeForTest,
+			expectedCause: ErrAdaptiveExecutionPlanScopeConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				scopeRunID := fixture.Request.AdaptiveGate.Evidence.PlanScopeRunID
+				require.Equal(t, int64(20), scopeRunID)
+				require.Equal(t, scopeRunID, fixture.Request.AdaptiveGate.Decision.PlanScopeRunID)
+				require.NotEqual(t, fixture.Request.RunID, scopeRunID)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &agentRunPlanPO{}, "run_id = ?", 1, scopeRunID,
+				)
+				require.NoError(t, fixture.DB.Delete(&runPO{}, scopeRunID).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 0, scopeRunID,
+				)
+			},
+		},
+		{
+			name: "PlanMissing", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanScopeConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				scopeRunID := fixture.Request.AdaptiveGate.Evidence.PlanScopeRunID
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, fixture.Request.RunID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &threadPO{}, "id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.ThreadID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runAttemptPO{}, "journal_run_id = ? AND attempt_id = ?", 1,
+					fixture.Request.AdaptiveGate.Evidence.JournalRunID,
+					fixture.Request.AdaptiveGate.Evidence.AttemptID,
+				)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &runPO{}, "id = ?", 1, scopeRunID,
+				)
+				require.NoError(t, fixture.DB.Delete(&agentRunPlanPO{}, scopeRunID).Error)
+				requireAdaptiveVerifiedSuccessRowCountForTest(
+					t, fixture.DB, &agentRunPlanPO{}, "run_id = ?", 0, scopeRunID,
+				)
+			},
+		},
+		{
+			name: "Plan", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanRevisionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&agentRunPlanPO{}).Where("run_id = ?", 20).
+					UpdateColumn("high_watermark", 2).Error)
+			},
+		},
+		{
+			name: "PlanItems", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanItemVersionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&agentRunPlanItemPO{}).Where("id = ?", 62).
+					UpdateColumn("subject", "unreferenced completed sentinel drift").Error)
+			},
+		},
+		{
+			name: "Decision", prepare: prepareAdaptiveVerifiedSuccessFixtureWithNewerDecisionForTest,
+			mutate: func(*testing.T, adaptiveVerifiedSuccessFixtureForTest) {},
+		},
+		{
+			name: "Verification", prepare: defaultFixture, commitFirst: true,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runEventPO{}).
+					Where("id = ?", fixture.Request.CompletionEvent.ID).
+					UpdateColumn("sequence", fixture.Evidence.Authority.EventSequence+3).Error)
+			},
+		},
+		{
+			name: "EvidenceHighWatermark", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("last_committed_sequence", fixture.Evidence.Authority.EventSequence-1).Error)
+			},
+		},
+		{
+			name: "TerminalCheckpointReference", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate:        driftAdaptiveVerifiedSuccessEvidenceRuntimeForTest,
+		},
+		{
+			name: "AttemptTerminal", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumns(map[string]any{
+						"status": string(entity.RunAttemptStatusCompleted), "active_slot": nil,
+					}).Error)
+			},
+		},
+		{
+			name: "AttemptSlot", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("active_slot", nil).Error)
+			},
+		},
+		{
+			name: "AttemptExecutionDrift", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionAttemptConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("execution_run_id", 30).Error)
+			},
+		},
+		{
+			name: "AttemptNextSequence", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("next_sequence", fixture.Evidence.Authority.EventSequence+2).Error)
+			},
+		},
+		{
+			name: "DecisionMissingEvent", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&runEventPO{}, fixture.Decision.Authority.EventID,
+				).Error)
+			},
+		},
+		{
+			name: "DecisionMissingCheckpoint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&checkpointPO{}, fixture.Decision.Authority.CheckpointID,
+				).Error)
+			},
+		},
+		{
+			name: "DecisionCheckpointTuple", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			errorContains: "identity",
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t,
+					fixture,
+					fixture.Decision.Authority,
+					nil,
+					func(checkpoint *checkpointPO) { checkpoint.ThreadID++ },
+					nil,
+				)
+			},
+		},
+		{
+			name: "DecisionTuple", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runEventPO{}).
+					Where("id = ?", fixture.Decision.Authority.EventID).
+					UpdateColumn("idempotency_key", "decision-tuple-drift").Error)
+			},
+		},
+		{
+			name: "DecisionEventFingerprint", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runEventPO{}).
+					Where("id = ?", fixture.Decision.Authority.EventID).
+					UpdateColumn("payload", []byte(`{"schema":"workbench-adaptive-decision.v1","decision_id":"tampered","decision_revision":1}`)).Error)
+			},
+		},
+		{
+			name: "DecisionCheckpointFingerprint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&checkpointPO{}).
+					Where("id = ?", fixture.Decision.Authority.CheckpointID).
+					UpdateColumn("channel_values", []byte(`{"tampered":true}`)).Error)
+			},
+		},
+		{
+			name: "DecisionPayload", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Decision.Authority,
+					func(event *runEventPO) {
+						event.Payload = []byte(`{"schema":"workbench-adaptive-decision.v1","decision_id":"decision-drift","decision_revision":1}`)
+					},
+					nil,
+					nil,
+				)
+			},
+		},
+		{
+			name: "EvidenceMissingEvent", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&runEventPO{}, fixture.Evidence.Authority.EventID,
+				).Error)
+			},
+		},
+		{
+			name: "EvidenceMissingCheckpoint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Delete(
+					&checkpointPO{}, fixture.Evidence.Authority.CheckpointID,
+				).Error)
+			},
+		},
+		{
+			name: "EvidenceSource", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) {
+						sourceAttempt := "source-drift"
+						sourceCheckpoint := int64(8999)
+						metadata.SourceAttemptID = &sourceAttempt
+						metadata.SourceCheckpointID = &sourceCheckpoint
+					},
+				)
+			},
+		},
+		{
+			name: "EvidenceGeneration", prepare: defaultFixture,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.ExecutionGeneration++ },
+				)
+			},
+		},
+		{
+			name: "EvidenceEventAnchor", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				driftAdaptiveVerifiedSuccessEventAnchorForTest(t, fixture, fixture.Evidence.Authority)
+			},
+		},
+		{
+			name: "EvidenceCheckpointFingerprint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&checkpointPO{}).
+					Where("id = ?", fixture.Evidence.Authority.CheckpointID).
+					UpdateColumn("channel_versions", []byte(`{"tampered":true}`)).Error)
+			},
+		},
+		{
+			name: "EvidenceCheckpointParent", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			errorContains: "parent",
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t,
+					fixture,
+					fixture.Evidence.Authority,
+					nil,
+					func(checkpoint *checkpointPO) { checkpoint.ParentCheckpointID++ },
+					nil,
+				)
+			},
+		},
+		{
+			name: "EvidencePlanScope", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanScopeConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.PlanScopeRunID = 30 },
+				)
+			},
+		},
+		{
+			name: "EvidenceRevision", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanRevisionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.PlanRevision++ },
+				)
+			},
+		},
+		{
+			name: "EvidenceItemReference", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanItemVersionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.ItemRefs[0].ID = 9999 },
+				)
+			},
+		},
+		{
+			name: "EvidenceItemVersion", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanItemVersionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.ItemRefs[0].Version++ },
+				)
+			},
+		},
+		{
+			name: "EvidenceFingerprint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionPlanItemVersionConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				drift := strings.Repeat("d", sha256.Size*2)
+				fixture.Request.AdaptiveGate.Evidence.PlanItemFingerprint = drift
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil, nil,
+					func(metadata *adaptiveExecutionCheckpointMetadata) { metadata.ItemFingerprint = drift },
+				)
+			},
+		},
+		{
+			name: "EvidenceNextSequenceHighWatermark", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionSequenceConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("next_sequence", fixture.Evidence.Authority.EventSequence+2).Error)
+			},
+		},
+		{
+			name: "VerificationServerFingerprint", prepare: defaultFixture, commitFirst: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				mutateAdaptiveVerifiedSuccessDurableVerificationPayloadForTest(
+					t,
+					fixture,
+					func(fields map[string]any) {
+						fields["finalize_request_fingerprint"] = strings.Repeat("f", sha256.Size*2)
+					},
+				)
+			},
+		},
+		{
+			name: "VerificationServerOutboxFingerprint", prepare: defaultFixture, commitFirst: true,
+			errorContains: "outbox_fingerprint",
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				mutateAdaptiveVerifiedSuccessDurableVerificationPayloadForTest(
+					t,
+					fixture,
+					func(fields map[string]any) {
+						fields["outbox_fingerprint"] = strings.Repeat("e", sha256.Size*2)
+					},
+				)
+			},
+		},
+		{
+			name: "VerificationTerminalAttemptPostImage", prepare: defaultFixture, commitFirst: true,
+			expectedCause: ErrAdaptiveExecutionAttemptConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+					UpdateColumn("ended_at", fixture.Request.Now+1).Error)
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := test.prepare(t)
+			if test.commitFirst {
+				fixture.Request.OutboxIntent = adaptiveVerifiedSuccessRetryableOutboxIntentForDriftTest(
+					t, fixture.Request.Now,
+				)
+				committed, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+				require.NoError(t, err)
+				require.NotNil(t, committed)
+				fixture.Repo = &threadRepository{db: fixture.DB}
+			} else {
+				callbackSentinel := fmt.Errorf("authority drift reached outbox callback")
+				outboxEvent := adaptiveVerifiedSuccessOutboxEventForTest(fixture.Request.Now)
+				outboxFingerprint := adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, outboxEvent)
+				fixture.Request.OutboxIntent = &NotificationOutboxIntent{
+					Event: outboxEvent,
+					Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+						return fmt.Errorf("legacy append must not be used")
+					},
+					AppendWithResult: func(_ context.Context, tx *gorm.DB, _ domainnotification.Event) (bool, error) {
+						if err := tx.Create(&adaptiveVerifiedSuccessOutboxPOForTest{
+							EventID: outboxEvent.EventID, Fingerprint: outboxFingerprint,
+						}).Error; err != nil {
+							return false, err
+						}
+						return false, callbackSentinel
+					},
+				}
+			}
+			test.mutate(t, fixture)
+			before := snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB)
+
+			result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionVerifiedSuccessConflict)
+			if test.expectedCause != nil {
+				require.ErrorIs(t, err, test.expectedCause)
+			}
+			if test.errorContains != "" {
+				require.ErrorContains(t, err, test.errorContains)
+			}
+			require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB))
+		})
+	}
+}
+
+type adaptiveVerifiedSuccessCommittedReplayFixtureForTest struct {
+	Fixture             adaptiveVerifiedSuccessFixtureForTest
+	First               *FinalizeRunSuccessResult
+	OutboxEvent         domainnotification.Event
+	OutboxFingerprint   string
+	OutboxCallbackCalls *int
+}
+
+func adaptiveVerifiedSuccessTrackedOutboxIntentForReplayTest(
+	t *testing.T,
+	now int64,
+	calls *int,
+) *NotificationOutboxIntent {
+	t.Helper()
+	require.NotNil(t, calls)
+	event := adaptiveVerifiedSuccessOutboxEventForTest(now)
+	fingerprint := adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, event)
+	return &NotificationOutboxIntent{
+		Event: event,
+		Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+			return fmt.Errorf("legacy append must not be used")
+		},
+		AppendWithResult: func(_ context.Context, tx *gorm.DB, _ domainnotification.Event) (bool, error) {
+			*calls++
+			var count int64
+			if err := tx.Model(&adaptiveVerifiedSuccessOutboxPOForTest{}).
+				Where("event_id = ?", event.EventID).Count(&count).Error; err != nil {
+				return false, err
+			}
+			if count == 0 {
+				if err := tx.Create(&adaptiveVerifiedSuccessOutboxPOForTest{
+					EventID: event.EventID, Fingerprint: fingerprint,
+				}).Error; err != nil {
+					return false, err
+				}
+				return true, nil
+			}
+			var row adaptiveVerifiedSuccessOutboxPOForTest
+			if err := tx.Where("event_id = ?", event.EventID).First(&row).Error; err != nil {
+				return false, err
+			}
+			if row.Fingerprint != fingerprint {
+				return false, fmt.Errorf(
+					"%w: durable outbox fingerprint drift",
+					domainnotification.ErrIdempotencyConflict,
+				)
+			}
+			return false, nil
+		},
+	}
+}
+
+func prepareAdaptiveVerifiedSuccessCommittedReplayFixtureForTest(
+	t *testing.T,
+	withOutbox bool,
+	titleConflict bool,
+) adaptiveVerifiedSuccessCommittedReplayFixtureForTest {
+	t.Helper()
+	fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+	if titleConflict {
+		require.NoError(t, fixture.DB.Model(&threadPO{}).Where("id = ?", 10).
+			UpdateColumn("title", "concurrent title").Error)
+	}
+	calls := new(int)
+	var outboxEvent domainnotification.Event
+	var outboxFingerprint string
+	if withOutbox {
+		fixture.Request.OutboxIntent = adaptiveVerifiedSuccessTrackedOutboxIntentForReplayTest(
+			t,
+			fixture.Request.Now,
+			calls,
+		)
+		outboxEvent = fixture.Request.OutboxIntent.Event
+		outboxFingerprint = adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, outboxEvent)
+	}
+	first, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.False(t, first.Replayed)
+	require.NotNil(t, first.VerificationEvent)
+	require.Equal(t, !titleConflict, first.TitleUpdated)
+	if titleConflict {
+		require.Nil(t, first.TitleEvent)
+	} else {
+		require.Equal(t, fixture.Request.TitleEvent, first.TitleEvent)
+	}
+	if withOutbox {
+		require.Equal(t, 1, *calls)
+	} else {
+		require.Zero(t, *calls)
+	}
+	var run runPO
+	require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.RunID).First(&run).Error)
+	require.Equal(t, string(entity.RunStatusSucceeded), run.Status)
+	require.Nil(t, run.LeaseOwner)
+	require.Nil(t, run.LeaseToken)
+	require.Nil(t, run.LeaseExpiresAt)
+	var attempt runAttemptPO
+	require.NoError(t, fixture.DB.Where("id = ?", 100).First(&attempt).Error)
+	require.Equal(t, string(entity.RunAttemptStatusCompleted), attempt.Status)
+	require.Nil(t, attempt.ActiveSlot)
+	require.Equal(t, fixture.Request.Now, requireInt64PointerForTest(t, attempt.EndedAt))
+	require.Equal(t, fixture.Request.Now, attempt.UpdatedAt)
+	return adaptiveVerifiedSuccessCommittedReplayFixtureForTest{
+		Fixture: fixture, First: first,
+		OutboxEvent: outboxEvent, OutboxFingerprint: outboxFingerprint,
+		OutboxCallbackCalls: calls,
+	}
+}
+
+func TestThreadRepositoryFinalizeRunSuccessAdaptiveVerificationSurvivesDegradedProjection(t *testing.T) {
+	t.Run("DurablyDegradedWritesAuthoritativeBaseTuples", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		degradedAt := int64(1_150)
+		require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+			UpdateColumns(map[string]any{
+				"projection_state":       string(entity.JournalProjectionStateDegraded),
+				"projection_degraded_at": degradedAt,
+			}).Error)
+		var preRun runPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.RunID).First(&preRun).Error)
+		var preAttempt runAttemptPO
+		require.NoError(t, fixture.DB.Where("id = ?", 100).First(&preAttempt).Error)
+		expectedFinalizeFingerprint := adaptiveVerifiedSuccessFinalizeFingerprintOracleForTest(
+			t,
+			fixture,
+			preRun,
+			preAttempt,
+			nil,
+			false,
+		)
+
+		result, err := (&threadRepository{db: fixture.DB}).FinalizeRunSuccess(
+			context.Background(),
+			fixture.Request,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.False(t, result.Replayed)
+		require.NotNil(t, result.VerificationEvent)
+		var verification, completion runEventPO
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.AdaptiveGate.VerificationEvent.ID).
+			First(&verification).Error)
+		require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.CompletionEvent.ID).
+			First(&completion).Error)
+		require.Equal(t, fixture.Evidence.Authority.JournalRunID, requireInt64PointerForTest(t, verification.JournalRunID))
+		require.Equal(t, fixture.Evidence.Authority.AttemptID, requireStringPointerForTest(t, verification.AttemptID))
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+1, requireUint64PointerForTest(t, verification.Sequence))
+		require.Equal(t, fixture.Request.AdaptiveGate.VerificationIdempotencyKey, requireStringPointerForTest(t, verification.IdempotencyKey))
+		durableVerification, decodeErr := decodeAdaptiveVerifiedSuccessPayload(string(verification.Payload), true)
+		require.NoError(t, decodeErr)
+		require.Nil(t, durableVerification.OutboxFingerprint)
+		require.Equal(t, expectedFinalizeFingerprint, durableVerification.FinalizeRequestFingerprint)
+		require.Equal(t, fixture.Evidence.Authority.JournalRunID, requireInt64PointerForTest(t, completion.JournalRunID))
+		require.Equal(t, fixture.Evidence.Authority.AttemptID, requireStringPointerForTest(t, completion.AttemptID))
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+2, requireUint64PointerForTest(t, completion.Sequence))
+		require.Equal(t, fixture.Request.JournalEvent.IdempotencyKey, requireStringPointerForTest(t, completion.IdempotencyKey))
+		require.Nil(t, completion.JournalEventType)
+		require.Empty(t, completion.JournalPayload)
+		var attempt runAttemptPO
+		require.NoError(t, fixture.DB.Where("id = ?", 100).First(&attempt).Error)
+		require.Equal(t, string(entity.JournalProjectionStateDegraded), attempt.ProjectionState)
+		require.Equal(t, degradedAt, requireInt64PointerForTest(t, attempt.ProjectionDegradedAt))
+		require.Equal(t, string(entity.RunAttemptStatusCompleted), attempt.Status)
+		require.Nil(t, attempt.ActiveSlot)
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+3, attempt.NextSequence)
+		require.Equal(t, fixture.Evidence.Authority.EventSequence+1, attempt.LastCommittedSequence)
+		require.Equal(t, completion.ID, requireInt64PointerForTest(t, attempt.TerminalEventID))
+		require.Equal(t, fixture.Request.Now, requireInt64PointerForTest(t, attempt.EndedAt))
+		require.Equal(t, fixture.Request.Now, attempt.UpdatedAt)
+	})
+
+	t.Run("ProjectionModesCanonicalizeCompletionIdempotencyKeyEqually", func(t *testing.T) {
+		for _, projectionState := range []entity.JournalProjectionState{
+			entity.JournalProjectionStateHealthy,
+			entity.JournalProjectionStateDegraded,
+		} {
+			projectionState := projectionState
+			t.Run(string(projectionState), func(t *testing.T) {
+				fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+				fixture.Request.JournalEvent.IdempotencyKey = "  completion-1  "
+				if projectionState == entity.JournalProjectionStateDegraded {
+					require.NoError(t, fixture.DB.Model(&runAttemptPO{}).Where("id = ?", 100).
+						UpdateColumns(map[string]any{
+							"projection_state":       string(projectionState),
+							"projection_degraded_at": int64(1_150),
+						}).Error)
+				}
+
+				result, err := (&threadRepository{db: fixture.DB}).FinalizeRunSuccess(
+					context.Background(),
+					fixture.Request,
+				)
+
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				var completion runEventPO
+				require.NoError(t, fixture.DB.Where("id = ?", fixture.Request.CompletionEvent.ID).
+					First(&completion).Error)
+				require.Equal(t, "completion-1", requireStringPointerForTest(t, completion.IdempotencyKey))
+			})
+		}
+	})
+
+	t.Run("HealthyRejectsInvalidJournalProjectionWithoutWrites", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		fixture.Request.JournalEvent.Visibility = entity.JournalVisibility("invalid")
+		before := snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB)
+
+		result, err := (&threadRepository{db: fixture.DB}).FinalizeRunSuccess(
+			context.Background(),
+			fixture.Request,
+		)
+
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionVerifiedSuccessInvalid)
+		require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB))
+	})
+}
+
+func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateReplaysExactCommittedResultWithoutWrites(t *testing.T) {
+	t.Run("ExactCommittedRetry", func(t *testing.T) {
+		committed := prepareAdaptiveVerifiedSuccessCommittedReplayFixtureForTest(t, true, false)
+		before := snapshotAdaptiveVerifiedSuccessDBForTest(t, committed.Fixture.DB)
+
+		replayed, err := (&threadRepository{db: committed.Fixture.DB}).FinalizeRunSuccess(
+			context.Background(),
+			cloneAdaptiveVerifiedSuccessRequestForTest(committed.Fixture.Request),
+		)
+
+		require.NoError(t, err)
+		expected := *committed.First
+		expected.Replayed = true
+		require.Equal(t, &expected, replayed)
+		require.Equal(t, 2, *committed.OutboxCallbackCalls)
+		require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, committed.Fixture.DB))
+	})
+
+	t.Run("ExactCommittedRetryWhenConcurrentTitleAlreadyEqualsRequested", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		requestedTitle := strings.TrimSpace(fixture.Request.ThreadTitle)
+		require.NotEmpty(t, requestedTitle)
+		require.NoError(t, fixture.DB.Model(&threadPO{}).Where("id = ?", fixture.Request.Message.ThreadID).
+			UpdateColumn("title", requestedTitle).Error)
+		calls := new(int)
+		fixture.Request.OutboxIntent = adaptiveVerifiedSuccessTrackedOutboxIntentForReplayTest(
+			t,
+			fixture.Request.Now,
+			calls,
+		)
+		first, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+		require.NoError(t, err)
+		require.NotNil(t, first)
+		require.False(t, first.TitleUpdated)
+		require.Nil(t, first.TitleEvent)
+		require.Equal(t, fixture.Request.TerminalCheckpointOnTitleConflict, first.TerminalCheckpoint)
+		require.Equal(t, 1, *calls)
+		before := snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB)
+
+		replayed, err := (&threadRepository{db: fixture.DB}).FinalizeRunSuccess(
+			context.Background(),
+			cloneAdaptiveVerifiedSuccessRequestForTest(fixture.Request),
+		)
+
+		require.NoError(t, err)
+		expected := *first
+		expected.Replayed = true
+		require.Equal(t, &expected, replayed)
+		require.Equal(t, 2, *calls)
+		require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB))
+	})
+
+	type replayConflictMutation func(
+		*testing.T,
+		*adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+		*FinalizeRunSuccessRequest,
+	) func(*testing.T)
+	type replayConflictVariant struct {
+		name   string
+		mutate replayConflictMutation
+	}
+	type replayConflictCase struct {
+		name          string
+		withOutbox    bool
+		titleConflict bool
+		expectedCause error
+		errorContains string
+		mutate        replayConflictMutation
+		variants      []replayConflictVariant
+	}
+	requireOutboxCalls := func(
+		committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+		want int,
+	) func(*testing.T) {
+		return func(t *testing.T) {
+			t.Helper()
+			require.Equal(t, want, *committed.OutboxCallbackCalls)
+		}
+	}
+	cases := []replayConflictCase{
+		{
+			name: "InitialOutboxRetryWithoutOutbox", withOutbox: true,
+			errorContains: "outbox",
+			mutate: func(
+				_ *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				retry.OutboxIntent = nil
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name:          "InitialWithoutOutboxRetryWithOutbox",
+			errorContains: "outbox",
+			mutate: func(
+				t *testing.T,
+				_ *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				calls := new(int)
+				retry.OutboxIntent = adaptiveVerifiedSuccessTrackedOutboxIntentForReplayTest(
+					t,
+					retry.Now,
+					calls,
+				)
+				return func(t *testing.T) { require.Zero(t, *calls) }
+			},
+		},
+		{
+			name: "InitialOutboxRetryMissingDurableRow", withOutbox: true,
+			errorContains: "outbox",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Where(
+					"event_id = ?", committed.OutboxEvent.EventID,
+				).Delete(&adaptiveVerifiedSuccessOutboxPOForTest{}).Error)
+				return requireOutboxCalls(committed, 2)
+			},
+		},
+		{
+			name: "MessageIDOrBody", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				replacement := *retry.Message
+				replacement.ID = 6_101
+				replacement.Content = "replacement final answer"
+				replacementPO, err := messageToPO(&replacement)
+				require.NoError(t, err)
+				require.NoError(t, committed.Fixture.DB.Create(replacementPO).Error)
+				retry.Message = &replacement
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "SelectedCheckpointIDOrBody", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				replacement := *retry.TerminalCheckpoint
+				replacement.ID = 8_103
+				replacement.ChannelValues = `{"terminal":"replacement"}`
+				fallback := *retry.TerminalCheckpointOnTitleConflict
+				fallback.ID = replacement.ID
+				fallback.ChannelValues = `{"terminal":"replacement","title":"preserved"}`
+				replacementPO, err := checkpointToPO(&replacement)
+				require.NoError(t, err)
+				require.NoError(t, committed.Fixture.DB.Create(replacementPO).Error)
+				retry.TerminalCheckpoint = &replacement
+				retry.TerminalCheckpointOnTitleConflict = &fallback
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "UnselectedCheckpointIDOrBody", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(
+				_ *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				fallback := *retry.TerminalCheckpointOnTitleConflict
+				fallback.ChannelValues = `{"terminal":true,"title":"unselected replacement"}`
+				retry.TerminalCheckpointOnTitleConflict = &fallback
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "ExpectedOrUpdatedTitle", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(
+				_ *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				retry.ExpectedThreadTitle = "replacement expected title"
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "UnpersistedTitleEventIDOrBody", withOutbox: true, titleConflict: true,
+			errorContains: "finalize_request_fingerprint",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				title := *retry.TitleEvent
+				title.ID = 6_999
+				title.Payload = `{"thread_title":"replacement"}`
+				retry.TitleEvent = &title
+				var count int64
+				require.NoError(t, committed.Fixture.DB.Model(&runEventPO{}).
+					Where("id IN ?", []int64{committed.Fixture.Request.TitleEvent.ID, title.ID}).
+					Count(&count).Error)
+				require.Zero(t, count)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "OutboxImmutableRequestIdentity", withOutbox: true,
+			errorContains: "outbox",
+			mutate: func(
+				_ *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				retry *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				intent := *retry.OutboxIntent
+				intent.Event.AggregateVersion++
+				called := false
+				intent.AppendWithResult = func(
+					context.Context,
+					*gorm.DB,
+					domainnotification.Event,
+				) (bool, error) {
+					called = true
+					return false, nil
+				}
+				retry.OutboxIntent = &intent
+				return func(t *testing.T) {
+					require.False(t, called)
+					require.Equal(t, 1, *committed.OutboxCallbackCalls)
+				}
+			},
+		},
+		{
+			name: "RunPostImage", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			variants: []replayConflictVariant{
+				{
+					name: "Metadata",
+					mutate: func(
+						t *testing.T,
+						committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+						_ *FinalizeRunSuccessRequest,
+					) func(*testing.T) {
+						require.NoError(t, committed.Fixture.DB.Model(&runPO{}).
+							Where("id = ?", committed.Fixture.Request.RunID).
+							UpdateColumn("metadata", []byte(`{"durable":"run-postimage-drift"}`)).Error)
+						return requireOutboxCalls(committed, 1)
+					},
+				},
+				{
+					name: "Context",
+					mutate: func(
+						t *testing.T,
+						committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+						_ *FinalizeRunSuccessRequest,
+					) func(*testing.T) {
+						require.NoError(t, committed.Fixture.DB.Model(&runPO{}).
+							Where("id = ?", committed.Fixture.Request.RunID).
+							UpdateColumn("context", []byte(`{"durable":"run-context-drift"}`)).Error)
+						return requireOutboxCalls(committed, 1)
+					},
+				},
+			},
+		},
+		{
+			name: "AttemptPostImage", withOutbox: true,
+			errorContains: "finalize_request_fingerprint",
+			variants: []replayConflictVariant{
+				{
+					name: "TraceID",
+					mutate: func(
+						t *testing.T,
+						committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+						_ *FinalizeRunSuccessRequest,
+					) func(*testing.T) {
+						require.NoError(t, committed.Fixture.DB.Model(&runAttemptPO{}).
+							Where("id = ?", 100).
+							UpdateColumn("trace_id", "attempt-postimage-drift").Error)
+						return requireOutboxCalls(committed, 1)
+					},
+				},
+				{
+					name: "EnrollmentVersion",
+					mutate: func(
+						t *testing.T,
+						committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+						_ *FinalizeRunSuccessRequest,
+					) func(*testing.T) {
+						require.NoError(t, committed.Fixture.DB.Model(&runAttemptPO{}).
+							Where("id = ?", 100).
+							UpdateColumn("enrollment_version", "attempt-enrollment-drift").Error)
+						return requireOutboxCalls(committed, 1)
+					},
+				},
+			},
+		},
+		{
+			name: "DurableCompletion", withOutbox: true,
+			errorContains: "completion",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&runEventPO{}).
+					Where("id = ?", committed.Fixture.Request.CompletionEvent.ID).
+					UpdateColumn("payload", []byte(`{"status":"durable-drift"}`)).Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "DurableMessage", withOutbox: true,
+			errorContains: "message",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&messagePO{}).
+					Where("id = ?", committed.Fixture.Request.Message.ID).
+					UpdateColumn("content", "durable message drift").Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "DurableTitle", withOutbox: true,
+			errorContains: "title",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&runEventPO{}).
+					Where("id = ?", committed.Fixture.Request.TitleEvent.ID).
+					UpdateColumn("payload", []byte(`{"thread_title":"durable drift"}`)).Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "DurableThreadTitle", withOutbox: true,
+			errorContains: "title",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.True(t, committed.First.TitleUpdated)
+				require.Equal(t, committed.Fixture.Request.TerminalCheckpoint, committed.First.TerminalCheckpoint)
+				require.NoError(t, committed.Fixture.DB.Model(&threadPO{}).
+					Where("id = ?", committed.Fixture.Request.Message.ThreadID).
+					UpdateColumn("title", "durable thread title drift").Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "DurableSelectedCheckpoint", withOutbox: true,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			errorContains: "checkpoint",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&checkpointPO{}).
+					Where("id = ?", committed.Fixture.Request.TerminalCheckpoint.ID).
+					UpdateColumn("channel_values", []byte(`{"terminal":"durable-drift"}`)).Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+		{
+			name: "DurableOutbox", withOutbox: true,
+			expectedCause: domainnotification.ErrIdempotencyConflict,
+			errorContains: "outbox",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&adaptiveVerifiedSuccessOutboxPOForTest{}).
+					Where("event_id = ?", committed.OutboxEvent.EventID).
+					UpdateColumn("fingerprint", strings.Repeat("d", sha256.Size*2)).Error)
+				return requireOutboxCalls(committed, 2)
+			},
+		},
+		{
+			name: "DurablePlanRevision", withOutbox: true,
+			expectedCause: ErrAdaptiveExecutionPlanRevisionConflict,
+			errorContains: "plan",
+			mutate: func(
+				t *testing.T,
+				committed *adaptiveVerifiedSuccessCommittedReplayFixtureForTest,
+				_ *FinalizeRunSuccessRequest,
+			) func(*testing.T) {
+				require.NoError(t, committed.Fixture.DB.Model(&agentRunPlanPO{}).
+					Where("run_id = ?", committed.Fixture.Request.AdaptiveGate.Evidence.PlanScopeRunID).
+					UpdateColumn("revision", committed.Fixture.Request.AdaptiveGate.Evidence.PlanRevision+1).Error)
+				return requireOutboxCalls(committed, 1)
+			},
+		},
+	}
+	runConflict := func(
+		t *testing.T,
+		test replayConflictCase,
+		mutate replayConflictMutation,
+	) {
+		t.Helper()
+		require.NotNil(t, mutate)
+		committed := prepareAdaptiveVerifiedSuccessCommittedReplayFixtureForTest(
+			t,
+			test.withOutbox,
+			test.titleConflict,
+		)
+		retry := cloneAdaptiveVerifiedSuccessRequestForTest(committed.Fixture.Request)
+		verify := mutate(t, &committed, &retry)
+		before := snapshotAdaptiveVerifiedSuccessDBForTest(t, committed.Fixture.DB)
+
+		result, err := (&threadRepository{db: committed.Fixture.DB}).FinalizeRunSuccess(
+			context.Background(),
+			retry,
+		)
+
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionVerifiedSuccessConflict)
+		if test.expectedCause != nil {
+			require.ErrorIs(t, err, test.expectedCause)
+		}
+		if test.errorContains != "" {
+			require.ErrorContains(t, err, test.errorContains)
+		}
+		if verify != nil {
+			verify(t)
+		}
+		require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, committed.Fixture.DB))
+	}
+	for _, test := range cases {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if len(test.variants) == 0 {
+				runConflict(t, test, test.mutate)
+				return
+			}
+			for _, variant := range test.variants {
+				variant := variant
+				t.Run(variant.name, func(t *testing.T) {
+					runConflict(t, test, variant.mutate)
+				})
+			}
+		})
+	}
+}
+
+func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExecutionRunAndAttempt(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		shared bool
+	}{
+		{name: "DistinctJournalAndExecutionRuns"},
+		{name: "SharedJournalAndExecutionRun", shared: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo, mock := canonicalMySQLMockRepository(t)
+			req := newValidAdaptiveVerifiedSuccessRequestForTest()
+			if test.shared {
+				req.AdaptiveGate.Decision.JournalRunID = req.RunID
+				req.AdaptiveGate.Evidence.JournalRunID = req.RunID
+				req.JournalEvent.JournalRunID = req.RunID
+				req.AdaptiveGate.VerificationEvent.Payload = adaptiveVerifiedSuccessPayloadMutationForTest(
+					t, req.AdaptiveGate.VerificationEvent.Payload,
+					func(fields map[string]any) { fields["journal_run_id"] = req.RunID },
+				)
+			}
+			sentinel := fmt.Errorf("adaptive verification tuple lock sentinel")
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
+				WithArgs(req.AdaptiveGate.Evidence.JournalRunID, 1).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"id", "thread_id", "parent_run_id", "space_id", "creator_id", "run_kind", "status", "execution_generation",
+					"lease_owner", "lease_token", "lease_expires_at", "cancel_requested_at",
+				}).AddRow(
+					req.AdaptiveGate.Evidence.JournalRunID, 10, 0, 10, 20, string(entity.RunKindTask),
+					string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil,
+				))
+			if !test.shared {
+				mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
+					WithArgs(req.RunID, 1).
+					WillReturnRows(sqlmock.NewRows([]string{
+						"id", "thread_id", "parent_run_id", "space_id", "creator_id", "status", "execution_generation", "lease_owner", "lease_token",
+						"lease_expires_at", "cancel_requested_at",
+					}).AddRow(req.RunID, 10, 0, 10, 20, string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil))
+			}
+			mock.ExpectQuery("SELECT .*FROM .*agent_threads.*FOR UPDATE").
+				WithArgs(int64(10), 1).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "creator_id", "title"}).
+					AddRow(10, 10, 20, "initial"))
+			mock.ExpectQuery("SELECT .*FROM .*run_attempts.*FOR UPDATE").
+				WithArgs(req.AdaptiveGate.Evidence.JournalRunID, "attempt-1", 1).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"id", "thread_id", "journal_run_id", "execution_run_id", "attempt_id", "status",
+					"active_slot", "next_sequence", "last_committed_sequence", "projection_state",
+				}).AddRow(100, 10, req.AdaptiveGate.Evidence.JournalRunID, 20, "attempt-1",
+					string(entity.RunAttemptStatusRunning), 1, 3, 2, string(entity.JournalProjectionStateHealthy)))
+			mock.ExpectQuery(
+				"SELECT .*FROM .*run_events.*journal_run_id.*attempt_id.*idempotency_key.*FOR UPDATE",
+			).
+				WithArgs(
+					req.AdaptiveGate.Evidence.JournalRunID,
+					req.AdaptiveGate.Evidence.AttemptID,
+					req.AdaptiveGate.VerificationIdempotencyKey,
+					1,
+				).
+				WillReturnError(sentinel)
+			mock.ExpectRollback()
+
+			result, err := repo.FinalizeRunSuccess(context.Background(), req)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, err, sentinel)
+		})
+	}
+}
+
+func TestThreadRepositoryFinalizeRunSuccessRollsBackAdaptiveVerificationOnLateOutboxFailure(t *testing.T) {
+	fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+	sentinel := fmt.Errorf("late adaptive outbox sentinel")
+	callbackObserved := false
+	outboxEvent := adaptiveVerifiedSuccessOutboxEventForTest(fixture.Request.Now)
+	outboxFingerprint := adaptiveVerifiedSuccessOutboxFingerprintOracleForTest(t, outboxEvent)
+	fixture.Request.OutboxIntent = &NotificationOutboxIntent{
+		Event: outboxEvent,
+		Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+			return fmt.Errorf("legacy append must not be used")
+		},
+		AppendWithResult: func(_ context.Context, tx *gorm.DB, _ domainnotification.Event) (bool, error) {
+			var run runPO
+			if err := tx.Where("id = ?", fixture.Request.RunID).First(&run).Error; err != nil {
+				return false, fmt.Errorf("callback cannot see terminal run: %w", err)
+			}
+			if entity.RunStatus(run.Status) != entity.RunStatusSucceeded {
+				return false, fmt.Errorf("callback saw run status %s", run.Status)
+			}
+			var attempt runAttemptPO
+			if err := tx.Where("id = ?", 100).First(&attempt).Error; err != nil {
+				return false, fmt.Errorf("callback cannot see terminal attempt: %w", err)
+			}
+			if attempt.Status != string(entity.RunAttemptStatusCompleted) || attempt.ActiveSlot != nil ||
+				attempt.NextSequence != fixture.Evidence.Authority.EventSequence+3 ||
+				attempt.LastCommittedSequence != fixture.Evidence.Authority.EventSequence+1 ||
+				attempt.TerminalEventID == nil || *attempt.TerminalEventID != fixture.Request.CompletionEvent.ID ||
+				attempt.EndedAt == nil || *attempt.EndedAt != fixture.Request.Now || attempt.UpdatedAt != fixture.Request.Now {
+				return false, fmt.Errorf("callback saw incomplete terminal attempt")
+			}
+			var message messagePO
+			if err := tx.Where("id = ?", fixture.Request.Message.ID).First(&message).Error; err != nil ||
+				message.Content != fixture.Request.Message.Content {
+				return false, fmt.Errorf("callback cannot see final message: %w", err)
+			}
+			var verification, completion runEventPO
+			if err := tx.Where("id = ?", fixture.Request.AdaptiveGate.VerificationEvent.ID).
+				First(&verification).Error; err != nil {
+				return false, fmt.Errorf("callback cannot see verification: %w", err)
+			}
+			if err := tx.Where("id = ?", fixture.Request.CompletionEvent.ID).
+				First(&completion).Error; err != nil {
+				return false, fmt.Errorf("callback cannot see completion: %w", err)
+			}
+			if verification.Sequence == nil || completion.Sequence == nil ||
+				*verification.Sequence >= *completion.Sequence {
+				return false, fmt.Errorf("callback saw invalid event order")
+			}
+			var checkpoint checkpointPO
+			if err := tx.Where("id = ?", fixture.Request.TerminalCheckpoint.ID).
+				First(&checkpoint).Error; err != nil ||
+				checkpoint.ParentCheckpointID != fixture.Evidence.Authority.CheckpointID {
+				return false, fmt.Errorf("callback cannot see selected checkpoint: %w", err)
+			}
+			var thread threadPO
+			if err := tx.Where("id = ?", int64(10)).First(&thread).Error; err != nil ||
+				thread.Title != fixture.Request.ThreadTitle {
+				return false, fmt.Errorf("callback cannot see committed title: %w", err)
+			}
+			outboxRow := adaptiveVerifiedSuccessOutboxPOForTest{
+				EventID: outboxEvent.EventID, Fingerprint: outboxFingerprint,
+			}
+			if err := tx.Create(&outboxRow).Error; err != nil {
+				return false, err
+			}
+			callbackObserved = true
+			return false, sentinel
+		},
+	}
+	for _, absent := range []struct {
+		model any
+		id    int64
+	}{
+		{model: &messagePO{}, id: fixture.Request.Message.ID},
+		{model: &runEventPO{}, id: fixture.Request.TitleEvent.ID},
+		{model: &runEventPO{}, id: fixture.Request.AdaptiveGate.VerificationEvent.ID},
+		{model: &runEventPO{}, id: fixture.Request.CompletionEvent.ID},
+		{model: &checkpointPO{}, id: fixture.Request.TerminalCheckpoint.ID},
+	} {
+		var count int64
+		require.NoError(t, fixture.DB.Model(absent.model).Where("id = ?", absent.id).Count(&count).Error)
+		require.Zero(t, count)
+	}
+	before := snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB)
+
+	result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, sentinel)
+	require.True(t, callbackObserved)
+	require.Equal(t, before, snapshotAdaptiveVerifiedSuccessDBForTest(t, fixture.DB))
+}
+
+func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateAndCancellationHaveSingleTerminalOutcome(t *testing.T) {
+	t.Run("CancelFirst", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+		cancelEvent := &entity.RunEvent{
+			ID: 7100, ThreadID: 10, RunID: 20, EventType: "run.canceled", Payload: `{}`, CreatedAt: 1_150,
+		}
+		cancelJournal := &entity.JournalEvent{
+			ID: 7100, ThreadID: 10, RunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
+			IdempotencyKey: "cancel-1", EventType: "run.lifecycle",
+			Status: string(entity.RunAttemptStatusCancelled), Visibility: entity.JournalVisibilityUser,
+			Payload:            `{"type":"terminal","data":{"status":"cancelled"}}`,
+			OccurredAtUnixNano: 1_150 * int64(time.Millisecond), CreatedAt: 1_150,
+		}
+		_, err := fixture.Repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+			RunID: 20, Now: 1_150, Event: cancelEvent, JournalEvent: cancelJournal,
+		})
+		require.NoError(t, err)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrRunCanceled)
+		var verificationCount, completionCount, canceledCount int64
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "adaptive.verification").Count(&verificationCount).Error)
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "run.completed").Count(&completionCount).Error)
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "run.canceled").Count(&canceledCount).Error)
+		require.Zero(t, verificationCount)
+		require.Zero(t, completionCount)
+		require.Equal(t, int64(1), canceledCount)
+		var terminalEvents []runEventPO
+		require.NoError(t, fixture.DB.Where("event_type IN ?", []string{
+			"run.completed", "run.succeeded", "run.failed", "run.canceled", "run.cancelled", "run.timed_out",
+		}).Order("id ASC").Find(&terminalEvents).Error)
+		require.Len(t, terminalEvents, 1)
+		require.Equal(t, "run.canceled", terminalEvents[0].EventType)
+		require.Equal(t, int64(7100), terminalEvents[0].ID)
+	})
+
+	t.Run("SuccessFirst", func(t *testing.T) {
+		fixture := prepareAdaptiveVerifiedSuccessFixtureForTest(t)
+
+		result, err := fixture.Repo.FinalizeRunSuccess(context.Background(), fixture.Request)
+		require.NoError(t, err)
+		require.NotNil(t, result.VerificationEvent)
+		_, cancelErr := fixture.Repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+			RunID: 20, Now: 1_300,
+			Event: &entity.RunEvent{
+				ID: 7100, ThreadID: 10, RunID: 20, EventType: "run.canceled", Payload: `{}`, CreatedAt: 1_300,
+			},
+		})
+		require.Error(t, cancelErr)
+		var verificationCount, completionCount, canceledCount int64
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "adaptive.verification").Count(&verificationCount).Error)
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "run.completed").Count(&completionCount).Error)
+		require.NoError(t, fixture.DB.Model(&runEventPO{}).Where("event_type = ?", "run.canceled").Count(&canceledCount).Error)
+		require.Equal(t, int64(1), verificationCount)
+		require.Equal(t, int64(1), completionCount)
+		require.Zero(t, canceledCount)
+	})
+}
 
 func TestAdaptiveExecutionPlanItemFingerprintUsesCanonicalJSON(t *testing.T) {
 	items := []*entity.AgentRunPlanItem{
@@ -502,7 +3698,7 @@ func TestAdaptiveExecutionBoundaryDuplicateVerificationReplaysAfterRepositoryRel
 	seedAdaptiveExecutionInitialState(t, db)
 	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
 	req.Event.EventType = "adaptive.verification"
-	req.Event.Payload = `{"schema":"workbench-adaptive-verification.v1","status":"passed"}`
+	req.Event.Payload = `{"schema":"workbench-adaptive-verification.v1","status":"blocked"}`
 	first, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(context.Background(), req)
 	require.NoError(t, err)
 	beforeReplay := snapshotAdaptiveExecutionDBForTest(t, db)
