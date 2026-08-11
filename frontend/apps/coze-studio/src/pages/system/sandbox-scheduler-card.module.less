@@ -1,0 +1,24 @@
+.card { padding: 16px; background: #fff; border: 1px solid var(--newx-color-border, #dfe6e0); border-radius: 12px; }
+.card header { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+.card h3, .card p { margin: 0; }.card h3 { font-size: 15px; }.card p { margin-top: 4px; font-size: 12px; color: #607067; }
+
+.card button, .card input { min-height: 32px; padding: 6px 10px;
+
+ font: inherit;
+
+ background: #fff; border: 1px solid #d5dbe6; border-radius: 7px; }
+
+.warning, .message { margin-top: 12px; padding: 9px 10px;
+
+ font-size: 12px; color: #755300;
+
+ background: #fff7dc; border-radius: 8px; }.message { color: #25653f; background: #edf8f0; }
+.body { margin-top: 14px; }.fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }.fields label { display: grid; gap: 4px; font-size: 11px; color: #607067; }.workloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+
+.workloads article { display: grid; gap: 8px;
+
+ padding: 10px;
+
+ background: #f7f9f7; border-radius: 8px; }.workloadFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }.workloadFields label { display: grid; gap: 3px; font-size: 11px; color: #607067; }.body footer { margin-top: 12px; text-align: right; }.body footer button { color: #fff; background: #218c55; border-color: #218c55; }
+
+@media (max-width: 900px) { .fields, .workloads { grid-template-columns: 1fr; } }

@@ -10,6 +10,8 @@ import {
   deleteSandboxProvider,
   getSandboxCapabilities,
   getSandboxProviderSummary,
+  getSandboxRuntimeStatus,
+  getSandboxSchedulerSettings,
   healthCheckSandboxProvider,
   isSandboxConflict,
   isSandboxPermissionError,
@@ -20,6 +22,7 @@ import {
   SandboxAPIError,
   setSandboxProviderDefault,
   setSandboxProviderEnabled,
+  updateSandboxSchedulerSettings,
   updateSandboxProvider,
 } from '../sandbox-service';
 import { fullPolicy, providerFixture } from './sandbox-test-fixtures';
@@ -32,6 +35,106 @@ const ok = (data: object) => ({
 
 describe('sandbox service', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('loads and saves the complete scheduler snapshot without surfacing runner secrets', async () => {
+    const settings = {
+      total_weight: 2,
+      max_outstanding: 32,
+      global_queue_depth: 32,
+      per_space_queue_depth: 8,
+      per_user_queue_depth: 4,
+      host_memory_reserve_mb: 1536,
+      cancel_grace_seconds: 5,
+      health_failure_threshold: 3,
+      health_recovery_threshold: 2,
+      workloads: {
+        agent: {
+          weight: 2,
+          cpu_limit: 1.25,
+          memory_limit_mb: 1536,
+          pid_limit: 128,
+          queue_timeout_seconds: 600,
+          idle_ttl_seconds: 300,
+        },
+        appdev: {
+          weight: 2,
+          cpu_limit: 1.25,
+          memory_limit_mb: 1536,
+          pid_limit: 192,
+          queue_timeout_seconds: 1200,
+          idle_ttl_seconds: 600,
+        },
+        mcp_stdio: {
+          weight: 1,
+          cpu_limit: 0.4,
+          memory_limit_mb: 384,
+          pid_limit: 64,
+          queue_timeout_seconds: 300,
+          idle_ttl_seconds: 180,
+        },
+        plugin: {
+          weight: 1,
+          cpu_limit: 0.4,
+          memory_limit_mb: 384,
+          pid_limit: 64,
+          queue_timeout_seconds: 300,
+          idle_ttl_seconds: 0,
+        },
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ version: 4, settings }))
+      .mockResolvedValueOnce(
+        ok({
+          version: 5,
+          settings,
+          applied: false,
+          reason_code: 'PROVIDER_UNAVAILABLE',
+        }),
+      )
+      .mockResolvedValueOnce(
+        ok({
+          available: false,
+          desired_config_version: 5,
+          applied_config_version: 0,
+          reason_code: 'PROVIDER_UNAVAILABLE',
+          endpoint: 'must-not-surface',
+          credential: 'must-not-surface',
+        }),
+      );
+    globalThis.fetch = fetchMock as never;
+
+    expect(await getSandboxSchedulerSettings()).toEqual({
+      version: 4,
+      settings,
+    });
+    expect(await updateSandboxSchedulerSettings(4, settings)).toMatchObject({
+      version: 5,
+      applied: false,
+    });
+    const runtime = await getSandboxRuntimeStatus();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/sandboxes/scheduler-settings',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/sandboxes/scheduler-settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ expected_version: 4, settings }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/sandboxes/runtime-status',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(runtime).not.toHaveProperty('endpoint');
+    expect(runtime).not.toHaveProperty('credential');
+  });
 
   it('loads list filters plus server-owned defaults, summary and capabilities', async () => {
     const fetchMock = vi

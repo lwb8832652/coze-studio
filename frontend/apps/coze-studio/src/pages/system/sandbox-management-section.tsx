@@ -37,6 +37,7 @@ import {
   type SandboxProviderType,
   type SandboxScope,
 } from './sandbox-service';
+import { SandboxSchedulerCard } from './sandbox-scheduler-card';
 import {
   SandboxProviderForm,
   type SandboxProviderFormValue,
@@ -648,6 +649,8 @@ export const SandboxManagementSection = () => {
           })}
         </div>
       </section>
+
+      <SandboxSchedulerCard />
 
       <section className={styles.filters} aria-label="筛选 Sandbox Provider">
         <input

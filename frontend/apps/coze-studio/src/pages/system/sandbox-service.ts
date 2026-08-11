@@ -109,6 +109,52 @@ export interface SandboxProviderMutation {
   version: number;
 }
 
+export interface SandboxSchedulerWorkload {
+  weight: number;
+  cpu_limit: number;
+  memory_limit_mb: number;
+  pid_limit: number;
+  queue_timeout_seconds: number;
+  idle_ttl_seconds: number;
+}
+
+export interface SandboxSchedulerSettings {
+  total_weight: number;
+  max_outstanding: number;
+  global_queue_depth: number;
+  per_space_queue_depth: number;
+  per_user_queue_depth: number;
+  host_memory_reserve_mb: number;
+  cancel_grace_seconds: number;
+  health_failure_threshold: number;
+  health_recovery_threshold: number;
+  workloads: Record<SandboxScope, SandboxSchedulerWorkload>;
+}
+
+export interface SandboxSchedulerSettingsSnapshot {
+  version: number;
+  settings: SandboxSchedulerSettings;
+}
+
+export interface SandboxSchedulerSettingsUpdate
+  extends SandboxSchedulerSettingsSnapshot {
+  applied: boolean;
+  reason_code?: string;
+}
+
+export interface SandboxRuntimeStatus {
+  available: boolean;
+  desired_config_version: number;
+  applied_config_version: number;
+  queue_depth: number;
+  active_slots: number;
+  slot_capacity: number;
+  queue_high_watermark: number;
+  draining_count: number;
+  quarantined_count: number;
+  reason_code?: string;
+}
+
 export interface SandboxAuditEvent {
   id: number;
   provider_id: number;
@@ -528,6 +574,45 @@ export const getSandboxCapabilities = async (
   return {
     control_plane: sanitizeCapability(result.control_plane),
     local_debug: sanitizeCapability(result.local_debug),
+  };
+};
+
+export const getSandboxSchedulerSettings = async (
+  signal?: AbortSignal,
+): Promise<SandboxSchedulerSettingsSnapshot> =>
+  requestSandbox<SandboxSchedulerSettingsSnapshot>(
+    '/api/admin/sandboxes/scheduler-settings',
+    { method: 'GET', signal },
+  );
+
+export const updateSandboxSchedulerSettings = async (
+  expectedVersion: number,
+  settings: SandboxSchedulerSettings,
+  signal?: AbortSignal,
+): Promise<SandboxSchedulerSettingsUpdate> =>
+  requestSandbox<SandboxSchedulerSettingsUpdate>(
+    '/api/admin/sandboxes/scheduler-settings',
+    jsonRequest('PUT', { expected_version: expectedVersion, settings }, signal),
+  );
+
+export const getSandboxRuntimeStatus = async (
+  signal?: AbortSignal,
+): Promise<SandboxRuntimeStatus> => {
+  const status = await requestSandbox<SandboxRuntimeStatus>(
+    '/api/admin/sandboxes/runtime-status',
+    { method: 'GET', signal },
+  );
+  return {
+    available: Boolean(status.available),
+    desired_config_version: Number(status.desired_config_version || 0),
+    applied_config_version: Number(status.applied_config_version || 0),
+    queue_depth: Number(status.queue_depth || 0),
+    active_slots: Number(status.active_slots || 0),
+    slot_capacity: Number(status.slot_capacity || 0),
+    queue_high_watermark: Number(status.queue_high_watermark || 0),
+    draining_count: Number(status.draining_count || 0),
+    quarantined_count: Number(status.quarantined_count || 0),
+    reason_code: String(status.reason_code || '').slice(0, 64) || undefined,
   };
 };
 
