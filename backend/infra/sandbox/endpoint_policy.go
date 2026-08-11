@@ -11,6 +11,7 @@ import (
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 type RemoteProviderConfig struct {
@@ -19,6 +20,7 @@ type RemoteProviderConfig struct {
 	AllowedHosts        []string
 	AllowedPrivateCIDRs []string
 	Timeout             time.Duration
+	IdentitySigner      sandboxidentity.Signer
 }
 
 type endpointPolicy struct {

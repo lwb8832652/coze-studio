@@ -268,6 +268,12 @@ type AsyncRuntimeProvider interface {
 	KeepAlive(ctx context.Context, executionID string) error
 }
 
+// QueueStatusProvider is optional; existing asynchronous providers remain
+// source-compatible without queue status support.
+type QueueStatusProvider interface {
+	QueueStatus(context.Context, string) (QueueStatus, error)
+}
+
 // ExecutionReconciler resolves an ambiguous asynchronous Execute submission by
 // replaying the exact canonical request and idempotency key. Implementations
 // must use the same endpoint and wire body. The server must consult its
@@ -433,6 +439,32 @@ type HealthResult struct {
 	ProtocolVersion string
 	Status          domainsandbox.HealthStatus
 	Capabilities    []domainsandbox.Scope
+	Features        []domainsandbox.ProviderFeature
+}
+
+type ExecutionIdentity struct {
+	SpaceID     int64
+	UserID      int64
+	ProjectID   string
+	SessionID   string
+	ExecutionID string
+}
+
+func (identity ExecutionIdentity) IsZero() bool {
+	return identity.SpaceID == 0 && identity.UserID == 0 && identity.ProjectID == "" && identity.SessionID == "" && identity.ExecutionID == ""
+}
+
+func (ExecutionIdentity) String() string   { return "ExecutionIdentity{value:<redacted>}" }
+func (ExecutionIdentity) GoString() string { return "ExecutionIdentity{value:<redacted>}" }
+
+type QueueStatus struct {
+	Schema               string `json:"schema"`
+	Waiting              bool   `json:"waiting"`
+	ApproximatePosition  int    `json:"approximate_position"`
+	EstimatedWaitSeconds int    `json:"estimated_wait_seconds"`
+	DeadlineUnixMilli    int64  `json:"deadline_unix_milli"`
+	Cancelable           bool   `json:"cancelable"`
+	ReasonCode           string `json:"reason_code"`
 }
 
 type FileReference struct {
@@ -489,6 +521,7 @@ type ExecuteRequest struct {
 	Stdin              []byte
 	Files              []FileReference
 	ArtifactReferences []ArtifactReference `json:"-"`
+	Identity           ExecutionIdentity   `json:"-"`
 }
 
 type ArtifactSummary struct {
@@ -755,6 +788,7 @@ func normalizeExecuteRequestWithTemporalMode(input ExecuteRequest, now time.Time
 		Stdin:              append([]byte(nil), input.Stdin...),
 		Files:              files,
 		ArtifactReferences: artifactReferences,
+		Identity:           input.Identity,
 	}, nil
 }
 
@@ -775,7 +809,11 @@ func normalizeHealthResult(input HealthResult) (HealthResult, error) {
 		}
 		capabilities = append(capabilities, normalized...)
 	}
-	return HealthResult{ProtocolVersion: HealthProtocolV1, Status: input.Status, Capabilities: capabilities}, nil
+	features, err := domainsandbox.NormalizeProviderFeatures(input.Features)
+	if err != nil {
+		return HealthResult{}, domainsandbox.ErrInvalidInput
+	}
+	return HealthResult{ProtocolVersion: HealthProtocolV1, Status: input.Status, Capabilities: capabilities, Features: features}, nil
 }
 
 // NormalizeExecuteResult is the single result contract shared by provider

@@ -709,6 +709,7 @@ func NormalizeHealthSnapshot(snapshot HealthSnapshot, providerScopes []Scope) (H
 
 	normalized := snapshot
 	normalized.Capabilities = nil
+	normalized.Features = nil
 	normalized.ReasonCode = reasonCode
 	normalized.Message = message
 	if len(snapshot.Capabilities) > 0 {
@@ -723,6 +724,11 @@ func NormalizeHealthSnapshot(snapshot HealthSnapshot, providerScopes []Scope) (H
 		}
 		normalized.Capabilities = normalizedCapabilities
 	}
+	features, err := NormalizeProviderFeatures(snapshot.Features)
+	if err != nil {
+		return HealthSnapshot{}, err
+	}
+	normalized.Features = features
 
 	switch snapshot.Status {
 	case HealthStatusHealthy, HealthStatusDegraded, HealthStatusUnhealthy:
@@ -730,12 +736,33 @@ func NormalizeHealthSnapshot(snapshot HealthSnapshot, providerScopes []Scope) (H
 			return HealthSnapshot{}, ErrInvalidInput
 		}
 	case HealthStatusUnknown:
-		if !snapshot.CheckedAt.IsZero() || snapshot.LatencyMillis != 0 || len(snapshot.Capabilities) != 0 {
+		if !snapshot.CheckedAt.IsZero() || snapshot.LatencyMillis != 0 || len(snapshot.Capabilities) != 0 || len(snapshot.Features) != 0 {
 			return HealthSnapshot{}, ErrInvalidInput
 		}
 	}
 	if !snapshot.CheckedAt.IsZero() {
 		normalized.CheckedAt = snapshot.CheckedAt.UTC()
+	}
+	return normalized, nil
+}
+
+// NormalizeProviderFeatures keeps optional, versioned protocol extensions
+// separate from Provider capabilities (which remain scoped workload support).
+func NormalizeProviderFeatures(features []ProviderFeature) ([]ProviderFeature, error) {
+	if len(features) == 0 {
+		return nil, nil
+	}
+	normalized := make([]ProviderFeature, 0, len(features))
+	seen := make(map[ProviderFeature]struct{}, len(features))
+	for _, feature := range features {
+		if feature != ProviderFeatureQueueStatusV1 {
+			return nil, ErrInvalidInput
+		}
+		if _, duplicate := seen[feature]; duplicate {
+			return nil, ErrInvalidInput
+		}
+		seen[feature] = struct{}{}
+		normalized = append(normalized, feature)
 	}
 	return normalized, nil
 }

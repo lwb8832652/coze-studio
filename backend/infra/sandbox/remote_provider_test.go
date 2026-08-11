@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 func TestRemoteProviderExecuteUsesV1ProtocolAndReturnsBoundedProjection(t *testing.T) {
@@ -175,15 +177,86 @@ func TestRemoteProviderMCPStdioUsesExistingExecutionEndpoint(t *testing.T) {
 	}
 }
 
+func TestRemoteProviderExecutionIdentityUsesHeadersWithoutChangingExecuteJSON(t *testing.T) {
+	t.Parallel()
+
+	keyring, err := sandboxidentity.NewKeyring("current", map[string][]byte{"current": []byte("test-signing-key-material")}, time.Minute)
+	if err != nil {
+		t.Fatalf("NewKeyring() error = %v", err)
+	}
+	keyring.Nonce = func() (string, error) { return "nonce_123", nil }
+	config := validRemoteProviderConfig()
+	config.IdentitySigner = keyring
+	request := validExecuteRequest()
+	request.Identity = ExecutionIdentity{SpaceID: 11, UserID: 22, ExecutionID: "exec_123"}
+	wantBody, _, err := canonicalExecuteRequest(request, false, timeNow())
+	if err != nil {
+		t.Fatalf("canonical execute request = %v", err)
+	}
+	digest := sha256.Sum256(wantBody)
+	provider, err := newRemoteProviderWithDoer(config, providerDoerFunc(func(httpRequest *http.Request) (*http.Response, error) {
+		body, readErr := io.ReadAll(httpRequest.Body)
+		if readErr != nil {
+			t.Fatalf("read execute body: %v", readErr)
+		}
+		if gotDigest := sha256.Sum256(body); gotDigest != digest {
+			t.Fatalf("execute body changed with identity: got_length=%d got_sha256=%x want_length=%d want_sha256=%x", len(body), gotDigest, len(wantBody), digest)
+		}
+		contextHeader := httpRequest.Header.Get(SandboxContextHeader)
+		signatureHeader := httpRequest.Header.Get(SandboxContextSignatureHeader)
+		if contextHeader == "" || signatureHeader == "" {
+			t.Fatalf("identity headers missing: context_present=%t signature_present=%t", contextHeader != "", signatureHeader != "")
+		}
+		if _, verifyErr := keyring.Verify(contextHeader, signatureHeader, sandboxidentity.ScopeAgent, digest[:], time.Now().UTC()); verifyErr != nil {
+			t.Fatalf("verify identity headers: %v", verifyErr)
+		}
+		return jsonResponse(httpRequest, http.StatusOK, `{"schema":"coze.sandbox.execute.v1","execution_id":"exec_123","status":"succeeded","exit_code":0,"stdout":"","stderr":"","artifacts":[]}`), nil
+	}))
+	if err != nil {
+		t.Fatalf("new remote provider = %v", err)
+	}
+	if _, err := provider.Execute(context.Background(), request); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
+func TestRemoteProviderExecutionIdentityRequiresSigner(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	provider := mustRemoteProvider(t, providerDoerFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("unexpected request")
+	}))
+	request := validExecuteRequest()
+	request.Identity = ExecutionIdentity{SpaceID: 11, UserID: 22, ExecutionID: "exec_123"}
+	if _, err := provider.Execute(context.Background(), request); !errors.Is(err, domainsandbox.ErrConfigurationInvalid) || calls != 0 {
+		t.Fatalf("Execute() error/calls = %v/%d", err, calls)
+	}
+}
+
 func TestRemoteProviderHealthUsesStrictBoundedProtocol(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		body    string
-		wantErr error
+		body         string
+		wantErr      error
+		wantFeatures []domainsandbox.ProviderFeature
 	}{
 		"valid": {
 			body: `{"protocol_version":"v1","status":"healthy","capabilities":["agent","mcp_stdio"]}`,
+		},
+		"queue status feature": {
+			body:         `{"protocol_version":"v1","status":"healthy","capabilities":["agent"],"features":["queue_status_v1"]}`,
+			wantFeatures: []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+		},
+		"unknown feature": {
+			body:    `{"protocol_version":"v1","status":"healthy","capabilities":["agent"],"features":["unsafe_debug_v1"]}`,
+			wantErr: domainsandbox.ErrProviderUnhealthy,
+		},
+		"duplicate feature": {
+			body:    `{"protocol_version":"v1","status":"healthy","capabilities":["agent"],"features":["queue_status_v1","queue_status_v1"]}`,
+			wantErr: domainsandbox.ErrProviderUnhealthy,
 		},
 		"unknown field": {
 			body:    `{"protocol_version":"v1","status":"healthy","capabilities":["agent"],"raw":"secret"}`,
@@ -249,8 +322,16 @@ func TestRemoteProviderHealthUsesStrictBoundedProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatalf("health: %v", err)
 			}
-			if result.ProtocolVersion != HealthProtocolV1 || result.Status != domainsandbox.HealthStatusHealthy || len(result.Capabilities) != 2 {
+			if result.ProtocolVersion != HealthProtocolV1 || result.Status != domainsandbox.HealthStatusHealthy || len(result.Capabilities) != 2 && test.wantFeatures == nil {
 				t.Fatalf("health result = %#v", result)
+			}
+			if len(result.Features) != len(test.wantFeatures) {
+				t.Fatalf("health features = %#v, want %#v", result.Features, test.wantFeatures)
+			}
+			for index := range test.wantFeatures {
+				if result.Features[index] != test.wantFeatures[index] {
+					t.Fatalf("health features = %#v, want %#v", result.Features, test.wantFeatures)
+				}
 			}
 		})
 	}

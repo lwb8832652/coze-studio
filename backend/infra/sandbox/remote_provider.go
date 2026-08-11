@@ -6,6 +6,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,14 +21,16 @@ import (
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 type RemoteProvider struct {
-	endpoint   *endpointPolicy
-	credential string
-	doer       remoteHTTPDoer
-	closeState atomic.Pointer[remoteProviderCloseAttempt]
-	closed     atomic.Bool
+	endpoint       *endpointPolicy
+	credential     string
+	doer           remoteHTTPDoer
+	identitySigner sandboxidentity.Signer
+	closeState     atomic.Pointer[remoteProviderCloseAttempt]
+	closed         atomic.Bool
 }
 
 type remoteProviderCloseAttempt struct {
@@ -40,6 +43,9 @@ const (
 	ReconciliationProtocolVersionHeader  = "X-Coze-Sandbox-Reconciliation-Version"
 	ExecutionLookupProtocolVersionHeader = "X-Coze-Sandbox-Execution-Lookup-Version"
 	ExecutionLookupProtocolVersionV1     = "v1"
+	QueueStatusSchemaV1                  = "coze.sandbox.queue_status.v1"
+	SandboxContextHeader                 = "X-Coze-Sandbox-Context"
+	SandboxContextSignatureHeader        = "X-Coze-Sandbox-Context-Signature"
 )
 
 func (p *RemoteProvider) CloseContext(ctx context.Context) error {
@@ -105,10 +111,13 @@ var errRemoteJSONInvalid = errors.New("sandbox provider response JSON is invalid
 const maxRemoteJSONDepth = 32
 
 type healthResponseV1 struct {
-	ProtocolVersion string                     `json:"protocol_version"`
-	Status          domainsandbox.HealthStatus `json:"status"`
-	Capabilities    []domainsandbox.Scope      `json:"capabilities"`
+	ProtocolVersion string                          `json:"protocol_version"`
+	Status          domainsandbox.HealthStatus      `json:"status"`
+	Capabilities    []domainsandbox.Scope           `json:"capabilities"`
+	Features        []domainsandbox.ProviderFeature `json:"features,omitempty"`
 }
+
+type queueStatusResponseV1 QueueStatus
 
 type runtimePolicyV1 struct {
 	TimeoutSeconds          int                           `json:"timeout_seconds"`
@@ -228,7 +237,7 @@ func NewRemoteProvider(config RemoteProviderConfig) (*RemoteProvider, error) {
 	if err != nil {
 		return nil, domainsandbox.ErrInvalidInput
 	}
-	return &RemoteProvider{endpoint: endpoint, credential: config.Credential, doer: client}, nil
+	return &RemoteProvider{endpoint: endpoint, credential: config.Credential, doer: client, identitySigner: config.IdentitySigner}, nil
 }
 
 func newRemoteProviderWithDoer(config RemoteProviderConfig, doer remoteHTTPDoer) (*RemoteProvider, error) {
@@ -239,7 +248,7 @@ func newRemoteProviderWithDoer(config RemoteProviderConfig, doer remoteHTTPDoer)
 	if doer == nil {
 		return nil, domainsandbox.ErrInvalidInput
 	}
-	return &RemoteProvider{endpoint: endpoint, credential: config.Credential, doer: doer}, nil
+	return &RemoteProvider{endpoint: endpoint, credential: config.Credential, doer: doer, identitySigner: config.IdentitySigner}, nil
 }
 
 func validateRemoteProviderConfig(config RemoteProviderConfig) (*endpointPolicy, error) {
@@ -281,11 +290,60 @@ func (p *RemoteProvider) Health(ctx context.Context) (HealthResult, error) {
 		ProtocolVersion: wire.ProtocolVersion,
 		Status:          wire.Status,
 		Capabilities:    wire.Capabilities,
+		Features:        wire.Features,
 	})
 	if err != nil {
 		return HealthResult{}, domainsandbox.ErrProviderUnhealthy
 	}
 	return result, nil
+}
+
+func (p *RemoteProvider) QueueStatus(ctx context.Context, executionID string) (QueueStatus, error) {
+	if p == nil || ctx == nil || !validExecutionID(executionID) {
+		return QueueStatus{}, domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return QueueStatus{}, err
+	}
+	ctx = safehttp.WithResponseBodyLimit(ctx, MaxHealthResponseBodyBytes)
+	request, err := p.newRequest(ctx, http.MethodGet, "/v1/executions/"+executionID+"/queue-status", nil)
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	response, err := p.doer.Do(request)
+	if err != nil {
+		return QueueStatus{}, mapProviderErrorWithContext(request.Context(), err)
+	}
+	defer response.Body.Close()
+	if err := mapHTTPStatus(response.StatusCode); err != nil {
+		return QueueStatus{}, err
+	}
+	var wire queueStatusResponseV1
+	if err := decodeStrictJSONResponseContext(request.Context(), response, MaxHealthResponseBodyBytes, &wire); err != nil {
+		return QueueStatus{}, err
+	}
+	status := QueueStatus(wire)
+	if status.Schema != QueueStatusSchemaV1 || status.ApproximatePosition < 0 || status.EstimatedWaitSeconds < 0 ||
+		status.DeadlineUnixMilli < 0 || !validQueueReasonCode(status.ReasonCode) {
+		return QueueStatus{}, domainsandbox.ErrProviderUnhealthy
+	}
+	return status, nil
+}
+
+func validQueueReasonCode(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > domainsandbox.MaxHealthReasonCodeLength {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *RemoteProvider) Execute(ctx context.Context, input ExecuteRequest) (ExecuteResult, error) {
@@ -403,6 +461,23 @@ func (p *RemoteProvider) execute(ctx context.Context, input ExecuteRequest, reco
 	}
 	if err := request.Context().Err(); err != nil {
 		return ExecuteResult{}, executionNotSubmitted(err)
+	}
+	if !normalized.Identity.IsZero() {
+		if p.identitySigner == nil {
+			return ExecuteResult{}, domainsandbox.ErrConfigurationInvalid
+		}
+		digest := sha256.Sum256(body)
+		signed, signErr := p.identitySigner.Sign(sandboxidentity.Request{
+			Scope: sandboxidentity.Scope(normalized.Scope), SpaceID: normalized.Identity.SpaceID,
+			UserID: normalized.Identity.UserID, ProjectID: normalized.Identity.ProjectID,
+			SessionID: normalized.Identity.SessionID, ExecutionID: normalized.Identity.ExecutionID,
+			RequestDigest: digest[:],
+		})
+		if signErr != nil {
+			return ExecuteResult{}, domainsandbox.ErrInvalidInput
+		}
+		request.Header.Set(SandboxContextHeader, signed.Context)
+		request.Header.Set(SandboxContextSignatureHeader, signed.Signature)
 	}
 	response, err := p.doer.Do(request)
 	if err != nil {

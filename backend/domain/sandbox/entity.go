@@ -31,6 +31,10 @@ const (
 	ScopePlugin   Scope = "plugin"
 )
 
+type ProviderFeature string
+
+const ProviderFeatureQueueStatusV1 ProviderFeature = "queue_status_v1"
+
 type ProviderType string
 
 const (
@@ -202,6 +206,7 @@ type RuntimePolicy struct {
 type HealthSnapshot struct {
 	Status        HealthStatus
 	Capabilities  []Scope
+	Features      []ProviderFeature
 	ReasonCode    string
 	Message       string
 	LatencyMillis int64
