@@ -546,7 +546,7 @@ func TestSearchCanonicalThreadsSortsByProjectedSDKStatus(t *testing.T) {
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "busy",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 
@@ -934,7 +934,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "message-000",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 	for index := 1; index <= 125; index++ {
@@ -1349,7 +1349,7 @@ func createCanonicalStateFixture(
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "state fixture",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 	checkpoint, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{

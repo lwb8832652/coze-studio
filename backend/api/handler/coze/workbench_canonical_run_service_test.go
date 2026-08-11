@@ -453,7 +453,7 @@ func TestCanonicalRunTopLevelRetryFingerprintScopesSourceAndOperation(t *testing
 		AssistantID:    "agent",
 		MessageContent: "retry the current task",
 		Metadata:       `{"source":"task_retry"}`,
-		Config:         `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:         `{"runtime":"eino_adk"}`,
 		Context:        `{"locale":"zh-CN"}`,
 		Options: canonicalRunOptions{
 			StreamModes:       []string{"messages-tuple", "updates"},
