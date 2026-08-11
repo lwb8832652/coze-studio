@@ -111,6 +111,18 @@ method/path pair，always-on canonical Workbench 路由合计 54 条。前端页
 fallback。session principal 和 path resource 决定身份与资源归属，workspace 请求
 使用 `X-Coze-Space-ID` 并由服务端再次授权。
 
+P1M-A 已冻结 canonical 外部执行控制：CreateThread、Create/Wait/Stream Run、Resume
+和 Subagent Retry 在 JSON binder 与持久化前，按结构化路径拒绝
+`requested_policy`、`mode`、`thinking_enabled`、`reasoning_effort`、
+`is_plan_mode`、`subagent_enabled` 和 `max_concurrent_subagents`。第一方前端不再写入
+这些字段，并暂时隐藏“模型推理”控件；`runtime=eino_adk`、模型、Skill、MCP、知识库、
+数据库和资源配置仍是合法输入。该冻结不代表后端 mode、ADK consumer 或恢复继承已经退休。
+
+整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
+统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用
+`DeleteThreadIfIdle`。P1L 完成并在移除 guard 的同一候选 SHA 上重验前，底层 idle cascade
+仍不可从 canonical HTTP 到达；Artifact、Upload、Memory 等子资源删除不受影响。
+
 canonical handler 只负责严格 HTTP 合同、公开投影、错误映射和脱敏结构化日志，
 继续调用现有 `agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。
 公共合同由 `idl/workbench/thread.thrift` 与 `thread_product.thrift` 定义；

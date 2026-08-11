@@ -220,6 +220,11 @@ P0 为 `FAIL` 时，只允许：
 P1 分为两个串行包。P1M 先建立无模式、可恢复的 gate-off 基础；P1D 才接 adaptive producer。
 两包共用同一 `ExecutionDecision` schema，不能并行修改 admission、Run config 或恢复链。
 
+P1M-A 已作为独立安全切片承担 canonical raw ingress freeze、第一方前端旧字段清理与
+whole-Thread DELETE 编译期 guard；它不等于 P1M PASS。P1M-B/C 仍负责 typed admission/decision、
+application defense-in-depth、legacy recovery 与 ADK consumer 退休。P1L 已延期，guard 必须保持；
+P1D 仍以完整 P1M 与 rolling-authority 闭环为前置。
+
 ### P1M：退休产品执行模式
 
 **加载时必须创建：**
@@ -276,12 +281,14 @@ P1 分为两个串行包。P1M 先建立无模式、可恢复的 gate-off 基础
 
 P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GREEN/commit：
 
-- [ ] 先写 `TestCanonicalAdaptiveEnvelopeRejectsRetiredExecutionControls` 表驱动 RED，逐一覆盖 root、
+- [ ] 以 P1M-A 已完成的 canonical raw ingress 与第一方 writer 清理为前置；继续写
+      `TestCanonicalAdaptiveEnvelopeRejectsRetiredExecutionControls` 的 application/internal
+      defense-in-depth RED，逐一覆盖 root、
       附件、follow-up、retry、resume 的顶层与嵌套 `config/context/configurable` 中
       `requested_policy`、产品 `mode`、`is_plan_mode`、`subagent_enabled`、`max_concurrent_subagents`
       及客户端 reasoning 控制，同时证明 `runtime=eino_adk` 仍合法；退休控制精确要求
       HTTP 422、`unsupported_execution_control`、`retryable=false`、Thread/Message/Run 行数零变化；
-      HTTP handler 必须在 JSON binder 前按结构化控制键检查 raw body，不能扫描正文字符串或误伤
+      canonical HTTP 已在 JSON binder 前按结构化控制键检查 raw body，不能扫描正文字符串或误伤
       其它领域的同名 `mode`；ApplicationService 还要为 IM/scheduled/internal 入口做同义的
       defense-in-depth 校验，不能把未知字段静默丢掉。
 - [ ] 定义 `AdaptiveAdmissionSnapshot`、`AdaptiveAdmissionSource`、`AdaptiveCapabilities`、
@@ -436,9 +443,9 @@ P3 小步骤索引：
 - [ ] 保留 loading/empty/error/readonly/cancel/reconnect/keyboard/ARIA 行为。
 - [ ] 用 Vitest 覆盖 direct 无空壳、多步更新、验证失败和 SSE reconnect。
 - [ ] 用 in-app browser 验收现有 Workbench URL；记录账号/空间、可见状态和控制台错误。
-- [ ] 更新 `workbench-execution-chain.md`、`workbench-execution-graph.json` 和必要的
-      `workbench-chat.md`；删除后者把 `auto/pro/ultra/requested_policy` 描述为当前产品合同的内容，
-      但保留 `RuntimeModeEinoADK/legacy` 执行内核路由事实。
+- [ ] 延续 P1M-A 已同步的 ingress/UI 当前事实；完成 P1M/P1D 后继续更新
+      `workbench-execution-chain.md`、`workbench-execution-graph.json` 和必要的
+      `workbench-chat.md`，但保留 `RuntimeModeEinoADK/legacy` 执行内核路由事实。
 - [ ] 运行 execution graph verify/build/verify-derived 并提交 P3。
 
 ## 5. P4：评测、候选冻结与一次性验收（P3 PASS 后加载）

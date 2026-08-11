@@ -1,6 +1,6 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-08-10
+更新时间：2026-08-12
 状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
@@ -146,6 +146,10 @@ admission 状态。
 行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
 或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
 
+上述 repository 能力当前对 whole-Thread canonical DELETE 是 dormant：P1M-A 的 HTTP
+编译期 guard 在 workspace 授权与 path 校验后统一返回 503，不调用 application/domain/repository
+删除链。它没有改变底层事务语义，也不能作为 idle cascade 已完成锁序闭合的证据。
+
 ### P0A/P0B/P0C/P0D 自适应执行事务边界
 
 `P0A/P0B/P0C/P0D 当前仍只覆盖 repository primitive 与 named-path evidence`：P0A
@@ -191,8 +195,11 @@ deadlock-free 结论。
 boundary 会因 source checkpoint 冻结的 `PlanRevision` 与已经推进的 Plan authority 冲突；这阻塞
 P1D 与 P2。第二，`DeleteThread` 和 `DeleteThreadIfIdle` 真正进入 idle cascade 时，与 historical
 Journal、generic boundary 和 exact replay 的完整锁序尚未闭合；P0D 的 active-run 删除竞态不能
-证明该分支，这阻塞 P1M、P1D 与 P2。P0A3 只把直接 Plan mutation 与 primitive 的锁顺序统一为
-先锁 `AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan mutation 仍然可达。
+证明该分支。P1L 已延期，P1M-A 仅以 canonical HTTP guard 隔离 whole-Thread 删除，因此底层
+idle cascade 仍未解锁；该 blocker 至少阻塞删除重新启用，而 P1M-A 也不等于完整 P1M PASS。
+P1M-B/C 可在 guard 保持时继续，P1D 仍需完整 P1M 与 rolling-authority 闭环。P0A3 只把直接
+Plan mutation 与 primitive 的锁顺序统一为先锁 `AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan
+mutation 仍然可达。
 
 `AdaptiveGate` 仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
 它，现有 `FinalizeRunSuccess` production caller 继续使用 nil gate；adaptive boundary 与 recovery
@@ -212,9 +219,22 @@ workspace。create/search 直接在声明空间内执行；其余资源路由还
 读取服务端归属，把声明空间、资源实际空间和 Thread 授权一起校验。任何路由都拒绝
 依赖客户端 body 中的 owner、`user_id` 或 `space_id`。
 
+whole-Thread DELETE route 与 IDL 保持注册，但执行顺序固定为 dependency 检查、workspace
+授权、path ID 校验、`503 thread_delete_temporarily_disabled`。合法正整数 ID 无论 Thread
+存在与否都返回同一错误；handler 不读取 Thread、不调用 `DeleteThreadIfIdle`，也不进入删除
+application/domain/repository。该临时 guard 不影响 Artifact、Upload、Memory 等子资源 DELETE。
+
+P1M-A 还在 raw JSON binder 与任何业务持久化前冻结七个客户端执行控制字段：
+`requested_policy`、`mode`、`thinking_enabled`、`reasoning_effort`、`is_plan_mode`、
+`subagent_enabled`、`max_concurrent_subagents`。覆盖 Thread create 的
+`initial_run/deferred_initial_run`、Run Create/Wait/Stream、专用 Resume 与 Subagent Retry；
+只沿审核后的 root、`config`、`context`、`configurable/context` 对象路径检查，不扫描字符串、
+数组或普通资源对象。命中返回稳定 `422 unsupported_execution_control`，但
+`runtime=eino_adk`、model、Skill、MCP、knowledge/database、附件和可靠性配置仍合法。
+
 canonical handler 只做严格 SDK 参数、公开投影和稳定错误适配，随后调用同一个
 `agentthread.ApplicationService`。create 继续进入既有 `CreateThread` 或
-`CreateTaskThread` 事务链；query、patch、busy-delete 和 public-state 则进入 additive
+`CreateTaskThread` 事务链；query、patch 和 public-state 则进入 additive
 应用/领域/repository use case，不建立第二套 runtime、storage 或双写。public-state 更新
 在同一事务内锁定 Thread、选择顶层 Run/父 checkpoint、合并审核后的 `custom`，并写入
 隔离的 `canonical_public_state` checkpoint；不会修改或公开 Eino checkpoint bytes、
@@ -280,6 +300,10 @@ required/optional presence 一致，所有必填实体 ID 均 fail closed；公�
 fallback。
 
 当前 Workbench、任务列表和任务详情 UI 均经唯一 canonical client 使用上述合同。
+第一方 writer 已停止向 `config`、`metadata` 和 `message_metadata` 写入上述七字段；运行设置
+暂时不渲染“模型推理”，但模型、资源、重试/failover 与 Token 用量设置保持。该 UI/ingress
+冻结不改变内部 ADK Execute/Resume、human resume、lease recovery 或 subagent retry 对历史
+config 的兼容读取。
 `/api/workbench/task_threads/**` 36 条 V1 路由和 `/api/threads/**` 23 条本地
 LangGraph Thread 路由以及 stateless `/api/runs/**` 10 条路由已全部不可达。
 Scheduled Task 的 11 条路由继续由 `idl/workbench/task.thrift` 拥有。三组已退役

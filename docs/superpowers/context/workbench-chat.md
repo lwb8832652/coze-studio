@@ -31,15 +31,23 @@ Thread
   从 Thread 历史重建权威输入。
 - 取消、人工恢复和子智能体重试分别调用 `cancelRun`、`resumeRun` 和
   `retrySubagentRun`；重试创建新 Run，不改写历史 Run。
+- 整 Thread DELETE route 仍存在，但当前在 workspace 授权和 path 校验后统一返回
+  `503 thread_delete_temporarily_disabled`，不会进入 `DeleteThreadIfIdle`；子资源删除不受影响。
 - 事件订阅调用 `subscribeRunEvents`，通过 `@coze-arch/fetch-stream` 读取 canonical
   SSE；页面源码不得绕过统一 client 直接创建浏览器流连接。
 - 执行内核为 Eino ADK，公共 API 只返回经过审核的 bounded projection。
 
 ## Journal 执行体验
 
-- 公开前端不再暴露 Flash、Thinking、Pro、Ultra 模式选择，新任务、追问和
-  重试统一提交 `requested_policy=auto`。后端只保留 `auto`、`pro`、`ultra`
-  策略；`pro` 和 `ultra` 是内部显式覆盖，不是公开页面交互。
+- 公开前端不再暴露 Flash、Thinking、Pro、Ultra 模式选择，也不再渲染“模型推理”。
+  新任务、附件启动、追问和重试的第一方 serializer 不写入 `requested_policy`、`mode`、
+  `thinking_enabled`、`reasoning_effort`、`is_plan_mode`、`subagent_enabled` 或
+  `max_concurrent_subagents`；reasoning 暂由现有服务端默认和兼容逻辑决定。
+- canonical CreateThread、Create/Wait/Stream Run、Resume 和 Subagent Retry 会在 binder
+  与持久化前，于审核后的 root、`config`、`context`、`configurable/context` 路径返回
+  `422 unsupported_execution_control`。该检查不扫描用户字符串、数组或普通资源对象，合法的
+  `runtime=eino_adk`、模型与资源设置仍可提交。P1M-A 只冻结外部 HTTP；内部 mode、恢复链与
+  ADK consumer 仍保留。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

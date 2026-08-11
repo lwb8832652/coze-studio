@@ -2355,6 +2355,69 @@
       ]
     },
     {
+      "id": "http.workbench.canonical_execution_control_ingress",
+      "label": "Canonical execution-control raw ingress freeze",
+      "layer": "http_handler",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_execution_control_validator.go",
+          "symbol": "validateCanonicalExecutionControlIngress",
+          "locator": "func validateCanonicalExecutionControlIngress("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_execution_control_validator_test.go",
+          "locator": "func TestCanonicalExecutionControlIngressValidator"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestCreateCanonicalThreadRejectsExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go",
+          "locator": "func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_thread_delete_guard",
+      "label": "Canonical whole-Thread deletion hard guard",
+      "layer": "http_handler",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "symbol": "canonicalWholeThreadDeletionTemporarilyDisabled",
+          "locator": "const canonicalWholeThreadDeletionTemporarilyDisabled = true"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "symbol": "DeleteCanonicalThread",
+          "locator": "func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation"
+        }
+      ]
+    },
+    {
       "id": "http.workbench.canonical_product_contract",
       "label": "Canonical product IDL wire validation, projection and safe logging",
       "layer": "http_handler",
@@ -4090,6 +4153,34 @@
       ]
     },
     {
+      "id": "edge.canonical_thread_handler_validates_execution_controls",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "canonicalExecutionControlCreateThread"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_thread_handler_applies_delete_guard",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_thread_delete_guard",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "if canonicalWholeThreadDeletionTemporarilyDisabled {"
+        }
+      ]
+    },
+    {
       "id": "edge.canonical_app_delegates_domain_contract",
       "from": "application.canonical_thread_contract",
       "to": "domain.canonical_thread_contract",
@@ -4189,6 +4280,28 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
           "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_handler_validates_execution_controls",
+      "from": "http.workbench.canonical_run",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRunSubmission"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRootOnly"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service.go",
+          "locator": "canonicalExecutionControlRootOnly"
         }
       ]
     },
@@ -4329,6 +4442,24 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
           "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_validates_execution_controls",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "submission, public := parseCanonicalRunSubmission(c, false)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRunSubmission"
         }
       ]
     },
@@ -5380,6 +5511,8 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_thread_handler_validates_space",
+        "edge.canonical_thread_handler_validates_execution_controls",
+        "edge.canonical_thread_handler_applies_delete_guard",
         "edge.canonical_thread_create_calls_create_thread",
         "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.canonical_route_surface_maps_contract"
@@ -5401,7 +5534,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
-          "locator": "func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling"
+          "locator": "func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation"
         }
       ]
     },
@@ -5425,6 +5558,7 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_run_handler_validates_space",
+        "edge.canonical_run_handler_validates_execution_controls",
         "edge.canonical_run_handler_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_idempotency_race_validates_fingerprint",
@@ -5454,6 +5588,18 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
           "locator": "func TestCanonicalWaitCancellationHonorsEndpointDisconnectMode"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalResumeRejectsExecutionControlsBeforeApplication"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go",
+          "locator": "func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication"
         }
       ]
     },
@@ -5477,6 +5623,7 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_run_stream_validates_space",
+        "edge.canonical_run_stream_validates_execution_controls",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_run_stream_calls_app_query",
@@ -5509,6 +5656,10 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
           "locator": "func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE"
         }
       ]
     }
@@ -5582,7 +5733,7 @@
       "id": "exclude.unwired_adaptive_boundary",
       "term": "P0A/P0B/P0C/P0D adaptive repository production wiring",
       "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves the existing durable writes, result shape, callers, and optional Journal Attempt projection without Decision, Evidence, Plan, or PlanItem reads. P0D closes only named repository-path evidence: gate-on discovers the durable Thread from the logical Journal root and locks Thread, logical Journal root, distinct Execution Run when present, then Attempt; gate-off locks the durable Thread before the Execution Run and reaches an Attempt only for the existing optional Journal projection; active lease recovery locks the source Execution Run before the source Attempt. Real-MySQL coverage passed cancel versus verified success, lease recovery admission versus finalizer or cancellation, DeleteThreadIfIdle active-run rejection versus gate-on or gate-off finalization, and crash-after-commit exact replay, with one legal durable outcome per race. This is not a repository-wide deadlock-free claim. Two cross-packet P1 blockers remain: a second Plan-bearing boundary in the same recovery Attempt fails against the source checkpoint's frozen PlanRevision, blocking P1D and P2; and the idle cascade of DeleteThread or DeleteThreadIfIdle has no closed lock order across historical Journal, generic boundary, and exact replay paths, blocking P1M, P1D, and P2. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess production callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production edge is asserted.",
+      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-A is not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -5965,6 +6116,8 @@
         "Always-on canonical Thread HTTP handlers",
         "Always-on canonical Run HTTP handlers",
         "Always-on canonical Run SSE handlers",
+        "Canonical execution-control raw ingress freeze",
+        "Canonical whole-Thread deletion hard guard",
         "delegates_to",
         "persists_via",
         "maps_to"
@@ -5987,6 +6140,8 @@
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
         "http.workbench.canonical_run_stream",
+        "http.workbench.canonical_execution_control_ingress",
+        "http.workbench.canonical_thread_delete_guard",
         "application.canonical_thread_contract",
         "application.create_run",
         "application.cancel_run",
@@ -6003,6 +6158,8 @@
         "edge.canonical_create_thread_routes_handler",
         "edge.canonical_contract_routes_thread",
         "edge.canonical_thread_handler_calls_app_contract",
+        "edge.canonical_thread_handler_validates_execution_controls",
+        "edge.canonical_thread_handler_applies_delete_guard",
         "edge.canonical_app_delegates_domain_contract",
         "edge.canonical_domain_persists_repo_contract",
         "edge.canonical_thread_create_calls_create_thread",
@@ -6011,6 +6168,7 @@
         "edge.canonical_create_run_routes_handler",
         "edge.canonical_contract_routes_run",
         "edge.canonical_run_handler_calls_app_create_run",
+        "edge.canonical_run_handler_validates_execution_controls",
         "edge.create_run_app_delegates_domain",
         "edge.create_run_domain_persists_bundle",
         "edge.canonical_run_handler_calls_app_query",
@@ -6018,6 +6176,7 @@
         "edge.canonical_run_handler_calls_resume",
         "edge.canonical_contract_routes_run_stream",
         "edge.canonical_run_stream_calls_app_create_run",
+        "edge.canonical_run_stream_validates_execution_controls",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_run_stream_calls_app_query",
         "edge.canonical_run_stream_calls_cancel",
