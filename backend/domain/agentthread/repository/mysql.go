@@ -1591,11 +1591,70 @@ func prepareRecoveryRunBundleAttempt(
 		return ErrJournalParentMismatch
 	}
 
-	sourceAttempt, err := lockJournalAttemptByIdentity(
-		tx, attempt.JournalRunID, strings.TrimSpace(*attempt.SourceAttemptID),
-	)
-	if err != nil {
-		return err
+	sourceAttemptID := strings.TrimSpace(*attempt.SourceAttemptID)
+	var sourceAttempt *runAttemptPO
+	var lockedSourceRun *runPO
+	var err error
+	if sourceLease != nil {
+		var discoveredSourceAttempt struct {
+			ExecutionRunID int64
+		}
+		discoveryErr := tx.Model(&runAttemptPO{}).
+			Select("execution_run_id").
+			Where(
+				"journal_run_id = ? AND attempt_id = ?",
+				attempt.JournalRunID,
+				sourceAttemptID,
+			).
+			First(&discoveredSourceAttempt).Error
+		if errors.Is(discoveryErr, gorm.ErrRecordNotFound) {
+			return ErrJournalNotEnrolled
+		}
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		if discoveredSourceAttempt.ExecutionRunID != sourceLease.RunID {
+			return ErrJournalInvalidStateTransition
+		}
+		lockedSourceRun, err = lockAdaptiveExecutionRunIdentity(
+			tx,
+			discoveredSourceAttempt.ExecutionRunID,
+		)
+		if err != nil {
+			return err
+		}
+		if lockedSourceRun.ID != sourceLease.RunID ||
+			lockedSourceRun.ThreadID != run.ThreadID ||
+			lockedSourceRun.SpaceID != run.SpaceID ||
+			lockedSourceRun.CreatorID != run.CreatorID {
+			return fmt.Errorf(
+				"%w: run %d expired lease cannot be recovered",
+				ErrRunLeaseLost,
+				sourceLease.RunID,
+			)
+		}
+		sourceAttempt, err = lockJournalAttemptByIdentity(
+			tx,
+			attempt.JournalRunID,
+			sourceAttemptID,
+		)
+		if err != nil {
+			return err
+		}
+		if sourceAttempt.JournalRunID != attempt.JournalRunID ||
+			sourceAttempt.ExecutionRunID != discoveredSourceAttempt.ExecutionRunID ||
+			sourceAttempt.AttemptID != sourceAttemptID {
+			return ErrJournalParentMismatch
+		}
+	} else {
+		sourceAttempt, err = lockJournalAttemptByIdentity(
+			tx,
+			attempt.JournalRunID,
+			sourceAttemptID,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	if sourceAttempt.ThreadID != run.ThreadID {
 		return ErrJournalParentMismatch
@@ -1603,6 +1662,23 @@ func prepareRecoveryRunBundleAttempt(
 	sourceStatus := entity.RunAttemptStatus(sourceAttempt.Status)
 	if !sourceStatus.IsTerminal() && !sourceStatus.IsActive() {
 		return ErrJournalInvalidStateTransition
+	}
+	if sourceLease != nil {
+		if !sourceStatus.IsActive() {
+			return ErrJournalInvalidStateTransition
+		}
+		if lockedSourceRun == nil ||
+			entity.RunStatus(lockedSourceRun.Status) != entity.RunStatusRunning ||
+			lockedSourceRun.ExecutionGeneration != sourceLease.ExecutionGeneration ||
+			lockedSourceRun.LeaseOwner == nil || *lockedSourceRun.LeaseOwner != sourceLease.LeaseOwner ||
+			lockedSourceRun.LeaseToken == nil || *lockedSourceRun.LeaseToken != sourceLease.LeaseToken ||
+			lockedSourceRun.LeaseExpiresAt == nil || *lockedSourceRun.LeaseExpiresAt > sourceLease.Now {
+			return fmt.Errorf(
+				"%w: run %d expired lease cannot be recovered",
+				ErrRunLeaseLost,
+				sourceLease.RunID,
+			)
+		}
 	}
 
 	var checkpoint checkpointPO
@@ -5168,6 +5244,19 @@ func (r *threadRepository) FinalizeRunSuccess(
 
 	result := &FinalizeRunSuccessResult{}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var discoveredRun struct {
+			ThreadID int64
+		}
+		if err := tx.Model(&runPO{}).
+			Select("thread_id").
+			Where("id = ?", req.RunID).
+			First(&discoveredRun).Error; err != nil {
+			return err
+		}
+		if _, err := lockThreadForUpdate(tx, discoveredRun.ThreadID); err != nil {
+			return err
+		}
+
 		updates := map[string]any{
 			"status":        string(entity.RunStatusSucceeded),
 			"error_code":    "",
@@ -5189,21 +5278,25 @@ func (r *threadRepository) FinalizeRunSuccess(
 		if updated.Error != nil {
 			return updated.Error
 		}
+
+		completedQuery := tx.Where("id = ?", req.RunID)
+		if tx.Dialector.Name() != "sqlite" {
+			completedQuery = completedQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var completed runPO
+		if err := completedQuery.First(&completed).Error; err != nil {
+			return err
+		}
+		if completed.ThreadID != discoveredRun.ThreadID {
+			return fmt.Errorf("run success execution run thread identity drift")
+		}
 		if updated.RowsAffected == 0 {
-			var current runPO
-			if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
-				return err
-			}
-			if entity.RunStatus(current.Status) == entity.RunStatusCanceled || current.CancelRequestedAt != nil {
+			if entity.RunStatus(completed.Status) == entity.RunStatusCanceled || completed.CancelRequestedAt != nil {
 				return fmt.Errorf("%w: run %d rejected late success", ErrRunCanceled, req.RunID)
 			}
 			return fmt.Errorf("%w: run %d cannot finalize success", ErrRunLeaseLost, req.RunID)
 		}
 
-		var completed runPO
-		if err := tx.Where("id = ?", req.RunID).First(&completed).Error; err != nil {
-			return err
-		}
 		if message.ThreadID != completed.ThreadID {
 			return fmt.Errorf("run success message does not belong to run thread")
 		}

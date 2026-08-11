@@ -5580,29 +5580,21 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C adaptive repository production wiring",
+      "term": "P0A/P0B/P0C/P0D adaptive repository production wiring",
       "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate. A nil gate preserves the existing production finalizer behavior and performs no Decision, Evidence, Plan, or PlanItem reads. Gate-on locks the logical Journal root, locks the Execution Run only when distinct (otherwise reusing the root row), then locks the Thread and Attempt identity before the exact Verification tuple and adaptive authority. Passed Verification precedes Completion on consecutive sequences in the same Attempt and transaction. Exact committed retry current-reads and revalidates the durable result; a non-nil outbox performs only immutable identity comparison with inserted=false, so no terminal row is rewritten or repaired. The optional AdaptiveGate remains implemented but unwired: existing application and ADK production callers of FinalizeRunSuccess do not construct it and continue with nil. P0D owns real MySQL cancel, lease, crash-after-commit, and cross-API Run↔Thread barrier races; P2 owns the full VerificationResult codec, registry, producer, nullable-Plan authority branch, and application/ADK wiring. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order.",
+      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves the existing durable writes, result shape, callers, and optional Journal Attempt projection without Decision, Evidence, Plan, or PlanItem reads. P0D closes only named repository-path evidence: gate-on discovers the durable Thread from the logical Journal root and locks Thread, logical Journal root, distinct Execution Run when present, then Attempt; gate-off locks the durable Thread before the Execution Run and reaches an Attempt only for the existing optional Journal projection; active lease recovery locks the source Execution Run before the source Attempt. Real-MySQL coverage passed cancel versus verified success, lease recovery admission versus finalizer or cancellation, DeleteThreadIfIdle active-run rejection versus gate-on or gate-off finalization, and crash-after-commit exact replay, with one legal durable outcome per race. This is not a repository-wide deadlock-free claim. Two cross-packet P1 blockers remain: a second Plan-bearing boundary in the same recovery Attempt fails against the source checkpoint's frozen PlanRevision, blocking P1D and P2; and the idle cascade of DeleteThread or DeleteThreadIfIdle has no closed lock order across historical Journal, generic boundary, and exact replay paths, blocking P1M, P1D, and P2. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess production callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production edge is asserted.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
-          "locator": "P0A/P0B/P0C 当前只提供 repository primitive"
+          "locator": "P0A/P0B/P0C/P0D 当前仍只覆盖 repository primitive 与 named-path evidence"
         },
         {
-          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
-          "locator": "type AdaptiveVerifiedSuccessGate struct {"
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "func prepareRecoveryRunBundleAttempt("
         },
         {
           "path": "backend/domain/agentthread/repository/mysql.go",
           "locator": "func (r *threadRepository) FinalizeRunSuccess("
-        },
-        {
-          "path": "backend/domain/agentthread/repository/mysql.go",
-          "locator": "if req.AdaptiveGate != nil {"
-        },
-        {
-          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
-          "locator": "ReadAdaptiveExecutionRecoverySource("
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
@@ -5618,11 +5610,19 @@
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
-          "locator": "func TestThreadRepositoryFinalizeRunSuccessNilAdaptiveGateDoesNotRequireAdaptiveTables("
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExecutionRunAndAttempt("
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
-          "locator": "func TestThreadRepositoryFinalizeRunSuccessCommitsAdaptiveVerificationBeforeCompletionAtomically("
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessGateOffLocksThreadBeforeExecutionRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryCreateRunBundleRecoveryLocksExecutionRunBeforeSourceAttempt("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_integration_test.go",
+          "locator": "func TestAdaptiveExecutionP0DMySQL("
         }
       ]
     },

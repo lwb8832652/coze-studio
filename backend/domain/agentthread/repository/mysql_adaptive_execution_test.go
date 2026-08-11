@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -30,8 +31,10 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
@@ -3004,16 +3007,43 @@ func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateReplaysExactCommittedResu
 	}
 }
 
+func p0dMySQLMockRepository(t *testing.T) (*threadRepository, sqlmock.Sqlmock) {
+	t.Helper()
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	db, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn: sqlDB, SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		DisableAutomaticPing: true,
+		Logger:               logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if t.Failed() {
+			mock.MatchExpectationsInOrder(false)
+			mock.ExpectClose()
+			_ = sqlDB.Close()
+			return
+		}
+		mock.ExpectClose()
+		require.NoError(t, sqlDB.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	return &threadRepository{db: db}, mock
+}
+
 func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExecutionRunAndAttempt(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		shared bool
+		name           string
+		shared         bool
+		callerMismatch bool
 	}{
 		{name: "DistinctJournalAndExecutionRuns"},
 		{name: "SharedJournalAndExecutionRun", shared: true},
+		{name: "CallerThreadSelectorCannotPrelockUnrelatedThread", callerMismatch: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			repo, mock := canonicalMySQLMockRepository(t)
+			repo, mock := p0dMySQLMockRepository(t)
 			req := newValidAdaptiveVerifiedSuccessRequestForTest()
 			if test.shared {
 				req.AdaptiveGate.Decision.JournalRunID = req.RunID
@@ -3024,8 +3054,32 @@ func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExe
 					func(fields map[string]any) { fields["journal_run_id"] = req.RunID },
 				)
 			}
+			if test.callerMismatch {
+				req.Message.ThreadID = 11
+				req.TitleEvent.ThreadID = 11
+				req.CompletionEvent.ThreadID = 11
+				req.JournalEvent.ThreadID = 11
+				req.TerminalCheckpoint.ThreadID = 11
+				req.TerminalCheckpointOnTitleConflict.ThreadID = 11
+				req.AdaptiveGate.Decision.ThreadID = 11
+				req.AdaptiveGate.Evidence.ThreadID = 11
+				req.AdaptiveGate.VerificationEvent.ThreadID = 11
+			}
 			sentinel := fmt.Errorf("adaptive verification tuple lock sentinel")
 			mock.ExpectBegin()
+			mock.ExpectQuery("^SELECT .*FROM .*agent_runs.*WHERE id = \\?.*LIMIT \\?$").
+				WithArgs(req.AdaptiveGate.Evidence.JournalRunID, 1).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"id", "thread_id", "parent_run_id", "space_id", "creator_id", "run_kind", "status", "execution_generation",
+					"lease_owner", "lease_token", "lease_expires_at", "cancel_requested_at",
+				}).AddRow(
+					req.AdaptiveGate.Evidence.JournalRunID, 10, 0, 10, 20, string(entity.RunKindTask),
+					string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil,
+				))
+			mock.ExpectQuery("SELECT .*FROM .*agent_threads.*FOR UPDATE").
+				WithArgs(int64(10), 1).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "creator_id", "title"}).
+					AddRow(10, 10, 20, "initial"))
 			mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
 				WithArgs(req.AdaptiveGate.Evidence.JournalRunID, 1).
 				WillReturnRows(sqlmock.NewRows([]string{
@@ -3035,43 +3089,244 @@ func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExe
 					req.AdaptiveGate.Evidence.JournalRunID, 10, 0, 10, 20, string(entity.RunKindTask),
 					string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil,
 				))
-			if !test.shared {
-				mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
-					WithArgs(req.RunID, 1).
+			if test.callerMismatch {
+				mock.ExpectRollback()
+			} else {
+				if !test.shared {
+					mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
+						WithArgs(req.RunID, 1).
+						WillReturnRows(sqlmock.NewRows([]string{
+							"id", "thread_id", "parent_run_id", "space_id", "creator_id", "status", "execution_generation", "lease_owner", "lease_token",
+							"lease_expires_at", "cancel_requested_at",
+						}).AddRow(req.RunID, 10, 0, 10, 20, string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil))
+				}
+				mock.ExpectQuery("SELECT .*FROM .*run_attempts.*FOR UPDATE").
+					WithArgs(req.AdaptiveGate.Evidence.JournalRunID, "attempt-1", 1).
 					WillReturnRows(sqlmock.NewRows([]string{
-						"id", "thread_id", "parent_run_id", "space_id", "creator_id", "status", "execution_generation", "lease_owner", "lease_token",
-						"lease_expires_at", "cancel_requested_at",
-					}).AddRow(req.RunID, 10, 0, 10, 20, string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000), nil))
+						"id", "thread_id", "journal_run_id", "execution_run_id", "attempt_id", "status",
+						"active_slot", "next_sequence", "last_committed_sequence", "projection_state",
+					}).AddRow(100, 10, req.AdaptiveGate.Evidence.JournalRunID, 20, "attempt-1",
+						string(entity.RunAttemptStatusRunning), 1, 3, 2, string(entity.JournalProjectionStateHealthy)))
+				mock.ExpectQuery(
+					"SELECT .*FROM .*run_events.*journal_run_id.*attempt_id.*idempotency_key.*FOR UPDATE",
+				).
+					WithArgs(
+						req.AdaptiveGate.Evidence.JournalRunID,
+						req.AdaptiveGate.Evidence.AttemptID,
+						req.AdaptiveGate.VerificationIdempotencyKey,
+						1,
+					).
+					WillReturnError(sentinel)
+				mock.ExpectRollback()
 			}
+
+			result, err := repo.FinalizeRunSuccess(context.Background(), req)
+
+			require.Nil(t, result)
+			if test.callerMismatch {
+				if !errors.Is(err, ErrAdaptiveExecutionVerifiedSuccessConflict) ||
+					!strings.Contains(err.Error(), "identity drift") {
+					t.Fatalf("P0D_LOCK_ORDER_RED: caller Thread selector was not rejected by durable root identity: %v", err)
+				}
+			} else if !errors.Is(err, sentinel) {
+				t.Fatalf("P0D_LOCK_ORDER_RED: gate-on lock prefix is not Thread-first: %v", err)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestThreadRepositoryFinalizeRunSuccessGateOffLocksThreadBeforeExecutionRun(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		callerMismatch bool
+	}{
+		{name: "AuthoritativeThreadPrecedesExecutionRun"},
+		{name: "CallerThreadSelectorCannotPrelockUnrelatedThread", callerMismatch: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo, mock := p0dMySQLMockRepository(t)
+			req := newValidAdaptiveVerifiedSuccessRequestForTest()
+			req.AdaptiveGate = nil
+			if test.callerMismatch {
+				req.Message.ThreadID = 11
+				req.TitleEvent.ThreadID = 11
+				req.CompletionEvent.ThreadID = 11
+				req.JournalEvent.ThreadID = 11
+				req.TerminalCheckpoint.ThreadID = 11
+				req.TerminalCheckpointOnTitleConflict.ThreadID = 11
+			}
+			sentinel := fmt.Errorf("gate-off execution fence sentinel")
+			mock.ExpectBegin()
+			mock.ExpectQuery("^SELECT .*FROM .*agent_runs.*WHERE id = \\?.*LIMIT \\?$").
+				WithArgs(req.RunID, 1).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"id", "thread_id", "space_id", "creator_id", "status", "execution_generation",
+					"lease_owner", "lease_token", "lease_expires_at", "cancel_requested_at",
+				}).AddRow(
+					req.RunID, 10, 10, 20, string(entity.RunStatusRunning), uint64(3),
+					"worker-1", "lease-1", int64(2_000), nil,
+				))
 			mock.ExpectQuery("SELECT .*FROM .*agent_threads.*FOR UPDATE").
 				WithArgs(int64(10), 1).
 				WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "creator_id", "title"}).
 					AddRow(10, 10, 20, "initial"))
-			mock.ExpectQuery("SELECT .*FROM .*run_attempts.*FOR UPDATE").
-				WithArgs(req.AdaptiveGate.Evidence.JournalRunID, "attempt-1", 1).
-				WillReturnRows(sqlmock.NewRows([]string{
-					"id", "thread_id", "journal_run_id", "execution_run_id", "attempt_id", "status",
-					"active_slot", "next_sequence", "last_committed_sequence", "projection_state",
-				}).AddRow(100, 10, req.AdaptiveGate.Evidence.JournalRunID, 20, "attempt-1",
-					string(entity.RunAttemptStatusRunning), 1, 3, 2, string(entity.JournalProjectionStateHealthy)))
-			mock.ExpectQuery(
-				"SELECT .*FROM .*run_events.*journal_run_id.*attempt_id.*idempotency_key.*FOR UPDATE",
-			).
-				WithArgs(
-					req.AdaptiveGate.Evidence.JournalRunID,
-					req.AdaptiveGate.Evidence.AttemptID,
-					req.AdaptiveGate.VerificationIdempotencyKey,
-					1,
-				).
-				WillReturnError(sentinel)
+			update := mock.ExpectExec("UPDATE .*agent_runs").WithArgs(
+				sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+				sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+				sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+				req.RunID, string(entity.RunStatusRunning), req.LeaseOwner, req.LeaseToken,
+				req.ExecutionGeneration, req.Now,
+			)
+			if test.callerMismatch {
+				update.WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectQuery("SELECT .*FROM .*agent_runs.*WHERE id = \\?.*LIMIT \\?").
+					WithArgs(req.RunID, 1).
+					WillReturnRows(sqlmock.NewRows([]string{
+						"id", "thread_id", "space_id", "creator_id", "status", "execution_generation",
+					}).AddRow(req.RunID, 10, 10, 20, string(entity.RunStatusSucceeded), uint64(3)))
+			} else {
+				update.WillReturnError(sentinel)
+			}
 			mock.ExpectRollback()
 
 			result, err := repo.FinalizeRunSuccess(context.Background(), req)
 
 			require.Nil(t, result)
-			require.ErrorIs(t, err, sentinel)
+			if test.callerMismatch {
+				if err == nil || !strings.Contains(err.Error(), "thread") {
+					t.Fatalf("P0D_LOCK_ORDER_RED: gate-off caller Thread selector was not rejected after durable Thread lock: %v", err)
+				}
+			} else if !errors.Is(err, sentinel) {
+				t.Fatalf("P0D_LOCK_ORDER_RED: gate-off lock prefix is not Thread-first: %v", err)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestThreadRepositoryCreateRunBundleRecoveryLocksExecutionRunBeforeSourceAttempt(t *testing.T) {
+	repo, mock := p0dMySQLMockRepository(t)
+	recoveryKey := "recovery-21"
+	sourceCheckpointID := int64(8001)
+	sourceAttemptID := "attempt-1"
+	run := newRepositoryTestRun(21, 10, entity.RunStatusQueued, 1_200)
+	run.SpaceID = 10
+	run.CreatorID = 20
+	run.RunKind = entity.RunKindTask
+	run.IdempotencyKey = recoveryKey
+	req := CreateRunBundleRequest{
+		Run: run,
+		Attempt: &entity.RunAttempt{
+			ID: 101, ThreadID: 10, JournalRunID: 30, ExecutionRunID: 21,
+			AttemptID: "attempt-2", Status: entity.RunAttemptStatusPending,
+			SourceCheckpointID: &sourceCheckpointID, SourceAttemptID: &sourceAttemptID,
+			RecoveryIdempotencyKey: &recoveryKey,
+			ProjectionState:        entity.JournalProjectionStateHealthy,
+		},
+		RecoverySourceLease: &ReconcileExpiredRunLeaseRequest{
+			RunID: 20, LeaseOwner: "worker-1", LeaseToken: "lease-1",
+			ExecutionGeneration: 3, ToStatus: entity.RunStatusFailed, Now: 2_100,
+			ErrorCode: "run_recovered", ErrorMessage: "recovered",
+			Event: &entity.RunEvent{
+				ID: 7100, ThreadID: 10, RunID: 20, EventType: "run.failed",
+				Payload: `{"status":"failed","error_code":"run_recovered"}`, CreatedAt: 2_100,
+			},
+			JournalEvent: &entity.JournalEvent{
+				ID: 7100, ThreadID: 10, RunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
+				IdempotencyKey: "recovery-source-failed", SchemaVersion: entity.JournalSchemaVersion,
+				Status: string(entity.RunAttemptStatusFailed), Visibility: entity.JournalVisibilityUser,
+				PayloadVersion: entity.JournalPayloadVersion, EventType: "run.lifecycle",
+				Payload:            `{"type":"terminal","data":{"status":"failed"}}`,
+				OccurredAtUnixNano: 2_100 * int64(time.Millisecond), CreatedAt: 2_100,
+			},
+		},
+	}
+	sentinel := fmt.Errorf("recovery source checkpoint lock sentinel")
+	mock.MatchExpectationsInOrder(false)
+	type observedRecoveryQuery struct {
+		table   string
+		firstID any
+		locked  bool
+	}
+	observed := make([]observedRecoveryQuery, 0, 8)
+	const callbackName = "p0d:observe_recovery_source_lock_order"
+	require.NoError(t, repo.db.Callback().Query().After("gorm:query").Register(
+		callbackName,
+		func(tx *gorm.DB) {
+			if tx == nil || tx.Statement == nil {
+				return
+			}
+			var firstID any
+			if len(tx.Statement.Vars) > 0 {
+				firstID = tx.Statement.Vars[0]
+			}
+			observed = append(observed, observedRecoveryQuery{
+				table: tx.Statement.Table, firstID: firstID,
+				locked: strings.Contains(strings.ToUpper(tx.Statement.SQL.String()), "FOR UPDATE"),
+			})
+		},
+	))
+	t.Cleanup(func() {
+		require.NoError(t, repo.db.Callback().Query().Remove(callbackName))
+	})
+	mock.ExpectBegin()
+	for index := 0; index < 3; index++ {
+		mock.ExpectQuery("SELECT .*FROM .*agent_runs.*space_id.*idempotency_key").
+			WithArgs(int64(10), recoveryKey, 1).WillReturnError(gorm.ErrRecordNotFound)
+	}
+	mock.ExpectQuery("SELECT .*FROM .*agent_threads.*FOR UPDATE").
+		WithArgs(int64(10), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "creator_id"}).AddRow(10, 10, 20))
+	mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
+		WithArgs(int64(30), 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "thread_id", "parent_run_id", "space_id", "creator_id", "run_kind", "status",
+		}).AddRow(30, 10, 0, 10, 20, string(entity.RunKindTask), string(entity.RunStatusSucceeded)))
+	mock.ExpectQuery("^SELECT .*FROM .*agent_run_attempts.*journal_run_id.*attempt_id.*LIMIT \\?$").
+		WithArgs(int64(30), "attempt-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "thread_id", "journal_run_id", "execution_run_id", "attempt_id", "status",
+			"active_slot", "next_sequence", "last_committed_sequence",
+		}).AddRow(100, 10, 30, 20, "attempt-1", string(entity.RunAttemptStatusRunning), 1, 2, 1))
+	mock.ExpectQuery("SELECT .*FROM .*agent_runs.*FOR UPDATE").
+		WithArgs(int64(20), 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "thread_id", "space_id", "creator_id", "status", "execution_generation",
+			"lease_owner", "lease_token", "lease_expires_at",
+		}).AddRow(20, 10, 10, 20, string(entity.RunStatusRunning), uint64(3), "worker-1", "lease-1", int64(2_000)))
+	mock.ExpectQuery("SELECT .*FROM .*agent_run_attempts.*FOR UPDATE").
+		WithArgs(int64(30), "attempt-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "thread_id", "journal_run_id", "execution_run_id", "attempt_id", "status",
+			"active_slot", "next_sequence", "last_committed_sequence",
+		}).AddRow(100, 10, 30, 20, "attempt-1", string(entity.RunAttemptStatusRunning), 1, 2, 1))
+	mock.ExpectQuery("SELECT .*FROM .*agent_checkpoints.*FOR UPDATE").
+		WithArgs(sourceCheckpointID, 1).WillReturnError(sentinel)
+	mock.ExpectRollback()
+
+	result, err := repo.CreateRunBundle(context.Background(), req)
+
+	require.Nil(t, result)
+	plainAttemptIndex, sourceRunIndex, lockedAttemptIndex := -1, -1, -1
+	for index, query := range observed {
+		switch {
+		case query.table == "agent_run_attempts" && !query.locked:
+			plainAttemptIndex = index
+		case query.table == "agent_runs" && query.locked && fmt.Sprint(query.firstID) == "20":
+			sourceRunIndex = index
+		case query.table == "agent_run_attempts" && query.locked:
+			lockedAttemptIndex = index
+		}
+	}
+	if !errors.Is(err, sentinel) || plainAttemptIndex < 0 || sourceRunIndex < 0 ||
+		lockedAttemptIndex < 0 || plainAttemptIndex >= sourceRunIndex || sourceRunIndex >= lockedAttemptIndex {
+		t.Fatalf(
+			"P0D_LOCK_ORDER_RED: recovery source order plain-attempt=%d execution-run=%d locked-attempt=%d observed=%v err=%v",
+			plainAttemptIndex, sourceRunIndex, lockedAttemptIndex, observed, err,
+		)
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestThreadRepositoryFinalizeRunSuccessRollsBackAdaptiveVerificationOnLateOutboxFailure(t *testing.T) {

@@ -1589,6 +1589,36 @@ func (r *threadRepository) finalizeAdaptiveVerifiedRunSuccess(
 
 	var committed *FinalizeRunSuccessResult
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var discoveredJournalRoot struct {
+			ThreadID int64
+		}
+		discoveryErr := tx.Model(&runPO{}).
+			Select("thread_id").
+			Where("id = ?", gate.Evidence.JournalRunID).
+			First(&discoveredJournalRoot).Error
+		if errors.Is(discoveryErr, gorm.ErrRecordNotFound) {
+			return adaptiveVerifiedSuccessConflictCausef(
+				ErrRunLeaseLost,
+				"journal root run %d is missing",
+				gate.Evidence.JournalRunID,
+			)
+		}
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+
+		thread, err := lockThreadForUpdate(tx, discoveredJournalRoot.ThreadID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return adaptiveVerifiedSuccessConflictCausef(
+					err,
+					"thread %d is missing",
+					discoveredJournalRoot.ThreadID,
+				)
+			}
+			return err
+		}
+
 		journalRun, err := lockAdaptiveExecutionRunIdentity(tx, gate.Evidence.JournalRunID)
 		if err != nil {
 			if errors.Is(err, ErrRunLeaseLost) {
@@ -1601,6 +1631,7 @@ func (r *threadRepository) finalizeAdaptiveVerifiedRunSuccess(
 			return err
 		}
 		if journalRun.ID != gate.Evidence.JournalRunID ||
+			journalRun.ThreadID != discoveredJournalRoot.ThreadID ||
 			journalRun.ThreadID != gate.Evidence.ThreadID || !isJournalRootRun(journalRun) {
 			return adaptiveVerifiedSuccessConflictf("journal root identity drift")
 		}
@@ -1623,17 +1654,6 @@ func (r *threadRepository) finalizeAdaptiveVerifiedRunSuccess(
 			return adaptiveVerifiedSuccessConflictf("execution run identity drift")
 		}
 
-		thread, err := lockThreadForUpdate(tx, gate.Evidence.ThreadID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return adaptiveVerifiedSuccessConflictCausef(
-					err,
-					"thread %d is missing",
-					gate.Evidence.ThreadID,
-				)
-			}
-			return err
-		}
 		if thread.ID != gate.Evidence.ThreadID || thread.SpaceID != executionRun.SpaceID ||
 			thread.CreatorID != executionRun.CreatorID {
 			return adaptiveVerifiedSuccessConflictf("thread tenant identity drift")

@@ -146,9 +146,10 @@ admission 状态。
 行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
 或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
 
-### P0A/P0B/P0C 自适应执行事务边界
+### P0A/P0B/P0C/P0D 自适应执行事务边界
 
-`P0A/P0B/P0C 当前只提供 repository primitive`：P0A implementation HEAD 是
+`P0A/P0B/P0C/P0D 当前仍只覆盖 repository primitive 与 named-path evidence`：P0A
+implementation HEAD 是
 `a1df1789b0b60c0916505711bcc1e5a1fa1410cd`。P0B 已在同一个 private repository
 interface 中实现 `CommitAdaptiveExecutionBoundary` 的 exact-tuple 幂等回放，以及
 `ReadAdaptiveExecutionRecoverySource` 的 recovery source 只读恢复；checkpoint 的
@@ -167,22 +168,37 @@ checkpoint selector。
 P0C 没有新增第二个 finalizer，只在唯一现有 repository `FinalizeRunSuccess` request 上增加
 optional `AdaptiveGate`。nil gate 继续执行原有成功终态路径，返回的
 `VerificationEvent=nil`、`Replayed=false`，也不会新增 Decision、Evidence、Plan 或 PlanItem
-查询；原有 non-nil JournalEvent 的 Attempt projection 语义保持不变。gate-on 路径按 logical
-Journal root → Execution Run → Thread → Attempt identity 加锁；Journal root 与 Execution Run
-相同时复用同一已锁行，随后才读取 exact Verification tuple、Decision/Evidence authority、Plan
-与全部 current PlanItems。passed Verification 与 Completion 在同一个 `FinalizeRunSuccess`
-事务和同一个 Attempt 的连续 sequence 中依次写入（Verification < Completion），任一
-authority drift、写失败或末尾 outbox callback 失败都会回滚整个终态事务。已提交的 exact retry
-在锁内 current-read 并重校原结果；non-nil
-outbox 只做 immutable identity compare 且必须返回 `inserted=false`，不会重写终态或补写缺失行。
+查询；原有 non-nil JournalEvent 的 Attempt projection 语义保持不变。P0D 将 gate-on 的锁前缀
+固定为从 logical Journal root 发现 durable Thread 后按 Thread → logical Journal root → distinct
+Execution Run → Attempt identity 加锁；Journal root 与 Execution Run 相同时复用同一已锁 Run，
+随后才读取 exact Verification tuple、Decision/Evidence authority、Plan 与全部 current PlanItems。
+passed Verification 与 Completion 在同一个 `FinalizeRunSuccess` 事务和同一个 Attempt 的连续
+sequence 中依次写入（Verification < Completion），任一 authority drift、写失败或末尾 outbox
+callback 失败都会回滚整个终态事务。已提交的 exact retry 在锁内 current-read 并重校原结果；
+non-nil outbox 只做 immutable identity compare 且必须返回 `inserted=false`，不会重写终态或补写
+缺失行。
 
-P0C 当前状态仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
-`AdaptiveGate` 的 caller，现有 caller 继续使用 nil gate；因此本阶段不在执行图中制造不存在的
-production edge。P0A3 只把直接 Plan mutation 与该 primitive 的锁顺序统一为先锁
-`AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan mutation 仍然可达。P0D 负责用真实 MySQL 验证
-cancel、lease、crash-after-commit 以及跨 API Run↔Thread barrier races；P2 负责完整
-VerificationResult codec、registry、producer、nullable-Plan authority 分支和 application/ADK
-接线，在 P0D 竞态门禁通过前不得接入。
+P0D 只证明三条 named repository path 的锁序与线性化结果：gate-on 是 Thread → logical Journal
+root → distinct Execution Run → Attempt；gate-off 是从 durable Run identity 发现并锁定 Thread，
+再锁 Execution Run，只有既有 non-nil JournalEvent 投影需要时才进入 Attempt，原有 durable write、
+返回值和 caller 均不变；active lease recovery 在锁定 source Attempt 前先锁 source Execution Run。
+真实 MySQL 门禁已覆盖 cancel 与 verified success、lease recovery admission 与 finalizer/cancel、
+`DeleteThreadIfIdle` 的 active-run 拒绝分支与 gate-on/gate-off finalizer，以及 crash-after-commit
+exact replay，并验证每组竞态只有一个合法 durable outcome。该证据不扩张为 repository-wide
+deadlock-free 结论。
+
+仍有两个跨 packet 的 P1 wiring blocker。第一，recovery 后同一 Attempt 的第二个 Plan-bearing
+boundary 会因 source checkpoint 冻结的 `PlanRevision` 与已经推进的 Plan authority 冲突；这阻塞
+P1D 与 P2。第二，`DeleteThread` 和 `DeleteThreadIfIdle` 真正进入 idle cascade 时，与 historical
+Journal、generic boundary 和 exact replay 的完整锁序尚未闭合；P0D 的 active-run 删除竞态不能
+证明该分支，这阻塞 P1M、P1D 与 P2。P0A3 只把直接 Plan mutation 与 primitive 的锁顺序统一为
+先锁 `AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan mutation 仍然可达。
+
+`AdaptiveGate` 仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
+它，现有 `FinalizeRunSuccess` production caller 继续使用 nil gate；adaptive boundary 与 recovery
+source primitive 也没有 production caller。因此本阶段不在执行图中制造不存在的 production edge；
+P2 仍负责完整 VerificationResult codec、registry、producer、nullable-Plan authority 分支和
+application/ADK 接线，并受上述两个 blocker 约束。
 
 ### Canonical Thread HTTP 契约
 
