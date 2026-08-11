@@ -434,6 +434,10 @@ func (r *MySQLRepository) UpdateProviderHealth(
 		if err != nil {
 			return err
 		}
+		featuresJSON, err := marshalProviderFeatures(normalized.Health.Features)
+		if err != nil {
+			return err
+		}
 		var checkedAt *time.Time
 		if !normalized.Health.CheckedAt.IsZero() {
 			value := normalized.Health.CheckedAt.UTC().Truncate(time.Millisecond)
@@ -444,6 +448,7 @@ func (r *MySQLRepository) UpdateProviderHealth(
 			Updates(map[string]any{
 				"health_status":                 string(normalized.Health.Status),
 				"last_health_capabilities_json": capabilitiesJSON,
+				"last_health_features_json":     featuresJSON,
 				"last_health_code":              normalized.Health.ReasonCode,
 				"last_health_message":           normalized.Health.Message,
 				"last_health_latency_ms":        latencyMillis,

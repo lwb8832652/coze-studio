@@ -30,7 +30,9 @@ const maxProviderConcurrencyPersistence uint32 = math.MaxInt32
 
 var (
 	errInvalidPersistedScopeJSON         = errors.New("sandbox persisted scope JSON is invalid")
+	errInvalidPersistedFeatureJSON       = errors.New("sandbox persisted feature JSON is invalid")
 	errInvalidPersistedPolicyJSON        = errors.New("sandbox persisted policy JSON is invalid")
+	errInvalidPersistedSchedulerJSON     = errors.New("sandbox persisted scheduler JSON is invalid")
 	errInvalidPersistedMetadataJSON      = errors.New("sandbox persisted audit metadata JSON is invalid")
 	errInvalidPersistedProjection        = errors.New("sandbox persisted provider projection is invalid")
 	errInvalidPersistedNumericProjection = errors.New("sandbox persisted numeric projection is invalid")
@@ -92,6 +94,46 @@ func unmarshalHealthCapabilities(raw string) ([]domainsandbox.Scope, error) {
 		return nil, errInvalidPersistedScopeJSON
 	}
 	return normalized, nil
+}
+
+func marshalProviderFeatures(features []domainsandbox.ProviderFeature) (string, error) {
+	values := make([]string, 0, len(features))
+	for _, feature := range features {
+		values = append(values, string(feature))
+	}
+	return marshalCanonicalJSON(values)
+}
+
+func unmarshalProviderFeatures(raw string) ([]domainsandbox.ProviderFeature, error) {
+	var values []string
+	if err := json.Unmarshal([]byte(raw), &values); err != nil || values == nil {
+		return nil, errInvalidPersistedFeatureJSON
+	}
+	features := make([]domainsandbox.ProviderFeature, 0, len(values))
+	for _, value := range values {
+		features = append(features, domainsandbox.ProviderFeature(value))
+	}
+	normalized, err := domainsandbox.NormalizeProviderFeatures(features)
+	if err != nil {
+		return nil, errInvalidPersistedFeatureJSON
+	}
+	return normalized, nil
+}
+
+func marshalSchedulerSettings(settings domainsandbox.SchedulerSettings) (string, error) {
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil {
+		return "", err
+	}
+	return marshalCanonicalJSON(normalized)
+}
+
+func unmarshalSchedulerSettings(raw string) (domainsandbox.SchedulerSettings, error) {
+	settings, err := domainsandbox.DecodeSchedulerSettingsJSON([]byte(raw))
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, errInvalidPersistedSchedulerJSON
+	}
+	return settings, nil
 }
 
 func unmarshalScopes(raw string) ([]domainsandbox.Scope, error) {
@@ -221,6 +263,10 @@ func newProviderPO(input domainsandbox.CreateProviderInput, now time.Time) (*pro
 	if err != nil {
 		return nil, err
 	}
+	featuresJSON, err := marshalProviderFeatures([]domainsandbox.ProviderFeature{})
+	if err != nil {
+		return nil, err
+	}
 	return &providerPO{
 		ProviderKey:                input.ProviderKey,
 		Name:                       input.Name,
@@ -236,6 +282,7 @@ func newProviderPO(input domainsandbox.CreateProviderInput, now time.Time) (*pro
 		Status:                     string(domainsandbox.ProviderStatusDisabled),
 		HealthStatus:               string(domainsandbox.HealthStatusUnknown),
 		LastHealthCapabilitiesJSON: capabilitiesJSON,
+		LastHealthFeaturesJSON:     featuresJSON,
 		Version:                    domainsandbox.InitialVersion,
 		CreatedBy:                  actorUserID,
 		UpdatedBy:                  actorUserID,
@@ -279,9 +326,14 @@ func (po *providerPO) toDomain() (*domainsandbox.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	features, err := unmarshalProviderFeatures(po.LastHealthFeaturesJSON)
+	if err != nil {
+		return nil, err
+	}
 	health := domainsandbox.HealthSnapshot{
 		Status:        domainsandbox.HealthStatus(po.HealthStatus),
 		Capabilities:  capabilities,
+		Features:      features,
 		ReasonCode:    po.LastHealthCode,
 		Message:       po.LastHealthMessage,
 		LatencyMillis: int64(po.LastHealthLatencyMS),
@@ -350,6 +402,19 @@ func (po *providerDefaultPO) toDomain() (*domainsandbox.ProviderDefault, error) 
 	}, nil
 }
 
+func (po *schedulerSettingsPO) toDomain() (domainsandbox.SchedulerSettings, error) {
+	if po == nil || po.ID != 1 || po.Version < domainsandbox.InitialVersion || po.UpdatedBy > math.MaxInt64 {
+		return domainsandbox.SchedulerSettings{}, errInvalidPersistedProjection
+	}
+	settings, err := unmarshalSchedulerSettings(po.SettingsJSON)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	settings.Version = po.Version
+	settings.UpdatedBy = int64(po.UpdatedBy)
+	return settings, nil
+}
+
 func (po *providerAuditEventPO) toDomain() (*domainsandbox.ProviderAuditEvent, error) {
 	if po == nil {
 		return nil, fmt.Errorf("sandbox audit event is nil")
@@ -400,6 +465,7 @@ func cloneRuntimePolicy(policy domainsandbox.RuntimePolicy) domainsandbox.Runtim
 func cloneHealthSnapshot(snapshot domainsandbox.HealthSnapshot) domainsandbox.HealthSnapshot {
 	cloned := snapshot
 	cloned.Capabilities = append([]domainsandbox.Scope(nil), snapshot.Capabilities...)
+	cloned.Features = append([]domainsandbox.ProviderFeature(nil), snapshot.Features...)
 	return cloned
 }
 

@@ -6779,6 +6779,10 @@ table "sandbox_providers" {
     null = false
     type = json
   }
+  column "last_health_features_json" {
+    null = false
+    type = json
+  }
   column "last_health_code" {
     null    = false
     type    = varchar(64)
@@ -6888,6 +6892,43 @@ table "sandbox_provider_defaults" {
   }
   index "idx_sandbox_provider_defaults_provider_id" {
     columns = [column.provider_id]
+  }
+}
+table "sandbox_scheduler_settings" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null     = false
+    type     = tinyint
+    unsigned = true
+  }
+  column "settings_json" {
+    null = false
+    type = json
+  }
+  column "version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "updated_by" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  check "chk_sandbox_scheduler_settings_singleton" {
+    expr = "`id` = 1"
   }
 }
 table "sandbox_provider_audit_events" {

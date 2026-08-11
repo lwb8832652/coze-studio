@@ -186,6 +186,14 @@ type ProviderDefaultRepository interface {
 	SetProviderDefault(ctx context.Context, input SetProviderDefaultInput) (*ProviderDefault, error)
 }
 
+// SchedulerSettingsRepository owns the singleton scheduler snapshot. Returned
+// settings are detached values. UpdateSchedulerSettingsCAS initializes no
+// additional rows and changes the version exactly once on success.
+type SchedulerSettingsRepository interface {
+	GetSchedulerSettings(ctx context.Context) (SchedulerSettings, error)
+	UpdateSchedulerSettingsCAS(ctx context.Context, input UpdateSchedulerSettingsInput) (SchedulerSettings, error)
+}
+
 type ProviderSummary struct {
 	Total     int64
 	Enabled   int64

@@ -67,8 +67,9 @@ func TestMySQLRepositoryCreateGetListAndCanonicalJSON(t *testing.T) {
 		ScopesJSON                 string `gorm:"column:scopes_json"`
 		PolicyJSON                 string `gorm:"column:policy_json"`
 		LastHealthCapabilitiesJSON string `gorm:"column:last_health_capabilities_json"`
+		LastHealthFeaturesJSON     string `gorm:"column:last_health_features_json"`
 	}
-	if err := db.Raw(`SELECT scopes_json, policy_json, last_health_capabilities_json FROM sandbox_providers WHERE id = ?`, first.ID).
+	if err := db.Raw(`SELECT scopes_json, policy_json, last_health_capabilities_json, last_health_features_json FROM sandbox_providers WHERE id = ?`, first.ID).
 		Scan(&raw).Error; err != nil {
 		t.Fatalf("read canonical JSON columns: %v", err)
 	}
@@ -81,6 +82,9 @@ func TestMySQLRepositoryCreateGetListAndCanonicalJSON(t *testing.T) {
 	}
 	if raw.LastHealthCapabilitiesJSON != `[]` {
 		t.Fatalf("last_health_capabilities_json = %q", raw.LastHealthCapabilitiesJSON)
+	}
+	if raw.LastHealthFeaturesJSON != `[]` {
+		t.Fatalf("last_health_features_json = %q", raw.LastHealthFeaturesJSON)
 	}
 
 	byID, err := repository.GetProvider(ctx, first.ID)
@@ -1429,6 +1433,7 @@ func migrateSQLiteSandboxTestSchema(db *gorm.DB) error {
             status TEXT NOT NULL,
             health_status TEXT NOT NULL,
             last_health_capabilities_json JSON NOT NULL,
+            last_health_features_json JSON NOT NULL,
             last_health_code TEXT NOT NULL DEFAULT '',
             last_health_message TEXT NOT NULL DEFAULT '',
             last_health_latency_ms INTEGER NOT NULL DEFAULT 0,

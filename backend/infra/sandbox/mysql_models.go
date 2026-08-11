@@ -33,6 +33,7 @@ type providerPO struct {
 	Status                     string     `gorm:"column:status;size:32;not null;index:idx_sandbox_providers_status_deleted,priority:1"`
 	HealthStatus               string     `gorm:"column:health_status;size:32;not null"`
 	LastHealthCapabilitiesJSON string     `gorm:"column:last_health_capabilities_json;type:json;not null"`
+	LastHealthFeaturesJSON     string     `gorm:"column:last_health_features_json;type:json;not null"`
 	LastHealthCode             string     `gorm:"column:last_health_code;size:64;not null;default:''"`
 	LastHealthMessage          string     `gorm:"column:last_health_message;size:255;not null;default:''"`
 	LastHealthLatencyMS        uint32     `gorm:"column:last_health_latency_ms;type:int unsigned;not null;default:0"`
@@ -61,6 +62,19 @@ type providerDefaultPO struct {
 
 func (providerDefaultPO) TableName() string {
 	return "sandbox_provider_defaults"
+}
+
+type schedulerSettingsPO struct {
+	ID           uint8     `gorm:"column:id;type:tinyint unsigned;primaryKey"`
+	SettingsJSON string    `gorm:"column:settings_json;type:json;not null"`
+	Version      uint64    `gorm:"column:version;type:bigint unsigned;not null"`
+	UpdatedBy    uint64    `gorm:"column:updated_by;type:bigint unsigned;not null"`
+	CreatedAt    time.Time `gorm:"column:created_at;not null"`
+	UpdatedAt    time.Time `gorm:"column:updated_at;not null"`
+}
+
+func (schedulerSettingsPO) TableName() string {
+	return "sandbox_scheduler_settings"
 }
 
 type providerAuditEventPO struct {
