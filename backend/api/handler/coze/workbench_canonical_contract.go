@@ -647,6 +647,18 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"unsupported_multitask_strategy",
 			false,
 		)
+	case errors.Is(err, appagentthread.ErrUnsupportedExecutionControl):
+		detail := "Unsupported execution control"
+		if path, ok := appagentthread.UnsupportedExecutionControlPath(err); ok {
+			detail += ": " + path
+		}
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"unsupported_execution_control",
+			detail,
+			"unsupported_execution_control",
+			false,
+		)
 	case errors.Is(err, appagentthread.ErrInvalidRuntimeConfig):
 		return *newCanonicalError(
 			hertzconsts.StatusUnprocessableEntity,

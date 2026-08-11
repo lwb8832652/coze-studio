@@ -676,6 +676,35 @@ func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
 	}
 }
 
+func TestCanonicalErrorMapsUnsupportedExecutionControlPath(t *testing.T) {
+	applicationService := &appagentthread.ApplicationService{
+		ThreadSVC: domainservice.NewService(nil),
+	}
+	_, err := applicationService.CreateTaskThread(context.Background(), &appagentthread.CreateTaskThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Message: "continue",
+		Config:  `{"configurable":{"mode":"provider-secret"}}`,
+	})
+	require.ErrorIs(t, err, appagentthread.ErrUnsupportedExecutionControl)
+	require.Equal(t, "config.configurable.mode", mustUnsupportedExecutionControlPath(t, err))
+
+	public := mapCanonicalApplicationError(err)
+	require.Equal(t, hertzconsts.StatusUnprocessableEntity, public.status)
+	require.Equal(t, "unsupported_execution_control", public.Code)
+	require.Equal(t, "Unsupported execution control: config.configurable.mode", public.Detail)
+	require.Equal(t, "unsupported_execution_control", public.errorClass)
+	require.False(t, public.Retryable)
+	require.NotContains(t, public.Detail, "provider-secret")
+}
+
+func mustUnsupportedExecutionControlPath(t *testing.T, err error) string {
+	t.Helper()
+	path, ok := appagentthread.UnsupportedExecutionControlPath(err)
+	require.True(t, ok)
+	return path
+}
+
 func TestCanonicalErrorLogFieldsNeverExposeRawCause(t *testing.T) {
 	const sensitiveCause = "database failed with sk-secret and raw provider payload"
 

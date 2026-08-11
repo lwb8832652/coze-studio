@@ -34,6 +34,8 @@ import (
 func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
 	source := expiredRecoveryTestRun(200)
+	source.Config = `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	source.Context = `{"locale":"zh-CN","configurable":{"reasoning_effort":"high"}}`
 	service := newRunLeaseRecoveryTestService(source)
 	service.reconcileFailures = 1
 	service.checkpoints[source.ID] = []*entity.Checkpoint{

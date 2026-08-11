@@ -2065,6 +2065,8 @@ func TestApplicationCreateRunCanonicalizesAllowedRuntimeContext(t *testing.T) {
 }
 
 func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
+	legacyConfig := `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	legacyContext := `{"configurable":{"is_plan_mode":true,"subagent_enabled":true}}`
 	envelope := ADKCheckpointEnvelope{
 		EnvelopeVersion: 1,
 		Runtime:         string(RuntimeModeEinoADK),
@@ -2094,6 +2096,8 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 			ThreadID: 10,
 			SpaceID:  1,
 			Status:   entity.RunStatusInterrupted,
+			Config:   legacyConfig,
+			Context:  legacyContext,
 		},
 		checkpoints: []*entity.Checkpoint{
 			{
@@ -2145,6 +2149,8 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
 	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
+	require.Equal(t, legacyConfig, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, legacyContext, domainSVC.createRunBundleReq.Run.Context)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(20), domainSVC.listCheckpointsReq.RunID)
 	require.JSONEq(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
@@ -2286,6 +2292,8 @@ func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testin
 }
 
 func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
+	legacyConfig := `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	legacyContext := `{"plan_scope_run_id":10,"configurable":{"thinking_enabled":true}}`
 	domainSVC := &recordingThreadService{
 		gotRunsByID: map[int64]*entity.Run{
 			10: {
@@ -2296,8 +2304,8 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 				RunKind:           entity.RunKindTask,
 				Status:            entity.RunStatusFailed,
 				Input:             `{"messages":[]}`,
-				Config:            `{"runtime":"eino_adk"}`,
-				Context:           `{"plan_scope_run_id":10}`,
+				Config:            legacyConfig,
+				Context:           legacyContext,
 				StreamMode:        `["messages","updates"]`,
 				MultitaskStrategy: "enqueue",
 				OnDisconnect:      "continue",
@@ -2349,8 +2357,8 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 	require.Zero(t, domainSVC.createRunBundleReq.Run.ParentRunID)
 	require.Equal(t, "lead-agent", domainSVC.createRunBundleReq.Run.AssistantID)
 	require.Equal(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
-	require.Equal(t, `{"runtime":"eino_adk"}`, domainSVC.createRunBundleReq.Run.Config)
-	require.Equal(t, `{"plan_scope_run_id":10}`, domainSVC.createRunBundleReq.Run.Context)
+	require.Equal(t, legacyConfig, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, legacyContext, domainSVC.createRunBundleReq.Run.Context)
 	require.Equal(t, "retry-child-20", domainSVC.createRunBundleReq.Run.IdempotencyKey)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"subagent_retry"`)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"source_run_id":20`)

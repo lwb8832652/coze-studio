@@ -33,6 +33,10 @@ import (
 
 func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing.T) {
 	app, threadSVC, repo := newJournalRecoveryTestService(t)
+	legacyConfig := `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	legacyContext := `{"configurable":{"is_plan_mode":true,"subagent_enabled":true}}`
+	threadSVC.gotRun.Config = legacyConfig
+	threadSVC.gotRun.Context = legacyContext
 	registry := prometheus.NewRegistry()
 	metrics, err := NewJournalPrometheusMetricsCollector(registry)
 	require.NoError(t, err)
@@ -51,6 +55,8 @@ func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing
 	require.NotNil(t, threadSVC.createRunBundleReq)
 	require.True(t, threadSVC.createRunBundleReq.EnrollJournal)
 	require.Equal(t, "recover-1", threadSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.Equal(t, legacyConfig, threadSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, legacyContext, threadSVC.createRunBundleReq.Run.Context)
 	require.NotNil(t, threadSVC.createRunBundleReq.JournalEnrollment)
 	require.NotNil(t, threadSVC.createRunBundleReq.JournalEnrollment.Recovery)
 	require.Equal(t, int64(10), threadSVC.createRunBundleReq.JournalEnrollment.Recovery.JournalRunID)
