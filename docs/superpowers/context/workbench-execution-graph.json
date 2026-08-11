@@ -312,6 +312,10 @@
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateTaskThreadRejectsSubmittedExecutionControls"
         }
       ]
     },
@@ -325,13 +329,80 @@
         {
           "path": "backend/application/agentthread/service.go",
           "symbol": "(*ApplicationService).CreateRun",
-          "locator": "func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest)"
+          "locator": "func (s *ApplicationService) CreateRun("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationCreateTopLevelRunUsesAdmissionBundleAndCancelsSupersededADK"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunRejectsSubmittedExecutionControls"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTopLevelRetryRejectsSubmittedExecutionControls"
+        }
+      ]
+    },
+    {
+      "id": "application.submitted_execution_control_admission",
+      "label": "Application admission and historical execution-control compatibility boundary",
+      "layer": "application",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/retired_execution_control.go",
+          "symbol": "validateSubmittedExecutionControls",
+          "locator": "func validateSubmittedExecutionControls(config, runContext string) error"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).createRun",
+          "locator": "func (s *ApplicationService) createRun("
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder.go",
+          "symbol": "(*ApplicationADKSubagentRunRecorder).StartADKSubagentRun",
+          "locator": "func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/retired_execution_control_test.go",
+          "locator": "func TestSubmittedExecutionControlsRejectsRetiredFields"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunProvenanceFailsClosed"
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder_test.go",
+          "locator": "func TestApplicationADKSubagentRunRecorderStartsChildRun"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_contract_test.go",
+          "locator": "func TestCanonicalErrorMapsUnsupportedExecutionControlPath"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun"
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery_test.go",
+          "locator": "func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
         }
       ]
     },
@@ -4041,6 +4112,48 @@
       ]
     },
     {
+      "id": "edge.create_task_thread_checks_submitted_controls",
+      "from": "application.create_task_thread",
+      "to": "application.submitted_execution_control_admission",
+      "relation": "implemented_with",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_checks_submitted_controls",
+      "from": "application.create_run",
+      "to": "application.submitted_execution_control_admission",
+      "relation": "implemented_with",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "case createRunSubmitted:"
+        }
+      ]
+    },
+    {
+      "id": "edge.submitted_controls_precede_new_run_policy",
+      "from": "application.submitted_execution_control_admission",
+      "to": "runtime.new_run_policy",
+      "relation": "precedes",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)"
+        }
+      ]
+    },
+    {
       "id": "edge.app_run_calls_new_run_policy",
       "from": "application.create_run",
       "to": "runtime.new_run_policy",
@@ -5733,7 +5846,7 @@
       "id": "exclude.unwired_adaptive_boundary",
       "term": "P0A/P0B/P0C/P0D adaptive repository production wiring",
       "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-A is not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
+      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-B1 additionally freezes public Application submissions before runtime normalization while preserving one package-private server-owned ADK child compatibility seam and historical resume/retry/recovery Config inheritance. P1M-A/B1 are not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",

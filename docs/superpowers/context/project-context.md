@@ -118,6 +118,13 @@ P1M-A 已冻结 canonical 外部执行控制：CreateThread、Create/Wait/Stream
 这些字段，并暂时隐藏“模型推理”控件；`runtime=eino_adk`、模型、Skill、MCP、知识库、
 数据库和资源配置仍是合法输入。该冻结不代表后端 mode、ADK consumer 或恢复继承已经退休。
 
+P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
+`CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
+closed；因此 canonical、Scheduled Task、飞书和其它 public Application caller 共享同一
+防线。package-private ADK server-owned child seam 仍可生成历史控制字段，Human interaction、
+Subagent、Journal 与 lease recovery 仍原样继承已持久化 Config/Context。该兼容边界是有意的，
+P1M-B1 不等于 mode consumer 退休或完整 P1M PASS。
+
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
 统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用
 `DeleteThreadIfIdle`。P1L 完成并在移除 guard 的同一候选 SHA 上重验前，底层 idle cascade

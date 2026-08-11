@@ -221,9 +221,10 @@ P1 分为两个串行包。P1M 先建立无模式、可恢复的 gate-off 基础
 两包共用同一 `ExecutionDecision` schema，不能并行修改 admission、Run config 或恢复链。
 
 P1M-A 已作为独立安全切片承担 canonical raw ingress freeze、第一方前端旧字段清理与
-whole-Thread DELETE 编译期 guard；它不等于 P1M PASS。P1M-B/C 仍负责 typed admission/decision、
-application defense-in-depth、legacy recovery 与 ADK consumer 退休。P1L 已延期，guard 必须保持；
-P1D 仍以完整 P1M 与 rolling-authority 闭环为前置。
+whole-Thread DELETE 编译期 guard；P1M-B1 又完成 public Application admission、canonical typed
+error 映射和历史恢复兼容边界。两者都不等于 P1M PASS。后续 P1M-B/C 仍负责 typed
+admission/decision，并退休 server-owned ADK child legacy seam 与 legacy consumer。P1L 已延期，guard 必须
+保持；P1D 仍以完整 P1M 与 rolling-authority 闭环为前置。
 
 ### P1M：退休产品执行模式
 
@@ -281,16 +282,15 @@ P1D 仍以完整 P1M 与 rolling-authority 闭环为前置。
 
 P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GREEN/commit：
 
-- [ ] 以 P1M-A 已完成的 canonical raw ingress 与第一方 writer 清理为前置；继续写
-      `TestCanonicalAdaptiveEnvelopeRejectsRetiredExecutionControls` 的 application/internal
-      defense-in-depth RED，逐一覆盖 root、
-      附件、follow-up、retry、resume 的顶层与嵌套 `config/context/configurable` 中
-      `requested_policy`、产品 `mode`、`is_plan_mode`、`subagent_enabled`、`max_concurrent_subagents`
-      及客户端 reasoning 控制，同时证明 `runtime=eino_adk` 仍合法；退休控制精确要求
-      HTTP 422、`unsupported_execution_control`、`retryable=false`、Thread/Message/Run 行数零变化；
-      canonical HTTP 已在 JSON binder 前按结构化控制键检查 raw body，不能扫描正文字符串或误伤
-      其它领域的同名 `mode`；ApplicationService 还要为 IM/scheduled/internal 入口做同义的
-      defense-in-depth 校验，不能把未知字段静默丢掉。
+- [x] P1M-B1 在 P1M-A canonical raw ingress 与第一方 writer 清理之后，为 public
+      `CreateTaskThread/CreateRun` 增加同义七字段 admission；top-level retry 在来源读取前拒绝，
+      package-private ADK child provenance 只允许非零 parent 的精确 Subagent Run，未知 provenance
+      fail closed。canonical typed error 映射为 422，Human/Subagent/Journal/lease recovery 用旧
+      Config/Context fixture 证明历史继承不被新 admission 改写。
+- [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
+      Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
+      组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知
+      execution-control 字段静默丢掉。
 - [ ] 定义 `AdaptiveAdmissionSnapshot`、`AdaptiveAdmissionSource`、`AdaptiveCapabilities`、
       `AdaptiveLimits` 与 `ExecutionDecision`；snapshot 只含 gate/schema/capability/limits 及可空
       source Run/generation/config digest/decoder version，不得定义 product mode 字段。

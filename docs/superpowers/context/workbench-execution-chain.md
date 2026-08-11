@@ -130,12 +130,22 @@ runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点�
 `query.integration_ingress` 独立验收 Scheduled 和飞书的
 新建/复用 Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 
+P1M-B1 在 public `ApplicationService.CreateTaskThread` 与 `CreateRun` 安装与
+canonical raw ingress 同义的七字段结构化 admission，并固定在 runtime 规范化、retry
+来源查询和任何持久化之前执行；因此 canonical、Scheduled Task、飞书以及其它直接调用
+public Application 用例的新提交不能绕过 ingress freeze。`CreateRun` 的 package-private
+`server_owned_subagent` provenance 只供 ADK Subagent recorder 使用，并再次要求非零
+`ParentRunID` 与精确 `subagent` Run kind；未知 provenance fail closed。该兼容缝仍允许
+服务端子运行生成旧控制字段。Human interaction resume、Subagent retry、Journal recovery
+与 lease recovery 不接收新的外部 Config/Context，而是原样继承已持久化来源；P1M-B1
+不改写历史 Run，也不代表 mode consumer 或完整 P1M 已退休。
+
 ## 持久化与异步执行
 
 ### 原子 Run 创建
 
 `CreateCanonicalRun` handler 调用 `ApplicationService.CreateRun`，应用层完成权限、
-输入、幂等和 runtime 规范化，再调用领域层 `CreateRunBundle`。领域层经
+提交执行控制 admission、输入、幂等和 runtime 规范化，再调用领域层 `CreateRunBundle`。领域层经
 repository `CreateRunBundle` 原子写入 Run、当前轮 Message、初始 Event 和相关
 admission 状态。
 
@@ -231,6 +241,13 @@ P1M-A 还在 raw JSON binder 与任何业务持久化前冻结七个客户端执
 只沿审核后的 root、`config`、`context`、`configurable/context` 对象路径检查，不扫描字符串、
 数组或普通资源对象。命中返回稳定 `422 unsupported_execution_control`，但
 `runtime=eino_adk`、model、Skill、MCP、knowledge/database、附件和可靠性配置仍合法。
+
+P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
+`CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error
+继续由 canonical mapper 输出 `422 unsupported_execution_control`，只公开规范化字段路径。
+该防御覆盖 canonical、Scheduled Task、飞书和未来直接 public Application caller；唯一
+package-private ADK child provenance 与既有 resume/retry/recovery 继承链继续读取历史
+Config/Context，作为 P1M-C 退休 consumer 前的显式兼容边界。
 
 canonical handler 只做严格 SDK 参数、公开投影和稳定错误适配，随后调用同一个
 `agentthread.ApplicationService`。create 继续进入既有 `CreateThread` 或
