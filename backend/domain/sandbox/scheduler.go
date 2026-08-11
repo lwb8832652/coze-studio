@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CPUQuotaMilli stores a CPU quota as thousandths of one CPU. Keeping the
@@ -93,6 +95,19 @@ type UpdateSchedulerSettingsInput struct {
 	UpdatedBy       int64
 }
 
+const (
+	SchedulerAuditMetadataPreviousVersion = "previous_version"
+	SchedulerAuditMetadataNewVersion      = "new_version"
+	SchedulerAuditMetadataChangedFields   = "changed_fields"
+)
+
+var schedulerAuditChangedFields = map[string]struct{}{
+	"total_weight": {}, "max_outstanding": {}, "global_queue_depth": {},
+	"per_space_queue_depth": {}, "per_user_queue_depth": {}, "host_memory_reserve_mb": {},
+	"cancel_grace_seconds": {}, "health_failure_threshold": {}, "health_recovery_threshold": {},
+	"workloads": {},
+}
+
 var schedulerScopes = []Scope{ScopeAgent, ScopeAppDev, ScopeMCPStdio, ScopePlugin}
 
 func DefaultSchedulerSettings() SchedulerSettings {
@@ -162,6 +177,118 @@ func NormalizeUpdateSchedulerSettingsInput(input UpdateSchedulerSettingsInput) (
 	}
 	input.Settings = settings
 	return input, nil
+}
+
+func NormalizeAppendSchedulerAuditEventInput(input AppendSchedulerAuditEventInput) (AppendSchedulerAuditEventInput, error) {
+	if input.ActorUserID <= 0 || (input.Action != SchedulerAuditActionUpdate && input.Action != SchedulerAuditActionUpdateFailed) ||
+		strings.TrimSpace(input.RequestID) != input.RequestID || len(input.RequestID) > MaxAuditRequestIDLength || containsControl(input.RequestID) ||
+		len(input.Metadata) != 3 {
+		return AppendSchedulerAuditEventInput{}, ErrInvalidInput
+	}
+	previous, okPrevious := normalizeSchedulerAuditVersion(input.Metadata[SchedulerAuditMetadataPreviousVersion])
+	next, okNext := normalizeSchedulerAuditVersion(input.Metadata[SchedulerAuditMetadataNewVersion])
+	changed, okChanged := normalizeSchedulerAuditChangedFields(input.Metadata[SchedulerAuditMetadataChangedFields])
+	if !okPrevious || !okNext || !okChanged {
+		return AppendSchedulerAuditEventInput{}, ErrInvalidInput
+	}
+	for key := range input.Metadata {
+		if key != SchedulerAuditMetadataPreviousVersion && key != SchedulerAuditMetadataNewVersion && key != SchedulerAuditMetadataChangedFields {
+			return AppendSchedulerAuditEventInput{}, ErrInvalidInput
+		}
+	}
+	return AppendSchedulerAuditEventInput{
+		ActorUserID: input.ActorUserID, RequestID: input.RequestID, Action: input.Action,
+		Metadata: map[string]string{
+			SchedulerAuditMetadataPreviousVersion: previous,
+			SchedulerAuditMetadataNewVersion:      next,
+			SchedulerAuditMetadataChangedFields:   changed,
+		},
+	}, nil
+}
+
+func normalizeSchedulerAuditVersion(value string) (string, bool) {
+	if strings.TrimSpace(value) != value || value == "" {
+		return "", false
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || parsed == 0 {
+		return "", false
+	}
+	return strconv.FormatUint(parsed, 10), true
+}
+
+func normalizeSchedulerAuditChangedFields(value string) (string, bool) {
+	if value == "" || len(value) > MaxAuditMetadataValueLength || containsControl(value) {
+		return "", false
+	}
+	seen := make(map[string]struct{})
+	for _, field := range strings.Split(value, ",") {
+		if _, ok := schedulerAuditChangedFields[field]; !ok {
+			return "", false
+		}
+		seen[field] = struct{}{}
+	}
+	ordered := make([]string, 0, len(seen))
+	for field := range seen {
+		ordered = append(ordered, field)
+	}
+	sort.Strings(ordered)
+	return strings.Join(ordered, ","), true
+}
+
+func SchedulerSettingsChangedFields(previous, next SchedulerSettings) []string {
+	fields := make([]string, 0, len(schedulerAuditChangedFields))
+	if previous.TotalWeight != next.TotalWeight {
+		fields = append(fields, "total_weight")
+	}
+	if previous.MaxOutstanding != next.MaxOutstanding {
+		fields = append(fields, "max_outstanding")
+	}
+	if previous.GlobalQueueDepth != next.GlobalQueueDepth {
+		fields = append(fields, "global_queue_depth")
+	}
+	if previous.PerSpaceQueueDepth != next.PerSpaceQueueDepth {
+		fields = append(fields, "per_space_queue_depth")
+	}
+	if previous.PerUserQueueDepth != next.PerUserQueueDepth {
+		fields = append(fields, "per_user_queue_depth")
+	}
+	if previous.HostMemoryReserveMB != next.HostMemoryReserveMB {
+		fields = append(fields, "host_memory_reserve_mb")
+	}
+	if previous.CancelGraceSeconds != next.CancelGraceSeconds {
+		fields = append(fields, "cancel_grace_seconds")
+	}
+	if previous.HealthFailureThreshold != next.HealthFailureThreshold {
+		fields = append(fields, "health_failure_threshold")
+	}
+	if previous.HealthRecoveryThreshold != next.HealthRecoveryThreshold {
+		fields = append(fields, "health_recovery_threshold")
+	}
+	if !schedulerWorkloadsEqual(previous.Workloads, next.Workloads) {
+		fields = append(fields, "workloads")
+	}
+	return fields
+}
+
+func schedulerWorkloadsEqual(left, right map[Scope]SchedulerWorkload) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for scope, workload := range left {
+		if other, ok := right[scope]; !ok || other != workload {
+			return false
+		}
+	}
+	return true
+}
+
+func NewSchedulerAuditEvent(input AppendSchedulerAuditEventInput) (*SchedulerAuditEvent, error) {
+	normalized, err := NormalizeAppendSchedulerAuditEventInput(input)
+	if err != nil {
+		return nil, err
+	}
+	return &SchedulerAuditEvent{ActorUserID: normalized.ActorUserID, RequestID: normalized.RequestID, Action: normalized.Action, Metadata: normalized.Metadata, CreatedAt: time.Time{}}, nil
 }
 
 func isSchedulerScope(scope Scope) bool {

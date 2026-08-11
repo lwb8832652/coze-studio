@@ -98,6 +98,80 @@ func (r *MySQLRepository) UpdateSchedulerSettingsCAS(
 	return result, nil
 }
 
+func (r *MySQLRepository) UpdateSchedulerSettingsCASWithAudit(
+	ctx context.Context,
+	input domainsandbox.UpdateSchedulerSettingsInput,
+	audit domainsandbox.AppendSchedulerAuditEventInput,
+) (domainsandbox.SchedulerSettings, error) {
+	release, err := r.acquireOperation()
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	defer release()
+	normalized, err := domainsandbox.NormalizeUpdateSchedulerSettingsInput(input)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	normalizedAudit, err := domainsandbox.NormalizeAppendSchedulerAuditEventInput(audit)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	db, err := r.dbFor(ctx)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	var result domainsandbox.SchedulerSettings
+	err = db.Transaction(func(tx *gorm.DB) error {
+		updated, updateErr := updateSchedulerSettingsCAS(tx, normalized)
+		if updateErr != nil {
+			return updateErr
+		}
+		if _, auditErr := appendSchedulerAuditEvent(tx, normalizedAudit); auditErr != nil {
+			return auditErr
+		}
+		result = updated
+		return nil
+	})
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	return result, nil
+}
+
+func updateSchedulerSettingsCAS(db *gorm.DB, normalized domainsandbox.UpdateSchedulerSettingsInput) (domainsandbox.SchedulerSettings, error) {
+	updatedBy, err := positiveDomainInt64ToUint64(normalized.UpdatedBy)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, domainsandbox.ErrInvalidInput
+	}
+	settingsJSON, err := marshalSchedulerSettings(normalized.Settings)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	po, err := findOrCreateSchedulerSettings(db, true)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	if po.Version != normalized.ExpectedVersion {
+		return domainsandbox.SchedulerSettings{}, domainsandbox.ErrVersionConflict
+	}
+	nextVersion, err := domainsandbox.NextVersion(normalized.ExpectedVersion)
+	if err != nil {
+		return domainsandbox.SchedulerSettings{}, err
+	}
+	update := db.Model(&schedulerSettingsPO{}).Where("id = ? AND version = ?", 1, normalized.ExpectedVersion).Updates(map[string]any{
+		"settings_json": settingsJSON, "version": nextVersion, "updated_by": updatedBy, "updated_at": persistenceNow(),
+	})
+	if update.Error != nil {
+		return domainsandbox.SchedulerSettings{}, update.Error
+	}
+	if update.RowsAffected == 0 {
+		return domainsandbox.SchedulerSettings{}, domainsandbox.ErrVersionConflict
+	}
+	result := normalized.Settings
+	result.Version, result.UpdatedBy = nextVersion, normalized.UpdatedBy
+	return result, nil
+}
+
 func findOrCreateSchedulerSettings(db *gorm.DB, lock bool) (*schedulerSettingsPO, error) {
 	var po schedulerSettingsPO
 	query := db.Where("id = ?", 1)

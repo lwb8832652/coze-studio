@@ -134,6 +134,29 @@ type UpdateProviderHealthInput struct {
 	ActorUserID     int64
 }
 
+type SchedulerAuditAction string
+
+const (
+	SchedulerAuditActionUpdate       SchedulerAuditAction = "scheduler_settings.update"
+	SchedulerAuditActionUpdateFailed SchedulerAuditAction = "scheduler_settings.update_failed"
+)
+
+type SchedulerAuditEvent struct {
+	ID          int64
+	ActorUserID int64
+	RequestID   string
+	Action      SchedulerAuditAction
+	Metadata    map[string]string
+	CreatedAt   time.Time
+}
+
+type AppendSchedulerAuditEventInput struct {
+	ActorUserID int64
+	RequestID   string
+	Action      SchedulerAuditAction
+	Metadata    map[string]string
+}
+
 type DeleteProviderInput struct {
 	ProviderID      int64
 	ExpectedVersion uint64
@@ -218,44 +241,44 @@ const DefaultHealthIncidentFailureThreshold = 3
 type HealthIncidentStatus string
 
 const (
-	HealthIncidentStatusNone       HealthIncidentStatus = "none"
-	HealthIncidentStatusObserving  HealthIncidentStatus = "observing"
-	HealthIncidentStatusOpen       HealthIncidentStatus = "open"
-	HealthIncidentStatusRecovered  HealthIncidentStatus = "recovered"
-	HealthIncidentStatusDisabled   HealthIncidentStatus = "disabled"
+	HealthIncidentStatusNone      HealthIncidentStatus = "none"
+	HealthIncidentStatusObserving HealthIncidentStatus = "observing"
+	HealthIncidentStatusOpen      HealthIncidentStatus = "open"
+	HealthIncidentStatusRecovered HealthIncidentStatus = "recovered"
+	HealthIncidentStatusDisabled  HealthIncidentStatus = "disabled"
 )
 
 type HealthIncidentNotification string
 
 const (
-	HealthIncidentNotificationNone       HealthIncidentNotification = ""
-	HealthIncidentNotificationUnhealthy  HealthIncidentNotification = "unhealthy"
-	HealthIncidentNotificationRecovered  HealthIncidentNotification = "recovered"
+	HealthIncidentNotificationNone      HealthIncidentNotification = ""
+	HealthIncidentNotificationUnhealthy HealthIncidentNotification = "unhealthy"
+	HealthIncidentNotificationRecovered HealthIncidentNotification = "recovered"
 )
 
 // ProviderHealthEpisode is the durable state for one provider's latest health
 // episode. IncidentSequence is monotonic and makes incident and notification
 // identities stable across retries, restarts, and worker instances.
 type ProviderHealthEpisode struct {
-	ProviderID             int64
-	ConsecutiveFailures    int
-	FailureStartedAt       time.Time
-	IncidentSequence       uint64
-	IncidentID             string
-	IncidentStatus         HealthIncidentStatus
-	IncidentOpenedAt       time.Time
-	IncidentNotifiedAt     time.Time
-	IncidentClosedAt       time.Time
-	RecoveryNotifiedAt     time.Time
-	LastRecoveredAt        time.Time
-	LastCheckedAt          time.Time
-	NextCheckAt            time.Time
-	LeaseOwner             string
-	LeaseToken             string
-	LeaseExpiresAt         time.Time
-	Version                uint64
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	ProviderID          int64
+	ConsecutiveFailures int
+	FailureStartedAt    time.Time
+	IncidentSequence    uint64
+	IncidentID          string
+	IncidentStatus      HealthIncidentStatus
+	IncidentOpenedAt    time.Time
+	IncidentNotifiedAt  time.Time
+	IncidentClosedAt    time.Time
+	RecoveryNotifiedAt  time.Time
+	LastRecoveredAt     time.Time
+	LastCheckedAt       time.Time
+	NextCheckAt         time.Time
+	LeaseOwner          string
+	LeaseToken          string
+	LeaseExpiresAt      time.Time
+	Version             uint64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type HealthIncidentObservation struct {

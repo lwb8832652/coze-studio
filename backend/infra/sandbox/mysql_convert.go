@@ -29,13 +29,14 @@ import (
 const maxProviderConcurrencyPersistence uint32 = math.MaxInt32
 
 var (
-	errInvalidPersistedScopeJSON         = errors.New("sandbox persisted scope JSON is invalid")
-	errInvalidPersistedFeatureJSON       = errors.New("sandbox persisted feature JSON is invalid")
-	errInvalidPersistedPolicyJSON        = errors.New("sandbox persisted policy JSON is invalid")
-	errInvalidPersistedSchedulerJSON     = errors.New("sandbox persisted scheduler JSON is invalid")
-	errInvalidPersistedMetadataJSON      = errors.New("sandbox persisted audit metadata JSON is invalid")
-	errInvalidPersistedProjection        = errors.New("sandbox persisted provider projection is invalid")
-	errInvalidPersistedNumericProjection = errors.New("sandbox persisted numeric projection is invalid")
+	errInvalidPersistedScopeJSON          = errors.New("sandbox persisted scope JSON is invalid")
+	errInvalidPersistedFeatureJSON        = errors.New("sandbox persisted feature JSON is invalid")
+	errInvalidPersistedPolicyJSON         = errors.New("sandbox persisted policy JSON is invalid")
+	errInvalidPersistedSchedulerJSON      = errors.New("sandbox persisted scheduler JSON is invalid")
+	errInvalidPersistedSchedulerAuditJSON = errors.New("sandbox persisted scheduler audit JSON is invalid")
+	errInvalidPersistedMetadataJSON       = errors.New("sandbox persisted audit metadata JSON is invalid")
+	errInvalidPersistedProjection         = errors.New("sandbox persisted provider projection is invalid")
+	errInvalidPersistedNumericProjection  = errors.New("sandbox persisted numeric projection is invalid")
 )
 
 type runtimePolicyDocument struct {
@@ -134,6 +135,30 @@ func unmarshalSchedulerSettings(raw string) (domainsandbox.SchedulerSettings, er
 		return domainsandbox.SchedulerSettings{}, errInvalidPersistedSchedulerJSON
 	}
 	return settings, nil
+}
+
+func marshalSchedulerAuditMetadata(metadata map[string]string) (string, error) {
+	normalized, err := domainsandbox.NormalizeAppendSchedulerAuditEventInput(domainsandbox.AppendSchedulerAuditEventInput{
+		ActorUserID: 1, RequestID: "", Action: domainsandbox.SchedulerAuditActionUpdate, Metadata: metadata,
+	})
+	if err != nil {
+		return "", err
+	}
+	return marshalCanonicalJSON(normalized.Metadata)
+}
+
+func unmarshalSchedulerAuditMetadata(raw string) (map[string]string, error) {
+	metadata := make(map[string]string)
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+		return nil, errInvalidPersistedSchedulerAuditJSON
+	}
+	normalized, err := domainsandbox.NormalizeAppendSchedulerAuditEventInput(domainsandbox.AppendSchedulerAuditEventInput{
+		ActorUserID: 1, RequestID: "", Action: domainsandbox.SchedulerAuditActionUpdate, Metadata: metadata,
+	})
+	if err != nil {
+		return nil, errInvalidPersistedSchedulerAuditJSON
+	}
+	return normalized.Metadata, nil
 }
 
 func unmarshalScopes(raw string) ([]domainsandbox.Scope, error) {
@@ -413,6 +438,31 @@ func (po *schedulerSettingsPO) toDomain() (domainsandbox.SchedulerSettings, erro
 	settings.Version = po.Version
 	settings.UpdatedBy = int64(po.UpdatedBy)
 	return settings, nil
+}
+
+func (po *schedulerAuditEventPO) toDomain() (*domainsandbox.SchedulerAuditEvent, error) {
+	if po == nil {
+		return nil, domainsandbox.ErrInvalidInput
+	}
+	id, err := positivePersistedUint64ToInt64(po.EventID)
+	if err != nil {
+		return nil, err
+	}
+	actorUserID, err := positivePersistedUint64ToInt64(po.ActorUserID)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := unmarshalSchedulerAuditMetadata(po.MetadataJSON)
+	if err != nil {
+		return nil, err
+	}
+	input, err := domainsandbox.NormalizeAppendSchedulerAuditEventInput(domainsandbox.AppendSchedulerAuditEventInput{
+		ActorUserID: actorUserID, RequestID: po.RequestID, Action: domainsandbox.SchedulerAuditAction(po.Action), Metadata: metadata,
+	})
+	if err != nil {
+		return nil, errInvalidPersistedSchedulerAuditJSON
+	}
+	return &domainsandbox.SchedulerAuditEvent{ID: id, ActorUserID: actorUserID, RequestID: input.RequestID, Action: input.Action, Metadata: input.Metadata, CreatedAt: po.CreatedAt.UTC()}, nil
 }
 
 func (po *providerAuditEventPO) toDomain() (*domainsandbox.ProviderAuditEvent, error) {

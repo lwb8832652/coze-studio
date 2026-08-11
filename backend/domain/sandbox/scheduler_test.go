@@ -110,3 +110,30 @@ func TestCPUQuotaMilliRejectsOverflowJSON(t *testing.T) {
 		t.Fatalf("overflow CPU quota error = %v, want ErrInvalidInput", err)
 	}
 }
+
+func TestSchedulerSettingsAuditAcceptsOnlySafeMetadata(t *testing.T) {
+	input := AppendSchedulerAuditEventInput{
+		ActorUserID: 1,
+		Action:      SchedulerAuditActionUpdate,
+		Metadata: map[string]string{
+			SchedulerAuditMetadataPreviousVersion: "1",
+			SchedulerAuditMetadataNewVersion:      "2",
+			SchedulerAuditMetadataChangedFields:   "max_outstanding",
+		},
+	}
+	if _, err := NormalizeAppendSchedulerAuditEventInput(input); err != nil {
+		t.Fatalf("NormalizeAppendSchedulerAuditEventInput() error = %v", err)
+	}
+	for _, forbidden := range []string{"settings", "updated_by", "user_id", "space_id", "project_id", "session_id", "credential", "token", "secret", "endpoint", "error"} {
+		candidate := input
+		candidate.Metadata = map[string]string{
+			SchedulerAuditMetadataPreviousVersion: "1",
+			SchedulerAuditMetadataNewVersion:      "2",
+			SchedulerAuditMetadataChangedFields:   "max_outstanding",
+			forbidden:                             "blocked",
+		}
+		if _, err := NormalizeAppendSchedulerAuditEventInput(candidate); !errors.Is(err, ErrInvalidInput) {
+			t.Fatal("scheduler audit accepted forbidden metadata")
+		}
+	}
+}

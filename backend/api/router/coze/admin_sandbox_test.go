@@ -103,6 +103,34 @@ func TestAdminSandboxRoutesUseSharedAdminAuthAndExposeCompleteContract(t *testin
 	}
 }
 
+func TestAdminSandboxSchedulerRoutesRequireSystemAdmin(t *testing.T) {
+	previousFactory := adminAuthMiddlewareFactory
+	adminAuthMiddlewareFactory = func() app.HandlerFunc {
+		return middleware.AdminAuthMWWithEmailLoader(func(context.Context) (string, error) {
+			return "admin@example.test", nil
+		})
+	}
+	t.Cleanup(func() { adminAuthMiddlewareFactory = previousFactory })
+
+	previousService := rootapplication.SandboxSchedulerSVC
+	rootapplication.SandboxSchedulerSVC = nil
+	t.Cleanup(func() { rootapplication.SandboxSchedulerSVC = previousService })
+	for _, request := range []struct {
+		path   string
+		status int
+	}{
+		{"/api/admin/sandboxes/scheduler-settings", http.StatusServiceUnavailable},
+		{"/api/admin/sandboxes/runtime-status", http.StatusOK},
+	} {
+		unauthenticated := performAdminSandboxRouteRequest("", http.MethodGet, request.path, "")
+		require.Equal(t, http.StatusUnauthorized, unauthenticated.Code)
+		member := performAdminSandboxRouteRequest("member@example.test", http.MethodGet, request.path, "")
+		require.Equal(t, http.StatusForbidden, member.Code)
+		administrator := performAdminSandboxRouteRequest("admin@example.test", http.MethodGet, request.path, "")
+		require.Equal(t, request.status, administrator.Code, string(administrator.Result().Body()))
+	}
+}
+
 func performAdminSandboxRouteRequest(email, method, path, body string) *ut.ResponseRecorder {
 	h := server.Default(server.WithStreamBody(true))
 	h.Use(middleware.ContextCacheMW())

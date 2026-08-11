@@ -33,6 +33,7 @@ const (
 
 var (
 	SandboxSVC               *appsandbox.Service
+	SandboxSchedulerSVC      *appsandbox.SchedulerService
 	SandboxRouter            *appsandbox.ProviderRouter
 	SandboxRuntimeRepository sandboxRepository
 )
@@ -66,6 +67,7 @@ type sandboxRepository interface {
 	domainsandbox.ProviderManagementRepository
 	domainsandbox.ProviderCreateUnitOfWork
 	appsandbox.ProviderLookup
+	domainsandbox.SchedulerSettingsAuditRepository
 }
 
 type sandboxSharedLimiter interface {
@@ -104,6 +106,7 @@ var errSandboxControlPlaneInitialization = fmt.Errorf("sandbox control plane ini
 func clearSandboxControlPlane() {
 	clearSandboxMCPRuntimeBinding()
 	SandboxSVC = nil
+	SandboxSchedulerSVC = nil
 	SandboxRouter = nil
 	SandboxRuntimeRepository = nil
 }
@@ -171,6 +174,11 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 		return fmt.Errorf("create sandbox control plane service: %w", err)
 	}
 	SandboxSVC = service
+	schedulerService, err := appsandbox.NewSchedulerService(appsandbox.SchedulerServiceOptions{Store: repository})
+	if err != nil {
+		return fmt.Errorf("create sandbox scheduler service: %w", err)
+	}
+	SandboxSchedulerSVC = schedulerService
 	SandboxRuntimeRepository = repository
 	if !runtimeRoutingEnabled {
 		return nil

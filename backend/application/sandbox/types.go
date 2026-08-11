@@ -236,3 +236,59 @@ type ServiceOptions struct {
 	ProviderKey  func(Actor) (string, error)
 	Now          func() time.Time
 }
+
+const SchedulerReasonProviderUnavailable = "PROVIDER_UNAVAILABLE"
+
+type SchedulerSettingsDTO struct {
+	Version  uint64                          `json:"version"`
+	Settings domainsandbox.SchedulerSettings `json:"settings"`
+}
+
+type UpdateSchedulerSettingsRequest struct {
+	ExpectedVersion uint64
+	Settings        domainsandbox.SchedulerSettings
+}
+
+type SchedulerSettingsUpdateResult struct {
+	Version    uint64                          `json:"version"`
+	Settings   domainsandbox.SchedulerSettings `json:"settings"`
+	Applied    bool                            `json:"applied"`
+	ReasonCode string                          `json:"reason_code,omitempty"`
+}
+
+type NativeRunnerStatus struct {
+	Healthy              bool
+	AppliedConfigVersion uint64
+	QueueDepth           int
+	ActiveSlots          int
+	SlotCapacity         int
+	QueueHighWatermark   int
+	DrainingCount        int
+	QuarantinedCount     int
+	ReasonCode           string
+}
+
+type SchedulerRuntimeStatusDTO struct {
+	Available            bool   `json:"available"`
+	DesiredConfigVersion uint64 `json:"desired_config_version"`
+	AppliedConfigVersion uint64 `json:"applied_config_version"`
+	QueueDepth           int    `json:"queue_depth"`
+	ActiveSlots          int    `json:"active_slots"`
+	SlotCapacity         int    `json:"slot_capacity"`
+	QueueHighWatermark   int    `json:"queue_high_watermark"`
+	DrainingCount        int    `json:"draining_count"`
+	QuarantinedCount     int    `json:"quarantined_count"`
+	ReasonCode           string `json:"reason_code,omitempty"`
+}
+
+// NativeSchedulerRunner is deliberately narrow: Task 3 only persists desired
+// settings and asks the native Runner to apply/project safe aggregates.
+type NativeSchedulerRunner interface {
+	ApplySchedulerSettings(context.Context, domainsandbox.SchedulerSettings) error
+	RuntimeStatus(context.Context) (NativeRunnerStatus, error)
+}
+
+type SchedulerServiceOptions struct {
+	Store  domainsandbox.SchedulerSettingsAuditRepository
+	Runner NativeSchedulerRunner
+}

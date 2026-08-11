@@ -77,6 +77,17 @@ func (schedulerSettingsPO) TableName() string {
 	return "sandbox_scheduler_settings"
 }
 
+type schedulerAuditEventPO struct {
+	EventID      uint64    `gorm:"column:event_id;type:bigint unsigned;primaryKey;autoIncrement"`
+	ActorUserID  uint64    `gorm:"column:actor_user_id;type:bigint unsigned;not null"`
+	RequestID    string    `gorm:"column:request_id;size:128;not null"`
+	Action       string    `gorm:"column:action;size:64;not null"`
+	MetadataJSON string    `gorm:"column:metadata_json;type:json;not null"`
+	CreatedAt    time.Time `gorm:"column:created_at;not null"`
+}
+
+func (schedulerAuditEventPO) TableName() string { return "sandbox_scheduler_audit_events" }
+
 type providerAuditEventPO struct {
 	EventID      uint64    `gorm:"column:event_id;type:bigint unsigned;primaryKey;autoIncrement;index:idx_sandbox_audit_provider_created_event,priority:3;index:idx_sandbox_audit_created_event,priority:2;index:idx_sandbox_audit_action_created_event,priority:3;index:idx_sandbox_audit_result_created_event,priority:3"`
 	ProviderID   *uint64   `gorm:"column:provider_id;type:bigint unsigned;index:idx_sandbox_audit_provider_created_event,priority:1"`

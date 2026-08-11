@@ -194,6 +194,18 @@ type SchedulerSettingsRepository interface {
 	UpdateSchedulerSettingsCAS(ctx context.Context, input UpdateSchedulerSettingsInput) (SchedulerSettings, error)
 }
 
+type SchedulerAuditRepository interface {
+	AppendSchedulerAuditEvent(ctx context.Context, input AppendSchedulerAuditEventInput) (*SchedulerAuditEvent, error)
+}
+
+// SchedulerSettingsAuditRepository preserves the desired scheduler snapshot
+// and its successful audit row in one transaction.
+type SchedulerSettingsAuditRepository interface {
+	SchedulerSettingsRepository
+	SchedulerAuditRepository
+	UpdateSchedulerSettingsCASWithAudit(ctx context.Context, input UpdateSchedulerSettingsInput, audit AppendSchedulerAuditEventInput) (SchedulerSettings, error)
+}
+
 type ProviderSummary struct {
 	Total     int64
 	Enabled   int64

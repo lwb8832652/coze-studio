@@ -54,6 +54,14 @@ type adminSandboxService interface {
 	ListAuditEvents(context.Context, appsandbox.Actor, appsandbox.ListAuditEventsRequest) (*appsandbox.ListAuditEventsResult, error)
 }
 
+// adminSandboxSchedulerService is separate from the provider management
+// contract, preserving existing provider-only handler injectables.
+type adminSandboxSchedulerService interface {
+	GetSchedulerSettings(context.Context, appsandbox.Actor) (*appsandbox.SchedulerSettingsDTO, error)
+	UpdateSchedulerSettings(context.Context, appsandbox.Actor, appsandbox.UpdateSchedulerSettingsRequest) (*appsandbox.SchedulerSettingsUpdateResult, error)
+	GetRuntimeStatus(context.Context, appsandbox.Actor) (*appsandbox.SchedulerRuntimeStatusDTO, error)
+}
+
 type applicationAdminSandboxService struct{}
 
 func (applicationAdminSandboxService) current() (*appsandbox.Service, error) {
@@ -61,6 +69,13 @@ func (applicationAdminSandboxService) current() (*appsandbox.Service, error) {
 		return nil, domainsandbox.ErrUnavailable
 	}
 	return rootapplication.SandboxSVC, nil
+}
+
+func (applicationAdminSandboxService) currentScheduler() (*appsandbox.SchedulerService, error) {
+	if rootapplication.SandboxSchedulerSVC == nil {
+		return nil, domainsandbox.ErrUnavailable
+	}
+	return rootapplication.SandboxSchedulerSVC, nil
 }
 
 func (a applicationAdminSandboxService) List(ctx context.Context, actor appsandbox.Actor, request appsandbox.ListProvidersRequest) (*appsandbox.ListProvidersResult, error) {
@@ -176,6 +191,30 @@ func (a applicationAdminSandboxService) ListAuditEvents(ctx context.Context, act
 	return service.ListAuditEvents(ctx, actor, request)
 }
 
+func (a applicationAdminSandboxService) GetSchedulerSettings(ctx context.Context, actor appsandbox.Actor) (*appsandbox.SchedulerSettingsDTO, error) {
+	service, err := a.currentScheduler()
+	if err != nil {
+		return nil, err
+	}
+	return service.Get(ctx, actor)
+}
+
+func (a applicationAdminSandboxService) UpdateSchedulerSettings(ctx context.Context, actor appsandbox.Actor, request appsandbox.UpdateSchedulerSettingsRequest) (*appsandbox.SchedulerSettingsUpdateResult, error) {
+	service, err := a.currentScheduler()
+	if err != nil {
+		return nil, err
+	}
+	return service.Update(ctx, actor, request)
+}
+
+func (a applicationAdminSandboxService) GetRuntimeStatus(ctx context.Context, actor appsandbox.Actor) (*appsandbox.SchedulerRuntimeStatusDTO, error) {
+	service, err := a.currentScheduler()
+	if err != nil {
+		return &appsandbox.SchedulerRuntimeStatusDTO{ReasonCode: appsandbox.SchedulerReasonProviderUnavailable}, nil
+	}
+	return service.RuntimeStatus(ctx, actor)
+}
+
 type adminSandboxHandler struct {
 	service adminSandboxService
 }
@@ -192,39 +231,45 @@ func defaultAdminSandboxHandler() *adminSandboxHandler {
 // The application service is resolved per request so control-plane wiring can
 // fail closed without leaking the internal service contract.
 type AdminSandboxRouteHandlers struct {
-	List         app.HandlerFunc
-	ListDefaults app.HandlerFunc
-	GetSummary   app.HandlerFunc
-	Capabilities app.HandlerFunc
-	Create       app.HandlerFunc
-	Get          app.HandlerFunc
-	Update       app.HandlerFunc
-	Delete       app.HandlerFunc
-	Enable       app.HandlerFunc
-	Disable      app.HandlerFunc
-	Credentials  app.HandlerFunc
-	SetDefault   app.HandlerFunc
-	Health       app.HandlerFunc
-	AuditEvents  app.HandlerFunc
+	List                    app.HandlerFunc
+	ListDefaults            app.HandlerFunc
+	GetSummary              app.HandlerFunc
+	Capabilities            app.HandlerFunc
+	Create                  app.HandlerFunc
+	Get                     app.HandlerFunc
+	Update                  app.HandlerFunc
+	Delete                  app.HandlerFunc
+	Enable                  app.HandlerFunc
+	Disable                 app.HandlerFunc
+	Credentials             app.HandlerFunc
+	SetDefault              app.HandlerFunc
+	Health                  app.HandlerFunc
+	AuditEvents             app.HandlerFunc
+	SchedulerSettings       app.HandlerFunc
+	UpdateSchedulerSettings app.HandlerFunc
+	RuntimeStatus           app.HandlerFunc
 }
 
 func DefaultAdminSandboxRouteHandlers() *AdminSandboxRouteHandlers {
 	handler := defaultAdminSandboxHandler()
 	return &AdminSandboxRouteHandlers{
-		List:         handler.list,
-		ListDefaults: handler.defaults,
-		GetSummary:   handler.summary,
-		Capabilities: handler.capabilities,
-		Create:       handler.create,
-		Get:          handler.get,
-		Update:       handler.update,
-		Delete:       handler.delete,
-		Enable:       handler.enable,
-		Disable:      handler.disable,
-		Credentials:  handler.credentials,
-		SetDefault:   handler.setDefault,
-		Health:       handler.health,
-		AuditEvents:  handler.auditEvents,
+		List:                    handler.list,
+		ListDefaults:            handler.defaults,
+		GetSummary:              handler.summary,
+		Capabilities:            handler.capabilities,
+		Create:                  handler.create,
+		Get:                     handler.get,
+		Update:                  handler.update,
+		Delete:                  handler.delete,
+		Enable:                  handler.enable,
+		Disable:                 handler.disable,
+		Credentials:             handler.credentials,
+		SetDefault:              handler.setDefault,
+		Health:                  handler.health,
+		AuditEvents:             handler.auditEvents,
+		SchedulerSettings:       handler.schedulerSettings,
+		UpdateSchedulerSettings: handler.updateSchedulerSettings,
+		RuntimeStatus:           handler.runtimeStatus,
 	}
 }
 
@@ -362,6 +407,11 @@ type defaultAdminSandboxRequest struct {
 	ExpectedVersion        uint64              `json:"expected_version"`
 	DefaultExpectedVersion uint64              `json:"default_expected_version"`
 	Scope                  domainsandbox.Scope `json:"scope"`
+}
+
+type updateAdminSandboxSchedulerSettingsRequest struct {
+	ExpectedVersion uint64                          `json:"expected_version"`
+	Settings        domainsandbox.SchedulerSettings `json:"settings"`
 }
 
 func (h *adminSandboxHandler) list(ctx context.Context, c *app.RequestContext) {
@@ -608,6 +658,67 @@ func (h *adminSandboxHandler) auditEvents(ctx context.Context, c *app.RequestCon
 		return
 	}
 	result, err := h.service.ListAuditEvents(ctx, actor, request)
+	adminSandboxResult(ctx, c, result, err)
+}
+
+func (h *adminSandboxHandler) schedulerSettings(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	service, ok := h.service.(adminSandboxSchedulerService)
+	if !ok {
+		adminSandboxError(ctx, c, domainsandbox.ErrUnavailable)
+		return
+	}
+	result, err := service.GetSchedulerSettings(ctx, actor)
+	adminSandboxResult(ctx, c, result, err)
+}
+
+func (h *adminSandboxHandler) updateSchedulerSettings(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	var request updateAdminSandboxSchedulerSettingsRequest
+	if err := decodeAdminSandboxJSON(c, &request); err != nil {
+		adminSandboxError(ctx, c, err)
+		return
+	}
+	if request.ExpectedVersion == 0 {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	settingsJSON, err := json.Marshal(request.Settings)
+	if err != nil {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	settings, err := domainsandbox.DecodeSchedulerSettingsJSON(settingsJSON)
+	if err != nil {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	service, ok := h.service.(adminSandboxSchedulerService)
+	if !ok {
+		adminSandboxError(ctx, c, domainsandbox.ErrUnavailable)
+		return
+	}
+	result, err := service.UpdateSchedulerSettings(ctx, actor, appsandbox.UpdateSchedulerSettingsRequest{ExpectedVersion: request.ExpectedVersion, Settings: settings})
+	adminSandboxResult(ctx, c, result, err)
+}
+
+func (h *adminSandboxHandler) runtimeStatus(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	service, ok := h.service.(adminSandboxSchedulerService)
+	if !ok {
+		adminSandboxResult(ctx, c, &appsandbox.SchedulerRuntimeStatusDTO{ReasonCode: appsandbox.SchedulerReasonProviderUnavailable}, nil)
+		return
+	}
+	result, err := service.GetRuntimeStatus(ctx, actor)
 	adminSandboxResult(ctx, c, result, err)
 }
 
@@ -943,7 +1054,10 @@ type adminSandboxResponsePayload interface {
 		*appsandbox.ProviderDTO |
 		*appsandbox.ProviderMutationResult |
 		*appsandbox.ProviderDefaultDTO |
-		*appsandbox.ListAuditEventsResult
+		*appsandbox.ListAuditEventsResult |
+		*appsandbox.SchedulerSettingsDTO |
+		*appsandbox.SchedulerSettingsUpdateResult |
+		*appsandbox.SchedulerRuntimeStatusDTO
 }
 
 func adminSandboxResult[T adminSandboxResponsePayload](ctx context.Context, c *app.RequestContext, result T, err error) {

@@ -1464,6 +1464,14 @@ func migrateSQLiteSandboxTestSchema(db *gorm.DB) error {
             metadata_json JSON NOT NULL,
             created_at DATETIME NOT NULL
         )`,
+		`CREATE TABLE sandbox_scheduler_audit_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_user_id INTEGER NOT NULL,
+            request_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            metadata_json JSON NOT NULL,
+            created_at DATETIME NOT NULL
+        )`,
 		`CREATE INDEX idx_sandbox_audit_action_created_event ON sandbox_provider_audit_events (action, created_at, event_id)`,
 		`CREATE INDEX idx_sandbox_audit_result_created_event ON sandbox_provider_audit_events (result, created_at, event_id)`,
 	}

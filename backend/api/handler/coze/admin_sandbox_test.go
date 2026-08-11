@@ -163,6 +163,33 @@ func TestAdminSandboxHandlersRejectStrictInputMatrix(t *testing.T) {
 	}
 }
 
+func TestAdminSandboxSchedulerSettingsRejectStrictPayloads(t *testing.T) {
+	h := newAdminSandboxTestServer(&adminSandboxServiceStub{})
+	validSettings, err := json.Marshal(domainsandbox.DefaultSchedulerSettings())
+	require.NoError(t, err)
+	valid := `{"expected_version":1,"settings":` + string(validSettings) + `}`
+	for _, body := range []string{
+		valid,
+		`{"expected_version":1,"settings":` + string(validSettings) + `,"credential":"forbidden"}`,
+		`{"expected_version":1,"ExpectedVersion":1,"settings":` + string(validSettings) + `}`,
+		`{"expected_version":1,"settings":{"total_weight":2}}`,
+	} {
+		response := performAdminSandboxRequest(h, http.MethodPut, "/api/admin/sandboxes/scheduler-settings", body)
+		if body == valid {
+			require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
+		} else {
+			require.Equal(t, http.StatusBadRequest, response.Code, string(response.Result().Body()))
+		}
+	}
+}
+
+func TestAdminSandboxRuntimeStatusReturnsSafeUnavailableEnvelope(t *testing.T) {
+	h := newAdminSandboxTestServer(&adminSandboxServiceStub{})
+	response := performAdminSandboxRequest(h, http.MethodGet, "/api/admin/sandboxes/runtime-status", "")
+	require.Equal(t, http.StatusOK, response.Code, string(response.Result().Body()))
+	require.Contains(t, string(response.Result().Body()), `"available":false`)
+}
+
 func TestAdminSandboxHandlersAcceptBodyAtExactLimit(t *testing.T) {
 	stub := &adminSandboxServiceStub{}
 	h := newAdminSandboxTestServer(stub)
@@ -313,6 +340,21 @@ func (s *adminSandboxServiceStub) ListAuditEvents(_ context.Context, actor appsa
 	}}, Total: 1}, err
 }
 
+func (s *adminSandboxServiceStub) GetSchedulerSettings(_ context.Context, actor appsandbox.Actor) (*appsandbox.SchedulerSettingsDTO, error) {
+	err := s.record("scheduler_get", actor)
+	return &appsandbox.SchedulerSettingsDTO{Version: 1, Settings: domainsandbox.DefaultSchedulerSettings()}, err
+}
+
+func (s *adminSandboxServiceStub) UpdateSchedulerSettings(_ context.Context, actor appsandbox.Actor, request appsandbox.UpdateSchedulerSettingsRequest) (*appsandbox.SchedulerSettingsUpdateResult, error) {
+	err := s.record("scheduler_update", actor)
+	return &appsandbox.SchedulerSettingsUpdateResult{Version: request.ExpectedVersion + 1, Settings: request.Settings, Applied: true}, err
+}
+
+func (s *adminSandboxServiceStub) GetRuntimeStatus(_ context.Context, actor appsandbox.Actor) (*appsandbox.SchedulerRuntimeStatusDTO, error) {
+	err := s.record("runtime_status", actor)
+	return &appsandbox.SchedulerRuntimeStatusDTO{ReasonCode: appsandbox.SchedulerReasonProviderUnavailable}, err
+}
+
 func adminSandboxSafeProvider() *appsandbox.ProviderDTO {
 	return &appsandbox.ProviderDTO{
 		ID:                    17,
@@ -350,6 +392,9 @@ func newAdminSandboxTestServer(service adminSandboxService) *server.Hertz {
 	h.POST("/api/admin/sandboxes/:id/defaults", handler.setDefault)
 	h.POST("/api/admin/sandboxes/:id/health", handler.health)
 	h.GET("/api/admin/sandboxes/:id/audit-events", handler.auditEvents)
+	h.GET("/api/admin/sandboxes/scheduler-settings", handler.schedulerSettings)
+	h.PUT("/api/admin/sandboxes/scheduler-settings", handler.updateSchedulerSettings)
+	h.GET("/api/admin/sandboxes/runtime-status", handler.runtimeStatus)
 	return h
 }
 

@@ -6931,6 +6931,43 @@ table "sandbox_scheduler_settings" {
     expr = "`id` = 1"
   }
 }
+table "sandbox_scheduler_audit_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "event_id" {
+    null           = false
+    type           = bigint
+    unsigned       = true
+    auto_increment = true
+  }
+  column "actor_user_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "request_id" {
+    null = false
+    type = varchar(128)
+  }
+  column "action" {
+    null = false
+    type = varchar(64)
+  }
+  column "metadata_json" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.event_id]
+  }
+  check "chk_sandbox_scheduler_audit_action" {
+    expr = "`action` IN ('scheduler_settings.update', 'scheduler_settings.update_failed')"
+  }
+}
 table "sandbox_provider_audit_events" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"
