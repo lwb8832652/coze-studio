@@ -82,6 +82,45 @@ describe('code plugin form submission', () => {
         }),
         { __disableErrorToast: true },
       );
+
+      const request = apiMocks.registerPluginMeta.mock.calls[0][0];
+      expect(request).not.toHaveProperty('common_params');
+      expect(request).not.toHaveProperty('oauth_info');
+      expect(request).not.toHaveProperty('url');
+      expect(request).not.toHaveProperty('location');
+      expect(request).not.toHaveProperty('key');
+      expect(request).not.toHaveProperty('service_token');
     },
   );
+
+  it('keeps HTTP plugin configuration unchanged', () => {
+    const params = pluginFormUtils.convertPluginMetaParams({
+      val: {
+        name: 'http-plugin',
+        desc: 'http plugin',
+        url: 'https://plugins.example.test',
+        plugin_uri: [{ uid: 'plugin-icon' }],
+        auth_type: [0],
+      } as unknown as FormState,
+      spaceId: 'space-1',
+      headerList: [{ name: 'User-Agent', value: 'Coze/1.0' }],
+      projectId: undefined,
+      creationMethod: CreationMethod.COZE,
+      defaultRuntime: '1',
+      pluginType: PluginType.PLUGIN,
+      extItemsJSON: {},
+    });
+
+    expect(params).toEqual(
+      expect.objectContaining({
+        url: 'https://plugins.example.test',
+        plugin_type: PluginType.PLUGIN,
+        creation_method: CreationMethod.COZE,
+        oauth_info: '{}',
+        common_params: expect.objectContaining({
+          4: [{ name: 'User-Agent', value: 'Coze/1.0' }],
+        }),
+      }),
+    );
+  });
 });

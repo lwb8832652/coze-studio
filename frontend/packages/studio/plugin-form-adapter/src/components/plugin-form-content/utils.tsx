@@ -22,9 +22,9 @@ import { I18n } from '@coze-arch/i18n';
 import { safeJSONParse } from '@coze-arch/bot-utils';
 import {
   type commonParamSchema,
-  type CreationMethod,
+  CreationMethod,
   ParameterLocation,
-  type PluginType,
+  PluginType,
   type PluginMetaInfo,
 } from '@coze-arch/bot-api/plugin_develop';
 import { PluginDevelopApi } from '@coze-arch/bot-api';
@@ -106,6 +106,12 @@ export interface AuthOption {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any
   [key: string]: any;
 }
+
+const isCodePluginCreation = (
+  pluginType: PluginType,
+  creationMethod: CreationMethod,
+) => pluginType === PluginType.FUNC && creationMethod === CreationMethod.IDE;
+
 /** Recursively find the input under the auth option */
 export const findAuthTypeItem = (data: AuthOption[], targetKey = 0) => {
   for (const item of data) {
@@ -240,6 +246,20 @@ export const convertPluginMetaParams = ({
 }) => {
   const mainAuthType = val.auth_type?.at(0);
   const serviceSubAuthType = val.auth_type?.at(-1);
+  if (isCodePluginCreation(pluginType, creationMethod)) {
+    return {
+      name: val.name,
+      desc: val.desc,
+      icon: { uri: val?.plugin_uri?.[0]?.uid },
+      auth_type: mainAuthType,
+      space_id: spaceId,
+      project_id: projectId,
+      creation_method: creationMethod,
+      ide_code_runtime: val.ide_code_runtime ?? defaultRuntime,
+      plugin_type: pluginType,
+    };
+  }
+
   const initParams = {
     ...val,
     icon: { uri: val?.plugin_uri?.[0]?.uid },

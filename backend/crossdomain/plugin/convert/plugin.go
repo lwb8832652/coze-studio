@@ -23,6 +23,7 @@ import (
 
 var pluginTypes = map[common.PluginType]consts.PluginType{
 	common.PluginType_PLUGIN: consts.PluginTypeOfCloud,
+	common.PluginType_FUNC:   consts.PluginTypeOfCustom,
 }
 
 func ToPluginType(typ common.PluginType) (consts.PluginType, bool) {

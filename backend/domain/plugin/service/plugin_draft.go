@@ -77,13 +77,20 @@ func (p *pluginServiceImpl) CreateDraftPlugin(ctx context.Context, req *dto.Crea
 	}
 
 	doc := model.NewDefaultOpenapiDoc()
-	doc.Servers = append(doc.Servers, &openapi3.Server{
-		URL: req.ServerURL,
-	})
+	if req.PluginType != common.PluginType_FUNC {
+		doc.Servers = append(doc.Servers, &openapi3.Server{
+			URL: req.ServerURL,
+		})
+	}
 	doc.Info.Title = req.Name
 	doc.Info.Description = req.Desc
 
-	err = doc.Validate(ctx)
+	if req.PluginType == common.PluginType_FUNC {
+		standardDoc := openapi3.T(*doc)
+		err = standardDoc.Validate(ctx)
+	} else {
+		err = doc.Validate(ctx)
+	}
 	if err != nil {
 		return 0, err
 	}
