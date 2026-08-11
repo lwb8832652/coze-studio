@@ -144,6 +144,58 @@ func TestCanonicalRunRequestRejectsUnsupportedFieldsWithoutSideEffects(t *testin
 	}
 }
 
+func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(threadID int64) string
+		body string
+	}{
+		{
+			name: "create nested config",
+			path: func(threadID int64) string {
+				return fmt.Sprintf("/api/workbench/threads/%d/runs", threadID)
+			},
+			body: `{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"CoNfIg":{"CoNfIgUrAbLe":{"MoDe":"ultra"}}
+			}`,
+		},
+		{
+			name: "wait root control",
+			path: func(threadID int64) string {
+				return fmt.Sprintf("/api/workbench/threads/%d/runs/wait", threadID)
+			},
+			body: `{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"reasoning_effort":"high"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			thread := createCanonicalTestThread(t, 1001, "execution control rejection", `{}`)
+			response := performCanonicalRunJSONRequest(
+				t,
+				canonicalRunTestServer(),
+				http.MethodPost,
+				test.path(thread.ThreadID),
+				test.body,
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Empty(t, canonicalRunsForThread(t, thread.ThreadID))
+		})
+	}
+}
+
 func TestCanonicalRunRequestOnlyAcceptsSingleUserTurn(t *testing.T) {
 	tests := map[string]string{
 		"missing input":      `{"assistant_id":"agent"}`,
@@ -186,7 +238,7 @@ func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency(t
 		"command":{},
 		"metadata":{"source":"workbench_detail_followup"},
 		"coze":{"message_metadata":{"source":"workbench_detail_followup","composer":"detail"}},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"context":{"locale":"zh-CN"},
 		"stream_mode":["messages-tuple","updates"],
 		"on_disconnect":"continue"
@@ -258,7 +310,7 @@ func TestCanonicalCreateRunTopLevelRetryIsMessageLessAndReplaysAcrossWait(t *tes
 		"input":{"messages":[{"role":"user","content":"retry the current task"}]},
 		"command":{},
 		"metadata":{"source":"task_retry"},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"context":{"locale":"zh-CN"},
 		"stream_mode":["messages-tuple","updates"],
 		"on_disconnect":"continue",
@@ -801,6 +853,26 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 	assertCanonicalResumePersistence(t, sourceRunID, "canonical-resume-route-1")
 }
 
+func TestCanonicalResumeRejectsExecutionControlsBeforeApplication(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServerForUserAndSpace(2, 1),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+		`{"mode":"ultra"}`,
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_execution_control", public.Code)
+	runs := canonicalRunsForThread(t, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, sourceRunID, runs[0].RunID)
+}
+
 func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) {
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
@@ -1186,7 +1258,7 @@ func TestCanonicalRunDoesNotTreatUserMessageAsRuntimeConfiguration(t *testing.T)
 	h := canonicalRunTestServer()
 	body := `{
 		"assistant_id":"agent",
-		"input":{"messages":[{"role":"user","content":"请说明为什么 api_key=sk-example 不应写入配置"}]}
+		"input":{"messages":[{"role":"user","content":"请说明为什么 api_key=sk-example 和 requested_policy=auto 都不应被当作配置"}]}
 	}`
 
 	response := performCanonicalRunJSONRequest(

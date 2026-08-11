@@ -638,6 +638,13 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
+	if public := validateCanonicalExecutionControlIngress(
+		c.Request.Body(),
+		canonicalExecutionControlRootOnly,
+	); public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	var req canonicalResumeRunRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -1461,6 +1468,12 @@ func parseCanonicalRunSubmission(
 	allowRaiseError bool,
 ) (*canonicalRunSubmission, *canonicalError) {
 	if public := canonicalRequestBodyLimit(c, "Run"); public != nil {
+		return nil, public
+	}
+	if public := validateCanonicalExecutionControlIngress(
+		c.Request.Body(),
+		canonicalExecutionControlRunSubmission,
+	); public != nil {
 		return nil, public
 	}
 	var req canonicalCreateRunRequest

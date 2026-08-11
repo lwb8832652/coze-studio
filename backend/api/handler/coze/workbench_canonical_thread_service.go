@@ -39,6 +39,8 @@ const (
 	canonicalMaxJournalSourceBytes = 32 << 20
 )
 
+const canonicalWholeThreadDeletionTemporarilyDisabled = true
+
 var errCanonicalJournalBudgetExceeded = errors.New("canonical thread journal budget exceeded")
 
 type canonicalJournalBudget struct {
@@ -156,6 +158,13 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	if public := canonicalRequestBodyLimit(c, "Thread"); public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
+	if public := validateCanonicalExecutionControlIngress(
+		c.Request.Body(),
+		canonicalExecutionControlCreateThread,
+	); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
@@ -465,9 +474,8 @@ func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
 }
 
 // DeleteCanonicalThread serves DELETE /api/workbench/threads/:thread_id.
-// It authorizes the authenticated session principal against the path Thread; workspace identity
-// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
-// ApplicationService.DeleteThreadIfIdle, and returns 204 with an empty body.
+// It requires the authenticated session principal to have workspace access and validates the
+// path Thread ID. Whole-Thread deletion is temporarily disabled before any delete mutation.
 func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.delete", "/api/workbench/threads/:thread_id")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
@@ -485,6 +493,17 @@ func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	}
 	requestLog.ThreadID = threadID
 	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
+	if canonicalWholeThreadDeletionTemporarilyDisabled {
+		public := newCanonicalError(
+			consts.StatusServiceUnavailable,
+			"thread_delete_temporarily_disabled",
+			"Thread deletion is temporarily unavailable",
+			"thread_delete_disabled",
+			false,
+		)
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	response, err := appagentthread.SVC.DeleteThreadIfIdle(ctx, &appagentthread.DeleteThreadIfIdleRequest{
 		ThreadID: threadID,
 	})

@@ -195,6 +195,32 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 	require.NotContains(t, replayed, "provider_body")
 }
 
+func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE(t *testing.T) {
+	installAgentThreadTestService(t)
+	previousWriterFactory := canonicalRunStreamWriterFactory
+	writerStarted := false
+	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
+		writerStarted = true
+		return canonicalRunStreamWriterHandle{writer: &callbackCanonicalRunStreamWriter{}}
+	}
+	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunStreamTestServer(20*time.Millisecond),
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		`{"mode":"ultra"}`,
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_execution_control", public.Code)
+	require.False(t, writerStarted)
+	require.Empty(t, canonicalRunsForThread(t, 1))
+}
+
 func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)

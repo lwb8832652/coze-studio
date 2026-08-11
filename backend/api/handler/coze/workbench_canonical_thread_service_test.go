@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	projectconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *testing.T) {
@@ -189,7 +191,7 @@ func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
 		"coze":{"initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home"}
 		}}
 	}`
@@ -259,6 +261,46 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 	}
 }
 
+func TestCreateCanonicalThreadRejectsExecutionControlsBeforeMutation(t *testing.T) {
+	tests := map[string]string{
+		"immediate nested mixed case": `{
+			"metadata":{},
+			"coze":{"initial_run":{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"CoNfIg":{"CoNfIgUrAbLe":{"ReQuEsTeD_PoLiCy":"fast"}}
+			}}
+		}`,
+		"deferred": `{
+			"metadata":{},
+			"coze":{"deferred_initial_run":{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"context":{"reasoning_effort":"high"}
+			}}
+		}`,
+	}
+
+	for name, body := range tests {
+		name, body := name, body
+		t.Run(name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", body,
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
 func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t *testing.T) {
 	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
@@ -304,7 +346,7 @@ func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testi
 		"coze":{"initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"first payload"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home"}
 		}}
 	}`
@@ -353,7 +395,7 @@ func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
 		"coze":{"deferred_initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"分析附件中的销售数据"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home_with_uploads"}
 		}}
 	}`
@@ -376,13 +418,13 @@ func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *test
 	initial := `{
 		"assistant_id":"agent",
 		"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"metadata":{"source":"workbench_home"}
 	}`
 	deferred := `{
 		"assistant_id":"agent",
 		"input":{"messages":[{"role":"user","content":"分析附件中的销售数据"}]},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"metadata":{"source":"workbench_home_with_uploads"}
 	}`
 	tests := map[string]string{
@@ -688,40 +730,84 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testing.T) {
-	h := canonicalAgentThreadTestServer()
-	h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
-	installAgentThreadTestService(t)
+type canonicalDeleteThreadIfIdleSpy struct {
+	domainservice.ThreadService
+	deleteCalls int
+}
 
-	idle := createCanonicalTestThread(t, 1001, "idle", `{}`)
-	idlePath := "/api/workbench/threads/" + strconv.FormatInt(idle.ThreadID, 10)
-	idleResponse := ut.PerformRequest(h.Engine, http.MethodDelete, idlePath, nil)
-	require.Equal(t, http.StatusNoContent, idleResponse.Code)
-	require.Empty(t, idleResponse.Result().Body())
+func (s *canonicalDeleteThreadIfIdleSpy) DeleteThreadIfIdle(
+	context.Context,
+	*domainservice.DeleteThreadIfIdleRequest,
+) (bool, error) {
+	s.deleteCalls++
+	return true, nil
+}
 
-	busy, err := appagentthread.SVC.CreateTaskThread(context.Background(), &appagentthread.CreateTaskThreadRequest{
-		SpaceID: 1001,
-		UserID:  2,
-		Message: "keep running",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, busy.Run)
-	busyPath := "/api/workbench/threads/" + strconv.FormatInt(busy.Thread.ThreadID, 10)
-	busyResponse := ut.PerformRequest(h.Engine, http.MethodDelete, busyPath, nil)
-	require.Equal(t, http.StatusConflict, busyResponse.Code)
-	var public canonicalError
-	require.NoError(t, json.Unmarshal(busyResponse.Result().Body(), &public))
-	require.Equal(t, "thread_busy", public.Code)
+func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing bool
+	}{
+		{name: "existing idle thread", existing: true},
+		{name: "valid nonexistent positive thread ID"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.Use(func(ctx context.Context, c *app.RequestContext) {
+				ctx = context.WithValue(ctx, projectconsts.CtxLogIDKey, "trace-delete")
+				c.Next(ctx)
+			})
+			h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
+			installAgentThreadTestService(t)
 
-	stored, err := appagentthread.SVC.GetThread(context.Background(), &appagentthread.GetThreadRequest{
-		ThreadID: busy.Thread.ThreadID,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, stored.Thread)
-	run, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: busy.Run.RunID})
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusPending, run.Run.Status)
+			authorizer := &canonicalRecordingWorkspaceAuthorizer{}
+			appagentthread.SVC.WorkspaceAuthorizer = authorizer
+			realThreadSVC := appagentthread.SVC.ThreadSVC
+			spy := &canonicalDeleteThreadIfIdleSpy{ThreadService: realThreadSVC}
+			appagentthread.SVC.ThreadSVC = spy
+
+			threadID := int64(999)
+			if test.existing {
+				threadID = createCanonicalTestThread(t, 1001, "idle", `{}`).ThreadID
+			}
+
+			path := "/api/workbench/threads/" + strconv.FormatInt(threadID, 10)
+			response := ut.PerformRequest(h.Engine, http.MethodDelete, path, nil)
+			if response.Code != http.StatusServiceUnavailable {
+				t.Errorf("expected exact HTTP status %d, got %d", http.StatusServiceUnavailable, response.Code)
+			}
+			if spy.deleteCalls != 0 {
+				t.Errorf("expected DeleteThreadIfIdle calls 0, got %d", spy.deleteCalls)
+			}
+			if response.Code != http.StatusServiceUnavailable || spy.deleteCalls != 0 {
+				return
+			}
+
+			body := response.Result().Body()
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(body, &public))
+			require.Equal(t, "thread_delete_temporarily_disabled", public.Code)
+			require.Equal(t, "Thread deletion is temporarily unavailable", public.Detail)
+			require.False(t, public.Retryable)
+			require.Equal(t, "trace-delete", public.TraceID)
+			require.NotContains(t, string(body), "error_code")
+			require.Empty(t, response.Result().Header.Get("Retry-After"))
+			require.Equal(t, 1, authorizer.calls)
+			require.Equal(t, appagentthread.WorkspaceAccessRequest{
+				ViewerID: 2,
+				SpaceID:  1001,
+			}, authorizer.req)
+
+			if test.existing {
+				stored, err := realThreadSVC.GetThread(context.Background(), threadID)
+				require.NoError(t, err)
+				require.NotNil(t, stored)
+				require.Equal(t, threadID, stored.ID)
+			}
+		})
+	}
 }
 
 func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *testing.T) {

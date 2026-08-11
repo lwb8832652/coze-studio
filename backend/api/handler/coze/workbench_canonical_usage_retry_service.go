@@ -135,6 +135,17 @@ func RetryCanonicalSubagentRun(ctx context.Context, c *app.RequestContext) {
 	requestLog.RunID = sourceRunID
 	requestLog.SourceRunID = sourceRunID
 	requestLog.ResourceID = strconv.FormatInt(sourceRunID, 10)
+	if public := canonicalRequestBodyLimit(c, "Run"); public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
+	if public := validateCanonicalExecutionControlIngress(
+		c.Request.Body(),
+		canonicalExecutionControlRootOnly,
+	); public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	if public := canonicalRejectNonEmptyBody(c); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return

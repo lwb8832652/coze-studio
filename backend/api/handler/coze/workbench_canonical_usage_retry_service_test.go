@@ -202,6 +202,76 @@ func TestCanonicalSubagentRunRetryContract(t *testing.T) {
 	require.Len(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID), 1)
 }
 
+func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "retry ingress rejection", `{}`)
+	parent := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued,
+	)
+	child := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, parent.RunID, appagentthread.RunKindSubagent, appagentthread.RunStatusRunning,
+	)
+	failCanonicalRunForUsageRetry(t, child.RunID)
+
+	response := performCanonicalUsageRetryRequest(
+		t,
+		canonicalUsageRetryTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(`{"subagent_enabled":true}`),
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	require.Contains(t, string(response.Result().Body()), `"code":"unsupported_execution_control"`)
+	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID))
+}
+
+func TestCanonicalSubagentRunRetryPreservesIngressPriorities(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "retry ingress priority", `{}`)
+	parent := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued,
+	)
+	child := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, parent.RunID, appagentthread.RunKindSubagent, appagentthread.RunStatusRunning,
+	)
+	failCanonicalRunForUsageRetry(t, child.RunID)
+	h := canonicalUsageRetryTestServer()
+
+	wrongWorkspace := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(`{"mode":"ultra"}`),
+		ut.Header{Key: canonicalSpaceIDHeader, Value: "2002"},
+	)
+	require.Equal(t, http.StatusNotFound, wrongWorkspace.Code, wrongWorkspace.Result().Body())
+	require.Contains(t, string(wrongWorkspace.Result().Body()), `"code":"resource_not_found"`)
+
+	invalidPath := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/not-a-run/retry", thread.ThreadID),
+		canonicalUsageRetryJSONBody(`{"mode":"ultra"}`),
+	)
+	require.Equal(t, http.StatusBadRequest, invalidPath.Code, invalidPath.Result().Body())
+	require.NotContains(t, string(invalidPath.Result().Body()), "unsupported_execution_control")
+
+	oversized := `{"payload":"` + strings.Repeat("x", canonicalMaxRequestBytes) + `"}`
+	tooLarge := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(oversized),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, tooLarge.Code, tooLarge.Result().Body())
+	require.Contains(t, string(tooLarge.Result().Body()), `"code":"request_too_large"`)
+	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID))
+}
+
 func TestCanonicalSubagentRunRetryErrors(t *testing.T) {
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "retry errors", `{}`)
