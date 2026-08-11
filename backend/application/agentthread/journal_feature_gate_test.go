@@ -189,7 +189,7 @@ func TestApplicationCreateTaskThreadPersistsJournalEnrollmentInAtomicBundle(t *t
 
 	_, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
 		SpaceID: 42, UserID: 2, Message: "分析项目需求",
-		Config: `{"runtime":"eino_adk","mode":"pro"}`,
+		Config: `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, domainSVC.createThreadRunMessageReq)

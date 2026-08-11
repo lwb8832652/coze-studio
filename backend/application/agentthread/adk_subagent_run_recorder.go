@@ -82,7 +82,7 @@ func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := r.app.CreateRun(ctx, &CreateRunRequest{
+	resp, err := r.app.createRun(ctx, &CreateRunRequest{
 		ThreadID:    req.Parent.ThreadID,
 		ParentRunID: req.Parent.RunID,
 		AssistantID: adkSubagentAssistantID(definition),
@@ -93,7 +93,7 @@ func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun(
 		Metadata:    metadata,
 		StreamMode:  req.Parent.StreamMode,
 		Durability:  req.Parent.Durability,
-	})
+	}, createRunServerOwnedSubagent)
 	if err != nil {
 		return nil, err
 	}

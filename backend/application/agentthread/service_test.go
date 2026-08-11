@@ -296,6 +296,58 @@ func TestApplicationCreateTaskThreadRejectsRuntimeBeforeThreadPersistence(t *tes
 	require.Nil(t, domainSVC.appendReq)
 }
 
+func TestApplicationCreateTaskThreadRejectsSubmittedExecutionControls(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		deferStart bool
+		config     string
+		runContext string
+	}{
+		{
+			name:   "immediate config",
+			config: `{"mode":"pro"}`,
+		},
+		{
+			name:       "deferred context",
+			deferStart: true,
+			runContext: `{"configurable":{"requested_policy":"pro"}}`,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{
+				created: &entity.Thread{
+					ID: 10, SpaceID: 1, CreatorID: 2,
+					Status: entity.ThreadStatusIdle,
+				},
+				createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+					Thread:  &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2},
+					Run:     &entity.Run{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask},
+					Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 20},
+				},
+			}
+			app := &ApplicationService{ThreadSVC: domainSVC}
+
+			resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+				SpaceID:    1,
+				UserID:     2,
+				Message:    "请分析客户反馈",
+				DeferStart: test.deferStart,
+				Config:     test.config,
+				Context:    test.runContext,
+			})
+
+			require.Nil(t, resp)
+			require.ErrorIs(t, err, ErrUnsupportedExecutionControl)
+			require.Nil(t, domainSVC.createReq)
+			require.Nil(t, domainSVC.createThreadRunMessageReq)
+			require.Nil(t, domainSVC.createRunReq)
+			require.Nil(t, domainSVC.createRunBundleReq)
+			require.Nil(t, domainSVC.appendReq)
+		})
+	}
+}
+
 func TestApplicationCreateTaskThreadCanDeferRunStartForUploads(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		created: &entity.Thread{
@@ -402,7 +454,6 @@ func TestApplicationCreateTaskThreadUsesActivatedSkillCreatorForProvisionalTitle
 		Message: "我想创建一个技能，请先询问我技能用途、使用场景和期望输出。",
 		Config: `{
 			"runtime":"eino_adk",
-			"mode":"pro",
 			"enable_skills":["skill-creator"],
 			"skills":{
 				"enabled":true,
@@ -465,7 +516,6 @@ func TestApplicationCreateTaskThreadPreservesNonTemplateTitlesWithActivatedSkill
 				Message: tt.message,
 				Config: `{
 					"runtime":"eino_adk",
-					"mode":"pro",
 					"enable_skills":["skill-creator"],
 					"skills":{
 						"enabled":true,
@@ -481,7 +531,7 @@ func TestApplicationCreateTaskThreadPreservesNonTemplateTitlesWithActivatedSkill
 	}
 }
 
-func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *testing.T) {
+func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeDefaults(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
 			Thread:  &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2, Title: "新建任务"},
@@ -496,7 +546,7 @@ func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *tes
 		SpaceID: 1,
 		UserID:  2,
 		Message: "请分析客户反馈",
-		Config:  `{"requested_policy":"auto","skills":{"enabled":true}}`,
+		Config:  `{"runtime":"eino_adk","skills":{"enabled":true}}`,
 	})
 
 	require.NoError(t, err)
@@ -1298,7 +1348,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 			Status:            entity.RunStatusPending,
 			Command:           `{}`,
 			Input:             `{"messages":[]}`,
-			Config:            `{"mode":"Auto"}`,
+			Config:            `{"runtime":"eino_adk","custom":"keep"}`,
 			Context:           `{"source":"web"}`,
 			Metadata:          `{"trace":"abc"}`,
 			StreamMode:        `["messages","updates"]`,
@@ -1319,7 +1369,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 		AssistantID:    "default",
 		RunKind:        RunKindSubagent,
 		Input:          `{"messages":[]}`,
-		Config:         `{"mode":"Auto"}`,
+		Config:         `{"runtime":"eino_adk","custom":"keep"}`,
 		Context:        `{"source":"web"}`,
 		Metadata:       `{"trace":"abc"}`,
 		IdempotencyKey: "idem-1",
@@ -1332,7 +1382,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	require.Equal(t, "default", domainSVC.createRunReq.AssistantID)
 	require.Equal(t, entity.RunKindSubagent, domainSVC.createRunReq.RunKind)
 	require.Equal(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Equal(t, `{"mode":"Auto"}`, domainSVC.createRunReq.Config)
+	require.Equal(t, `{"runtime":"eino_adk","custom":"keep"}`, domainSVC.createRunReq.Config)
 	require.Equal(t, `{"source":"web"}`, domainSVC.createRunReq.Context)
 	require.Equal(t, `{"trace":"abc"}`, domainSVC.createRunReq.Metadata)
 	require.Equal(t, "idem-1", domainSVC.createRunReq.IdempotencyKey)
@@ -1431,7 +1481,7 @@ func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
 		AssistantID:              "default",
 		Command:                  `{"retry":"current_task"}`,
 		Input:                    `{"messages":[{"role":"user","content":"继续分析"}]}`,
-		Config:                   `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:                   `{"runtime":"eino_adk"}`,
 		Context:                  `{"request":"context"}`,
 		Metadata:                 `{"caller":"keep"}`,
 		StreamMode:               `["messages-tuple","updates"]`,
@@ -1453,7 +1503,7 @@ func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
 	require.Equal(t, "default", domainSVC.createRunBundleReq.Run.AssistantID)
 	require.JSONEq(t, `{"retry":"current_task"}`, domainSVC.createRunBundleReq.Run.Command)
 	require.Equal(t, `{"messages":[{"role":"user","content":"继续分析"}]}`, domainSVC.createRunBundleReq.Run.Input)
-	require.JSONEq(t, `{"runtime":"eino_adk","mode":"pro"}`, domainSVC.createRunBundleReq.Run.Config)
+	require.JSONEq(t, `{"runtime":"eino_adk"}`, domainSVC.createRunBundleReq.Run.Config)
 	require.Equal(t, `{"request":"context"}`, domainSVC.createRunBundleReq.Run.Context)
 	require.JSONEq(t, `{"caller":"keep","attempt_kind":"retry","source_run_id":3001}`, domainSVC.createRunBundleReq.Run.Metadata)
 	require.Equal(t, `["messages-tuple","updates"]`, domainSVC.createRunBundleReq.Run.StreamMode)
@@ -1825,6 +1875,129 @@ func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) 
 	require.Nil(t, domainSVC.createRunReq)
 }
 
+func TestApplicationCreateRunRejectsSubmittedExecutionControls(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 20, ThreadID: 10, RunKind: entity.RunKindTask,
+			},
+		},
+	}
+	authorizer := &recordingThreadAuthorizer{}
+	workspaceAuthorizer := &recordingWorkspaceAuthorizer{}
+	app := &ApplicationService{
+		ThreadSVC:           domainSVC,
+		ThreadAuthorizer:    authorizer,
+		WorkspaceAuthorizer: workspaceAuthorizer,
+	}
+	ctx := WithThreadAccessRequest(context.Background(), ThreadAccessRequest{
+		ViewerID: 30,
+		SpaceID:  1,
+		ThreadID: 10,
+	})
+
+	resp, err := app.CreateRun(ctx, &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{}`,
+		Context:  `{"configurable":{"requested_policy":"pro"}}`,
+	})
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrUnsupportedExecutionControl)
+	require.Equal(t, []ThreadAccessRequest{{ViewerID: 30, SpaceID: 1, ThreadID: 10}}, authorizer.requests)
+	require.Equal(t, []WorkspaceAccessRequest{{ViewerID: 30, SpaceID: 1}}, workspaceAuthorizer.requests)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+	require.Nil(t, domainSVC.createThreadRunMessageReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationTopLevelRetryRejectsSubmittedExecutionControls(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 30, ThreadID: 10, RunKind: entity.RunKindTask,
+			Status: entity.RunStatusFailed,
+		},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 31, ThreadID: 10, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusPending,
+			},
+		},
+	}
+	authorizer := &recordingThreadAuthorizer{}
+	workspaceAuthorizer := &recordingWorkspaceAuthorizer{}
+	app := &ApplicationService{
+		ThreadSVC:           domainSVC,
+		ThreadAuthorizer:    authorizer,
+		WorkspaceAuthorizer: workspaceAuthorizer,
+	}
+	ctx := WithThreadAccessRequest(context.Background(), ThreadAccessRequest{
+		ViewerID: 30,
+		SpaceID:  1,
+		ThreadID: 10,
+	})
+
+	resp, err := app.CreateRun(ctx, &CreateRunRequest{
+		ThreadID:                 10,
+		TopLevelRetrySourceRunID: 30,
+		Config:                   `{"mode":"pro"}`,
+		Input:                    `{}`,
+	})
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrUnsupportedExecutionControl)
+	require.Equal(t, []ThreadAccessRequest{{ViewerID: 30, SpaceID: 1, ThreadID: 10}}, authorizer.requests)
+	require.Equal(t, []WorkspaceAccessRequest{{ViewerID: 30, SpaceID: 1}}, workspaceAuthorizer.requests)
+	require.Zero(t, domainSVC.getRunID)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationCreateRunProvenanceFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		provenance createRunProvenance
+		request    *CreateRunRequest
+	}{
+		{
+			name:       "unknown provenance",
+			provenance: createRunProvenance(255),
+			request: &CreateRunRequest{
+				ThreadID: 10, ParentRunID: 20, RunKind: RunKindSubagent,
+			},
+		},
+		{
+			name:       "server owned child requires parent",
+			provenance: createRunServerOwnedSubagent,
+			request: &CreateRunRequest{
+				ThreadID: 10, RunKind: RunKindSubagent,
+			},
+		},
+		{
+			name:       "server owned child requires exact run kind",
+			provenance: createRunServerOwnedSubagent,
+			request: &CreateRunRequest{
+				ThreadID: 10, ParentRunID: 20, RunKind: RunKindTask,
+			},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{}
+			app := &ApplicationService{ThreadSVC: domainSVC}
+
+			resp, err := app.createRun(context.Background(), test.request, test.provenance)
+
+			require.Nil(t, resp)
+			require.Error(t, err)
+			require.Nil(t, domainSVC.createRunReq)
+			require.Nil(t, domainSVC.createRunBundleReq)
+		})
+	}
+}
+
 func TestApplicationCreateRunRejectsUnknownRuntimeBeforePersistence(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
@@ -1861,7 +2034,7 @@ func TestApplicationCreateRunRejectsLegacyRuntimeBeforePersistence(t *testing.T)
 	require.Nil(t, domainSVC.createRunBundleReq)
 }
 
-func TestApplicationCreateRunCanonicalizesLangGraphRuntimeContext(t *testing.T) {
+func TestApplicationCreateRunCanonicalizesAllowedRuntimeContext(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		createdRunBundle: &domainservice.CreateRunBundleResult{
 			Run: &entity.Run{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2},
@@ -1873,20 +2046,21 @@ func TestApplicationCreateRunCanonicalizesLangGraphRuntimeContext(t *testing.T) 
 	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
 		ThreadID: 10,
 		Config:   `{}`,
-		Context:  `{"requested_policy":"pro","model_name":"deepseek-v4-pro"}`,
+		Context:  `{"model_name":"deepseek-v4-pro"}`,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, domainSVC.createRunBundleReq)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"requested_policy":"pro",
-		"mode":"pro",
+		"requested_policy":"auto",
+		"mode":"ultra",
 		"model_name":"deepseek-v4-pro",
 		"thinking_enabled":true,
-		"reasoning_effort":"medium",
+		"reasoning_effort":"high",
 		"is_plan_mode":true,
-		"subagent_enabled":false
+		"subagent_enabled":true,
+		"max_concurrent_subagents":3
 	}`, domainSVC.createRunBundleReq.Run.Config)
 }
 

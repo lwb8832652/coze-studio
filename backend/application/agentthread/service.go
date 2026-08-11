@@ -266,6 +266,9 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if message == "" {
 		return nil, fmt.Errorf("task thread message is required")
 	}
+	if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
+		return nil, err
+	}
 	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
 	if err != nil {
 		return nil, err
@@ -869,7 +872,25 @@ func (s *ApplicationService) ListRecentPublicMessages(
 	return resp, nil
 }
 
-func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest) (*CreateRunResponse, error) {
+type createRunProvenance uint8
+
+const (
+	createRunSubmitted createRunProvenance = iota
+	createRunServerOwnedSubagent
+)
+
+func (s *ApplicationService) CreateRun(
+	ctx context.Context,
+	req *CreateRunRequest,
+) (*CreateRunResponse, error) {
+	return s.createRun(ctx, req, createRunSubmitted)
+}
+
+func (s *ApplicationService) createRun(
+	ctx context.Context,
+	req *CreateRunRequest,
+	provenance createRunProvenance,
+) (*CreateRunResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
 	}
@@ -883,6 +904,18 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		ThreadID: req.ThreadID,
 	}); err != nil {
 		return nil, err
+	}
+	switch provenance {
+	case createRunSubmitted:
+		if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
+			return nil, err
+		}
+	case createRunServerOwnedSubagent:
+		if req.ParentRunID <= 0 || req.RunKind != RunKindSubagent {
+			return nil, fmt.Errorf("server-owned subagent run requires a parent and subagent run kind")
+		}
+	default:
+		return nil, fmt.Errorf("create run provenance is invalid")
 	}
 	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
 	if err != nil {
