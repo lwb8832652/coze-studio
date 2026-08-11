@@ -16,8 +16,6 @@
 
 export type WorkbenchComposerVariant = 'home' | 'detail';
 
-export const WORKBENCH_REQUESTED_POLICY = 'auto' as const;
-
 export interface WorkbenchResourceSelection {
   enable_skills: string[];
   explicit_enable_skills: string[];
@@ -368,14 +366,8 @@ export const createWorkbenchRunConfig = (
 
   return {
     runtime: runtimeSettings.runtime,
-    requested_policy: WORKBENCH_REQUESTED_POLICY,
     model_type: payload.modelType,
     model_name: payload.modelName,
-    ...(runtimeSettings.reasoning.enabled
-      ? {
-          reasoning_effort: runtimeSettings.reasoning.effort,
-        }
-      : {}),
     enable_skills: payload.enable_skills,
     enable_mcp: payload.enable_mcp,
     enable_kbs: payload.enable_kbs,

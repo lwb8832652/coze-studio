@@ -745,6 +745,22 @@ const expectDeerFlowTaskComposer = (
   );
 };
 
+const clientOwnedExecutionControlFields = [
+  'requested_policy',
+  'mode',
+  'thinking_enabled',
+  'reasoning_effort',
+  'is_plan_mode',
+  'subagent_enabled',
+  'max_concurrent_subagents',
+] as const;
+
+const expectNoClientOwnedExecutionControls = (value: unknown) => {
+  clientOwnedExecutionControlFields.forEach(field =>
+    expect(value).not.toHaveProperty(field),
+  );
+};
+
 describe('TaskDetailPage', () => {
   beforeEach(() => {
     window.localStorage.removeItem('coze.task-detail.token-usage-view-mode');
@@ -9924,24 +9940,21 @@ describe('TaskDetailPage', () => {
         },
       ],
     });
-    expect(JSON.parse(retryRequest.config)).toMatchObject({
+    const retryConfig = JSON.parse(retryRequest.config);
+    expect(retryConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
       token_usage: {
         enabled: true,
       },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(retryRequest.config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
-    expect(JSON.parse(retryRequest.metadata)).toMatchObject({
+    expectNoClientOwnedExecutionControls(retryConfig);
+    const retryMetadata = JSON.parse(retryRequest.metadata);
+    expect(retryMetadata).toMatchObject({
       source: 'task_retry',
       source_run_id: 'run-failed-1',
       source_thread_id: 'thread-retry-1',
     });
+    expectNoClientOwnedExecutionControls(retryMetadata);
     expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
 
     act(() => {
@@ -10478,7 +10491,6 @@ describe('TaskDetailPage', () => {
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     const messageMetadata = JSON.parse(runRequest.message_metadata);
     expect(messageMetadata).toMatchObject({
-      requested_policy: 'auto',
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
@@ -10490,9 +10502,7 @@ describe('TaskDetailPage', () => {
     expect(
       Object.prototype.hasOwnProperty.call(messageMetadata, 'enable_skills'),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(messageMetadata, 'reasoning_effort'),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(messageMetadata);
     expect(JSON.parse(runRequest.input)).toMatchObject({
       messages: [
         {
@@ -10511,7 +10521,6 @@ describe('TaskDetailPage', () => {
     const runConfig = JSON.parse(runRequest.config);
     expect(runConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
@@ -10535,12 +10544,12 @@ describe('TaskDetailPage', () => {
     expect(
       Object.prototype.hasOwnProperty.call(runConfig, 'enable_skills'),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
-    ).toBe(false);
-    expect(JSON.parse(runRequest.metadata)).toMatchObject({
+    expectNoClientOwnedExecutionControls(runConfig);
+    const runMetadata = JSON.parse(runRequest.metadata);
+    expect(runMetadata).toEqual({
       source: 'workbench_detail_followup',
     });
+    expectNoClientOwnedExecutionControls(runMetadata);
     expect(runRequest.idempotency_key).toMatch(
       /^space-1:thread-only-1:.+:followup$/,
     );

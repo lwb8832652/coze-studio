@@ -20,7 +20,6 @@ import type {
 } from '../workbench/thread-client';
 import {
   stringifyWorkbenchRunConfig,
-  WORKBENCH_REQUESTED_POLICY,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import {
@@ -51,12 +50,9 @@ const getThreadFollowUpRunInput = ({
     uploaded_files: uploadedFiles,
   });
 
-const getThreadFollowUpRunMetadata = (
-  payload: WorkbenchComposerSubmitPayload,
-) =>
+const getThreadFollowUpRunMetadata = () =>
   JSON.stringify({
     source: 'workbench_detail_followup',
-    requested_policy: WORKBENCH_REQUESTED_POLICY,
   });
 
 export const createFollowUpIdempotencyKey = (threadId: string) => {
@@ -91,7 +87,7 @@ export const sendFollowUpMessage = async ({
       uploadedFiles: uploadResponse.data?.files ?? [],
     }),
     config: getThreadFollowUpMetadata(payload),
-    metadata: getThreadFollowUpRunMetadata(payload),
+    metadata: getThreadFollowUpRunMetadata(),
     message_content: payload.message,
     message_metadata: getThreadFollowUpMetadata(payload),
     idempotency_key: idempotencyKey ?? createFollowUpIdempotencyKey(threadId),

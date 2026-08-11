@@ -52,7 +52,6 @@ import {
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
   stringifyWorkbenchRunConfig,
-  WORKBENCH_REQUESTED_POLICY,
   type WorkbenchComposerSubmitPayload,
 } from './components/types';
 
@@ -109,7 +108,6 @@ const buildNewTaskRunInput = ({
 const getNewTaskRunMetadata = () =>
   JSON.stringify({
     source: 'workbench_new_task',
-    requested_policy: WORKBENCH_REQUESTED_POLICY,
   });
 
 const createNewTaskRunIdempotencyKey = (threadId: string) => {

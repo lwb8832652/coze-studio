@@ -313,12 +313,29 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
 import WorkbenchPage, { WorkbenchTopbar } from '../index';
+import { WorkbenchRuntimeSettingsControl } from '../components/workbench-runtime-settings-control';
 import { WorkbenchComposer } from '../components/workbench-composer';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
   createWorkbenchRunConfig,
 } from '../components/types';
+
+const clientOwnedExecutionControlFields = [
+  'requested_policy',
+  'mode',
+  'thinking_enabled',
+  'reasoning_effort',
+  'is_plan_mode',
+  'subagent_enabled',
+  'max_concurrent_subagents',
+] as const;
+
+const expectNoClientOwnedExecutionControls = (value: unknown) => {
+  clientOwnedExecutionControlFields.forEach(field =>
+    expect(value).not.toHaveProperty(field),
+  );
+};
 
 const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
   data: {
@@ -1448,44 +1465,87 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('serializes only the automatic execution policy', () => {
-    const resourceSelection = createDefaultWorkbenchResourceSelection();
-    const runtimeSettings =
-      createDefaultWorkbenchRuntimeSettings(resourceSelection);
-
-    const runConfig = createWorkbenchRunConfig({
-      message: '验证自动执行策略',
-      runtimeSettings,
-      ...resourceSelection,
-    } as WorkbenchComposerSubmitPayload);
-
-    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
-    expect(runConfig).not.toHaveProperty('mode');
-    expect(runConfig).not.toHaveProperty('thinking_enabled');
-    expect(runConfig).not.toHaveProperty('is_plan_mode');
-    expect(runConfig).not.toHaveProperty('subagent_enabled');
-  });
-
-  it('serializes reasoning effort only when runtime reasoning is explicitly enabled', () => {
-    const resourceSelection = createDefaultWorkbenchResourceSelection();
+  it('omits client-owned execution controls while preserving canonical runtime config', () => {
+    const resourceSelection = {
+      ...createDefaultWorkbenchResourceSelection(),
+      enable_skills: ['skill-a'],
+      enable_mcp: ['tool-a'],
+      enable_kbs: ['kb-a'],
+      enable_databases: ['database-a'],
+    };
     const runtimeSettings =
       createDefaultWorkbenchRuntimeSettings(resourceSelection);
     runtimeSettings.reasoning.enabled = true;
     runtimeSettings.reasoning.effort = 'high';
 
-    expect(
-      createWorkbenchRunConfig({
-        message: '验证显式推理强度',
-        runtimeSettings,
-        ...resourceSelection,
-      } as WorkbenchComposerSubmitPayload),
-    ).toMatchObject({
-      requested_policy: 'auto',
-      reasoning_effort: 'high',
+    const runConfig = createWorkbenchRunConfig({
+      message: '验证服务端执行控制',
+      modelType: 100002,
+      modelName: 'deepseek-v4-pro',
+      runtimeSettings,
+      ...resourceSelection,
+    } as WorkbenchComposerSubmitPayload);
+
+    expect(runConfig).toMatchObject({
+      runtime: 'eino_adk',
+      model_type: 100002,
+      model_name: 'deepseek-v4-pro',
+      enable_skills: ['skill-a'],
+      enable_mcp: ['tool-a'],
+      enable_kbs: ['kb-a'],
+      enable_databases: ['database-a'],
+      skills: {
+        enabled: true,
+        allowed_skills: ['skill-a'],
+      },
+      mcp_tools: {
+        enabled: true,
+        allowed_tools: ['tool-a'],
+      },
+      token_usage: {
+        enabled: true,
+      },
     });
+    expectNoClientOwnedExecutionControls(runConfig);
   });
 
-  it('submits the automatic policy without a mode selector', async () => {
+  it('keeps runtime settings without exposing model reasoning controls', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const settings = createDefaultWorkbenchRuntimeSettings(
+      createDefaultWorkbenchResourceSelection(),
+    );
+
+    act(() => {
+      root.render(
+        <WorkbenchRuntimeSettingsControl
+          failoverCandidateCount={1}
+          settings={settings}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="运行设置"]',
+    );
+    act(() => Simulate.click(trigger as HTMLButtonElement));
+
+    const panel = container.querySelector('.chat-workbench-runtime-panel');
+    expect(panel?.textContent).not.toContain('模型推理');
+    expect(panel?.textContent).toContain('运行内核');
+    expect(panel?.textContent).toContain('记忆检索');
+    expect(panel?.textContent).toContain('Skill');
+    expect(panel?.textContent).toContain('MCP 工具');
+    expect(panel?.textContent).toContain('模型重试');
+    expect(panel?.textContent).toContain('模型切换');
+    expect(panel?.textContent).toContain('Token 用量');
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('submits server-owned execution controls without a mode selector', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -1522,14 +1582,7 @@ describe('WorkbenchPage', () => {
     const runConfig = JSON.parse(
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
-    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
-    expect(runConfig).not.toHaveProperty('mode');
-    expect(runConfig).not.toHaveProperty('thinking_enabled');
-    expect(runConfig).not.toHaveProperty('is_plan_mode');
-    expect(runConfig).not.toHaveProperty('subagent_enabled');
-    expect(
-      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(runConfig);
 
     act(() => {
       root?.unmount();
@@ -1577,7 +1630,6 @@ describe('WorkbenchPage', () => {
     );
     expect(defaultRunConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -1599,12 +1651,7 @@ describe('WorkbenchPage', () => {
         allowed_skills: [],
       },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        defaultRunConfig,
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(defaultRunConfig);
     expect(
       Object.prototype.hasOwnProperty.call(defaultRunConfig, 'enable_skills'),
     ).toBe(false);
@@ -1729,9 +1776,24 @@ describe('WorkbenchPage', () => {
       message_content: '请总结附件',
       message_metadata: expect.any(String),
     });
-    expect(
-      JSON.parse(mockCreateTaskThreadRun.mock.calls[0]?.[0].input),
-    ).toMatchObject({
+    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    const runConfig = JSON.parse(runRequest.config);
+    const runMetadata = JSON.parse(runRequest.metadata);
+    const messageMetadata = JSON.parse(runRequest.message_metadata);
+
+    expect(runConfig).toMatchObject({
+      runtime: 'eino_adk',
+      token_usage: { enabled: true },
+    });
+    expect(runMetadata).toEqual({ source: 'workbench_new_task' });
+    expect(messageMetadata).toMatchObject({
+      runtime: 'eino_adk',
+      token_usage: { enabled: true },
+    });
+    [runConfig, runMetadata, messageMetadata].forEach(
+      expectNoClientOwnedExecutionControls,
+    );
+    expect(JSON.parse(runRequest.input)).toMatchObject({
       messages: [
         {
           role: 'user',
@@ -2022,10 +2084,10 @@ describe('WorkbenchPage', () => {
       message: '关闭默认技能',
       config: expect.any(String),
     });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      requested_policy: 'auto',
+    const runConfig = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(runConfig).toMatchObject({
       model_type: 100002,
       model_name: 'deepseek-v4-pro',
       enable_skills: [],
@@ -2034,12 +2096,7 @@ describe('WorkbenchPage', () => {
         allowed_skills: [],
       },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(runConfig);
 
     act(() => {
       root?.unmount();
@@ -2409,19 +2466,14 @@ describe('WorkbenchPage', () => {
       message: '指定模型回答',
       config: expect.any(String),
     });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      requested_policy: 'auto',
+    const runConfig = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(runConfig).toMatchObject({
       model_type: 100003,
       model_name: 'gpt-4.1',
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(runConfig);
 
     act(() => {
       root?.unmount();
@@ -2545,7 +2597,6 @@ describe('WorkbenchPage', () => {
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
-      requested_policy: 'auto',
       skills: {
         enabled: true,
         allowed_skills: [],
@@ -2560,9 +2611,7 @@ describe('WorkbenchPage', () => {
         'allowed_tools',
       ),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(runtimeSettings, 'reasoning_effort'),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(runtimeSettings);
 
     act(() => {
       root?.unmount();
