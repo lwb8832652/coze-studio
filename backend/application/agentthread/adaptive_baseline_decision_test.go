@@ -70,6 +70,27 @@ func TestBaselineDecisionProducerFailsClosedForGateAndPolicy(t *testing.T) {
 	require.ErrorIs(t, err, ErrAdaptiveDecisionBlockedPolicy)
 }
 
+func TestBaselineDecisionProducerUsesExactConflictPrecedence(t *testing.T) {
+	invalidAdmissionWithGate := baselineDecisionRequest()
+	invalidAdmissionWithGate.Admission.Schema = "invalid"
+	invalidAdmissionWithGate.Admission.FeatureGateEnabled = true
+	_, err := (BaselineDecisionProducer{}).Produce(invalidAdmissionWithGate)
+	require.ErrorIs(t, err, ErrAdaptiveAdmissionInvalid)
+
+	gateOnWithBlockedPlanAndBadDecisionID := baselineDecisionRequest()
+	gateOnWithBlockedPlanAndBadDecisionID.Admission.FeatureGateEnabled = true
+	gateOnWithBlockedPlanAndBadDecisionID.Admission.Capabilities.PlanAllowed = false
+	gateOnWithBlockedPlanAndBadDecisionID.DecisionID = ""
+	_, err = (BaselineDecisionProducer{}).Produce(gateOnWithBlockedPlanAndBadDecisionID)
+	require.ErrorIs(t, err, ErrAdaptiveProducerUnavailable)
+
+	gateOffWithBlockedPlanAndBadDecisionID := baselineDecisionRequest()
+	gateOffWithBlockedPlanAndBadDecisionID.Admission.Capabilities.PlanAllowed = false
+	gateOffWithBlockedPlanAndBadDecisionID.DecisionID = ""
+	_, err = (BaselineDecisionProducer{}).Produce(gateOffWithBlockedPlanAndBadDecisionID)
+	require.ErrorIs(t, err, ErrAdaptiveDecisionBlockedPolicy)
+}
+
 func TestBaselineDecisionProducerRejectsInvalidAdmissionAndDecisionIdentifiers(t *testing.T) {
 	invalidAdmission := baselineDecisionRequest()
 	invalidAdmission.Admission.Schema = "invalid"
@@ -99,13 +120,25 @@ func TestBaselineDecisionProducerRejectsInvalidAdmissionAndDecisionIdentifiers(t
 
 func TestBaselineDecisionProducerIsDeterministicAndDoesNotMutateAdmission(t *testing.T) {
 	request := baselineDecisionRequest()
+	request.Admission = validAdmission(entity.AdaptiveAdmissionSourceTypedInheritance)
+	request.Admission.FeatureGateEnabled = false
 	before := request.Admission
+	before.SourceRunID = int64Pointer(*request.Admission.SourceRunID)
+	sourceExecutionGeneration := *request.Admission.SourceExecutionGeneration
+	before.SourceExecutionGeneration = &sourceExecutionGeneration
 	first, err := (BaselineDecisionProducer{}).Produce(request)
 	require.NoError(t, err)
 	second, err := (BaselineDecisionProducer{}).Produce(request)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+	require.NotSame(t, first.PlanScopeRunID, second.PlanScopeRunID)
 	require.Equal(t, before, request.Admission)
+
+	*first.PlanScopeRunID = 999
+	first.Deliverables = append(first.Deliverables, "mutated")
+	require.Equal(t, int64(303), *second.PlanScopeRunID)
+	require.Empty(t, second.Deliverables)
+	require.Equal(t, int64(303), request.PlanScopeRunID)
 }
 
 func TestBaselineDecisionProducerHasNarrowContract(t *testing.T) {
