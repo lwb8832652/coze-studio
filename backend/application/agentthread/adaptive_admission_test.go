@@ -368,6 +368,16 @@ func TestValidateExecutionDecisionAgainstAdmissionBlocksCapabilitiesWithoutMutat
 	admission := validAdmission(entity.AdaptiveAdmissionSourceFresh)
 	admission.Capabilities.PlanAllowed = false
 	before := decision
+	before.Deliverables = append(before.Deliverables[:0:0], decision.Deliverables...)
+	before.AcceptanceChecks = append(before.AcceptanceChecks[:0:0], decision.AcceptanceChecks...)
+	if decision.PlanScopeRunID != nil {
+		planScopeRunID := *decision.PlanScopeRunID
+		before.PlanScopeRunID = &planScopeRunID
+	}
+	if decision.ClarificationQuestion != nil {
+		clarificationQuestion := *decision.ClarificationQuestion
+		before.ClarificationQuestion = &clarificationQuestion
+	}
 	err := ValidateExecutionDecisionAgainstAdmission(admission, decision)
 	require.ErrorIs(t, err, ErrAdaptiveDecisionBlockedPolicy)
 	require.True(t, errors.Is(err, ErrAdaptiveDecisionBlockedPolicy))
