@@ -117,4 +117,49 @@ describe('SandboxSchedulerCard', () => {
     expect(container.textContent).not.toContain('must-not-show');
     expect(container.textContent).not.toContain('凭据');
   });
+
+  it('renders only the aggregate Runner status', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          msg: '',
+          data: { version: 4, settings },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: 0,
+          msg: '',
+          data: {
+            available: true,
+            desired_config_version: 4,
+            applied_config_version: 4,
+            queue_depth: 2,
+            queue_by_scope: { agent: 2 },
+            active_slots: 1,
+            slot_capacity: 2,
+            idle_containers: 1,
+            active_containers: 1,
+            memory_reserve_state: 'available',
+            execution_id: 'must-not-show',
+            endpoint: 'must-not-show',
+          },
+        }),
+      }) as never;
+    await act(async () => {
+      root.render(<SandboxSchedulerCard />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('队列 2');
+    expect(container.textContent).toContain('运行 1 / 2');
+    expect(container.textContent).toContain('内存预留正常');
+    expect(container.textContent).not.toContain('must-not-show');
+  });
 });

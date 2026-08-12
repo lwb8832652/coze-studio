@@ -161,19 +161,28 @@ assert_forbidden_config_content() {
 backend_dockerfile=$CONTRACT_ROOT/backend/Dockerfile
 backend_go_mod=$CONTRACT_ROOT/backend/go.mod
 frontend_dockerfile=$CONTRACT_ROOT/frontend/Dockerfile
+sandbox_runner_dockerfile=$CONTRACT_ROOT/backend/Dockerfile.sandbox-runner
 nginx_conf=$CONTRACT_ROOT/deploy/dev/nginx/nginx.conf
 default_conf=$CONTRACT_ROOT/deploy/dev/nginx/default.conf
 
 [ -f "$backend_dockerfile" ] || fail 'backend Dockerfile is missing'
 [ -f "$backend_go_mod" ] || fail 'backend go.mod is missing'
 [ -f "$frontend_dockerfile" ] || fail 'frontend Dockerfile is missing'
+[ -f "$sandbox_runner_dockerfile" ] || fail 'sandbox runner Dockerfile is missing'
 [ -f "$nginx_conf" ] || fail 'deployment nginx.conf is missing'
 [ -f "$default_conf" ] || fail 'deployment default.conf is missing'
 
-for dockerfile in "$backend_dockerfile" "$frontend_dockerfile"; do
+for dockerfile in "$backend_dockerfile" "$frontend_dockerfile" "$sandbox_runner_dockerfile"; do
   name=$(basename "$(dirname "$dockerfile")")
   assert_dockerfile "$dockerfile" "$name"
 done
+
+sandbox_runner_final_stage=$(final_stage "$sandbox_runner_dockerfile")
+printf '%s\n' "$sandbox_runner_final_stage" | grep -Eiq '^USER[[:space:]]+10001:10001([[:space:]]|$)' || fail 'sandbox runner must run as the unprivileged sandbox user'
+printf '%s\n' "$sandbox_runner_final_stage" | grep -Eiq '^EXPOSE[[:space:]]+9443([[:space:]]|$)' || fail 'sandbox runner must expose only its private API port'
+if printf '%s\n' "$sandbox_runner_final_stage" | grep -Eiq 'opencoze|python3|nodejs|deno'; then
+  fail 'sandbox runner final image must not include the application server or execution toolchains'
+fi
 
 backend_final_stage=$(final_stage "$backend_dockerfile")
 printf '%s\n' "$backend_final_stage" | grep -Eiq '^ENV[[:space:]]+APP_REVISION=\$GIT_REVISION([[:space:]]|$)' || fail 'backend final runtime stage must set APP_REVISION from GIT_REVISION'

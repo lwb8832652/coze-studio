@@ -22,12 +22,18 @@ DEPLOY_ROOT_DIR=${DEPLOY_ROOT_DIR:-$SCRIPT_DIR}
 DEPLOY_ENV_FILE=${DEPLOY_ENV_FILE:-$DEPLOY_ROOT_DIR/deploy.env}
 DEPLOY_LOCK_FILE=${DEPLOY_LOCK_FILE:-$DEPLOY_ROOT_DIR/deploy.lock}
 DEPLOYMENTS_DIR=${DEPLOYMENTS_DIR:-$DEPLOY_ROOT_DIR/deployments}
-COMPOSE_FILE=${COMPOSE_FILE:-$DEPLOY_ROOT_DIR/docker-compose.yml}
+COMPOSE_FILE=${COMPOSE_FILE:-}
 
 SERVER_REPOSITORY=${SERVER_REPOSITORY:-}
 WEB_REPOSITORY=${WEB_REPOSITORY:-}
 SERVER_IMAGE_REF=${SERVER_IMAGE_REF:-}
 WEB_IMAGE_REF=${WEB_IMAGE_REF:-}
+SANDBOX_RUNNER_REPOSITORY=${SANDBOX_RUNNER_REPOSITORY:-}
+SANDBOX_RUNNER_IMAGE_REF=${SANDBOX_RUNNER_IMAGE_REF:-}
+SANDBOX_RUNTIME_REPOSITORY=${SANDBOX_RUNTIME_REPOSITORY:-}
+SANDBOX_RUNTIME_IMAGE_REF=${SANDBOX_RUNTIME_IMAGE_REF:-}
+SANDBOX_RUNNER_EXECUTION_IMAGE=${SANDBOX_RUNNER_EXECUTION_IMAGE:-}
+DEPLOY_PROFILE=${DEPLOY_PROFILE:-local-data}
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -84,6 +90,42 @@ compose_cmd() {
   docker compose --env-file "$DEPLOY_ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
+runner_profile_enabled() {
+  [ "$DEPLOY_PROFILE" = runner-2c4g ]
+}
+
+validate_private_deploy_file() {
+	local file=${1:-}
+	local label=${2:-private deployment file}
+	local expected_owner=${3:-$(id -u)}
+	local mode owner
+
+	[ -f "$file" ] || {
+		error "$label is missing: $file"
+		return 1
+	}
+	if ! mode=$(stat -c '%a' -- "$file" 2>/dev/null); then
+		mode=$(stat -f '%Lp' -- "$file" 2>/dev/null) || {
+			error "$label permissions cannot be verified: $file"
+			return 1
+		}
+	fi
+	if ! owner=$(stat -c '%u' -- "$file" 2>/dev/null); then
+		owner=$(stat -f '%u' -- "$file" 2>/dev/null) || {
+			error "$label owner cannot be verified: $file"
+			return 1
+		}
+	fi
+	[ "$mode" = 600 ] || {
+		error "$label must have mode 0600: $file"
+		return 1
+	}
+	[ "$owner" = "$expected_owner" ] || {
+		error "$label must be owned by uid $expected_owner: $file"
+		return 1
+	}
+}
+
 service_health_status() {
   local service=$1
   local container_id status
@@ -131,6 +173,22 @@ image_id() {
   docker_cmd image inspect --format '{{.Id}}' "$image_ref"
 }
 
+runtime_image_digest_ref() {
+  local image_ref=$1
+  local repository=$2
+  local value
+
+  value=$(docker_cmd image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_ref" | awk -v repository="$repository" '$0 ~ "^" repository "@sha256:[0-9a-f]{64}$" { print; exit }') || return 1
+  [[ "$value" =~ ^[A-Za-z0-9._/:/-]+@sha256:[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
+recorded_runtime_image_ref() {
+  local record="$DEPLOYMENTS_DIR/current.env"
+  [ -f "$record" ] || return 1
+  awk -F= '$1 == "SANDBOX_RUNTIME_IMAGE_REF" { print substr($0, index($0, "=") + 1); exit }' "$record"
+}
+
 health_body_matches() {
   local body=$1
   local expected_revision=$2
@@ -153,6 +211,11 @@ health_checks_pass() {
     return 1
   fi
   health_body_matches "$backend_body" "$expected_revision" || return 1
+
+  if runner_profile_enabled; then
+    service_is_healthy coze-sandbox-runner || return 1
+    compose_cmd exec -T coze-sandbox-runner wget --no-check-certificate --quiet --tries=1 --spider https://127.0.0.1:9443/v1/health >/dev/null 2>&1 || return 1
+  fi
 
   base_url=$(web_health_base_url)
   if ! web_body=$(curl --fail --silent --show-error --max-time 5 "$base_url/healthz" 2>/dev/null); then
@@ -205,6 +268,8 @@ record_success() {
   local web_ref=$3
   local server_id=$4
   local web_id=$5
+  local runner_id=${6:-}
+  local runtime_ref=${7:-}
   local deployed_at tmp value
 
   for value in "$revision" "$server_ref" "$web_ref" "$server_id" "$web_id"; do
@@ -223,6 +288,11 @@ record_success() {
     printf 'WEB_IMAGE_REF=%s\n' "$web_ref"
     printf 'SERVER_IMAGE_ID=%s\n' "$server_id"
     printf 'WEB_IMAGE_ID=%s\n' "$web_id"
+    if runner_profile_enabled; then
+      printf 'SANDBOX_RUNNER_IMAGE_REF=%s\n' "$SANDBOX_RUNNER_IMAGE_REF"
+      printf 'SANDBOX_RUNNER_IMAGE_ID=%s\n' "$runner_id"
+      printf 'SANDBOX_RUNTIME_IMAGE_REF=%s\n' "$runtime_ref"
+    fi
     printf 'DEPLOYED_AT_UTC=%s\n' "$deployed_at"
   } > "$tmp"; then
     rm -f -- "$tmp"
@@ -310,8 +380,10 @@ rollback_images() {
   local old_server_revision=$3
   local old_web_revision=$4
   local transaction_id=$5
+  local old_runner_id=${6:-}
+  local old_runtime_ref=${7:-}
   local rollback_tag rollback_revision=
-  local restored_server_id restored_web_id
+  local restored_server_id restored_web_id restored_runner_id
 
   if [ -z "$old_server_id" ] || [ -z "$old_web_id" ]; then
     error 'first deployment failed; rollback unavailable'
@@ -327,8 +399,19 @@ rollback_images() {
     error 'failed to tag the previous web image'
     return 1
   fi
+  if runner_profile_enabled; then
+    if [ -z "$old_runner_id" ] || ! docker_cmd tag "$old_runner_id" "$SANDBOX_RUNNER_REPOSITORY:$rollback_tag"; then
+      error 'failed to tag the previous sandbox runner image'
+      return 1
+    fi
+  fi
 
-  if ! SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" compose_cmd up -d --no-build --remove-orphans coze-server coze-web; then
+  if runner_profile_enabled; then
+    if [ -z "$old_runtime_ref" ] || ! SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_EXECUTION_IMAGE="$old_runtime_ref" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web; then
+      error 'rollback compose update failed'
+      return 1
+    fi
+  elif ! SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" compose_cmd up -d --no-build --remove-orphans coze-server coze-web; then
     error 'rollback compose update failed'
     return 1
   fi
@@ -341,6 +424,12 @@ rollback_images() {
     [ "$restored_web_id" != "$old_web_id" ]; then
     error 'rollback container image IDs do not match the saved images'
     return 1
+  fi
+  if runner_profile_enabled; then
+    if ! restored_runner_id=$(container_image_id coze-sandbox-runner) || [ "$restored_runner_id" != "$old_runner_id" ]; then
+      error 'rollback sandbox runner image ID does not match the saved image'
+      return 1
+    fi
   fi
 
   if is_revision "$old_server_revision" &&
@@ -361,10 +450,10 @@ rollback_images() {
 
 deploy_transaction() {
   local requested_revision=${1:-}
-  local old_server_id= old_web_id= old_server_revision= old_web_revision=
-  local server_revision= web_revision= candidate_revision=
-  local candidate_server_id= candidate_web_id=
-  local running_server_id= running_web_id=
+  local old_server_id= old_web_id= old_runner_id= old_server_revision= old_web_revision= old_runner_revision= old_runtime_ref=
+  local server_revision= web_revision= runner_revision= runtime_revision= candidate_revision=
+  local candidate_server_id= candidate_web_id= candidate_runner_id=
+  local running_server_id= running_web_id= running_runner_id=
   local transaction_id rollback_result failure_reason
 
   transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
@@ -382,6 +471,20 @@ deploy_transaction() {
   if [ -n "$old_web_id" ]; then
     old_web_revision=$(image_revision "$old_web_id" 2>/dev/null || true)
   fi
+  if runner_profile_enabled; then
+    if ! old_runner_id=$(container_image_id coze-sandbox-runner); then
+      record_pre_update_failure 'cannot read the current sandbox runner container image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+      return
+    fi
+    if [ -n "$old_runner_id" ]; then
+      old_runner_revision=$(image_revision "$old_runner_id" 2>/dev/null || true)
+    fi
+    old_runtime_ref=$(recorded_runtime_image_ref 2>/dev/null || true)
+    if [ -n "$old_runner_id" ] && [ -z "$old_runtime_ref" ]; then
+      record_pre_update_failure 'current sandbox runtime digest is unavailable for rollback' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+      return
+    fi
+  fi
 
   log 'pulling candidate server and web images'
   if ! docker_cmd pull "$SERVER_IMAGE_REF"; then
@@ -390,6 +493,14 @@ deploy_transaction() {
   fi
   if ! docker_cmd pull "$WEB_IMAGE_REF"; then
     record_pre_update_failure 'failed to pull the candidate web image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if runner_profile_enabled && ! docker_cmd pull "$SANDBOX_RUNNER_IMAGE_REF"; then
+    record_pre_update_failure 'failed to pull the candidate sandbox runner image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if runner_profile_enabled && ! docker_cmd pull "$SANDBOX_RUNTIME_IMAGE_REF"; then
+    record_pre_update_failure 'failed to pull the candidate sandbox runtime image' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
 
@@ -401,6 +512,14 @@ deploy_transaction() {
     record_pre_update_failure 'cannot read the candidate web image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
+  if runner_profile_enabled && ! candidate_runner_id=$(image_id "$SANDBOX_RUNNER_IMAGE_REF"); then
+    record_pre_update_failure 'cannot read the candidate sandbox runner image ID' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if runner_profile_enabled && ! SANDBOX_RUNNER_EXECUTION_IMAGE=$(runtime_image_digest_ref "$SANDBOX_RUNTIME_IMAGE_REF" "$SANDBOX_RUNTIME_REPOSITORY"); then
+    record_pre_update_failure 'candidate sandbox runtime image has no immutable digest' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
 
   if ! server_revision=$(image_revision "$SERVER_IMAGE_REF"); then
     record_pre_update_failure 'candidate server image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
@@ -410,13 +529,25 @@ deploy_transaction() {
     record_pre_update_failure 'candidate web image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
-  if ! is_revision "$server_revision" || ! is_revision "$web_revision"; then
+  if runner_profile_enabled && ! runner_revision=$(image_revision "$SANDBOX_RUNNER_IMAGE_REF"); then
+    record_pre_update_failure 'candidate sandbox runner image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if runner_profile_enabled && ! runtime_revision=$(image_revision "$SANDBOX_RUNTIME_IMAGE_REF"); then
+    record_pre_update_failure 'candidate sandbox runtime image has no readable revision' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
+  if ! is_revision "$server_revision" || ! is_revision "$web_revision" || { runner_profile_enabled && { ! is_revision "$runner_revision" || ! is_revision "$runtime_revision"; }; }; then
     record_pre_update_failure 'candidate image revisions must both be full 40-hex SHA values' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
   server_revision=$(normalize_revision "$server_revision")
   web_revision=$(normalize_revision "$web_revision")
-  if [ "$server_revision" != "$web_revision" ]; then
+  if runner_profile_enabled; then
+    runner_revision=$(normalize_revision "$runner_revision")
+    runtime_revision=$(normalize_revision "$runtime_revision")
+  fi
+  if [ "$server_revision" != "$web_revision" ] || { runner_profile_enabled && { [ "$server_revision" != "$runner_revision" ] || [ "$server_revision" != "$runtime_revision" ]; }; }; then
     record_pre_update_failure 'candidate server and web revisions do not match' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
@@ -427,15 +558,26 @@ deploy_transaction() {
     return
   fi
 
-  if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev compose_cmd up -d --no-build --remove-orphans coze-server coze-web &&
-    wait_for_health "$candidate_revision"; then
+  local candidate_started=false
+  if runner_profile_enabled; then
+    if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev SANDBOX_RUNNER_IMAGE_TAG=dev SANDBOX_RUNNER_EXECUTION_IMAGE="$SANDBOX_RUNNER_EXECUTION_IMAGE" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web && wait_for_health "$candidate_revision"; then
+      candidate_started=true
+    fi
+  else
+    if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev compose_cmd up -d --no-build --remove-orphans coze-server coze-web && wait_for_health "$candidate_revision"; then
+      candidate_started=true
+    fi
+  fi
+  if [ "$candidate_started" = true ]; then
     if ! running_server_id=$(container_image_id coze-server) ||
       ! running_web_id=$(container_image_id coze-web); then
       failure_reason='cannot read container image IDs after candidate update'
     elif [ "$running_server_id" != "$candidate_server_id" ] ||
       [ "$running_web_id" != "$candidate_web_id" ]; then
       failure_reason='candidate container image IDs do not match the pulled images'
-    elif record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
+    elif runner_profile_enabled && { ! running_runner_id=$(container_image_id coze-sandbox-runner) || [ "$running_runner_id" != "$candidate_runner_id" ]; }; then
+      failure_reason='candidate sandbox runner image ID does not match the pulled image'
+    elif record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id" "$candidate_runner_id" "$SANDBOX_RUNNER_EXECUTION_IMAGE"; then
       log "deployment succeeded for revision $candidate_revision"
       return 0
     else
@@ -447,7 +589,7 @@ deploy_transaction() {
 
   error "deployment failed for revision $candidate_revision: $failure_reason; starting rollback"
   rollback_result=failed
-  if rollback_images "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$transaction_id"; then
+  if rollback_images "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$transaction_id" "$old_runner_id" "$old_runtime_ref"; then
     rollback_result=succeeded
   fi
   record_failure "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" "$failure_reason" ||
@@ -492,6 +634,33 @@ main() {
   source "$DEPLOY_ENV_FILE"
   set +a
 
+  case "$DEPLOY_PROFILE" in
+    local-data)
+      COMPOSE_FILE=${COMPOSE_FILE:-$DEPLOY_ROOT_DIR/docker-compose.yml}
+      ;;
+    runner-2c4g)
+      COMPOSE_FILE=${COMPOSE_FILE:-$DEPLOY_ROOT_DIR/docker-compose.runner-2c4g.yml}
+		SANDBOX_RUNNER_ENV_FILE=${SANDBOX_RUNNER_ENV_FILE:-$DEPLOY_ROOT_DIR/sandbox-runner.env}
+		SANDBOX_RUNNER_TLS_CERT_FILE=${SANDBOX_RUNNER_TLS_CERT_FILE:-$DEPLOY_ROOT_DIR/secrets/sandbox-runner.crt}
+		SANDBOX_RUNNER_TLS_KEY_FILE=${SANDBOX_RUNNER_TLS_KEY_FILE:-$DEPLOY_ROOT_DIR/secrets/sandbox-runner.key}
+      if [ -z "${SANDBOX_RUNNER_ROOTLESS_SOCKET:-}" ] ||
+        [ -z "${SANDBOX_RUNNER_ROOTLESS_SOCKET_GID:-}" ] ||
+        ! [[ "$SANDBOX_RUNNER_ROOTLESS_SOCKET_GID" =~ ^[0-9]+$ ]] ||
+        [ ! -S "$SANDBOX_RUNNER_ROOTLESS_SOCKET" ]; then
+        error 'runner-2c4g requires an existing dedicated rootless runtime socket and numeric group ID'
+        return 1
+      fi
+		validate_private_deploy_file "$SANDBOX_RUNNER_ENV_FILE" 'sandbox runner environment file' "$(id -u)" || return 1
+		validate_private_deploy_file "$SANDBOX_RUNNER_TLS_CERT_FILE" 'sandbox runner TLS certificate' 10001 || return 1
+		validate_private_deploy_file "$SANDBOX_RUNNER_TLS_KEY_FILE" 'sandbox runner TLS key' 10001 || return 1
+		export SANDBOX_RUNNER_ENV_FILE SANDBOX_RUNNER_TLS_CERT_FILE SANDBOX_RUNNER_TLS_KEY_FILE
+      ;;
+    *)
+      error 'DEPLOY_PROFILE must be local-data or runner-2c4g'
+      return 1
+      ;;
+  esac
+
   WEB_BIND_IP=${WEB_BIND_IP:-0.0.0.0}
   WEB_PORT=${WEB_PORT:-8888}
   if ! is_ipv4 "$WEB_BIND_IP"; then
@@ -520,8 +689,12 @@ main() {
 
   SERVER_REPOSITORY="$ACR_REGISTRY/$ACR_NAMESPACE/coze-server"
   WEB_REPOSITORY="$ACR_REGISTRY/$ACR_NAMESPACE/coze-web"
+  SANDBOX_RUNNER_REPOSITORY="$ACR_REGISTRY/$ACR_NAMESPACE/coze-sandbox-runner"
+  SANDBOX_RUNTIME_REPOSITORY="$ACR_REGISTRY/$ACR_NAMESPACE/coze-sandbox-runtime"
   SERVER_IMAGE_REF="$SERVER_REPOSITORY:dev"
   WEB_IMAGE_REF="$WEB_REPOSITORY:dev"
+  SANDBOX_RUNNER_IMAGE_REF="$SANDBOX_RUNNER_REPOSITORY:dev"
+  SANDBOX_RUNTIME_IMAGE_REF="$SANDBOX_RUNTIME_REPOSITORY:dev"
 
   command -v docker >/dev/null 2>&1 || {
     error 'docker is required'

@@ -23,12 +23,14 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 const defaultRunProcessorWorkerID = "agent-harness"
@@ -333,11 +335,12 @@ func (p *RunProcessor) processRun(
 		"status":    string(RunStatusRunning),
 		"worker_id": p.workerID,
 	})
+	executionCtx := agentSandboxContext(ctx, run)
 
 	if isSubagentRetryCommand(run.Command) {
 		retryExecutor, ok := p.executor.(SubagentRetryRunExecutor)
 		if ok {
-			result, err := retryExecutor.ExecuteSubagentRetry(ctx, run)
+			result, err := retryExecutor.ExecuteSubagentRetry(executionCtx, run)
 			if isSubagentRetryUnsupportedError(err) {
 				return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 			}
@@ -347,9 +350,19 @@ func (p *RunProcessor) processRun(
 		return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 	}
 
-	result, err := p.executor.Execute(ctx, run)
+	result, err := p.executor.Execute(executionCtx, run)
 
 	return p.finalizeRunExecution(ctx, run, heartbeat, result, err)
+}
+
+func agentSandboxContext(ctx context.Context, run *RunSummary) context.Context {
+	if ctx == nil || run == nil || run.SpaceID <= 0 || run.CreatorID <= 0 || run.RunID <= 0 {
+		return ctx
+	}
+	return sandboxidentity.WithRequest(ctx, sandboxidentity.Request{
+		Scope: sandboxidentity.ScopeAgent, SpaceID: run.SpaceID, UserID: run.CreatorID,
+		ExecutionID: strconv.FormatInt(run.RunID, 10),
+	})
 }
 
 func (p *RunProcessor) finalizeRunExecution(

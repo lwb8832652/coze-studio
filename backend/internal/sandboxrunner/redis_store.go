@@ -16,6 +16,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"sync"
 	"time"
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
@@ -24,7 +25,10 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
-const maxRedisQueueDepth = 4096
+const (
+	maxRedisQueueDepth      = 4096
+	maxExecutionResultBytes = 8 << 20
+)
 
 var ErrExecutionConflict = errors.New("sandbox runner execution conflict")
 
@@ -43,11 +47,13 @@ type RedisStore struct {
 	deploymentHash     string
 	keys               redisEncryptionKeyring
 	maxQueueDepth      int
+	maxOutstanding     int
 	perSpaceQueueDepth int
 	perUserQueueDepth  int
 	recordTTL          time.Duration
 	now                func() time.Time
 	random             io.Reader
+	limitsMu           sync.RWMutex
 }
 
 type redisEncryptionKeyring struct {
@@ -77,6 +83,9 @@ type persistedExecution struct {
 	UpdatedUnixMS   int64                        `json:"updated_unix_ms"`
 	RequestEnvelope string                       `json:"request_envelope"`
 	Identity        string                       `json:"identity"`
+	ExitCode        *int                         `json:"exit_code,omitempty"`
+	Stdout          string                       `json:"stdout,omitempty"`
+	Stderr          string                       `json:"stderr,omitempty"`
 }
 
 func NewRedisStore(client cache.Cmdable, config RedisStoreConfig) (*RedisStore, error) {
@@ -99,9 +108,28 @@ func NewRedisStore(client cache.Cmdable, config RedisStoreConfig) (*RedisStore, 
 	return &RedisStore{
 		client: client, deploymentHash: redisHash(config.DeploymentID),
 		keys:          redisEncryptionKeyring{ActiveKeyID: config.ActiveKeyID, Keys: keys},
-		maxQueueDepth: config.MaxQueueDepth, perSpaceQueueDepth: config.PerSpaceQueueDepth, perUserQueueDepth: config.PerUserQueueDepth, recordTTL: config.RecordTTL,
+		maxQueueDepth: config.MaxQueueDepth, maxOutstanding: config.MaxQueueDepth, perSpaceQueueDepth: config.PerSpaceQueueDepth, perUserQueueDepth: config.PerUserQueueDepth, recordTTL: config.RecordTTL,
 		now: func() time.Time { return time.Now().UTC() }, random: rand.Reader,
 	}, nil
+}
+
+// ApplySchedulerSettings changes only admission limits for subsequent accepts.
+// Existing records retain their encrypted state and terminal accounting.
+func (store *RedisStore) ApplySchedulerSettings(_ context.Context, settings domainsandbox.SchedulerSettings) error {
+	if store == nil {
+		return ErrConfiguration
+	}
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil || normalized.Version == 0 {
+		return ErrConfiguration
+	}
+	store.limitsMu.Lock()
+	store.maxQueueDepth = normalized.GlobalQueueDepth
+	store.maxOutstanding = normalized.MaxOutstanding
+	store.perSpaceQueueDepth = normalized.PerSpaceQueueDepth
+	store.perUserQueueDepth = normalized.PerUserQueueDepth
+	store.limitsMu.Unlock()
+	return nil
 }
 
 func (store *RedisStore) Accept(ctx context.Context, command ExecuteCommand) (StoredExecution, bool, error) {
@@ -114,6 +142,14 @@ func (store *RedisStore) Accept(ctx context.Context, command ExecuteCommand) (St
 	operationHash := redisHash(command.IdempotencyKey)
 	operationKey := store.operationKey(operationHash)
 	acceptedAt := store.now().UTC()
+	store.limitsMu.RLock()
+	maxQueueDepth := store.maxQueueDepth
+	if store.maxOutstanding < maxQueueDepth {
+		maxQueueDepth = store.maxOutstanding
+	}
+	perSpaceQueueDepth := store.perSpaceQueueDepth
+	perUserQueueDepth := store.perUserQueueDepth
+	store.limitsMu.RUnlock()
 	recordTTL := store.recordTTL
 	if remaining := command.Deadline.UTC().Sub(acceptedAt); remaining < recordTTL {
 		recordTTL = remaining
@@ -139,7 +175,7 @@ func (store *RedisStore) Accept(ctx context.Context, command ExecuteCommand) (St
 	}
 	result, err := store.client.RunScript(ctx, redisAcceptExecutionScript,
 		[]string{operationKey, store.executionKey(executionID), store.queueKey(), store.spaceQueueKey(command.Identity.SpaceID), store.userQueueKey(command.Identity.SpaceID, command.Identity.UserID), store.activeQueueKey()},
-		store.maxQueueDepth, store.perSpaceQueueDepth, store.perUserQueueDepth, sealed, durationMillisecondsCeil(recordTTL), executionID).Result()
+		maxQueueDepth, perSpaceQueueDepth, perUserQueueDepth, sealed, durationMillisecondsCeil(recordTTL), executionID).Result()
 	if err != nil {
 		return StoredExecution{}, false, ErrUnavailable
 	}
@@ -151,11 +187,11 @@ func (store *RedisStore) Accept(ctx context.Context, command ExecuteCommand) (St
 	case "accepted":
 		return storedProjection(payload), false, nil
 	case "replay":
-		record, err := store.Get(ctx, replayExecutionID)
-		if err != nil || record.RequestDigest != requestDigest {
+		payload, err := store.loadPersisted(ctx, replayExecutionID)
+		if err != nil || !constantTimeEqual(payload.RequestDigest, requestDigest) || !constantTimeEqual(payload.IdentityDigest, redisHash(identity)) {
 			return StoredExecution{}, false, ErrExecutionConflict
 		}
-		return record, true, nil
+		return storedProjection(payload), true, nil
 	case "capacity":
 		return StoredExecution{}, false, ErrUnavailable
 	default:
@@ -235,12 +271,67 @@ func (store *RedisStore) Transition(ctx context.Context, executionID string, nex
 	return StoredExecution{}, ErrExecutionConflict
 }
 
+// Complete atomically persists the final state and bounded adapter output.
+// The result is retained inside the encrypted execution envelope only; it is
+// released through the already authenticated status and lookup paths.
+func (store *RedisStore) Complete(ctx context.Context, result infrasandbox.ExecuteResult) (StoredExecution, error) {
+	if store == nil || store.client == nil || ctx == nil || !validCompletedResult(result) {
+		return StoredExecution{}, ErrProtocol
+	}
+	key := store.executionKey(result.ExecutionID)
+	for attempts := 0; attempts < 3; attempts++ {
+		currentCiphertext, err := store.client.Get(ctx, key).Result()
+		if err != nil {
+			return StoredExecution{}, ErrUnavailable
+		}
+		payload, err := store.open(currentCiphertext)
+		if err != nil || payload.ExecutionID != result.ExecutionID || !canTransition(payload.State, result.Status) {
+			return StoredExecution{}, ErrExecutionConflict
+		}
+		identity, err := decodeIdentity(payload.Identity)
+		if err != nil || identity.SpaceID <= 0 || identity.UserID <= 0 {
+			return StoredExecution{}, ErrUnavailable
+		}
+		payload.State, payload.UpdatedUnixMS = result.Status, store.now().UTC().UnixMilli()
+		payload.ExitCode = copyExitCode(result.ExitCode)
+		payload.Stdout, payload.Stderr = result.Stdout, result.Stderr
+		nextCiphertext, err := store.seal(payload)
+		if err != nil {
+			return StoredExecution{}, ErrUnavailable
+		}
+		recordTTL := store.recordTTL
+		if remaining := time.UnixMilli(payload.DeadlineUnixMS).UTC().Sub(store.now().UTC()); remaining < recordTTL {
+			recordTTL = remaining
+		}
+		if recordTTL <= 0 {
+			return StoredExecution{}, ErrExecutionConflict
+		}
+		value, err := store.client.RunScript(ctx, redisTransitionExecutionScript,
+			[]string{key, store.queueKey(), store.spaceQueueKey(identity.SpaceID), store.userQueueKey(identity.SpaceID, identity.UserID), store.activeQueueKey()}, currentCiphertext, nextCiphertext, durationMillisecondsCeil(recordTTL), "terminal", result.ExecutionID).Result()
+		if err != nil {
+			return StoredExecution{}, ErrUnavailable
+		}
+		status, ok := parseRedisTransitionResult(value)
+		switch {
+		case !ok:
+			return StoredExecution{}, ErrUnavailable
+		case status == "updated":
+			return storedProjection(payload), nil
+		case status == "stale":
+			continue
+		default:
+			return StoredExecution{}, ErrExecutionConflict
+		}
+	}
+	return StoredExecution{}, ErrExecutionConflict
+}
+
 func (store *RedisStore) Status(ctx context.Context, executionID string) (infrasandbox.ExecuteResult, error) {
 	stored, err := store.Get(ctx, executionID)
 	if err != nil {
 		return infrasandbox.ExecuteResult{}, err
 	}
-	return infrasandbox.ExecuteResult{ExecutionID: stored.ExecutionID, Status: stored.State}, nil
+	return stored.Result, nil
 }
 
 func (store *RedisStore) Lookup(ctx context.Context, request infrasandbox.ExecutionLookupRequest) (infrasandbox.ExecutionLookupResult, error) {
@@ -265,7 +356,7 @@ func (store *RedisStore) Lookup(ctx context.Context, request infrasandbox.Execut
 	if !constantTimeEqual(stored.RequestDigest, normalized.RequestDigest.Hex()) || stored.Scope != string(normalized.Scope) || stored.WorkloadKind != string(normalized.WorkloadKind) {
 		return infrasandbox.ExecutionLookupResult{Status: infrasandbox.ExecutionLookupUnknown}, nil
 	}
-	return infrasandbox.ExecutionLookupResult{Status: infrasandbox.ExecutionLookupFound, Execution: infrasandbox.ExecuteResult{ExecutionID: stored.ExecutionID, Status: stored.State}}, nil
+	return infrasandbox.ExecutionLookupResult{Status: infrasandbox.ExecutionLookupFound, Execution: stored.Result}, nil
 }
 
 func (store *RedisStore) QueueStatus(ctx context.Context, executionID string) (infrasandbox.QueueStatus, error) {
@@ -482,14 +573,47 @@ func redisHash(value string) string {
 
 func storedProjection(payload persistedExecution) StoredExecution {
 	return StoredExecution{ExecutionID: payload.ExecutionID, RequestDigest: payload.RequestDigest, Scope: payload.Scope, WorkloadKind: payload.WorkloadKind,
-		Deadline: time.UnixMilli(payload.DeadlineUnixMS).UTC(), State: payload.State, AcceptedAt: time.UnixMilli(payload.AcceptedUnixMS).UTC(), UpdatedAt: time.UnixMilli(payload.UpdatedUnixMS).UTC()}
+		Deadline: time.UnixMilli(payload.DeadlineUnixMS).UTC(), State: payload.State, AcceptedAt: time.UnixMilli(payload.AcceptedUnixMS).UTC(), UpdatedAt: time.UnixMilli(payload.UpdatedUnixMS).UTC(),
+		Result: infrasandbox.ExecuteResult{ExecutionID: payload.ExecutionID, Status: payload.State, ExitCode: copyExitCode(payload.ExitCode), Stdout: payload.Stdout, Stderr: payload.Stderr}}
 }
 
 func validPersistedExecution(value persistedExecution) bool {
 	return value.Schema == "coze.sandbox.runner_execution.v1" && validExecutionID(value.ExecutionID) && len(value.OperationHash) == sha256.Size*2 &&
 		len(value.RequestDigest) == sha256.Size*2 && len(value.IdentityDigest) == sha256.Size*2 && validIdentifier(value.Scope) && validIdentifier(value.WorkloadKind) && value.DeadlineUnixMS > 0 &&
 		value.AcceptedUnixMS > 0 && value.UpdatedUnixMS >= value.AcceptedUnixMS && validExecutionState(value.State) &&
-		value.RequestEnvelope != "" && value.Identity != ""
+		value.RequestEnvelope != "" && value.Identity != "" && validPersistedResult(value)
+}
+
+func validCompletedResult(value infrasandbox.ExecuteResult) bool {
+	if !validExecutionID(value.ExecutionID) || !isTerminalExecutionState(value.Status) || len(value.Stdout)+len(value.Stderr) > maxExecutionResultBytes ||
+		len(value.Artifacts) != 0 || len(value.ArtifactDescriptors) != 0 || value.PreviewRoute != "" {
+		return false
+	}
+	if value.Status == infrasandbox.ExecutionStatusSucceeded {
+		return value.ExitCode != nil && *value.ExitCode == 0
+	}
+	return value.ExitCode == nil || *value.ExitCode >= 0
+}
+
+func validPersistedResult(value persistedExecution) bool {
+	result := infrasandbox.ExecuteResult{ExecutionID: value.ExecutionID, Status: value.State, ExitCode: value.ExitCode, Stdout: value.Stdout, Stderr: value.Stderr}
+	if isTerminalExecutionState(value.State) {
+		// Queue expiry and explicit cancellation are terminal lifecycle events,
+		// not adapter completions. They legitimately have no process output.
+		if value.ExitCode == nil && value.Stdout == "" && value.Stderr == "" {
+			return true
+		}
+		return validCompletedResult(result)
+	}
+	return value.ExitCode == nil && value.Stdout == "" && value.Stderr == ""
+}
+
+func copyExitCode(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func parseRedisAcceptResult(value any) (string, string, bool) {

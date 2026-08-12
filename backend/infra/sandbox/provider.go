@@ -56,17 +56,43 @@ const (
 	MaxExecutionDeadlineAhead            = time.Hour
 	MaxProviderCredentialBytes           = 64 * 1024
 
-	HealthProtocolV1                    = "v1"
-	ExecuteSchemaV1                     = "coze.sandbox.execute.v1"
-	ArtifactPublishSchemaV1             = "coze.sandbox.artifact_publish.v1"
-	AppDevBuildSchemaV1                 = "coze.sandbox.appdev_build.v1"
-	MCPStdioInvokeSchemaV1              = "coze.sandbox.mcp_stdio.invoke.v1"
-	MCPStdioResultSchemaV1              = "coze.sandbox.mcp_stdio.result.v1"
-	MCPStdioClientVersionV1             = "1"
-	ExecutionLookupSchemaV1             = "coze.sandbox.execution_lookup.v1"
-	ExecutionLookupLegacySchemaV1       = "coze.sandbox.execution_lookup.legacy.v1"
-	MaxArtifactDescriptorBytes    int64 = 100 * 1024 * 1024
+	HealthProtocolV1                     = "v1"
+	ExecuteSchemaV1                      = "coze.sandbox.execute.v1"
+	ArtifactPublishSchemaV1              = "coze.sandbox.artifact_publish.v1"
+	AppDevBuildSchemaV1                  = "coze.sandbox.appdev_build.v1"
+	MCPStdioInvokeSchemaV1               = "coze.sandbox.mcp_stdio.invoke.v1"
+	MCPStdioResultSchemaV1               = "coze.sandbox.mcp_stdio.result.v1"
+	MCPStdioClientVersionV1              = "1"
+	ExecutionLookupSchemaV1              = "coze.sandbox.execution_lookup.v1"
+	ExecutionLookupLegacySchemaV1        = "coze.sandbox.execution_lookup.legacy.v1"
+	SchedulerRuntimeStatusSchemaV1       = "coze.sandbox.runner_runtime_status.v1"
+	MaxArtifactDescriptorBytes     int64 = 100 * 1024 * 1024
 )
+
+type RuntimeMemoryReserveState string
+
+const (
+	RuntimeMemoryReserveAvailable      RuntimeMemoryReserveState = "available"
+	RuntimeMemoryReserveBelowWatermark RuntimeMemoryReserveState = "below_watermark"
+	RuntimeMemoryReserveUnknown        RuntimeMemoryReserveState = "unknown"
+)
+
+// SchedulerRuntimeStatus is the authenticated, aggregate-only projection
+// returned by a native Runner. It deliberately excludes tenant, execution,
+// container, command, endpoint, image, and credential fields.
+type SchedulerRuntimeStatus struct {
+	Schema                      string                      `json:"schema"`
+	AppliedConfigurationVersion uint64                      `json:"applied_configuration_version"`
+	Queued                      int                         `json:"queued"`
+	QueuedByScope               map[domainsandbox.Scope]int `json:"queued_by_scope"`
+	Running                     int                         `json:"running"`
+	UsedWeight                  int                         `json:"used_weight"`
+	TotalWeight                 int                         `json:"total_weight"`
+	IdleContainers              int                         `json:"idle_containers"`
+	ActiveContainers            int                         `json:"active_containers"`
+	QuarantinedContainers       int                         `json:"quarantined_containers"`
+	MemoryReserveState          RuntimeMemoryReserveState   `json:"memory_reserve_state"`
+}
 
 const maxMCPStdioToolContentItems = 64
 

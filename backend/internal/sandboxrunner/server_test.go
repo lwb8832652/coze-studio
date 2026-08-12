@@ -32,8 +32,8 @@ func TestServerHealthIsDiscoverableAndRejectsTrailingPaths(t *testing.T) {
 		Features        []domainsandbox.ProviderFeature `json:"features"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.ProtocolVersion != "v1" ||
-		body.Status != domainsandbox.HealthStatusHealthy || len(body.Capabilities) != 4 ||
-		len(body.Features) != 1 || body.Features[0] != domainsandbox.ProviderFeatureQueueStatusV1 {
+		body.Status != domainsandbox.HealthStatusHealthy || len(body.Capabilities) != 2 ||
+		len(body.Features) != 2 || body.Features[0] != domainsandbox.ProviderFeatureQueueStatusV1 || body.Features[1] != domainsandbox.ProviderFeatureSignedExecutionContext {
 		t.Fatalf("health body/error = %#v/%v", body, err)
 	}
 
@@ -46,6 +46,17 @@ func TestServerHealthIsDiscoverableAndRejectsTrailingPaths(t *testing.T) {
 	server.Handler().ServeHTTP(query, httptest.NewRequest(http.MethodGet, "/v1/health?unexpected=true", nil))
 	if query.Code != http.StatusBadRequest || strings.Contains(query.Body.String(), "unexpected") {
 		t.Fatalf("query status/body = %d/%s", query.Code, query.Body.String())
+	}
+}
+
+func TestServerHealthFailsClosedWhenRootlessRuntimeIsUnavailable(t *testing.T) {
+	dependencies := &recordingDependencies{}
+	dependencies.readinessErr = ErrUnavailable
+	server := newTestServerWithDependencies(t, dependencies.Dependencies())
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "rootless") {
+		t.Fatalf("health status/body = %d/%s", response.Code, response.Body.String())
 	}
 }
 
@@ -62,7 +73,7 @@ func TestServerRejectsQueryParametersWithoutRequestDetail(t *testing.T) {
 
 func TestServerExecuteRequiresBearerSignedContextAndStrictBody(t *testing.T) {
 	server := newTestServer(t)
-	body := validExecuteWireBody(t)
+	body := supportedExecuteWireBody(t)
 	request := httptest.NewRequest(http.MethodPost, "/v1/executions", strings.NewReader(body))
 	unauthorized := httptest.NewRecorder()
 	server.Handler().ServeHTTP(unauthorized, request)
@@ -102,6 +113,38 @@ func TestServerExecuteRequiresBearerSignedContextAndStrictBody(t *testing.T) {
 	}
 }
 
+func TestServerExecuteRejectsScopesNotAdvertisedByRuntimeImage(t *testing.T) {
+	server := newTestServer(t)
+	for _, body := range []string{
+		validExecuteWireBody(t),
+		strings.Replace(strings.Replace(validExecuteWireBody(t), `"scope":"appdev","workload_kind":"appdev"`, `"scope":"mcp_stdio","workload_kind":"mcp_stdio"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"mcp/stdio/invoke"`, 1),
+	} {
+		request := signedExecuteRequest(t, body)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("unsupported scope status/body = %d/%s", response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestServerLookupFailsClosedUntilIdentityBoundReconciliationIsAdvertised(t *testing.T) {
+	dependencies := &recordingDependencies{}
+	server := newTestServerWithDependencies(t, dependencies.Dependencies())
+	for _, body := range []string{
+		validLookupWireBody(),
+		strings.Replace(validLookupWireBody(), `"scope":"agent","workload_kind":"agent"`, `"scope":"appdev","workload_kind":"appdev"`, 1),
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/executions:lookup", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || dependencies.lookupCalls != 0 {
+			t.Fatalf("lookup status/calls = %d/%d", response.Code, dependencies.lookupCalls)
+		}
+	}
+}
+
 func TestParseExecuteRejectsInvalidDeadlineScopeEntrypointAndIdempotencyKey(t *testing.T) {
 	valid := validExecuteWireBody(t)
 	for name, body := range map[string]string{
@@ -109,12 +152,39 @@ func TestParseExecuteRejectsInvalidDeadlineScopeEntrypointAndIdempotencyKey(t *t
 		"excessive deadline":         strings.Replace(valid, `"deadline":"`+deadlineFromWireBody(t, valid)+`"`, `"deadline":"2999-01-01T00:00:00Z"`, 1),
 		"mismatched scope":           strings.Replace(valid, `"scope":"appdev"`, `"scope":"agent"`, 1),
 		"invalid idempotency":        strings.Replace(valid, `"idempotency_key":"runner-test-operation"`, `"idempotency_key":"runner test"`, 1),
-		"invalid entrypoint":         strings.Replace(valid, `"entrypoint":"main.py"`, `"entrypoint":"../main.py"`, 1),
-		"plugin entrypoint mismatch": strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"plugin","workload_kind":"plugin"`, 1), `"entrypoint":"main.py"`, `"entrypoint":"other.py"`, 1),
+		"invalid entrypoint":         strings.Replace(valid, `"entrypoint":"appdev/runtime"`, `"entrypoint":"../main.py"`, 1),
+		"plugin entrypoint mismatch": strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"plugin","workload_kind":"plugin"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"other.py"`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseExecute([]byte(body)); err == nil {
 				t.Fatal("parseExecute() unexpectedly accepted request")
+			}
+		})
+	}
+}
+
+func TestParseExecuteAcceptsOnlyReviewedWorkloadEntrypoints(t *testing.T) {
+	valid := validExecuteWireBody(t)
+	for name, body := range map[string]string{
+		"agent":                 strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"agent","workload_kind":"agent"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"agent/code/run"`, 1),
+		"mcp stdio":             strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"mcp_stdio","workload_kind":"mcp_stdio"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"mcp/stdio/invoke"`, 1),
+		"plugin":                strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"plugin","workload_kind":"plugin"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"plugin/code/run"`, 1),
+		"appdev legacy adapter": valid,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseExecute([]byte(body)); err != nil {
+				t.Fatalf("parseExecute() error = %v", err)
+			}
+		})
+	}
+	for name, body := range map[string]string{
+		"agent shell":              strings.Replace(valid, `"entrypoint":"appdev/runtime"`, `"entrypoint":"sh"`, 1),
+		"mcp arbitrary adapter":    strings.Replace(strings.Replace(valid, `"scope":"appdev","workload_kind":"appdev"`, `"scope":"mcp_stdio","workload_kind":"mcp_stdio"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"mcp/custom/run"`, 1),
+		"appdev arbitrary adapter": strings.Replace(valid, `"entrypoint":"appdev/runtime"`, `"entrypoint":"bin/appdev"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseExecute([]byte(body)); err == nil {
+				t.Fatal("parseExecute() unexpectedly accepted unreviewed entrypoint")
 			}
 		})
 	}
@@ -147,6 +217,76 @@ func TestServerBuildOperationIDMatchesRemoteProviderContract(t *testing.T) {
 	}
 }
 
+func TestServerConfigurationEndpointActivatesOnlyVerifiedSnapshots(t *testing.T) {
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewConfigurationStore(signer, schedulerConfigurationSettings(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t)
+	server.configuration = store
+	server.configurationApplier = store
+
+	next := schedulerConfigurationSettings(2)
+	envelope, err := signer.Sign(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/v1/configuration", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+	accepted := httptest.NewRecorder()
+	server.Handler().ServeHTTP(accepted, request)
+	if accepted.Code != http.StatusNoContent || store.Settings().Version != 2 {
+		t.Fatalf("status/version = %d/%d", accepted.Code, store.Settings().Version)
+	}
+
+	envelope.Settings.MaxOutstanding = 31
+	body, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/v1/configuration", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+	rejected := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rejected, request)
+	if rejected.Code != http.StatusBadRequest || store.Settings().Version != 2 {
+		t.Fatalf("status/version = %d/%d", rejected.Code, store.Settings().Version)
+	}
+}
+
+func TestServerRuntimeStatusIsAuthenticatedAndContainsOnlyAggregateState(t *testing.T) {
+	dependencies := &recordingDependencies{}
+	server := newTestServerWithDependencies(t, dependencies.Dependencies())
+
+	unauthorized := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/runtime-status", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/runtime-status", nil)
+	request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || dependencies.runtimeStatusCalls != 1 {
+		t.Fatalf("status/calls = %d/%d", response.Code, dependencies.runtimeStatusCalls)
+	}
+	if strings.Contains(response.Body.String(), "exec-") || strings.Contains(response.Body.String(), "space_id") || strings.Contains(response.Body.String(), "container_id") {
+		t.Fatalf("runtime status leaked an identifier: %s", response.Body.String())
+	}
+	var body RuntimeStatusProjection
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Schema != runtimeStatusSchemaV1 || body.AppliedConfigurationVersion != 1 || body.Queued != 2 || body.ActiveContainers != 1 || body.MemoryReserveState != memoryReserveAvailable {
+		t.Fatalf("runtime status/error = %#v/%v", body, err)
+	}
+}
+
 func TestParseControlRequestRejectsUnsafeArtifactCapability(t *testing.T) {
 	valid := validArtifactWireBody()
 	for name, body := range map[string]string{
@@ -172,7 +312,7 @@ func TestServerControlEndpointsRequireAuthenticationAndRejectTrailingPaths(t *te
 		"keep alive":    {method: http.MethodPost, path: "/v1/executions/exec-runner-test:keep-alive", body: `{}`},
 		"cancel":        {method: http.MethodPost, path: "/v1/executions/exec-runner-test:cancel", body: `{}`},
 		"queue":         {method: http.MethodGet, path: "/v1/executions/exec-runner-test/queue-status"},
-		"lookup":        {method: http.MethodPost, path: "/v1/executions:lookup", body: `{"schema":"coze.sandbox.execution_lookup.v1","scope":"appdev","workload_kind":"appdev","operation_id":"operation-1","request_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`},
+		"lookup":        {method: http.MethodPost, path: "/v1/executions:lookup", body: validLookupWireBody()},
 		"build":         {method: http.MethodPost, path: "/v1/executions/exec-runner-test/builds", body: `{"schema":"coze.sandbox.appdev_build.v1","operation_id":"build-1"}`},
 		"build status":  {method: http.MethodGet, path: "/v1/executions/exec-runner-test/builds/build-1"},
 		"artifact":      {method: http.MethodPost, path: "/v1/executions/exec-runner-test/artifacts:publish", body: `{"schema":"coze.sandbox.artifact_publish.v1","descriptor":{"kind":"appdev_build_archive","digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","size":1},"upload_url":"https://storage.example/upload","upload_token":"short-lived-token","expires_at":"2026-08-12T00:00:00Z"}`},
@@ -223,7 +363,6 @@ func TestServerControlEndpointsDelegateOnlyToInjectedDependencies(t *testing.T) 
 		"keep alive":    {http.MethodPost, "/v1/executions/exec-runner-test:keep-alive", `{}`},
 		"cancel":        {http.MethodPost, "/v1/executions/exec-runner-test:cancel", `{}`},
 		"queue":         {http.MethodGet, "/v1/executions/exec-runner-test/queue-status", ""},
-		"lookup":        {http.MethodPost, "/v1/executions:lookup", validLookupWireBody()},
 		"build":         {http.MethodPost, "/v1/executions/exec-runner-test/builds", `{"schema":"coze.sandbox.appdev_build.v1","operation_id":"build-1"}`},
 		"build status":  {http.MethodGet, "/v1/executions/exec-runner-test/builds/build-1", ""},
 		"artifact":      {http.MethodPost, "/v1/executions/exec-runner-test/artifacts:publish", validArtifactWireBody()},
@@ -240,7 +379,7 @@ func TestServerControlEndpointsDelegateOnlyToInjectedDependencies(t *testing.T) 
 		})
 	}
 	if dependencies.statusCalls != 1 || dependencies.keepAliveCalls != 1 || dependencies.cancelCalls != 1 ||
-		dependencies.queueCalls != 1 || dependencies.lookupCalls != 1 || dependencies.beginBuildCalls != 1 ||
+		dependencies.queueCalls != 1 || dependencies.lookupCalls != 0 || dependencies.beginBuildCalls != 1 ||
 		dependencies.buildStatusCalls != 1 || dependencies.publishArtifactCalls != 1 || dependencies.configurationCalls != 1 {
 		t.Fatalf("dependency calls = %#v", dependencies)
 	}
@@ -255,15 +394,6 @@ func TestServerControlResponsesRemainCompatibleWithRemoteProvider(t *testing.T) 
 		body   string
 		check  func(t *testing.T, response *httptest.ResponseRecorder)
 	}{
-		"lookup version": {
-			method: http.MethodPost, path: "/v1/executions:lookup", body: validLookupWireBody(),
-			check: func(t *testing.T, response *httptest.ResponseRecorder) {
-				t.Helper()
-				if response.Header().Get(infrasandbox.ExecutionLookupProtocolVersionHeader) != infrasandbox.ExecutionLookupProtocolVersionV1 {
-					t.Fatalf("lookup version = %q", response.Header().Get(infrasandbox.ExecutionLookupProtocolVersionHeader))
-				}
-			},
-		},
 		"keep alive empty body": {
 			method: http.MethodPost, path: "/v1/executions/exec-runner-test:keep-alive", body: `{}`,
 			check: func(t *testing.T, response *httptest.ResponseRecorder) {
@@ -314,6 +444,8 @@ func newTestServerWithDependencies(t *testing.T, dependencies Dependencies) *Ser
 type recordingDependencies struct {
 	statusCalls, keepAliveCalls, cancelCalls, queueCalls, lookupCalls           int
 	beginBuildCalls, buildStatusCalls, publishArtifactCalls, configurationCalls int
+	runtimeStatusCalls                                                          int
+	readinessErr                                                                error
 }
 
 func (d *recordingDependencies) Dependencies() Dependencies {
@@ -321,9 +453,10 @@ func (d *recordingDependencies) Dependencies() Dependencies {
 		Scheduler: acceptSchedulerFunc(func(context.Context, ExecuteCommand) (ExecutionProjection, error) {
 			return ExecutionProjection{ExecutionID: "exec-runner-test", Status: infrasandbox.ExecutionStatusAccepted}, nil
 		}),
-		Store: d, Lifecycle: d, Artifacts: d, Configuration: d,
+		Store: d, Lifecycle: d, Artifacts: d, Configuration: d, RuntimeStatus: d, Readiness: d,
 	}
 }
+func (d *recordingDependencies) Ready(context.Context) error { return d.readinessErr }
 
 func (d *recordingDependencies) Status(context.Context, string) (infrasandbox.ExecuteResult, error) {
 	d.statusCalls++
@@ -359,8 +492,13 @@ func (d *recordingDependencies) Configuration(context.Context) (ConfigurationPro
 	return ConfigurationProjection{Schema: "coze.sandbox.runner_configuration.v1", Version: 1}, nil
 }
 
+func (d *recordingDependencies) RuntimeStatus(context.Context) (RuntimeStatusProjection, error) {
+	d.runtimeStatusCalls++
+	return RuntimeStatusProjection{Schema: runtimeStatusSchemaV1, AppliedConfigurationVersion: 1, Queued: 2, QueuedByScope: map[string]int{"agent": 2}, Running: 1, UsedWeight: 2, TotalWeight: 4, IdleContainers: 1, ActiveContainers: 1, MemoryReserveState: memoryReserveAvailable}, nil
+}
+
 func validLookupWireBody() string {
-	return `{"schema":"coze.sandbox.execution_lookup.v1","scope":"appdev","workload_kind":"appdev","operation_id":"operation-1","request_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","space_id":"","project_id":"","generation":0}`
+	return `{"schema":"coze.sandbox.execution_lookup.v1","scope":"agent","workload_kind":"agent","operation_id":"operation-1","request_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","space_id":"","project_id":"","generation":0}`
 }
 
 func validArtifactWireBody() string {
@@ -381,7 +519,12 @@ func deadlineFromWireBody(t *testing.T, body string) string {
 func validExecuteWireBody(t *testing.T) string {
 	t.Helper()
 	deadline := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
-	return `{"schema":"coze.sandbox.execute.v1","scope":"appdev","workload_kind":"appdev","idempotency_key":"runner-test-operation","deadline":"` + deadline + `","policy":{"timeout_seconds":30,"memory_limit_mb":128,"cpu_limit":1,"max_output_bytes":4096,"max_concurrency":2,"allow_network":false,"network_allowlist":[],"allowed_env_names":[],"virtual_read_prefixes":[],"virtual_write_prefixes":[],"allowed_executables":[],"ffi_enabled":false,"node_modules_mode":"disabled","node_modules_directory_ref":""},"entrypoint":"main.py","args":[],"env":{},"stdin":"","files":[],"artifact_references":[]}`
+	return `{"schema":"coze.sandbox.execute.v1","scope":"appdev","workload_kind":"appdev","idempotency_key":"runner-test-operation","deadline":"` + deadline + `","policy":{"timeout_seconds":30,"memory_limit_mb":128,"cpu_limit":1,"max_output_bytes":4096,"max_concurrency":2,"allow_network":false,"network_allowlist":[],"allowed_env_names":[],"virtual_read_prefixes":[],"virtual_write_prefixes":[],"allowed_executables":[],"ffi_enabled":false,"node_modules_mode":"disabled","node_modules_directory_ref":""},"entrypoint":"appdev/runtime","args":[],"env":{},"stdin":"","files":[],"artifact_references":[]}`
+}
+
+func supportedExecuteWireBody(t *testing.T) string {
+	t.Helper()
+	return strings.Replace(strings.Replace(validExecuteWireBody(t), `"scope":"appdev","workload_kind":"appdev"`, `"scope":"agent","workload_kind":"agent"`, 1), `"entrypoint":"appdev/runtime"`, `"entrypoint":"agent/code/run"`, 1)
 }
 
 func signedExecuteRequest(t *testing.T, body string) *http.Request {
@@ -391,7 +534,19 @@ func signedExecuteRequest(t *testing.T, body string) *http.Request {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256([]byte(body))
-	signed, err := keyring.Sign(sandboxidentity.Request{Scope: sandboxidentity.ScopeAppDev, SpaceID: 1, UserID: 2, ProjectID: "project-1", ExecutionID: "exec-runner-test", RequestDigest: digest[:]})
+	var envelope struct {
+		Scope domainsandbox.Scope `json:"scope"`
+	}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	identity := sandboxidentity.Request{Scope: sandboxidentity.Scope(envelope.Scope), SpaceID: 1, UserID: 2, ExecutionID: "exec-runner-test", RequestDigest: digest[:]}
+	if envelope.Scope == domainsandbox.ScopeAppDev {
+		identity.ProjectID = "project-1"
+	} else if envelope.Scope == domainsandbox.ScopeMCPStdio {
+		identity.SessionID = "session-1"
+	}
+	signed, err := keyring.Sign(identity)
 	if err != nil {
 		t.Fatal(err)
 	}

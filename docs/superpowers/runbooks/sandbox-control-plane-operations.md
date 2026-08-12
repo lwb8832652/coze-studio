@@ -26,6 +26,40 @@
 生产环境必须显式设置 `SANDBOX_RUNTIME_ROUTING_ENABLED`，不要依赖兼容默认值。
 `APP_DEV_HOST_RUNTIME_ENABLED` 不得在生产或共享测试环境开启。
 
+## Native Sandbox Runner（2C4G）
+
+`runner-2c4g` 是额外部署 profile，不会替换既有 `local-data` profile。它只启动
+`nsqd`、`coze-server`、`coze-web` 与 `coze-sandbox-runner`；MySQL、Redis、
+Elasticsearch 和对象存储继续读取服务器本地 `app.env` 的远程配置，禁止为此 profile
+额外启动数据服务容器。
+
+启用前必须由运维准备：专用非特权 rootless Docker/Podman-compatible socket、其数值
+组 ID、权限为 `600` 且归容器运行 UID `10001` 所有的 TLS 证书和私钥，以及权限为
+`600` 且归部署用户所有的 `sandbox-runner.env`。部署脚本会对默认路径或
+`SANDBOX_RUNNER_ENV_FILE`、`SANDBOX_RUNNER_TLS_CERT_FILE`、
+`SANDBOX_RUNNER_TLS_KEY_FILE` 覆盖路径执行相同校验。环境文件至少包含 Runner 认证 token、身份验签 keyring、队列
+加密 keyring 和调度配置验签 keyring；不能放入仓库、CI 变量或 `app.env`。
+`SANDBOX_RUNNER_ROOTLESS_SOCKET` 必须是这个专用 socket，绝不能是
+`/var/run/docker.sock`。
+
+部署脚本会把执行 Runtime 镜像解析为不可变 digest，写入部署记录，并在回滚时恢复
+上一个 digest。不要手工给 `SANDBOX_RUNNER_EXECUTION_IMAGE` 传 mutable tag。
+
+当前 Runtime 镜像只包含并公开 `agent` 与 `plugin` 的受审核 Code adapter。Runner
+健康检查也只声明这两个 scope，因此不能将它设为 MCP 或 AppDev 默认 Provider；这两个
+scope 应继续使用其已验证的兼容 Provider。MCP stdio 需要受控依赖包和协议客户端，
+AppDev 需要受签名源码快照、长驻预览端口和网关路由；在各自 adapter 经过独立实现和
+验收前，禁止以 shell 或通用 Code adapter 代替。
+
+出现 Runner 健康失败、Redis 不可用、验签失败或 rootless runtime socket 不可达时，
+Runner 必须保持不可用并拒绝新执行。已运行执行可按业务取消路径终止；取消会先结束
+容器再释放调度容量。复用容器前清理临时文件、短期 secret 和同 UID 残留进程。
+
+Runner 的 `/v1/runtime-status` 与 `/v1/metrics` 均要求 Runner Bearer token；它们只
+返回固定 scope 的队列/容量、容器聚合和内存水位状态，不含用户、空间、业务执行 ID、
+容器 ID、endpoint 或凭据。Prometheus 应经受控采集端访问 `/v1/metrics`，不得把该
+端点映射为公网匿名接口。
+
 ## 首次上线顺序
 
 1. 应用并校验 Atlas 迁移，但暂不开放 Sandbox 前端入口。

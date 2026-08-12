@@ -52,8 +52,10 @@ credential、provider body 或隐藏配置。
 ### AppDev 与 Sandbox
 
 Sandbox 控制面和运行流量分别启用。生产与共享环境只通过数据库配置的 HTTPS
-remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安全依赖缺失
-时 fail closed，不回退到宿主机或内存 stub。
+remote provider 执行；`runner-2c4g` profile 可部署 Native Sandbox Runner，使用专用
+rootless runtime socket、TLS 和独立密钥文件，且不启动本地数据服务容器。本机 host
+runtime 只允许显式 Debug 模式。安全依赖缺失时 fail closed，不回退到宿主机或内存
+stub。
 
 当前产品策略暂时不在工作空间侧栏展示“网页应用开发”入口。该能力的菜单元数据、
 路由、页面、后端 API、通知映射和 Sandbox AppDev scope 继续保留，不视为删除或

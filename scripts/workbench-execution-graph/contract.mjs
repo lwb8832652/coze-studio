@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  'b55f04871f4d85070999dfe49ef54215cf95c7b83bb50d09f0096e6265de2031';
+  '443ac0b86bcf25cfb3ddc4d6e6b69b2a759a042fad18313c2bb8acea0c2d16e4';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',

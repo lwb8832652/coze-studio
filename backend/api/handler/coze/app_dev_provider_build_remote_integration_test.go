@@ -793,6 +793,7 @@ func migrateRemoteProviderBuildSQLite(db *gorm.DB) error {
             id TEXT NOT NULL PRIMARY KEY,
             space_id INTEGER NOT NULL,
             project_id TEXT NOT NULL,
+			actor_user_id INTEGER NOT NULL DEFAULT 0,
             generation INTEGER NOT NULL,
             idempotency_key BLOB NOT NULL,
             desired_state TEXT NOT NULL,

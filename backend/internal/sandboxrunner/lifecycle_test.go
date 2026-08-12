@@ -134,6 +134,35 @@ func TestLifecycleCancellationHonorsGraceThenForceKillsAndDestroysPlugin(t *test
 	}
 }
 
+func TestLifecycleExecutesReviewedAdapterAndReleasesLease(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	manager, driver := newLifecycleFixture(t, now)
+	request := lifecycleRequest(domainsandbox.ScopePlugin, "exec-adapter", 10, 20, "project", "session")
+	result, err := manager.Execute(context.Background(), request, sandboxruntime.AdapterPluginCode, []byte(`{"safe":true}`), 1024)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.ExitCode != 0 || string(result.Stdout) != "adapter-result" || driver.stageCalls != 1 || driver.runCalls != 1 || driver.lastAdapter != sandboxruntime.AdapterPluginCode {
+		t.Fatalf("result/driver = %#v/%#v", result, driver)
+	}
+	if manager.Snapshot().Active != 0 || len(driver.destroyed) != 1 {
+		t.Fatalf("adapter execution leaked lease: snapshot=%#v destroyed=%v", manager.Snapshot(), driver.destroyed)
+	}
+}
+
+func TestLifecycleDiscardsContainerWhenAdapterFails(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	manager, driver := newLifecycleFixture(t, now)
+	driver.runErr = errors.New("adapter failed")
+	_, err := manager.Execute(context.Background(), lifecycleRequest(domainsandbox.ScopeAgent, "exec-adapter-failure", 10, 20, "project", "session"), sandboxruntime.AdapterAgentCode, []byte(`{"safe":true}`), 1024)
+	if err == nil {
+		t.Fatal("Execute() unexpectedly accepted failed adapter")
+	}
+	if manager.Snapshot().Active != 0 || len(driver.destroyed) != 1 || manager.Snapshot().Quarantined != 1 {
+		t.Fatalf("failed adapter was reusable: snapshot=%#v destroyed=%v", manager.Snapshot(), driver.destroyed)
+	}
+}
+
 func TestLifecycleRecoveryKeepsOnlyIdleCompatibleContainers(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
 	manager, driver := newLifecycleFixture(t, now)
@@ -283,6 +312,11 @@ type lifecycleDriverFake struct {
 	prepareErr     error
 	healthErr      error
 	destroyErr     error
+	stageCalls     int
+	runCalls       int
+	lastAdapter    sandboxruntime.Adapter
+	stageErr       error
+	runErr         error
 }
 
 func (driver *lifecycleDriverFake) Create(_ context.Context, specification sandboxruntime.Specification) (sandboxruntime.Container, error) {
@@ -303,6 +337,22 @@ func (driver *lifecycleDriverFake) Health(context.Context, string) error {
 	defer driver.mu.Unlock()
 	driver.healthCalls++
 	return driver.healthErr
+}
+func (driver *lifecycleDriverFake) StageAdapterInput(_ context.Context, _ string, input []byte) error {
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	driver.stageCalls++
+	return driver.stageErr
+}
+func (driver *lifecycleDriverFake) RunAdapter(_ context.Context, _ string, adapter sandboxruntime.Adapter, _ int64) (sandboxruntime.AdapterResult, error) {
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	driver.runCalls++
+	driver.lastAdapter = adapter
+	if driver.runErr != nil {
+		return sandboxruntime.AdapterResult{}, driver.runErr
+	}
+	return sandboxruntime.AdapterResult{ExitCode: 0, Stdout: []byte("adapter-result")}, nil
 }
 func (driver *lifecycleDriverFake) Terminate(context.Context, string) error {
 	driver.mu.Lock()

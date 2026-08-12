@@ -47,6 +47,61 @@ func TestSchedulerDispatchesSpacesRoundRobinWhilePreservingSpaceFIFO(t *testing.
 	}
 }
 
+func TestSchedulerFinishResultPersistsTerminalOutputBeforeReleasingCapacity(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
+	store := newSchedulerStore(clock.now)
+	dispatcher := &recordingSchedulerDispatcher{}
+	scheduler, err := NewRunnerScheduler(RunnerSchedulerConfig{Store: store, Dispatcher: dispatcher, Settings: schedulerSettingsForTest(), Resources: fixedMemorySampler(4096), Now: clock.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := scheduler.Accept(context.Background(), schedulerCommand(clock.now(), "finish-result", 101, 201, domainsandbox.ScopePlugin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatched, err := scheduler.DispatchNext(context.Background()); err != nil || !dispatched {
+		t.Fatalf("DispatchNext() = %t, %v", dispatched, err)
+	}
+	exitCode := 0
+	if err := scheduler.FinishResult(context.Background(), infrasandbox.ExecuteResult{ExecutionID: accepted.ExecutionID, Status: infrasandbox.ExecutionStatusSucceeded, ExitCode: &exitCode, Stdout: "result"}); err != nil {
+		t.Fatalf("FinishResult() error = %v", err)
+	}
+	stored, err := store.Get(context.Background(), accepted.ExecutionID)
+	if err != nil || stored.State != infrasandbox.ExecutionStatusSucceeded || stored.Result.Stdout != "result" || stored.Result.ExitCode == nil || *stored.Result.ExitCode != 0 {
+		t.Fatalf("stored/error = %#v/%v", stored, err)
+	}
+	if scheduler.usedWeight != 0 || len(scheduler.running) != 0 {
+		t.Fatalf("scheduler capacity was not released: weight=%d running=%d", scheduler.usedWeight, len(scheduler.running))
+	}
+}
+
+func TestSchedulerPreservesSignedBusinessExecutionIDWhileUsingRunnerExecutionID(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
+	for _, scope := range []domainsandbox.Scope{domainsandbox.ScopeAgent, domainsandbox.ScopeMCPStdio, domainsandbox.ScopeAppDev, domainsandbox.ScopePlugin} {
+		t.Run(string(scope), func(t *testing.T) {
+			store := newSchedulerStore(clock.now)
+			dispatcher := &executionIdentityCheckingDispatcher{}
+			scheduler, err := NewRunnerScheduler(RunnerSchedulerConfig{Store: store, Dispatcher: dispatcher, Settings: schedulerSettingsForTest(), Resources: fixedMemorySampler(4096), Now: clock.now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := schedulerCommand(clock.now(), "runner-id-"+string(scope), 101, 201, scope)
+			command.Identity.ExecutionID = "upstream-business-id"
+			accepted, err := scheduler.Accept(context.Background(), command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatched, err := scheduler.DispatchNext(context.Background())
+			if err != nil || !dispatched {
+				t.Fatalf("DispatchNext() = %t, %v", dispatched, err)
+			}
+			if accepted.ExecutionID != dispatcher.executionID || dispatcher.identityExecutionID != "upstream-business-id" || accepted.ExecutionID == dispatcher.identityExecutionID {
+				t.Fatalf("runner/identity = %q/%q; want generated Runner ID and preserved signed identity", dispatcher.executionID, dispatcher.identityExecutionID)
+			}
+		})
+	}
+}
+
 func TestSchedulerRespectsHeavyLightAndSameUserHeavyLimits(t *testing.T) {
 	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
 	store := newSchedulerStore(clock.now)
@@ -263,6 +318,42 @@ func TestSchedulerFreezesConfigVersionAndProjectsQueueWithinItsOwnSpace(t *testi
 	}
 }
 
+func TestSchedulerAcceptCapturesWorkloadAndVersionFromOneSettingsSnapshot(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
+	baseStore := newSchedulerStore(clock.now)
+	store := &blockingSchedulerStore{schedulerStore: baseStore, entered: make(chan struct{}), release: make(chan struct{})}
+	settings := schedulerSettingsForTest()
+	settings.Version = 1
+	scheduler, err := NewRunnerScheduler(RunnerSchedulerConfig{Store: store, Dispatcher: &recordingSchedulerDispatcher{}, Settings: settings, Resources: fixedMemorySampler(4096), Now: clock.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := schedulerCommand(clock.now(), "settings-snapshot", 101, 201, domainsandbox.ScopeAgent)
+	result := make(chan error, 1)
+	go func() {
+		_, acceptErr := scheduler.Accept(context.Background(), command)
+		result <- acceptErr
+	}()
+	<-store.entered
+	next := settings
+	next.Version = 2
+	next.Workloads = cloneSchedulerWorkloads(settings.Workloads)
+	next.Workloads[domainsandbox.ScopeAgent] = domainsandbox.SchedulerWorkload{Weight: 1, CPULimit: 400, MemoryLimitMB: 384, PIDLimit: 64, QueueTimeoutSeconds: 300, IdleTTLSeconds: 180}
+	if err := scheduler.ApplySchedulerSettings(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	close(store.release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	scheduler.mu.Lock()
+	item := scheduler.queues[command.Identity.SpaceID][0]
+	scheduler.mu.Unlock()
+	if item.execution.ConfigurationVersion != 1 || item.execution.Weight != settings.Workloads[domainsandbox.ScopeAgent].Weight {
+		t.Fatalf("captured version/weight = %d/%d", item.execution.ConfigurationVersion, item.execution.Weight)
+	}
+}
+
 func TestSchedulerConcurrentDispatchNeverExceedsConfiguredWeight(t *testing.T) {
 	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
 	store := newSchedulerStore(clock.now)
@@ -402,7 +493,7 @@ func TestSchedulerKeepsQueuedWorkWhenCancellationStateWriteFails(t *testing.T) {
 	}
 }
 
-func TestSchedulerRecoversAcceptedQueueAndReservesRunningCapacity(t *testing.T) {
+func TestSchedulerRecoversAcceptedQueueAndFencesOrphanedRunningExecution(t *testing.T) {
 	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
 	store := newSchedulerStore(clock.now)
 	acceptedCommand := schedulerCommand(clock.now(), "recover-accepted", 101, 201, domainsandbox.ScopePlugin)
@@ -411,6 +502,8 @@ func TestSchedulerRecoversAcceptedQueueAndReservesRunningCapacity(t *testing.T) 
 		{Stored: StoredExecution{ExecutionID: "exec-recover-accepted", Scope: string(acceptedCommand.Scope), WorkloadKind: string(acceptedCommand.WorkloadKind), Deadline: acceptedCommand.Deadline, State: ExecutionStateAccepted, AcceptedAt: clock.now()}, Command: acceptedCommand},
 		{Stored: StoredExecution{ExecutionID: "exec-recover-running", Scope: string(runningCommand.Scope), WorkloadKind: string(runningCommand.WorkloadKind), Deadline: runningCommand.Deadline, State: ExecutionStateRunning, AcceptedAt: clock.now()}, Command: runningCommand},
 	}
+	store.byID["exec-recover-accepted"] = store.recovered[0].Stored
+	store.byID["exec-recover-running"] = store.recovered[1].Stored
 	scheduler, err := NewRunnerScheduler(RunnerSchedulerConfig{Store: store, Dispatcher: &recordingSchedulerDispatcher{}, Settings: schedulerSettingsForTest(), Resources: fixedMemorySampler(4096), Now: clock.now})
 	if err != nil {
 		t.Fatal(err)
@@ -418,11 +511,14 @@ func TestSchedulerRecoversAcceptedQueueAndReservesRunningCapacity(t *testing.T) 
 	if err := scheduler.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot := scheduler.Snapshot(); snapshot.Queued != 1 || snapshot.Running != 1 || snapshot.UsedWeight != 2 {
+	if snapshot := scheduler.Snapshot(); snapshot.Queued != 1 || snapshot.Running != 0 || snapshot.UsedWeight != 0 {
 		t.Fatalf("recovered snapshot = %#v", snapshot)
 	}
-	if dispatched, err := scheduler.DispatchNext(context.Background()); err != nil || dispatched {
-		t.Fatalf("DispatchNext() = %t, %v; recovered heavy task must retain capacity", dispatched, err)
+	if recovered := store.byID["exec-recover-running"]; recovered.State != infrasandbox.ExecutionStatusFailed {
+		t.Fatalf("orphaned running state = %q", recovered.State)
+	}
+	if dispatched, err := scheduler.DispatchNext(context.Background()); err != nil || !dispatched {
+		t.Fatalf("DispatchNext() = %t, %v; fenced running task must release capacity", dispatched, err)
 	}
 }
 
@@ -512,6 +608,30 @@ type schedulerStore struct {
 	transitionErr error
 }
 
+type blockingSchedulerStore struct {
+	*schedulerStore
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (store *blockingSchedulerStore) Accept(ctx context.Context, command ExecuteCommand) (StoredExecution, bool, error) {
+	close(store.entered)
+	select {
+	case <-store.release:
+		return store.schedulerStore.Accept(ctx, command)
+	case <-ctx.Done():
+		return StoredExecution{}, false, ctx.Err()
+	}
+}
+
+func cloneSchedulerWorkloads(input map[domainsandbox.Scope]domainsandbox.SchedulerWorkload) map[domainsandbox.Scope]domainsandbox.SchedulerWorkload {
+	cloned := make(map[domainsandbox.Scope]domainsandbox.SchedulerWorkload, len(input))
+	for scope, workload := range input {
+		cloned[scope] = workload
+	}
+	return cloned
+}
+
 func newSchedulerStore(now func() time.Time) *schedulerStore {
 	return &schedulerStore{now: now, byKey: map[string]StoredExecution{}, byID: map[string]StoredExecution{}}
 }
@@ -549,6 +669,17 @@ func (store *schedulerStore) Transition(_ context.Context, executionID string, s
 	store.byID[executionID] = record
 	return record, nil
 }
+func (store *schedulerStore) Complete(_ context.Context, result infrasandbox.ExecuteResult) (StoredExecution, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	record, ok := store.byID[result.ExecutionID]
+	if !ok {
+		return StoredExecution{}, errors.New("missing")
+	}
+	record.State, record.Result, record.UpdatedAt = result.Status, result, store.now()
+	store.byID[result.ExecutionID] = record
+	return record, nil
+}
 func (store *schedulerStore) Recover(context.Context) ([]StoredExecution, error) { return nil, nil }
 func (store *schedulerStore) RecoverExecutions(context.Context) ([]RecoveredExecution, error) {
 	store.mu.Lock()
@@ -559,6 +690,20 @@ func (store *schedulerStore) RecoverExecutions(context.Context) ([]RecoveredExec
 type recordingSchedulerDispatcher struct {
 	mu      sync.Mutex
 	records []ScheduledExecution
+}
+
+type executionIdentityCheckingDispatcher struct {
+	executionID         string
+	identityExecutionID string
+}
+
+func (dispatcher *executionIdentityCheckingDispatcher) Dispatch(_ context.Context, execution ScheduledExecution) error {
+	dispatcher.executionID = execution.ExecutionID
+	dispatcher.identityExecutionID = execution.Command.Identity.ExecutionID
+	if execution.ExecutionID == "" || execution.Command.Identity.ExecutionID == "" {
+		return ErrProtocol
+	}
+	return nil
 }
 
 func (dispatcher *recordingSchedulerDispatcher) Dispatch(_ context.Context, execution ScheduledExecution) error {

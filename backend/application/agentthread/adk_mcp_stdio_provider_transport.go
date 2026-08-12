@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -324,7 +325,7 @@ func (t *ADKMCPRuntimeStdioProviderTransport) buildExecuteRequest(
 	policy domainsandbox.RuntimePolicy,
 	operationID string,
 ) (infrasandbox.ExecuteRequest, error) {
-	if call.Run == nil || call.Server == nil {
+	if call.Run == nil || call.Server == nil || call.Run.SpaceID <= 0 || call.Run.CreatorID <= 0 || call.Run.ThreadID <= 0 || call.Run.RunID <= 0 {
 		return infrasandbox.ExecuteRequest{}, domainsandbox.ErrInvalidInput
 	}
 	envNames := make([]string, 0, len(config.Env))
@@ -363,6 +364,11 @@ func (t *ADKMCPRuntimeStdioProviderTransport) buildExecuteRequest(
 		Entrypoint:     adkMCPRuntimeStdioProviderEntrypoint,
 		Env:            cloneADKMCPRuntimeStringMap(config.Env),
 		Stdin:          stdin,
+		Identity: infrasandbox.ExecutionIdentity{
+			SpaceID: call.Run.SpaceID, UserID: call.Run.CreatorID,
+			SessionID:   "thread-" + strconv.FormatInt(call.Run.ThreadID, 10) + "-run-" + strconv.FormatInt(call.Run.RunID, 10),
+			ExecutionID: strconv.FormatInt(call.Run.RunID, 10),
+		},
 	}, nil
 }
 

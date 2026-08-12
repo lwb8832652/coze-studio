@@ -122,6 +122,7 @@ type providerExecutionRecord struct {
 	ID                           string                                       `gorm:"column:id;type:varchar(64);primaryKey;index:idx_appdev_provider_exec_recoverable,priority:7"`
 	SpaceID                      int64                                        `gorm:"column:space_id;type:bigint unsigned;not null;uniqueIndex:uk_appdev_provider_exec_generation,priority:1;uniqueIndex:uk_appdev_provider_exec_idempotency,priority:1;index:idx_appdev_provider_exec_recoverable,priority:1;index:idx_appdev_provider_exec_provider_id,priority:1;index:idx_appdev_provider_exec_launch,priority:1"`
 	ProjectID                    string                                       `gorm:"column:project_id;type:varchar(64);not null;uniqueIndex:uk_appdev_provider_exec_generation,priority:2;uniqueIndex:uk_appdev_provider_exec_idempotency,priority:2;index:idx_appdev_provider_exec_recoverable,priority:2;index:idx_appdev_provider_exec_provider_id,priority:2;index:idx_appdev_provider_exec_launch,priority:2"`
+	ActorUserID                  int64                                        `gorm:"column:actor_user_id;type:bigint unsigned;not null;default:0"`
 	Generation                   uint64                                       `gorm:"column:generation;type:bigint unsigned;not null;uniqueIndex:uk_appdev_provider_exec_generation,priority:3"`
 	IdempotencyKey               string                                       `gorm:"column:idempotency_key;type:varbinary(128);not null;uniqueIndex:uk_appdev_provider_exec_idempotency,priority:3"`
 	DesiredState                 domainappdev.ProviderExecutionDesiredState   `gorm:"column:desired_state;type:varchar(32);not null;index:idx_appdev_provider_exec_recoverable,priority:4"`
@@ -259,7 +260,7 @@ func (r *ProviderExecutionRepository) ensureStartAttempt(ctx context.Context, sp
 			generation = uint64(maximum.Int64) + 1
 		}
 		values := map[string]any{
-			"id": input.ID, "space_id": spaceID, "project_id": input.ProjectID, "generation": generation,
+			"id": input.ID, "space_id": spaceID, "project_id": input.ProjectID, "actor_user_id": input.ActorUserID, "generation": generation,
 			"idempotency_key": input.IdempotencyKey, "desired_state": domainappdev.ProviderExecutionDesiredRun,
 			"observed_state": domainappdev.ProviderExecutionObservedPending, "provider_key": input.ProviderKey,
 			"provider_scope": input.ProviderScope, "provider_execution_id": "", "checkpoint_envelope": "",
@@ -1660,7 +1661,7 @@ func (r *ProviderExecutionRepository) ListRecoverable(ctx context.Context, input
 			return nil, convertErr
 		}
 		items = append(items, &domainappdev.RecoverableProviderExecution{
-			ID: entity.ID, SpaceID: entity.SpaceID, ProjectID: entity.ProjectID, Generation: entity.Generation,
+			ID: entity.ID, SpaceID: entity.SpaceID, ProjectID: entity.ProjectID, ActorUserID: entity.ActorUserID, Generation: entity.Generation,
 			HasProviderExecution: entity.ProviderExecutionID != "", HasCheckpoint: entity.CheckpointEnvelope != "",
 			DesiredState: entity.DesiredState, ObservedState: entity.ObservedState, ProviderKey: entity.ProviderKey,
 			ProviderScope: entity.ProviderScope, ProviderLeaseExpiresAt: cloneProviderExecutionTime(entity.ProviderLeaseExpiresAt),
@@ -1821,7 +1822,7 @@ func providerExecutionRecordToDomain(record *providerExecutionRecord) (*domainap
 		return nil, domainappdev.ErrProviderExecutionUnavailable
 	}
 	entity := &domainappdev.ProviderExecution{
-		ID: record.ID, SpaceID: strconv.FormatInt(record.SpaceID, 10), ProjectID: record.ProjectID,
+		ID: record.ID, SpaceID: strconv.FormatInt(record.SpaceID, 10), ProjectID: record.ProjectID, ActorUserID: record.ActorUserID,
 		Generation: record.Generation, IdempotencyKey: record.IdempotencyKey, DesiredState: record.DesiredState,
 		ObservedState: record.ObservedState, ProviderKey: record.ProviderKey, ProviderScope: record.ProviderScope,
 		ProviderExecutionID: record.ProviderExecutionID, SubmissionStartedAt: cloneProviderExecutionTime(record.SubmissionStartedAt),

@@ -28,6 +28,7 @@ import (
 	wf "github.com/coze-dev/coze-studio/backend/domain/workflow"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/canvas/convert"
+	workflowexecute "github.com/coze-dev/coze-studio/backend/domain/workflow/internal/execute"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/schema"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/slices"
@@ -222,7 +223,9 @@ func (c *Runner) Invoke(ctx context.Context, input map[string]any) (ret map[stri
 	if c.importError != nil {
 		return nil, vo.WrapError(errno.ErrCodeExecuteFail, c.importError, errorx.KV("detail", c.importError.Error()))
 	}
-	response, err := c.runner.Run(ctx, &coderunner.RunRequest{Code: c.code, Language: c.language, Params: input})
+	response, err := c.runner.Run(workflowexecute.SandboxIdentityContext(ctx), &coderunner.RunRequest{
+		Purpose: coderunner.PurposeAgent, Code: c.code, Language: c.language, Params: input,
+	})
 	if err != nil {
 		return nil, vo.WrapError(errno.ErrCodeExecuteFail, err, errorx.KV("detail", err.Error()))
 	}

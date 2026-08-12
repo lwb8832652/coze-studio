@@ -181,6 +181,22 @@ export const SandboxSchedulerCard = () => {
           Runner 当前不可用，设置会先保存为期望配置。
         </div>
       ) : null}
+      {runtime?.available ? (
+        <div className={styles.runtime} aria-label="Runner 运行状态">
+          <span>队列 {runtime.queue_depth}</span>
+          <span>
+            运行 {runtime.active_slots} / {runtime.slot_capacity}
+          </span>
+          <span>空闲容器 {runtime.idle_containers}</span>
+          <span>
+            {runtime.memory_reserve_state === 'available'
+              ? '内存预留正常'
+              : runtime.memory_reserve_state === 'below_watermark'
+                ? '内存预留不足'
+                : '内存预留未知'}
+          </span>
+        </div>
+      ) : null}
       {message ? (
         <div role="status" className={styles.message}>
           {message}

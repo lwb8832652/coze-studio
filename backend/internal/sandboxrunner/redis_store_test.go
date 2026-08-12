@@ -6,12 +6,14 @@ package sandboxrunner
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	redisimpl "github.com/coze-dev/coze-studio/backend/infra/cache/impl/redis"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
@@ -43,6 +45,24 @@ func TestRedisStoreAcceptIsAtomicAndIdempotent(t *testing.T) {
 		if strings.Contains(key, "space-11") || strings.Contains(value, "first request") || strings.Contains(value, "project-22") {
 			t.Fatalf("plaintext found in redis key/value: %q=%q", key, value)
 		}
+	}
+}
+
+func TestRedisStoreIdempotencyReplayRejectsDifferentAuthenticatedIdentity(t *testing.T) {
+	store, _ := newRedisStoreFixture(t, "key-1")
+	firstCommand := validStoredCommand(t, "operation-shared", "same request")
+	secondCommand := validStoredCommand(t, "operation-shared", "same request")
+	secondCommand.Identity.SpaceID = 99
+	secondCommand.Identity.UserID = 100
+	secondCommand.Identity.ProjectID = "project-other"
+
+	first, replayed, err := store.Accept(context.Background(), firstCommand)
+	if err != nil || replayed {
+		t.Fatalf("first accept/replayed/error = %#v/%t/%v", first, replayed, err)
+	}
+	second, replayed, err := store.Accept(context.Background(), secondCommand)
+	if !errors.Is(err, ErrExecutionConflict) || replayed || second.ExecutionID != "" {
+		t.Fatalf("cross-identity accept/replayed/error = %#v/%t/%v", second, replayed, err)
 	}
 }
 
@@ -248,9 +268,86 @@ func TestRedisStoreEnforcesSpaceAndUserQueueLimits(t *testing.T) {
 	}
 }
 
+func TestRedisStoreCompletesExecutionWithBoundedResultProjection(t *testing.T) {
+	store, _ := newRedisStoreFixture(t, "key-1")
+	command := recoverableStoredCommand(t, "operation-complete-result", 11, 12, "project-result")
+	stored, _, err := store.Accept(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Transition(context.Background(), stored.ExecutionID, ExecutionStateRunning); err != nil {
+		t.Fatal(err)
+	}
+	exitCode := 0
+	result, err := store.Complete(context.Background(), infrasandbox.ExecuteResult{ExecutionID: stored.ExecutionID, Status: infrasandbox.ExecutionStatusSucceeded, ExitCode: &exitCode, Stdout: "approved output"})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if result.State != infrasandbox.ExecutionStatusSucceeded || result.Result.ExitCode == nil || *result.Result.ExitCode != 0 || result.Result.Stdout != "approved output" {
+		t.Fatalf("stored result = %#v", result)
+	}
+	status, err := store.Status(context.Background(), stored.ExecutionID)
+	if err != nil || status.Status != infrasandbox.ExecutionStatusSucceeded || status.ExitCode == nil || *status.ExitCode != 0 || status.Stdout != "approved output" {
+		t.Fatalf("status/error = %#v/%v", status, err)
+	}
+	lookup, err := store.Lookup(context.Background(), infrasandbox.ExecutionLookupRequest{Scope: command.Scope, WorkloadKind: command.WorkloadKind, OperationID: command.IdempotencyKey, RequestDigest: mustExecutionDigest(t, command.RawBody)})
+	if err != nil || lookup.Status != infrasandbox.ExecutionLookupFound || lookup.Execution.Stdout != "approved output" {
+		t.Fatalf("lookup/error = %#v/%v", lookup, err)
+	}
+}
+
+func TestRedisStoreRejectsOversizedCompletionOutput(t *testing.T) {
+	store, _ := newRedisStoreFixture(t, "key-1")
+	command := recoverableStoredCommand(t, "operation-complete-oversized", 11, 12, "project-result")
+	stored, _, err := store.Accept(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Transition(context.Background(), stored.ExecutionID, ExecutionStateRunning); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Complete(context.Background(), infrasandbox.ExecuteResult{ExecutionID: stored.ExecutionID, Status: infrasandbox.ExecutionStatusFailed, Stdout: strings.Repeat("x", maxExecutionResultBytes+1)}); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("Complete() error = %v, want protocol error", err)
+	}
+}
+
+func TestRedisStoreAppliesNewSchedulerQueueLimitsForFutureAdmissions(t *testing.T) {
+	store, _ := newRedisStoreFixture(t, "key-1")
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 2
+	settings.GlobalQueueDepth = 1
+	settings.PerSpaceQueueDepth = 1
+	settings.PerUserQueueDepth = 1
+	if err := store.ApplySchedulerSettings(context.Background(), settings); err != nil {
+		t.Fatalf("ApplySchedulerSettings() error = %v", err)
+	}
+	if _, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "queue-limit-one", 11, 12, "project-result")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "queue-limit-two", 13, 14, "project-result")); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Accept() error = %v, want capacity rejection", err)
+	}
+}
+
+func TestRedisStoreAppliesMaxOutstandingAsConservativeAdmissionCap(t *testing.T) {
+	store, _ := newRedisStoreFixture(t, "key-1")
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 2
+	settings.MaxOutstanding = 1
+	if err := store.ApplySchedulerSettings(context.Background(), settings); err != nil {
+		t.Fatalf("ApplySchedulerSettings() error = %v", err)
+	}
+	if _, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "outstanding-one", 11, 12, "project-result")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "outstanding-two", 13, 14, "project-result")); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Accept() error = %v, want max-outstanding rejection", err)
+	}
+}
+
 func TestRedisStoreRecoveryReturnsOnlyNonTerminalExecutions(t *testing.T) {
 	store, _ := newRedisStoreFixture(t, "key-1")
-	store.maxQueueDepth, store.perSpaceQueueDepth, store.perUserQueueDepth = 3, 3, 3
+	store.maxQueueDepth, store.maxOutstanding, store.perSpaceQueueDepth, store.perUserQueueDepth = 3, 3, 3, 3
 	accepted, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "operation-recover-accepted", 11, 12, "project-accepted"))
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +397,12 @@ func TestRedisStoreRecoveryRehydratesOnlyAuthenticatedExecutionCommands(t *testi
 	if recovered[0].Stored.ExecutionID != accepted.ExecutionID || recovered[0].Command.IdempotencyKey != acceptedCommand.IdempotencyKey || recovered[0].Command.Identity.SpaceID != acceptedCommand.Identity.SpaceID ||
 		recovered[1].Stored.ExecutionID != running.ExecutionID || recovered[1].Command.IdempotencyKey != runningCommand.IdempotencyKey {
 		t.Fatalf("recovered commands = %#v", recovered)
+	}
+	if recovered[0].Command.Identity.ExecutionID != acceptedCommand.Identity.ExecutionID ||
+		recovered[1].Command.Identity.ExecutionID != runningCommand.Identity.ExecutionID ||
+		recovered[0].Command.Identity.ExecutionID == recovered[0].Stored.ExecutionID ||
+		recovered[1].Command.Identity.ExecutionID == recovered[1].Stored.ExecutionID {
+		t.Fatalf("recovery did not preserve the signed business execution ID separately: %#v", recovered)
 	}
 	if err := server.Set(store.executionKey(accepted.ExecutionID), `{"schema":"coze.sandbox.runner_encrypted_execution.v1","key_id":"key-1","deployment_id":"invalid","nonce":"bad","ciphertext":"bad"}`); err != nil {
 		t.Fatal(err)
@@ -390,7 +493,7 @@ func newRedisStoreFixture(t *testing.T, activeKeyID string) (*RedisStore, *minir
 func validStoredCommand(t *testing.T, operationID, body string) ExecuteCommand {
 	t.Helper()
 	digest := sha256.Sum256([]byte(body))
-	return ExecuteCommand{IdempotencyKey: operationID, Scope: "appdev", WorkloadKind: "appdev", Entrypoint: "main.py", RawBody: []byte(body), Deadline: time.Now().Add(time.Minute), Identity: sandboxidentity.Request{SpaceID: 11, UserID: 12, ProjectID: "project-22", ExecutionID: "exec-context", RequestDigest: digest[:]}}
+	return ExecuteCommand{IdempotencyKey: operationID, Scope: "appdev", WorkloadKind: "appdev", Entrypoint: "appdev/runtime", RawBody: []byte(body), Deadline: time.Now().Add(time.Minute), Identity: sandboxidentity.Request{SpaceID: 11, UserID: 12, ProjectID: "project-22", ExecutionID: "exec-context", RequestDigest: digest[:]}}
 }
 
 func recoverableStoredCommand(t *testing.T, operationID string, spaceID, userID int64, projectID string) ExecuteCommand {

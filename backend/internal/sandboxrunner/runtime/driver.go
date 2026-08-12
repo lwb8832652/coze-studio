@@ -40,12 +40,32 @@ type Container struct {
 	State ContainerState
 }
 
+// Adapter identifies a reviewed executable baked into the runtime image. It
+// deliberately is not a command string: callers cannot select a shell or pass
+// arbitrary arguments through this boundary.
+type Adapter string
+
+const (
+	AdapterAgentCode     Adapter = "agent_code"
+	AdapterMCPStdio      Adapter = "mcp_stdio"
+	AdapterPluginCode    Adapter = "plugin_code"
+	AdapterAppDevRuntime Adapter = "appdev_runtime"
+)
+
+type AdapterResult struct {
+	ExitCode int
+	Stdout   []byte
+	Stderr   []byte
+}
+
 // Driver has exactly the lifecycle operations the Runner needs. It omits any
 // arbitrary exec, mount, socket, or host-shell capability by design.
 type Driver interface {
 	Create(context.Context, Specification) (Container, error)
 	PrepareForReuse(context.Context, string) error
 	Health(context.Context, string) error
+	StageAdapterInput(context.Context, string, []byte) error
+	RunAdapter(context.Context, string, Adapter, int64) (AdapterResult, error)
 	Terminate(context.Context, string) error
 	WaitStopped(context.Context, string, time.Duration) (bool, error)
 	ForceKill(context.Context, string) error

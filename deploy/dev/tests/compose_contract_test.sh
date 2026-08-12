@@ -20,6 +20,7 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 COMPOSE_FILE=$REPO_ROOT/deploy/dev/docker-compose.yml
+RUNNER_COMPOSE_FILE=$REPO_ROOT/deploy/dev/docker-compose.runner-2c4g.yml
 ENV_FILE=$REPO_ROOT/deploy/dev/.env.example
 
 fail() {
@@ -93,6 +94,34 @@ render_config() {
     OCEANBASE_PASSWORD=sentinel-oceanbase-password \
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config 2>&1) || {
     fail "docker compose config failed: $config_output"
+  }
+  printf '%s\n' "$config_output"
+}
+
+render_runner_config() {
+  runner_env=$(mktemp "${TMPDIR:-/tmp}/coze-runner-compose-env.XXXXXX")
+  runner_cert=$(mktemp "${TMPDIR:-/tmp}/coze-runner-compose-cert.XXXXXX")
+  runner_key=$(mktemp "${TMPDIR:-/tmp}/coze-runner-compose-key.XXXXXX")
+  trap 'rm -f -- "$runner_env" "$runner_cert" "$runner_key"' RETURN
+  printf 'SANDBOX_RUNNER_AUTH_TOKEN=runner-auth-token-0123456789\n' > "$runner_env"
+  printf 'placeholder\n' > "$runner_cert"
+  printf 'placeholder\n' > "$runner_key"
+  config_output=$(ACR_REGISTRY=registry.example.aliyuncs.com \
+    ACR_NAMESPACE=example \
+    SERVER_IMAGE_TAG=dev \
+    WEB_IMAGE_TAG=dev \
+    SANDBOX_RUNNER_IMAGE_TAG=dev \
+    SANDBOX_RUNNER_EXECUTION_IMAGE=registry.example.aliyuncs.com/example/coze-sandbox-runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+    WEB_BIND_IP=0.0.0.0 \
+    WEB_PORT=8888 \
+    SANDBOX_RUNNER_ROOTLESS_SOCKET="$runner_env" \
+    SANDBOX_RUNNER_ROOTLESS_SOCKET_GID=10001 \
+    SANDBOX_RUNNER_ENV_FILE="$runner_env" \
+    SANDBOX_RUNNER_TLS_CERT_FILE="$runner_cert" \
+    SANDBOX_RUNNER_TLS_KEY_FILE="$runner_key" \
+    docker compose --env-file "$ENV_FILE" \
+      -f "$RUNNER_COMPOSE_FILE" config 2>&1) || {
+    fail "runner compose config failed: $config_output"
   }
   printf '%s\n' "$config_output"
 }
@@ -254,5 +283,28 @@ custom_bind_config=$(render_config dev dev 127.0.0.1 18888)
 custom_web_config=$(service_block "$custom_bind_config" coze-web)
 require_text "$custom_web_config" 'host_ip: 127\.0\.0\.1' 'WEB_BIND_IP must override the web bind address'
 require_text "$custom_web_config" 'published: "18888"' 'WEB_PORT must override the published web port'
+
+[ -f "$RUNNER_COMPOSE_FILE" ] || fail 'runner-2c4g compose file is missing'
+runner_source=$(<"$RUNNER_COMPOSE_FILE")
+runner_config=$(render_runner_config)
+runner_services=$(printf '%s\n' "$runner_source" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
+require_exact_text "$runner_services" $'nsqd\ncoze-server\ncoze-sandbox-runner\ncoze-web' 'runner-2c4g must run only nsqd, server, sandbox runner, and web'
+if printf '%s\n' "$runner_source" | grep -Eiq '^  (oceanbase|mysql|redis|elasticsearch|minio|object-storage):'; then
+  fail 'runner-2c4g must not start local data service containers'
+fi
+runner_config_block=$(service_block "$runner_config" coze-sandbox-runner)
+require_text "$runner_config_block" 'image: registry\.example\.aliyuncs\.com/example/coze-sandbox-runner:dev' 'runner service must use the sandbox runner image'
+require_text "$runner_config_block" '^    mem_limit: "201326592"$' 'runner memory must be limited to 192 MiB'
+require_text "$runner_config_block" '^    cpus: 0\.2$' 'runner CPU must be limited to 0.20'
+require_text "$runner_config_block" '^    pids_limit: 64$' 'runner process count must be limited to 64'
+require_text "$runner_config_block" 'no-new-privileges:true' 'runner must enable no-new-privileges'
+require_text "$runner_config_block" 'read_only: true' 'runner root filesystem must be read-only'
+require_text "$runner_config_block" 'target: /app/runtime/docker\.sock' 'runner must mount only its dedicated rootless socket path'
+if printf '%s\n' "$runner_source" | grep -Fq '/var/run/docker.sock'; then
+  fail 'runner-2c4g must never mount the host Docker socket'
+fi
+require_text "$runner_config_block" 'SANDBOX_RUNNER_ROOTLESS_ENDPOINT: unix:///app/runtime/docker\.sock' 'runner must address its dedicated rootless socket'
+require_text "$runner_config_block" 'SANDBOX_RUNNER_EXECUTION_IMAGE: registry\.example\.aliyuncs\.com/example/coze-sandbox-runtime@sha256:' 'runner must receive an immutable execution runtime image digest'
+require_text "$runner_config_block" 'https://127\.0\.0\.1:9443/v1/health' 'runner healthcheck must verify the private TLS endpoint'
 
 printf 'compose contract: ok\n'

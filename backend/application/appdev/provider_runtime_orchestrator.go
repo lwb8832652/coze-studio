@@ -176,6 +176,7 @@ func (projection ProviderRuntimeProjection) Format(state fmt.State, _ rune) {
 type ProviderRuntimeStartInput struct {
 	SpaceID     string
 	ProjectID   string
+	ActorUserID int64
 	OperationID string
 	ActorID     string
 }
@@ -391,7 +392,7 @@ func (orchestrator *ProviderRuntimeOrchestrator) Start(ctx context.Context, inpu
 		}
 		return nil, ErrProviderRuntimeInvalid
 	}
-	metadata, err := orchestrator.ledger.EnsureStart(ctx, EnsureProviderExecutionStartRequest{SpaceID: input.SpaceID, ProjectID: input.ProjectID, IdempotencyKey: input.OperationID, ProviderKey: orchestrator.config.ProviderKey, ProviderScope: orchestrator.config.ProviderScope, RequireNoActive: true})
+	metadata, err := orchestrator.ledger.EnsureStart(ctx, EnsureProviderExecutionStartRequest{SpaceID: input.SpaceID, ProjectID: input.ProjectID, ActorUserID: input.ActorUserID, IdempotencyKey: input.OperationID, ProviderKey: orchestrator.config.ProviderKey, ProviderScope: orchestrator.config.ProviderScope, RequireNoActive: true})
 	if err != nil {
 		return nil, normalizeProviderRuntimeError(ctx, err)
 	}
@@ -466,6 +467,16 @@ func (orchestrator *ProviderRuntimeOrchestrator) Start(ctx context.Context, inpu
 		return &projection, ErrProviderRuntimeUnavailable
 	}
 	executeRequest := infrasandbox.ExecuteRequest{Scope: orchestrator.config.ProviderScope, WorkloadKind: infrasandbox.WorkloadAppDev, IdempotencyKey: providerRuntimeStableID("appdev_start", input.SpaceID, input.ProjectID, input.OperationID), Deadline: executeDeadline.UTC(), Policy: orchestrator.config.Policy, Entrypoint: orchestrator.config.Entrypoint, Args: append([]string(nil), orchestrator.config.Args...), Env: cloneProviderRuntimeEnv(orchestrator.config.Env), ArtifactReferences: []infrasandbox.ArtifactReference{reference}}
+	if current.ActorUserID > 0 {
+		spaceID, parseErr := strconv.ParseInt(current.SpaceID, 10, 64)
+		if parseErr != nil || spaceID <= 0 || current.ID == "" {
+			orchestrator.cleanupPreExecute(ctx, grant, selection)
+			projection := providerRuntimeProjection(current, "")
+			projection.Recovering = true
+			return &projection, ErrProviderRuntimeUnavailable
+		}
+		executeRequest.Identity = infrasandbox.ExecutionIdentity{SpaceID: spaceID, UserID: current.ActorUserID, ProjectID: current.ProjectID, ExecutionID: current.ID}
+	}
 	requestDigest, digestErr := infrasandbox.DigestExecuteRequest(executeRequest)
 	if digestErr != nil {
 		orchestrator.cleanupPreExecute(ctx, grant, selection)

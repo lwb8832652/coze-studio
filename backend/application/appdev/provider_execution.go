@@ -106,6 +106,7 @@ func NewProviderExecutionService(repository domainappdev.ProviderExecutionReposi
 type EnsureProviderExecutionStartRequest struct {
 	SpaceID         string
 	ProjectID       string
+	ActorUserID     int64
 	IdempotencyKey  string
 	ProviderKey     string
 	ProviderScope   domainsandbox.Scope
@@ -126,6 +127,7 @@ type ProviderExecutionMetadata struct {
 	ID                       string
 	SpaceID                  string
 	ProjectID                string
+	ActorUserID              int64
 	Generation               uint64
 	HasProviderExecution     bool
 	HasCheckpoint            bool
@@ -442,7 +444,7 @@ func (s *ProviderExecutionService) EnsureStart(ctx context.Context, request Ensu
 		return nil, err
 	}
 	record, err := s.repository.EnsureStart(ctx, domainappdev.EnsureProviderExecutionStartInput{
-		ID: id, SpaceID: request.SpaceID, ProjectID: request.ProjectID, IdempotencyKey: request.IdempotencyKey,
+		ID: id, SpaceID: request.SpaceID, ProjectID: request.ProjectID, ActorUserID: request.ActorUserID, IdempotencyKey: request.IdempotencyKey,
 		ProviderKey: request.ProviderKey, ProviderScope: request.ProviderScope, RequireNoActive: request.RequireNoActive,
 	})
 	if err != nil {
@@ -1135,7 +1137,7 @@ func providerExecutionMetadata(record *domainappdev.ProviderExecution) ProviderE
 		return ProviderExecutionMetadata{}
 	}
 	return ProviderExecutionMetadata{
-		ID: record.ID, SpaceID: record.SpaceID, ProjectID: record.ProjectID, Generation: record.Generation,
+		ID: record.ID, SpaceID: record.SpaceID, ProjectID: record.ProjectID, ActorUserID: record.ActorUserID, Generation: record.Generation,
 		DesiredState: record.DesiredState, ObservedState: record.ObservedState, ProviderKey: record.ProviderKey,
 		ProviderScope: record.ProviderScope, LaunchState: record.LaunchState,
 		ProviderLeaseExpiresAt: cloneProviderExecutionTime(record.ProviderLeaseExpiresAt),
@@ -1154,7 +1156,7 @@ func recoverableProviderExecutionMetadata(record *domainappdev.RecoverableProvid
 		return ProviderExecutionMetadata{}
 	}
 	return ProviderExecutionMetadata{
-		ID: record.ID, SpaceID: record.SpaceID, ProjectID: record.ProjectID, Generation: record.Generation,
+		ID: record.ID, SpaceID: record.SpaceID, ProjectID: record.ProjectID, ActorUserID: record.ActorUserID, Generation: record.Generation,
 		HasProviderExecution: record.HasProviderExecution, HasCheckpoint: record.HasCheckpoint,
 		DesiredState: record.DesiredState, ObservedState: record.ObservedState, ProviderKey: record.ProviderKey,
 		ProviderScope: record.ProviderScope, LaunchState: record.LaunchState,

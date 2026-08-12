@@ -147,11 +147,15 @@ export interface SandboxRuntimeStatus {
   desired_config_version: number;
   applied_config_version: number;
   queue_depth: number;
+  queue_by_scope?: Partial<Record<SandboxScope, number>>;
   active_slots: number;
   slot_capacity: number;
   queue_high_watermark: number;
   draining_count: number;
   quarantined_count: number;
+  idle_containers: number;
+  active_containers: number;
+  memory_reserve_state?: 'available' | 'below_watermark' | 'unknown';
   reason_code?: string;
 }
 
@@ -607,11 +611,26 @@ export const getSandboxRuntimeStatus = async (
     desired_config_version: Number(status.desired_config_version || 0),
     applied_config_version: Number(status.applied_config_version || 0),
     queue_depth: Number(status.queue_depth || 0),
+    queue_by_scope: Object.fromEntries(
+      Object.entries(status.queue_by_scope || {}).filter(
+        ([scope, value]) =>
+          ['agent', 'appdev', 'mcp_stdio', 'plugin'].includes(scope) &&
+          Number.isInteger(Number(value)) &&
+          Number(value) >= 0,
+      ),
+    ) as Partial<Record<SandboxScope, number>>,
     active_slots: Number(status.active_slots || 0),
     slot_capacity: Number(status.slot_capacity || 0),
     queue_high_watermark: Number(status.queue_high_watermark || 0),
     draining_count: Number(status.draining_count || 0),
     quarantined_count: Number(status.quarantined_count || 0),
+    idle_containers: Number(status.idle_containers || 0),
+    active_containers: Number(status.active_containers || 0),
+    memory_reserve_state: ['available', 'below_watermark', 'unknown'].includes(
+      String(status.memory_reserve_state),
+    )
+      ? (status.memory_reserve_state as SandboxRuntimeStatus['memory_reserve_state'])
+      : undefined,
     reason_code: String(status.reason_code || '').slice(0, 64) || undefined,
   };
 };

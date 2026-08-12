@@ -404,9 +404,10 @@ func runtimeStartFixture(t *testing.T) (*ProviderRuntimeOrchestrator, *runtimeSt
 
 func TestProviderRuntimeStartHappyPathPersistsRealProviderIDAndCheckpointInOrder(t *testing.T) {
 	orchestrator, ledger, checkpoints, _, _, selection, _ := runtimeStartFixture(t)
+	ledger.metadata.ActorUserID = 42
 
 	projection, err := orchestrator.Start(context.Background(), ProviderRuntimeStartInput{
-		SpaceID: runtimeStartSpace, ProjectID: runtimeStartProject, OperationID: runtimeStartOperation, ActorID: runtimeStartActor,
+		SpaceID: runtimeStartSpace, ProjectID: runtimeStartProject, ActorUserID: 999, OperationID: runtimeStartOperation, ActorID: runtimeStartActor,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ProviderRuntimeStateRunning, projection.State)
@@ -425,6 +426,10 @@ func TestProviderRuntimeStartHappyPathPersistsRealProviderIDAndCheckpointInOrder
 	require.False(t, ledger.startRequest.RequestDigest.IsZero())
 	require.Equal(t, runtimeStartOperation, ledger.submitRequest.OperationID)
 	require.Equal(t, runtimeStartOperation, ledger.saveRequest.LaunchOperationID)
+	require.Len(t, selection.executeRequests, 1)
+	require.Equal(t, infrasandbox.ExecutionIdentity{
+		SpaceID: 1001, UserID: 42, ProjectID: runtimeStartProject, ExecutionID: "ledger-1",
+	}, selection.executeRequests[0].Identity)
 }
 
 func TestProviderRuntimeStartExecuteContextEndsBeforeDurableDispatchLease(t *testing.T) {

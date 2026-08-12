@@ -34,6 +34,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 type Context struct {
@@ -89,6 +90,24 @@ type BatchInfo struct {
 }
 
 type contextKey struct{}
+
+// SandboxIdentityContext derives the code-runner identity solely from workflow
+// execution state. A context without all authoritative root facts remains
+// unchanged for legacy runner compatibility.
+func SandboxIdentityContext(ctx context.Context) context.Context {
+	executionContext := GetExeCtx(ctx)
+	if executionContext == nil || executionContext.RootWorkflowBasic == nil ||
+		executionContext.RootWorkflowBasic.SpaceID <= 0 || executionContext.ExeCfg.Operator <= 0 ||
+		executionContext.RootExecuteID <= 0 {
+		return ctx
+	}
+	return sandboxidentity.WithRequest(ctx, sandboxidentity.Request{
+		Scope:       sandboxidentity.ScopeAgent,
+		SpaceID:     executionContext.RootWorkflowBasic.SpaceID,
+		UserID:      executionContext.ExeCfg.Operator,
+		ExecutionID: "workflow-" + strconv.FormatInt(executionContext.RootExecuteID, 10),
+	})
+}
 
 func restoreWorkflowCtx(ctx context.Context, h *WorkflowHandler) (context.Context, error) {
 	var storedCtx *Context

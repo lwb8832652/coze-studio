@@ -24,6 +24,14 @@ type StoredExecution struct {
 	State         infrasandbox.ExecutionStatus
 	AcceptedAt    time.Time
 	UpdatedAt     time.Time
+	Result        infrasandbox.ExecuteResult
+}
+
+// ResultExecutionStore persists a terminal result together with its state so
+// polling never observes a terminal status without the corresponding output.
+type ResultExecutionStore interface {
+	ExecutionStore
+	Complete(context.Context, infrasandbox.ExecuteResult) (StoredExecution, error)
 }
 
 // ExecutionStore is the durable Runner execution state boundary. Implementors

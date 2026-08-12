@@ -755,7 +755,7 @@ func NormalizeProviderFeatures(features []ProviderFeature) ([]ProviderFeature, e
 	normalized := make([]ProviderFeature, 0, len(features))
 	seen := make(map[ProviderFeature]struct{}, len(features))
 	for _, feature := range features {
-		if feature != ProviderFeatureQueueStatusV1 {
+		if feature != ProviderFeatureQueueStatusV1 && feature != ProviderFeatureSignedExecutionContext {
 			return nil, ErrInvalidInput
 		}
 		if _, duplicate := seen[feature]; duplicate {

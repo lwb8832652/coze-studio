@@ -1,11 +1,18 @@
 # syntax=docker/dockerfile:1.7
+ARG GIT_REVISION=unknown
+ARG SOURCE_URL=unknown
+
 # alpine:3.22.0 multi-architecture index digest, resolved from the Docker
 # Official Image before
 # this file was added. Update only through the image review process.
 FROM alpine:3.22.0@sha256:8a1f59ffb675680d47db6337b49d22281a139e9d709335b492be023728e11715
+ARG GIT_REVISION
+ARG SOURCE_URL
 
 LABEL org.opencontainers.image.title="newx-sandbox-runtime"
 LABEL org.opencontainers.image.description="Unprivileged fixed-entrypoint runtime for NewX Sandbox Runner"
+LABEL org.opencontainers.image.revision=$GIT_REVISION
+LABEL org.opencontainers.image.source=$SOURCE_URL
 
 RUN apk add --no-cache ca-certificates nodejs python3 && \
     addgroup -S -g 10001 sandbox && \
@@ -16,6 +23,9 @@ RUN apk add --no-cache ca-certificates nodejs python3 && \
 COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-idle /opt/newx/bin/runtime-idle
 COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-cleanup /opt/newx/bin/runtime-cleanup
 COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-health /opt/newx/bin/runtime-health
+COPY --chmod=0555 deploy/sandbox-runner/runtime/adapter-code-run /opt/newx/bin/adapter-code-run
+COPY --chmod=0555 deploy/sandbox-runner/runtime/adapter-agent-code /opt/newx/bin/adapter-agent-code
+COPY --chmod=0555 deploy/sandbox-runner/runtime/adapter-plugin-code /opt/newx/bin/adapter-plugin-code
 
 USER 10001:10001
 WORKDIR /workspace

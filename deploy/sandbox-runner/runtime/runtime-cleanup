@@ -5,3 +5,24 @@ set -eu
 # workspace here: its lifecycle is controlled by the reviewed scope adapter.
 find /tmp -xdev -mindepth 1 -delete
 find /run/newx-secrets -xdev -mindepth 1 -delete
+
+# Adapter processes can deliberately fork. Before a container is returned to
+# the idle pool, terminate every residual non-root process except PID 1 (the
+# reviewed idle entrypoint) and this cleanup shell itself. This prevents state
+# or credentials from crossing executions through a background child.
+self="$$"
+for proc in /proc/[0-9]*; do
+  pid="${proc#/proc/}"
+  [ "$pid" = "1" ] || [ "$pid" = "$self" ] && continue
+  uid="$(awk '/^Uid:/ { print $2; exit }' "$proc/status" 2>/dev/null || true)"
+  [ "$uid" = "10001" ] || continue
+  kill -TERM "$pid" 2>/dev/null || true
+done
+sleep 1
+for proc in /proc/[0-9]*; do
+  pid="${proc#/proc/}"
+  [ "$pid" = "1" ] || [ "$pid" = "$self" ] && continue
+  uid="$(awk '/^Uid:/ { print $2; exit }' "$proc/status" 2>/dev/null || true)"
+  [ "$uid" = "10001" ] || continue
+  kill -KILL "$pid" 2>/dev/null || true
+done

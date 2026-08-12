@@ -933,6 +933,10 @@
         {
           "path": "backend/application/agentthread/runner_test.go",
           "locator": "func TestRunProcessorCompletesClaimedRunWithAssistantMessage"
+        },
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorAttachesAuthoritativeAgentSandboxIdentity"
         }
       ]
     },
@@ -1013,6 +1017,26 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "runtime.sandbox_identity",
+      "label": "Authoritative Agent Sandbox identity context",
+      "layer": "runtime_security",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "symbol": "agentSandboxContext",
+          "locator": "func agentSandboxContext(ctx context.Context, run *RunSummary) context.Context"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorAttachesAuthoritativeAgentSandboxIdentity"
         }
       ]
     },
@@ -1887,6 +1911,25 @@
       ]
     },
     {
+      "id": "middleware.side_effect",
+      "label": "side_effect",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSideEffect,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
       "id": "middleware.reduction",
       "label": "reduction",
       "layer": "eino_middleware",
@@ -2254,7 +2297,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -3019,7 +3062,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/runner.go",
-          "locator": "result, err := p.executor.Execute(ctx, run)"
+          "locator": "result, err := p.executor.Execute(executionCtx, run)"
         }
       ]
     },
@@ -3051,7 +3094,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_executor.go",
-          "locator": "mapped, err := MapADKEvent(ctx, run.ThreadID, run.RunID, event)"
+          "locator": "mapped, err := MapADKEvent(mappingCtx, run.ThreadID, run.RunID, event)"
         }
       ]
     },
@@ -3110,8 +3153,8 @@
       "confidence": "extracted",
       "evidence": [
         {
-          "path": "backend/domain/agentthread/service/service_impl.go",
-          "locator": "if err := s.repo.CreateRunEvent(ctx, event); err != nil {"
+          "path": "backend/domain/agentthread/service/journal.go",
+          "locator": "return s.repo.CreateRunEvent(ctx, event)"
         }
       ]
     },
@@ -3340,8 +3383,22 @@
       ]
     },
     {
-      "id": "edge.worker_executes_selector",
+      "id": "edge.worker_builds_sandbox_identity",
       "from": "worker.process_pending",
+      "to": "runtime.sandbox_identity",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "locator": "executionCtx := agentSandboxContext(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.sandbox_identity_executes_selector",
+      "from": "runtime.sandbox_identity",
       "to": "runtime.selector.execute",
       "relation": "executes",
       "chain_ids": ["framework.canonical_stack"],
@@ -3349,7 +3406,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/runner.go",
-          "locator": "result, err := p.executor.Execute(ctx, run)"
+          "locator": "result, err := p.executor.Execute(executionCtx, run)"
         }
       ]
     },
@@ -3686,6 +3743,20 @@
         {
           "path": "backend/application/agentthread/adk_executor.go",
           "locator": "result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_00",
+      "from": "middleware.side_effect",
+      "to": "middleware.reduction",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSideEffect,"
         }
       ]
     },
@@ -4504,7 +4575,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -5117,6 +5188,7 @@
         "domain.create_thread_atomic",
         "repository.create_thread_bundle",
         "worker.process_pending",
+        "runtime.sandbox_identity",
         "runtime.selector.execute",
         "runtime.adk_executor.execute",
         "runtime.map_adk_event",
@@ -5134,7 +5206,8 @@
         "edge.create_thread_app_delegates_domain",
         "edge.create_thread_domain_persists_bundle",
         "edge.persisted_bundle_precedes_worker",
-        "edge.worker_executes_selector",
+        "edge.worker_builds_sandbox_identity",
+        "edge.sandbox_identity_executes_selector",
         "edge.selector_executes_adk",
         "edge.adk_maps_events",
         "edge.mapper_emits_sink",
@@ -5227,9 +5300,10 @@
     {
       "id": "framework.eino_middleware_order",
       "name": "Eino middleware assembly order",
-      "entry": "middleware.reduction",
+      "entry": "middleware.side_effect",
       "terminal": "middleware.semantic_loop",
       "ordered_node_ids": [
+        "middleware.side_effect",
         "middleware.reduction",
         "middleware.filesystem",
         "middleware.uploaded_files",
@@ -5250,6 +5324,7 @@
         "middleware.semantic_loop"
       ],
       "ordered_edge_ids": [
+        "edge.middleware_00",
         "edge.middleware_01",
         "edge.middleware_02",
         "edge.middleware_03",
@@ -5643,6 +5718,7 @@
         "application.create_task_thread",
         "repository.create_thread_bundle",
         "worker.process_pending",
+        "runtime.sandbox_identity",
         "runtime.selector.execute",
         "runtime.adk_executor.execute"
       ],
@@ -5652,7 +5728,8 @@
         "edge.canonical_create_thread_routes_handler",
         "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.persisted_bundle_precedes_worker",
-        "edge.worker_executes_selector",
+        "edge.worker_builds_sandbox_identity",
+        "edge.sandbox_identity_executes_selector",
         "edge.selector_executes_adk"
       ]
     },
@@ -5691,14 +5768,16 @@
       "id": "query.middleware_order",
       "question": "Eino middleware 的真实装配顺序是什么？",
       "expanded_terms": [
+        "side_effect",
         "reduction",
         "adkMiddlewareOrder",
         "precedes",
         "handler order",
         "wrapper order"
       ],
-      "smoke_node_ids": ["middleware.reduction"],
+      "smoke_node_ids": ["middleware.side_effect"],
       "required_node_ids": [
+        "middleware.side_effect",
         "middleware.reduction",
         "middleware.filesystem",
         "middleware.uploaded_files",
@@ -5718,7 +5797,7 @@
         "middleware.subagent_limit",
         "middleware.semantic_loop"
       ],
-      "required_edge_ids": ["edge.middleware_01", "edge.middleware_17"]
+      "required_edge_ids": ["edge.middleware_00", "edge.middleware_17"]
     },
     {
       "id": "query.control_recovery",

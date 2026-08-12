@@ -34,6 +34,7 @@ type LifecycleRequest struct {
 	PolicyVersion        string
 	SchedulerVersion     uint64
 	CredentialGeneration string
+	AllowNetwork         bool
 }
 
 type LifecycleLease struct {
@@ -78,6 +79,29 @@ func NewLifecycle(config LifecycleConfig) (*Lifecycle, error) {
 		return nil, ErrConfiguration
 	}
 	return &Lifecycle{driver: config.Driver, settings: settings, deploymentID: config.DeploymentID, now: config.Now, idle: map[string][]idleContainer{}, active: map[string]activeContainer{}, quarantined: map[string]struct{}{}}, nil
+}
+
+// ApplySchedulerSettings changes limits and idle TTLs for future leases. A
+// request carries its captured SchedulerVersion, so containers from the old
+// generation cannot be reused after the new snapshot becomes active.
+func (lifecycle *Lifecycle) ApplySchedulerSettings(_ context.Context, settings domainsandbox.SchedulerSettings) error {
+	if lifecycle == nil {
+		return ErrConfiguration
+	}
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil || normalized.Version == 0 {
+		return ErrConfiguration
+	}
+	lifecycle.mu.Lock()
+	defer lifecycle.mu.Unlock()
+	if normalized.Version < lifecycle.settings.Version {
+		return ErrConfiguration
+	}
+	if normalized.Version == lifecycle.settings.Version {
+		return nil
+	}
+	lifecycle.settings = normalized
+	return nil
 }
 
 func (lifecycle *Lifecycle) ReuseKey(request LifecycleRequest) (string, time.Duration, error) {
@@ -175,6 +199,32 @@ func (lifecycle *Lifecycle) Release(ctx context.Context, executionID string) err
 	lifecycle.idle[active.reuseKey] = append(lifecycle.idle[active.reuseKey], idleContainer{container: active.container, reuseKey: active.reuseKey, expiresAt: lifecycle.now().Add(active.ttl)})
 	lifecycle.mu.Unlock()
 	return nil
+}
+
+// Execute acquires an isolated lease, stages a bounded server-owned request,
+// and invokes one reviewed runtime adapter. Any staging or runtime failure
+// permanently removes the container from reuse before returning the error.
+func (lifecycle *Lifecycle) Execute(ctx context.Context, request LifecycleRequest, adapter sandboxruntime.Adapter, input []byte, maxOutputBytes int64) (sandboxruntime.AdapterResult, error) {
+	if lifecycle == nil || ctx == nil || len(input) == 0 || maxOutputBytes <= 0 {
+		return sandboxruntime.AdapterResult{}, ErrProtocol
+	}
+	lease, err := lifecycle.Acquire(ctx, request)
+	if err != nil {
+		return sandboxruntime.AdapterResult{}, err
+	}
+	if err := lifecycle.driver.StageAdapterInput(ctx, lease.ContainerID, input); err != nil {
+		lifecycle.discardLease(ctx, lease.ExecutionID, lease.ContainerID)
+		return sandboxruntime.AdapterResult{}, ErrUnavailable
+	}
+	result, err := lifecycle.driver.RunAdapter(ctx, lease.ContainerID, adapter, maxOutputBytes)
+	if err != nil {
+		lifecycle.discardLease(ctx, lease.ExecutionID, lease.ContainerID)
+		return sandboxruntime.AdapterResult{}, ErrUnavailable
+	}
+	if err := lifecycle.Release(ctx, lease.ExecutionID); err != nil {
+		return sandboxruntime.AdapterResult{}, err
+	}
+	return result, nil
 }
 
 func (lifecycle *Lifecycle) Cancel(ctx context.Context, executionID string) error {
@@ -282,15 +332,23 @@ func (lifecycle *Lifecycle) destroyAndQuarantine(ctx context.Context, containerI
 	_ = lifecycle.quarantine(containerID)
 }
 
+func (lifecycle *Lifecycle) discardLease(ctx context.Context, executionID, containerID string) {
+	lifecycle.mu.Lock()
+	delete(lifecycle.active, executionID)
+	lifecycle.mu.Unlock()
+	_ = lifecycle.driver.Destroy(ctx, containerID)
+	_ = lifecycle.quarantine(containerID)
+}
+
 func (lifecycle *Lifecycle) specification(key string, request LifecycleRequest) sandboxruntime.Specification {
 	workload := lifecycle.settings.Workloads[request.Scope]
-	return sandboxruntime.Specification{ReuseKeyHash: lifecycleHash(key), Scope: string(request.Scope), ImageDigest: request.ImageDigest, PolicyVersion: request.PolicyVersion, SchedulerVersion: request.SchedulerVersion, CredentialGeneration: request.CredentialGeneration, DeploymentID: lifecycle.deploymentID, CPUMilli: int(workload.CPULimit), MemoryLimitMB: workload.MemoryLimitMB, PIDLimit: workload.PIDLimit}
+	return sandboxruntime.Specification{ReuseKeyHash: lifecycleHash(key), Scope: string(request.Scope), ImageDigest: request.ImageDigest, PolicyVersion: request.PolicyVersion, SchedulerVersion: request.SchedulerVersion, CredentialGeneration: request.CredentialGeneration, DeploymentID: lifecycle.deploymentID, CPUMilli: int(workload.CPULimit), MemoryLimitMB: workload.MemoryLimitMB, PIDLimit: workload.PIDLimit, AllowNetwork: request.AllowNetwork}
 }
 
 func (lifecycle *Lifecycle) matches(specification sandboxruntime.Specification, key string, request LifecycleRequest) bool {
 	return specification.ReuseKeyHash == key && specification.Scope == string(request.Scope) && specification.ImageDigest == request.ImageDigest &&
 		specification.PolicyVersion == request.PolicyVersion && specification.SchedulerVersion == request.SchedulerVersion &&
-		specification.CredentialGeneration == request.CredentialGeneration && specification.DeploymentID == lifecycle.deploymentID
+		specification.CredentialGeneration == request.CredentialGeneration && specification.AllowNetwork == request.AllowNetwork && specification.DeploymentID == lifecycle.deploymentID
 }
 
 func (lifecycle *Lifecycle) validContainerSpec(specification sandboxruntime.Specification) bool {
@@ -325,5 +383,9 @@ func lifecycleHash(value string) string {
 }
 
 func validLifecycleRequest(request LifecycleRequest) bool {
-	return validExecutionID(request.ExecutionID) && request.Identity.SpaceID > 0 && request.Identity.UserID > 0 && request.Identity.ExecutionID == request.ExecutionID && validDigestImage(request.ImageDigest) && validKeyID(request.PolicyVersion) && request.SchedulerVersion > 0 && validKeyID(request.CredentialGeneration)
+	// ExecutionID is the Runner-owned lifecycle key. Identity.ExecutionID is the
+	// independently signed business execution reference. They are bound by the
+	// encrypted execution record and ScheduledExecution, but intentionally must
+	// not be conflated or rewritten after signature verification.
+	return validExecutionID(request.ExecutionID) && request.Identity.SpaceID > 0 && request.Identity.UserID > 0 && validExecutionID(request.Identity.ExecutionID) && validDigestImage(request.ImageDigest) && validKeyID(request.PolicyVersion) && request.SchedulerVersion > 0 && validKeyID(request.CredentialGeneration)
 }

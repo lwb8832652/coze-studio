@@ -142,7 +142,10 @@ func encodeExecutionCheckpoint(checkpoint ExecutionCheckpoint) ([]byte, error) {
 	}
 	var flags byte
 	if checkpoint.queueStatusFeature {
-		flags = 1
+		flags |= 1
+	}
+	if checkpoint.signedExecutionContextFeature {
+		flags |= 2
 	}
 	if err := buffer.WriteByte(flags); err != nil ||
 		binary.Write(buffer, binary.BigEndian, uint32(checkpoint.admissionLimit)) != nil ||
@@ -183,7 +186,7 @@ func decodeExecutionCheckpoint(plaintext []byte) (ExecutionCheckpoint, error) {
 		return checkpoint, nil
 	}
 	flags, err := reader.ReadByte()
-	if err != nil || flags&^byte(1) != 0 {
+	if err != nil || flags&^byte(3) != 0 {
 		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
 	}
 	var admissionLimit uint32
@@ -191,6 +194,7 @@ func decodeExecutionCheckpoint(plaintext []byte) (ExecutionCheckpoint, error) {
 		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
 	}
 	checkpoint.queueStatusFeature = flags&1 != 0
+	checkpoint.signedExecutionContextFeature = flags&2 != 0
 	checkpoint.admissionLimit = int(admissionLimit)
 	return checkpoint, nil
 }

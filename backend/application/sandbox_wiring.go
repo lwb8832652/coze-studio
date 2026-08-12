@@ -19,6 +19,7 @@ import (
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	codecontrolplane "github.com/coze-dev/coze-studio/backend/infra/coderunner/impl/controlplane"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 const (
@@ -76,11 +77,14 @@ type sandboxSharedLimiter interface {
 }
 
 type sandboxWiringConstructors struct {
-	loadCodec     func(func(string) string) (*infrasandbox.CredentialCodec, error)
-	newRepository func(*appinfra.AppDependencies) sandboxRepository
-	newLimiter    func(*appinfra.AppDependencies) (sandboxSharedLimiter, error)
-	newService    func(appsandbox.ServiceOptions) (*appsandbox.Service, error)
-	newRouter     func(appsandbox.ProviderLookup, appsandbox.RuntimeProviderFactory, appsandbox.CapacityLimiter, time.Duration) (*appsandbox.ProviderRouter, error)
+	loadCodec           func(func(string) string) (*infrasandbox.CredentialCodec, error)
+	loadIdentitySigner  func(func(string) string) (sandboxidentity.Signer, error)
+	loadSchedulerSigner func(func(string) string) (*infrasandbox.SchedulerConfigSigner, bool, error)
+	newRepository       func(*appinfra.AppDependencies) sandboxRepository
+	newLimiter          func(*appinfra.AppDependencies) (sandboxSharedLimiter, error)
+	newService          func(appsandbox.ServiceOptions) (*appsandbox.Service, error)
+	newRouter           func(appsandbox.ProviderLookup, appsandbox.RuntimeProviderFactory, appsandbox.CapacityLimiter, time.Duration) (*appsandbox.ProviderRouter, error)
+	newSchedulerService func(appsandbox.SchedulerServiceOptions) (*appsandbox.SchedulerService, error)
 }
 
 var sandboxControlPlaneConstructors = sandboxWiringConstructors{
@@ -91,14 +95,28 @@ var sandboxControlPlaneConstructors = sandboxWiringConstructors{
 		}
 		return infrasandbox.NewCredentialCodec(keyRing)
 	},
+	loadIdentitySigner: func(getenv func(string) string) (sandboxidentity.Signer, error) {
+		keyring, configured, err := sandboxidentity.LoadKeyringFromEnv(getenv, 5*time.Minute)
+		if err != nil {
+			return nil, err
+		}
+		if !configured {
+			return nil, nil
+		}
+		return keyring, nil
+	},
+	loadSchedulerSigner: func(getenv func(string) string) (*infrasandbox.SchedulerConfigSigner, bool, error) {
+		return infrasandbox.LoadSchedulerConfigSignerFromEnv(getenv, 5*time.Minute)
+	},
 	newRepository: func(infra *appinfra.AppDependencies) sandboxRepository {
 		return infrasandbox.NewMySQLRepository(infra.DB)
 	},
 	newLimiter: func(infra *appinfra.AppDependencies) (sandboxSharedLimiter, error) {
 		return infrasandbox.NewRedisCapacityLimiter(infra.CacheCli)
 	},
-	newService: appsandbox.NewService,
-	newRouter:  appsandbox.NewProviderRouter,
+	newService:          appsandbox.NewService,
+	newRouter:           appsandbox.NewProviderRouter,
+	newSchedulerService: appsandbox.NewSchedulerService,
 }
 
 var errSandboxControlPlaneInitialization = fmt.Errorf("sandbox control plane initialization failed")
@@ -144,13 +162,21 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	}
 
 	constructors := sandboxControlPlaneConstructors
-	if constructors.loadCodec == nil || constructors.newRepository == nil || constructors.newLimiter == nil ||
-		constructors.newService == nil || (runtimeRoutingEnabled && constructors.newRouter == nil) {
+	if constructors.loadCodec == nil || constructors.loadIdentitySigner == nil || constructors.loadSchedulerSigner == nil || constructors.newRepository == nil || constructors.newLimiter == nil ||
+		constructors.newService == nil || constructors.newSchedulerService == nil || (runtimeRoutingEnabled && constructors.newRouter == nil) {
 		return fmt.Errorf("sandbox control plane constructors are incomplete")
 	}
 	codec, err := constructors.loadCodec(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("load sandbox credential codec: %w", err)
+	}
+	identitySigner, err := constructors.loadIdentitySigner(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("load sandbox execution identity signer: %w", err)
+	}
+	schedulerSigner, schedulerSigningConfigured, err := constructors.loadSchedulerSigner(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("load sandbox scheduler signing keyring: %w", err)
 	}
 	repository := constructors.newRepository(infra)
 	limiter, err := constructors.newLimiter(infra)
@@ -159,7 +185,7 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	}
 	metrics := appsandbox.NewSandboxPrometheusMetricsCollectorFromEnv()
 	providerFactory := &configuredSandboxProviderFactory{
-		codec: codec, localDelegate: localDelegate, metrics: metrics,
+		codec: codec, identitySigner: identitySigner, localDelegate: localDelegate, metrics: metrics,
 	}
 	service, err := constructors.newService(appsandbox.ServiceOptions{
 		Providers:  repository,
@@ -174,7 +200,17 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 		return fmt.Errorf("create sandbox control plane service: %w", err)
 	}
 	SandboxSVC = service
-	schedulerService, err := appsandbox.NewSchedulerService(appsandbox.SchedulerServiceOptions{Store: repository})
+	var schedulerRunner appsandbox.NativeSchedulerRunner
+	if schedulerSigningConfigured {
+		schedulerRunner, err = appsandbox.NewDefaultProviderSchedulerRunner(appsandbox.DefaultProviderSchedulerRunnerOptions{
+			Signer: schedulerSigner, Defaults: repository, Providers: repository,
+			Factory: sandboxRuntimeProviderFactory{factory: providerFactory}, Now: time.Now,
+		})
+		if err != nil {
+			return fmt.Errorf("create sandbox scheduler runner: %w", err)
+		}
+	}
+	schedulerService, err := constructors.newSchedulerService(appsandbox.SchedulerServiceOptions{Store: repository, Runner: schedulerRunner})
 	if err != nil {
 		return fmt.Errorf("create sandbox scheduler service: %w", err)
 	}
@@ -418,9 +454,10 @@ func validateSandboxHTTPSURL(raw, name string) error {
 }
 
 type configuredSandboxProviderFactory struct {
-	codec         *infrasandbox.CredentialCodec
-	localDelegate infrasandbox.LocalExecutionDelegate
-	metrics       appsandbox.SandboxMetricsRecorder
+	codec          *infrasandbox.CredentialCodec
+	identitySigner sandboxidentity.Signer
+	localDelegate  infrasandbox.LocalExecutionDelegate
+	metrics        appsandbox.SandboxMetricsRecorder
 }
 
 func (f *configuredSandboxProviderFactory) build(
@@ -474,10 +511,11 @@ func (f *configuredSandboxProviderFactory) build(
 		allowedHosts := append([]string(nil), provider.Policy.NetworkAllowlist...)
 		allowedHosts = append(allowedHosts, strings.ToLower(parsedEndpoint.Hostname()))
 		return infrasandbox.NewRemoteProvider(infrasandbox.RemoteProviderConfig{
-			Endpoint:     string(endpoint),
-			Credential:   string(credential),
-			AllowedHosts: allowedHosts,
-			Timeout:      time.Duration(provider.Policy.TimeoutSeconds) * time.Second,
+			Endpoint:       string(endpoint),
+			Credential:     string(credential),
+			AllowedHosts:   allowedHosts,
+			Timeout:        time.Duration(provider.Policy.TimeoutSeconds) * time.Second,
+			IdentitySigner: f.identitySigner,
 		})
 	default:
 		return nil, domainsandbox.ErrConfigurationInvalid
@@ -505,6 +543,9 @@ func (f sandboxRuntimeProviderFactory) ValidateConfig(_ context.Context, descrip
 	}
 	switch descriptor.ProviderType {
 	case domainsandbox.ProviderTypeRemoteHTTP:
+		if descriptor.HasFeature(domainsandbox.ProviderFeatureSignedExecutionContext) && (f.factory == nil || f.factory.identitySigner == nil) {
+			return domainsandbox.ErrConfigurationInvalid
+		}
 		return nil
 	case domainsandbox.ProviderTypeLocalDebug:
 		if f.factory == nil || f.factory.localDelegate == nil {

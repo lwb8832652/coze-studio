@@ -268,6 +268,12 @@ fail closed。
 6. 最终结果由 `RunProcessor` 以 fence 条件完成 Run，并保存安全投影和 Assistant
    Message。
 
+在进入 `RuntimeSelector.Execute` 前，`RunProcessor.processRun` 会从已持久化的
+Run 归属构造仅服务端可写的 `sandboxidentity.Request`（`scope=agent`、space、
+creator 和 Run ID）并写入执行 context。后续 MCP 或受控 Sandbox 调用只能消费这份
+上下文，不能从请求参数覆盖用户、空间或执行关联；该业务 Run ID 也不会替代 Native
+Sandbox Runner 的内部生命周期 ID。
+
 关键源码：
 
 - `backend/application/agentthread/runtime_selector.go`
@@ -275,6 +281,7 @@ fail closed。
 - `backend/application/agentthread/adk_agent_factory.go`
 - `backend/application/agentthread/adk_event_mapper.go`
 - `backend/application/agentthread/event_sink.go`
+- `backend/application/agentthread/runner.go`：`agentSandboxContext`
 
 ### Middleware 顺序
 
@@ -282,6 +289,7 @@ fail closed。
 顺序事实：
 
 ```text
+side_effect
 reduction
 filesystem
 uploaded_files

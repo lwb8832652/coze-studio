@@ -100,6 +100,7 @@ func (*ProviderAPIFacade) MarshalJSON() ([]byte, error) { return nil, ErrProvide
 type ProviderRuntimeMutationRequest struct {
 	SpaceID     string
 	ProjectID   string
+	ActorUserID int64
 	OperationID string
 	ActorID     string
 }
@@ -124,6 +125,7 @@ type ProviderBuildRecoverRequest struct {
 type ProviderSnapshotRestoreRequest struct {
 	SpaceID     string
 	ProjectID   string
+	ActorUserID int64
 	SnapshotID  string
 	OperationID string
 	ActorID     string
@@ -180,7 +182,7 @@ func (facade *ProviderAPIFacade) StartRuntime(ctx context.Context, request Provi
 		return nil, providerControlInputError(ctx)
 	}
 	projection, err := facade.runtime.Start(ctx, ProviderRuntimeStartInput{
-		SpaceID: request.SpaceID, ProjectID: request.ProjectID, OperationID: request.OperationID, ActorID: request.ActorID,
+		SpaceID: request.SpaceID, ProjectID: request.ProjectID, ActorUserID: request.ActorUserID, OperationID: request.OperationID, ActorID: request.ActorID,
 	})
 	return providerRuntimeAPIResult(ctx, projection, err)
 }
@@ -229,7 +231,7 @@ func (facade *ProviderAPIFacade) RestartRuntime(ctx context.Context, request Pro
 		return nil, providerControlInputError(ctx)
 	}
 	startInput := ProviderRuntimeStartInput{
-		SpaceID: request.SpaceID, ProjectID: request.ProjectID,
+		SpaceID: request.SpaceID, ProjectID: request.ProjectID, ActorUserID: request.ActorUserID,
 		OperationID: providerRuntimeStableID("appdev_api_restart_start", request.OperationID, request.SpaceID, request.ProjectID), ActorID: request.ActorID,
 	}
 	observed, statusErr := facade.runtime.Status(ctx, ProviderRuntimeStatusInput{
@@ -312,7 +314,7 @@ func (facade *ProviderAPIFacade) RestoreSnapshot(ctx context.Context, request Pr
 		return nil, ErrProviderControlUnavailable
 	}
 	if !validProviderRuntimeMutationRequest(ProviderRuntimeMutationRequest{
-		SpaceID: request.SpaceID, ProjectID: request.ProjectID, OperationID: request.OperationID, ActorID: request.ActorID,
+		SpaceID: request.SpaceID, ProjectID: request.ProjectID, ActorUserID: request.ActorUserID, OperationID: request.OperationID, ActorID: request.ActorID,
 	}) || !validProviderAPISafeID(request.SnapshotID) {
 		return nil, providerControlInputError(ctx)
 	}
@@ -325,7 +327,7 @@ func (facade *ProviderAPIFacade) RestoreSnapshot(ctx context.Context, request Pr
 		return nil, providerControlInputError(ctx)
 	}
 	startInput := ProviderRuntimeStartInput{
-		SpaceID: request.SpaceID, ProjectID: request.ProjectID,
+		SpaceID: request.SpaceID, ProjectID: request.ProjectID, ActorUserID: request.ActorUserID,
 		OperationID: providerSnapshotRestoreStableID("start", request), ActorID: request.ActorID,
 	}
 	var status *ProviderRuntimeProjection

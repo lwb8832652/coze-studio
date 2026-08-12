@@ -39,11 +39,12 @@ type RuntimeManager interface {
 }
 
 type RuntimeManagerRequest struct {
-	SpaceID    string
-	ProjectID  string
-	ProjectDir string
-	SourceURL  string
-	Snapshot   *RuntimeSnapshotReference
+	SpaceID     string
+	ActorUserID int64
+	ProjectID   string
+	ProjectDir  string
+	SourceURL   string
+	Snapshot    *RuntimeSnapshotReference
 }
 
 type RuntimeSnapshotReference struct {
@@ -253,9 +254,10 @@ func (s *Service) runtimeRequest(ctx context.Context, req *RuntimeRequest) (*Run
 	}
 
 	managerRequest := &RuntimeManagerRequest{
-		SpaceID:    strings.TrimSpace(req.SpaceID),
-		ProjectID:  strings.TrimSpace(req.ProjectID),
-		ProjectDir: projectDir,
+		SpaceID:     strings.TrimSpace(req.SpaceID),
+		ActorUserID: req.CurrentUserID,
+		ProjectID:   strings.TrimSpace(req.ProjectID),
+		ProjectDir:  projectDir,
 	}
 	if sourceProvider, ok := s.store.(ProjectSourceURLProvider); ok {
 		managerRequest.SourceURL, err = sourceProvider.ProjectSourceURL(

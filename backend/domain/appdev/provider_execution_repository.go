@@ -14,6 +14,7 @@ type EnsureProviderExecutionStartInput struct {
 	ID              string
 	SpaceID         string
 	ProjectID       string
+	ActorUserID     int64
 	IdempotencyKey  string
 	ProviderKey     string
 	ProviderScope   domainsandbox.Scope

@@ -17,6 +17,7 @@
 package code
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -72,7 +73,10 @@ async def main(args:Args)->Output:
 			Result: ret,
 		}
 
-		mockRunner.EXPECT().Run(gomock.Any(), gomock.Any()).Return(response, nil)
+		mockRunner.EXPECT().Run(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request *coderunner.RunRequest) (*coderunner.RunResponse, error) {
+			assert.Equal(t, coderunner.PurposeAgent, request.Purpose)
+			return response, nil
+		})
 		ctx := t.Context()
 		c := &Runner{
 			language: coderunner.Python,

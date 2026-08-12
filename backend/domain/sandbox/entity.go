@@ -33,7 +33,10 @@ const (
 
 type ProviderFeature string
 
-const ProviderFeatureQueueStatusV1 ProviderFeature = "queue_status_v1"
+const (
+	ProviderFeatureQueueStatusV1          ProviderFeature = "queue_status_v1"
+	ProviderFeatureSignedExecutionContext ProviderFeature = "signed_execution_context_v1"
+)
 
 type ProviderType string
 

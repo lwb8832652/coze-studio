@@ -776,6 +776,23 @@ test_logs_never_disclose_secret_sentinels() (
     'logs disclosed BAOTA_WEBHOOK_TOKEN'
 )
 
+test_runner_private_file_validation_honors_override_and_rejects_weak_mode() (
+	case_dir=$(mktemp -d "$TEST_ROOT/runner-private.XXXXXX")
+	override=$case_dir/custom-runner.env
+	printf 'SANDBOX_RUNNER_AUTH_TOKEN=test-only\n' > "$override"
+	chmod 0644 "$override"
+	if validate_private_deploy_file "$override" 'runner environment' "$(id -u)"; then
+		fail 'runner private file validation accepted mode 0644'
+	fi
+	chmod 0600 "$override"
+	if ! validate_private_deploy_file "$override" 'runner environment' "$(id -u)"; then
+		fail 'runner private file validation rejected owned mode 0600 override'
+	fi
+	if [ "$(id -u)" != 10001 ] && validate_private_deploy_file "$override" 'runner TLS key' 10001; then
+		fail 'runner TLS validation accepted a file not owned by container UID 10001'
+	fi
+)
+
 test_record_success_is_atomic_and_complete() (
   case_dir=$(mktemp -d "$TEST_ROOT/atomic-record.XXXXXX")
   DEPLOYMENTS_DIR=$case_dir/deployments
@@ -869,6 +886,7 @@ run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker
 run_test 'invalid web bind IP fails before Docker' test_invalid_web_bind_ip_fails_before_docker
 run_test 'invalid web port fails before Docker' test_invalid_web_port_fails_before_docker
 run_test 'logs do not disclose secret sentinels' test_logs_never_disclose_secret_sentinels
+run_test 'runner private files honor overrides and require mode 0600' test_runner_private_file_validation_honors_override_and_rejects_weak_mode
 run_test 'success record is atomic and complete' test_record_success_is_atomic_and_complete
 run_test 'success record cleans failed temporary file' test_record_success_cleans_temporary_file_when_finalize_fails
 run_test 'failure record cleans failed temporary file' test_record_failure_cleans_temporary_file_when_finalize_fails

@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -326,7 +327,9 @@ func (m *SandboxRuntimeManager) start(
 	if selection == nil {
 		return nil, m.failStart(key, entry, domainsandbox.ErrUnavailable)
 	}
-	executeRequest, err := buildAppDevExecuteRequest(m.now().UTC(), runtimeID, operation, req.Snapshot, selection.Policy())
+	executeRequest, err := buildAppDevExecuteRequest(
+		m.now().UTC(), runtimeID, operation, req.SpaceID, req.ProjectID, req.ActorUserID, req.Snapshot, selection.Policy(),
+	)
 	if err != nil {
 		_ = releaseAppDevSelection(selection)
 		return nil, m.failStart(key, entry, err)
@@ -558,6 +561,9 @@ func buildAppDevExecuteRequest(
 	now time.Time,
 	runtimeID string,
 	operation string,
+	spaceID string,
+	projectID string,
+	actorUserID int64,
 	snapshot *appdevapp.RuntimeSnapshotReference,
 	policy domainsandbox.RuntimePolicy,
 ) (infrasandbox.ExecuteRequest, error) {
@@ -582,7 +588,7 @@ func buildAppDevExecuteRequest(
 	if deadline.After(now.Add(infrasandbox.MaxExecutionDeadlineAhead)) {
 		return infrasandbox.ExecuteRequest{}, domainsandbox.ErrConfigurationInvalid
 	}
-	return infrasandbox.ExecuteRequest{
+	request := infrasandbox.ExecuteRequest{
 		Scope: domainsandbox.ScopeAppDev, WorkloadKind: infrasandbox.WorkloadAppDev,
 		IdempotencyKey: runtimeID, Deadline: deadline, Policy: normalizedPolicy,
 		Entrypoint: appDevSandboxEntrypoint,
@@ -594,7 +600,17 @@ func buildAppDevExecuteRequest(
 		Files: []infrasandbox.FileReference{{
 			ID: snapshot.ID, Path: snapshot.Path, Digest: snapshot.Digest, Size: snapshot.Size,
 		}},
-	}, nil
+	}
+	if actorUserID > 0 {
+		numericSpaceID, parseErr := strconv.ParseInt(strings.TrimSpace(spaceID), 10, 64)
+		if parseErr != nil || numericSpaceID <= 0 || strings.TrimSpace(projectID) == "" {
+			return infrasandbox.ExecuteRequest{}, domainsandbox.ErrInvalidInput
+		}
+		request.Identity = infrasandbox.ExecutionIdentity{
+			SpaceID: numericSpaceID, UserID: actorUserID, ProjectID: strings.TrimSpace(projectID), ExecutionID: runtimeID,
+		}
+	}
+	return request, nil
 }
 
 func validateSandboxRuntimeRequest(req *appdevapp.RuntimeManagerRequest, requireSnapshot bool) error {

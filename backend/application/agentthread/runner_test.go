@@ -34,6 +34,7 @@ import (
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 func TestClassifyRunMainFlowErrorUsesSafeStableCategories(t *testing.T) {
@@ -141,6 +142,34 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Contains(t, eventSink.events[0].Payload, `"status":"running"`)
 	require.Contains(t, eventSink.events[0].Payload, `"worker_id":"worker-a"`)
 	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
+}
+
+func TestRunProcessorAttachesAuthoritativeAgentSandboxIdentity(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9, Status: entity.RunStatusRunning,
+			Input:    `{"messages":[{"role":"user","content":"hello"}]}`,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200", ExecutionGeneration: 1,
+		}},
+		appended:     &entity.Message{ID: 300, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "done"},
+		completedRun: &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded, WorkerID: "worker-a"},
+	}
+	var identity sandboxidentity.Request
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(ctx context.Context, _ *RunSummary) (*RunExecutionResult, error) {
+		var ok bool
+		identity, ok = sandboxidentity.RequestFromContext(ctx)
+		if !ok {
+			t.Fatal("agent sandbox identity missing from executor context")
+		}
+		return &RunExecutionResult{Message: "done"}, nil
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	if err := processor.ProcessPendingRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if identity.Scope != sandboxidentity.ScopeAgent || identity.SpaceID != 7 || identity.UserID != 9 || identity.ExecutionID != "200" || identity.ProjectID != "" || identity.SessionID != "" || identity.RequestDigest != nil {
+		t.Fatalf("agent sandbox identity = %#v", identity)
+	}
 }
 
 func TestRunProcessorBuildsTerminalParityCheckpoint(t *testing.T) {
@@ -300,11 +329,13 @@ func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
 		},
 		claimedRuns: []*entity.Run{
 			{
-				ID:       200,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				Input:    input,
-				WorkerID: "worker-a",
+				ID:        200,
+				ThreadID:  10,
+				SpaceID:   7,
+				CreatorID: 9,
+				Status:    entity.RunStatusRunning,
+				Input:     input,
+				WorkerID:  "worker-a",
 			},
 		},
 		appended: &entity.Message{
@@ -353,11 +384,13 @@ func TestRunProcessorUsesCleanExplicitGeneratedThreadTitle(t *testing.T) {
 		},
 		claimedRuns: []*entity.Run{
 			{
-				ID:       200,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				Input:    input,
-				WorkerID: "worker-a",
+				ID:        200,
+				ThreadID:  10,
+				SpaceID:   7,
+				CreatorID: 9,
+				Status:    entity.RunStatusRunning,
+				Input:     input,
+				WorkerID:  "worker-a",
 			},
 		},
 		appended: &entity.Message{
@@ -1561,12 +1594,14 @@ func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
 			{
-				ID:       200,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				Input:    `{"messages":[]}`,
-				Command:  `{"subagent_retry":{"schema":"coze.subagent_retry.v1","source_run_id":20,"parent_run_id":10}}`,
-				WorkerID: "worker-a",
+				ID:        200,
+				ThreadID:  10,
+				SpaceID:   7,
+				CreatorID: 9,
+				Status:    entity.RunStatusRunning,
+				Input:     `{"messages":[]}`,
+				Command:   `{"subagent_retry":{"schema":"coze.subagent_retry.v1","source_run_id":20,"parent_run_id":10}}`,
+				WorkerID:  "worker-a",
 			},
 		},
 		appended: &entity.Message{
@@ -1603,6 +1638,12 @@ func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.
 	require.False(t, executor.executeCalled)
 	require.True(t, executor.retryExecuteCalled)
 	require.Equal(t, int64(200), executor.retryRun.RunID)
+	identity, ok := sandboxidentity.RequestFromContext(executor.retryContext)
+	require.True(t, ok)
+	require.Equal(t, sandboxidentity.ScopeAgent, identity.Scope)
+	require.Equal(t, int64(7), identity.SpaceID)
+	require.Equal(t, int64(9), identity.UserID)
+	require.Equal(t, "200", identity.ExecutionID)
 	require.Nil(t, domainSVC.failRunReq)
 	require.Equal(t, int64(200), domainSVC.appendReq.RunID)
 	require.Equal(t, "子智能体重试已完成", domainSVC.appendReq.Content)
@@ -2094,6 +2135,7 @@ type recordingSubagentRetryRunExecutor struct {
 	retryExecuteCalled bool
 	executeRun         *RunSummary
 	retryRun           *RunSummary
+	retryContext       context.Context
 	executeResult      *RunExecutionResult
 	retryResult        *RunExecutionResult
 	executeErr         error
@@ -2111,11 +2153,12 @@ func (e *recordingSubagentRetryRunExecutor) Execute(
 }
 
 func (e *recordingSubagentRetryRunExecutor) ExecuteSubagentRetry(
-	_ context.Context,
+	ctx context.Context,
 	run *RunSummary,
 ) (*RunExecutionResult, error) {
 	e.retryExecuteCalled = true
 	e.retryRun = run
+	e.retryContext = ctx
 
 	return e.retryResult, e.retryErr
 }

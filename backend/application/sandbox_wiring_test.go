@@ -18,6 +18,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 func TestSandboxWiringFailsClosedWhenEnabledDependenciesAreMissing(t *testing.T) {
@@ -57,6 +58,20 @@ func TestSandboxWiringAllowsManagementBeforeRuntimeRouting(t *testing.T) {
 	require.Nil(t, SandboxRouter)
 	_, ok := (sandboxMCPRuntimeBindingSource{}).LoadADKMCPRuntimeSandboxBinding()
 	require.False(t, ok)
+}
+
+func TestSandboxWiringUsesSignedRunnerOnlyWhenSigningKeyringIsConfigured(t *testing.T) {
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
+	capture := &sandboxWiringCapture{}
+	installSandboxWiringTestConstructors(t, capture)
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.Nil(t, capture.schedulerRunner)
+
+	t.Setenv(infrasandbox.SandboxRunnerConfigSigningKeysJSONEnv, `{"keys":{"key-1":"0123456789abcdef0123456789abcdef"}}`)
+	t.Setenv(infrasandbox.SandboxRunnerActiveConfigKeyIDEnv, "key-1")
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.NotNil(t, capture.schedulerRunner)
 }
 
 func TestSandboxHealthMonitorIsNotCreatedWhenProductionControlPlaneIsDisabled(
@@ -254,14 +269,15 @@ func TestSandboxMCPRuntimeBindingPublishReplaceUnpublish(t *testing.T) {
 }
 
 type sandboxWiringCapture struct {
-	assembled      bool
-	localDelegate  infrasandbox.LocalExecutionDelegate
-	limiter        *sandboxSharedLimiterStub
-	serviceLimiter appsandbox.ProviderLifecycleGuard
-	routerLimiter  appsandbox.CapacityLimiter
-	healthFactory  sandboxHealthProviderFactory
-	runtimeFactory sandboxRuntimeProviderFactory
-	serviceErr     error
+	assembled       bool
+	localDelegate   infrasandbox.LocalExecutionDelegate
+	limiter         *sandboxSharedLimiterStub
+	serviceLimiter  appsandbox.ProviderLifecycleGuard
+	routerLimiter   appsandbox.CapacityLimiter
+	healthFactory   sandboxHealthProviderFactory
+	runtimeFactory  sandboxRuntimeProviderFactory
+	schedulerRunner appsandbox.NativeSchedulerRunner
+	serviceErr      error
 }
 
 func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCapture) {
@@ -275,6 +291,12 @@ func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCa
 	sandboxControlPlaneConstructors = sandboxWiringConstructors{
 		loadCodec: func(func(string) string) (*infrasandbox.CredentialCodec, error) {
 			return &infrasandbox.CredentialCodec{}, nil
+		},
+		loadIdentitySigner: func(func(string) string) (sandboxidentity.Signer, error) {
+			return nil, nil
+		},
+		loadSchedulerSigner: func(getenv func(string) string) (*infrasandbox.SchedulerConfigSigner, bool, error) {
+			return infrasandbox.LoadSchedulerConfigSignerFromEnv(getenv, time.Minute)
 		},
 		newRepository: func(*appinfra.AppDependencies) sandboxRepository {
 			return infrasandbox.NewMySQLRepository(&gorm.DB{})
@@ -301,6 +323,10 @@ func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCa
 			capture.runtimeFactory = factory.(sandboxRuntimeProviderFactory)
 			capture.localDelegate = capture.runtimeFactory.factory.localDelegate
 			return &appsandbox.ProviderRouter{}, nil
+		},
+		newSchedulerService: func(options appsandbox.SchedulerServiceOptions) (*appsandbox.SchedulerService, error) {
+			capture.schedulerRunner = options.Runner
+			return appsandbox.NewSchedulerService(options)
 		},
 	}
 	t.Cleanup(func() { sandboxControlPlaneConstructors = previous })

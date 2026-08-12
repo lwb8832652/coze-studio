@@ -323,7 +323,7 @@ func (handler *appDevProviderHTTPHandler) runtimeMutation(ctx context.Context, c
 		return
 	}
 	projection, err := invoke(handler.control, appdev.ProviderRuntimeMutationRequest{
-		SpaceID: identity.spaceID, ProjectID: identity.projectID, OperationID: operationID, ActorID: strconv.FormatInt(identity.userID, 10),
+		SpaceID: identity.spaceID, ProjectID: identity.projectID, ActorUserID: identity.userID, OperationID: operationID, ActorID: strconv.FormatInt(identity.userID, 10),
 	})
 	if err != nil {
 		appDevProviderHTTPError(c, err)
@@ -458,7 +458,7 @@ func (handler *appDevProviderHTTPHandler) RestoreSnapshot(ctx context.Context, c
 	}
 	projection, err := handler.control.RestoreSnapshot(ctx, appdev.ProviderSnapshotRestoreRequest{
 		SpaceID: identity.spaceID, ProjectID: identity.projectID, SnapshotID: snapshotID,
-		OperationID: operationID, ActorID: strconv.FormatInt(identity.userID, 10),
+		ActorUserID: identity.userID, OperationID: operationID, ActorID: strconv.FormatInt(identity.userID, 10),
 	})
 	if err != nil {
 		appDevProviderHTTPError(c, err)

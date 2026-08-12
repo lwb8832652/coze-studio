@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Fixed CodeRunner adapter for the rootless NewX sandbox runtime.
+
+The Runner chooses this adapter from a closed scope enum. This program accepts
+no user-controlled command or path: it reads only /tmp/newx-input.json and
+selects only python3 or node after validating the signed request policy.
+"""
+
+import asyncio
+import base64
+import contextlib
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+INPUT_PATH = "/tmp/newx-input.json"
+MAX_ENVELOPE_BYTES = 1024 * 1024
+MAX_USER_LOG_BYTES = 64 * 1024
+INVOKE_SCHEMA = "coze.sandbox.code.invoke.v1"
+RESULT_SCHEMA = "coze.sandbox.code.result.v1"
+
+
+def fail(message: str) -> None:
+    print(f"adapter-code-run: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+class BoundedTextCapture(io.TextIOBase):
+    """Discard user logs after a small bounded budget without retaining them."""
+
+    def __init__(self, maximum: int) -> None:
+        self.maximum = maximum
+        self.used = 0
+
+    def write(self, value: str) -> int:
+        size = len(value.encode("utf-8", errors="replace"))
+        if self.used + size > self.maximum:
+            raise ValueError("user output limit exceeded")
+        self.used += size
+        return len(value)
+
+
+def read_json(path: str) -> dict:
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_ENVELOPE_BYTES + 1)
+        if not raw or len(raw) > MAX_ENVELOPE_BYTES:
+            fail("invalid input size")
+        value = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid input")
+    if not isinstance(value, dict):
+        fail("invalid input")
+    return value
+
+
+def require_string(value: object) -> str:
+    if not isinstance(value, str):
+        fail("invalid request")
+    return value
+
+
+def parse_request(adapter_scope: str) -> tuple[str, str, object, int]:
+    request = read_json(INPUT_PATH)
+    entrypoints = {"agent": "agent/code/run", "plugin": "plugin/code/run"}
+    if request.get("schema") != "coze.sandbox.execute.v1" or request.get("scope") != adapter_scope or \
+            request.get("workload_kind") != adapter_scope or request.get("entrypoint") != entrypoints[adapter_scope]:
+        fail("request scope mismatch")
+    policy = request.get("policy")
+    if not isinstance(policy, dict):
+        fail("invalid policy")
+    maximum_output = policy.get("max_output_bytes")
+    executables = policy.get("allowed_executables")
+    if not isinstance(maximum_output, int) or maximum_output < 1024 or maximum_output > 16 * 1024 * 1024 or not isinstance(executables, list):
+        fail("invalid policy")
+    try:
+        stdin = base64.b64decode(require_string(request.get("stdin")), validate=True)
+        if not stdin or len(stdin) > MAX_ENVELOPE_BYTES:
+            fail("invalid invoke envelope")
+        invoke = json.loads(stdin)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid invoke envelope")
+    if not isinstance(invoke, dict) or invoke.get("schema") != INVOKE_SCHEMA or invoke.get("client_version") != "1":
+        fail("invalid invoke envelope")
+    language = require_string(invoke.get("language"))
+    code = require_string(invoke.get("code"))
+    params = invoke.get("params")
+    if language == "Python" and not ("python" in executables or "python3" in executables):
+        fail("python is not allowed")
+    if language == "JavaScript" and not ("node" in executables or "nodejs" in executables):
+        fail("node is not allowed")
+    if language not in ("Python", "JavaScript") or not isinstance(params, dict):
+        fail("invalid invoke envelope")
+    return language, code, params, maximum_output
+
+
+def run_python(code: str, params: object) -> object:
+    namespace = {"__builtins__": __builtins__}
+    captured = BoundedTextCapture(MAX_USER_LOG_BYTES)
+    try:
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            exec(code, namespace, namespace)
+            main = namespace.get("main")
+            if not callable(main):
+                fail("main is required")
+            args = type("Args", (), {"params": params})()
+            result = asyncio.run(main(args))
+    except SystemExit:
+        raise
+    except Exception:
+        fail("code execution failed")
+    if not isinstance(result, dict):
+        fail("result must be an object")
+    return result
+
+
+def run_javascript(code: str, params: object) -> object:
+    source = """\n%s\nconst result = await main({params: %s});\nif (result === null || typeof result !== 'object' || Array.isArray(result)) process.exit(2);\nprocess.stdout.write(JSON.stringify(result));\n""" % (code, json.dumps(params, separators=(",", ":")))
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".mjs", dir="/tmp", delete=False, encoding="utf-8") as handle:
+            handle.write(source)
+            source_path = handle.name
+        completed = subprocess.run(["node", source_path], capture_output=True, check=False, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("code execution failed")
+    finally:
+        if "source_path" in locals():
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+    if len(completed.stdout) > MAX_USER_LOG_BYTES or len(completed.stderr) > MAX_USER_LOG_BYTES or completed.returncode != 0:
+        fail("code execution failed")
+    try:
+        result = json.loads(completed.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid code result")
+    if not isinstance(result, dict):
+        fail("result must be an object")
+    return result
+
+
+def main() -> None:
+    if len(sys.argv) != 2 or sys.argv[1] not in ("agent", "plugin"):
+        fail("invalid adapter")
+    language, code, params, maximum_output = parse_request(sys.argv[1])
+    result = run_python(code, params) if language == "Python" else run_javascript(code, params)
+    output = json.dumps({"schema": RESULT_SCHEMA, "result": result}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(output) > maximum_output:
+        fail("result exceeds output limit")
+    sys.stdout.buffer.write(output)
+
+
+if __name__ == "__main__":
+    main()

@@ -119,6 +119,8 @@ type healthResponseV1 struct {
 
 type queueStatusResponseV1 QueueStatus
 
+type runtimeStatusResponseV1 SchedulerRuntimeStatus
+
 type runtimePolicyV1 struct {
 	TimeoutSeconds          int                           `json:"timeout_seconds"`
 	MemoryLimitMB           int                           `json:"memory_limit_mb"`
@@ -328,6 +330,98 @@ func (p *RemoteProvider) QueueStatus(ctx context.Context, executionID string) (Q
 		return QueueStatus{}, domainsandbox.ErrProviderUnhealthy
 	}
 	return status, nil
+}
+
+// RuntimeStatus reads the Runner's bounded operational projection. It is used
+// only by the authenticated control plane; strict decoding prevents a Runner
+// from adding raw execution or tenant data to the admin surface by mistake.
+func (p *RemoteProvider) RuntimeStatus(ctx context.Context) (SchedulerRuntimeStatus, error) {
+	if p == nil || ctx == nil {
+		return SchedulerRuntimeStatus{}, domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return SchedulerRuntimeStatus{}, err
+	}
+	ctx = safehttp.WithResponseBodyLimit(ctx, MaxHealthResponseBodyBytes)
+	request, err := p.newRequest(ctx, http.MethodGet, "/v1/runtime-status", nil)
+	if err != nil {
+		return SchedulerRuntimeStatus{}, err
+	}
+	response, err := p.doer.Do(request)
+	if err != nil {
+		return SchedulerRuntimeStatus{}, mapProviderErrorWithContext(request.Context(), err)
+	}
+	defer response.Body.Close()
+	if err := mapHTTPStatus(response.StatusCode); err != nil {
+		return SchedulerRuntimeStatus{}, err
+	}
+	var wire runtimeStatusResponseV1
+	if err := decodeStrictJSONResponseContext(request.Context(), response, MaxHealthResponseBodyBytes, &wire); err != nil {
+		return SchedulerRuntimeStatus{}, err
+	}
+	status := SchedulerRuntimeStatus(wire)
+	if !validSchedulerRuntimeStatus(status) {
+		return SchedulerRuntimeStatus{}, domainsandbox.ErrProviderUnhealthy
+	}
+	return status, nil
+}
+
+func validSchedulerRuntimeStatus(status SchedulerRuntimeStatus) bool {
+	if status.Schema != SchedulerRuntimeStatusSchemaV1 || status.AppliedConfigurationVersion == 0 ||
+		status.Queued < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight < 1 ||
+		status.UsedWeight > status.TotalWeight || status.IdleContainers < 0 || status.ActiveContainers < 0 ||
+		status.QuarantinedContainers < 0 {
+		return false
+	}
+	if status.MemoryReserveState != RuntimeMemoryReserveAvailable && status.MemoryReserveState != RuntimeMemoryReserveBelowWatermark && status.MemoryReserveState != RuntimeMemoryReserveUnknown {
+		return false
+	}
+	queued := 0
+	for scope, count := range status.QueuedByScope {
+		if !validRuntimeStatusScope(scope) || count < 0 {
+			return false
+		}
+		queued += count
+	}
+	return queued == status.Queued
+}
+
+func validRuntimeStatusScope(scope domainsandbox.Scope) bool {
+	switch scope {
+	case domainsandbox.ScopeAgent, domainsandbox.ScopeMCPStdio, domainsandbox.ScopeAppDev, domainsandbox.ScopePlugin:
+		return true
+	default:
+		return false
+	}
+}
+
+// ApplySchedulerConfiguration sends one complete, signed, non-secret
+// scheduler snapshot to a Runner. The Runner is responsible for verifying it
+// before changing active scheduling state.
+func (p *RemoteProvider) ApplySchedulerConfiguration(ctx context.Context, configuration SchedulerConfiguration) error {
+	if p == nil || ctx == nil {
+		return domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	body, err := json.Marshal(configuration)
+	if err != nil || len(body) > MaxHealthResponseBodyBytes {
+		return domainsandbox.ErrInvalidInput
+	}
+	request, err := p.newRequest(ctx, http.MethodPut, "/v1/configuration", body)
+	if err != nil {
+		return err
+	}
+	response, err := p.doer.Do(request)
+	if err != nil {
+		return mapProviderErrorWithContext(request.Context(), err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return mapHTTPStatus(response.StatusCode)
+	}
+	return nil
 }
 
 func validQueueReasonCode(value string) bool {

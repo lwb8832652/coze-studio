@@ -187,7 +187,10 @@ func TestProviderRouterQueueCheckpointKeepsRecordedAdmissionLimitOnResume(t *tes
 	provider := healthyRouterProvider(now)
 	provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
 	provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
-	provider.Health.Features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+	provider.Health.Features = []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureQueueStatusV1,
+		domainsandbox.ProviderFeatureSignedExecutionContext,
+	}
 	runtime := &task9AsyncRuntime{executeResults: []task9ExecuteOutcome{{
 		result: infrasandbox.ExecuteResult{ExecutionID: "exec-admission-checkpoint", Status: infrasandbox.ExecutionStatusAccepted},
 	}}}
@@ -215,13 +218,18 @@ func TestProviderRouterQueueCheckpointKeepsRecordedAdmissionLimitOnResume(t *tes
 		t.Fatalf("Execute() error = %v", err)
 	}
 	checkpoint, err := selected.Checkpoint()
-	if err != nil || checkpoint.admissionLimit != 23 || !checkpoint.queueStatusFeature {
-		t.Fatalf("Checkpoint() error/limit/feature = %v/%d/%t", err, checkpoint.admissionLimit, checkpoint.queueStatusFeature)
+	if err != nil || checkpoint.admissionLimit != 23 || !checkpoint.queueStatusFeature ||
+		!checkpoint.signedExecutionContextFeature {
+		t.Fatalf("Checkpoint() error/limit/features = %v/%d/%t/%t", err, checkpoint.admissionLimit, checkpoint.queueStatusFeature, checkpoint.signedExecutionContextFeature)
 	}
 	provider.Health.Features = nil
 	repository.settings = schedulerSettingsWithMaxOutstanding(1)
-	if _, err := router.Resume(context.Background(), checkpoint, checkpoint.executionID); err != nil {
+	resumed, err := router.Resume(context.Background(), checkpoint, checkpoint.executionID)
+	if err != nil {
 		t.Fatalf("Resume() error = %v", err)
+	}
+	if !resumed.HasFeature(domainsandbox.ProviderFeatureSignedExecutionContext) {
+		t.Fatal("Resume() lost signed execution context feature")
 	}
 	if acquireCalls != 1 || repository.calls != 1 {
 		t.Fatalf("Resume() reinterpreted admission configuration: acquires=%d settings_reads=%d", acquireCalls, repository.calls)
@@ -258,6 +266,55 @@ func TestProviderRouterLegacyCheckpointPreservesLegacyAdmissionOnResume(t *testi
 	}
 	if resumedCheckpoint, checkpointErr := resumed.Checkpoint(); checkpointErr != nil || resumedCheckpoint.admissionLimit != provider.Policy.MaxConcurrency || resumedCheckpoint.queueStatusFeature {
 		t.Fatalf("Checkpoint() error/limit/feature = %v/%d/%t", checkpointErr, resumedCheckpoint.admissionLimit, resumedCheckpoint.queueStatusFeature)
+	}
+}
+
+func TestSelectedProviderExecutesIdentityOnlyForSignedContextProviders(t *testing.T) {
+	now := time.Unix(2_000_000_060, 0).UTC()
+	identity := infrasandbox.ExecutionIdentity{SpaceID: 11, UserID: 22, ExecutionID: "run_33"}
+	for _, test := range []struct {
+		name         string
+		features     []domainsandbox.ProviderFeature
+		wantIdentity bool
+	}{
+		{name: "legacy provider", wantIdentity: false},
+		{name: "signed runner", features: []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureSignedExecutionContext}, wantIdentity: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := healthyRouterProvider(now)
+			provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAgent}
+			provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAgent}
+			provider.Health.Features = test.features
+			runtime := &task9AsyncRuntime{executeResults: []task9ExecuteOutcome{{
+				result: infrasandbox.ExecuteResult{ExecutionID: "exec-identity-feature", Status: infrasandbox.ExecutionStatusAccepted},
+			}}}
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+				build: func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
+					return runtime, nil
+				},
+			}, &capacityLimiterFuncs{})
+			request, err := NewResolveProviderRequest(provider.ProviderKey, domainsandbox.ScopeAgent)
+			if err != nil {
+				t.Fatalf("NewResolveProviderRequest() error = %v", err)
+			}
+			selected, err := router.Resolve(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+			execute := task9AsyncRequest("identity-feature")
+			execute.Scope = domainsandbox.ScopeAgent
+			execute.WorkloadKind = infrasandbox.WorkloadAgent
+			execute.Identity = identity
+			if _, err := selected.Execute(context.Background(), execute); err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if len(runtime.executeRequests) != 1 {
+				t.Fatalf("execute request count = %d, want 1", len(runtime.executeRequests))
+			}
+			if got := !runtime.executeRequests[0].Identity.IsZero(); got != test.wantIdentity {
+				t.Fatalf("identity retained = %t, want %t", got, test.wantIdentity)
+			}
+		})
 	}
 }
 

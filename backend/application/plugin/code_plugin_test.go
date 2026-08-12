@@ -5,6 +5,7 @@ package plugin
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	mockPlugin "github.com/coze-dev/coze-studio/backend/internal/mock/domain/plugin"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
@@ -72,6 +74,14 @@ func TestCodePluginSaveAndDebug(t *testing.T) {
 	require.True(t, debugged.Data.Success)
 	require.Equal(t, common.CodePluginDebugStatus_Success, debugged.Data.Status)
 	require.Equal(t, coderunner.PurposePlugin, runner.request.Purpose)
+	identity, ok := sandboxidentity.RequestFromContext(runner.ctx)
+	require.True(t, ok)
+	require.Equal(t, sandboxidentity.ScopePlugin, identity.Scope)
+	require.Equal(t, plugin.SpaceID, identity.SpaceID)
+	require.Equal(t, int64(88), identity.UserID)
+	require.True(t, strings.HasPrefix(identity.ExecutionID, "plugin-"))
+	require.Empty(t, identity.ProjectID)
+	require.Empty(t, identity.SessionID)
 	require.Equal(t, int64(1), codeRepo.draft.LastDebuggedRevision)
 }
 
@@ -371,12 +381,14 @@ func codePluginDraftWithSchemas(t *testing.T, pluginID, spaceID int64, inputSche
 }
 
 type codeRunnerStub struct {
+	ctx      context.Context
 	request  *coderunner.RunRequest
 	response *coderunner.RunResponse
 	err      error
 }
 
-func (r *codeRunnerStub) Run(_ context.Context, request *coderunner.RunRequest) (*coderunner.RunResponse, error) {
+func (r *codeRunnerStub) Run(ctx context.Context, request *coderunner.RunRequest) (*coderunner.RunResponse, error) {
+	r.ctx = ctx
 	r.request = request
 	return r.response, r.err
 }

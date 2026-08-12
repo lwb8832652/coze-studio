@@ -18,14 +18,15 @@ import (
 )
 
 type task9AsyncRuntime struct {
-	mu             sync.Mutex
-	executeResults []task9ExecuteOutcome
-	statusResults  []task9ExecuteOutcome
-	executeKeys    []string
-	statusIDs      []string
-	keepAliveIDs   []string
-	cancelIDs      []string
-	closeCalls     int
+	mu              sync.Mutex
+	executeResults  []task9ExecuteOutcome
+	statusResults   []task9ExecuteOutcome
+	executeKeys     []string
+	executeRequests []infrasandbox.ExecuteRequest
+	statusIDs       []string
+	keepAliveIDs    []string
+	cancelIDs       []string
+	closeCalls      int
 }
 
 type task9ExecuteOutcome struct {
@@ -45,6 +46,7 @@ func (r *task9AsyncRuntime) Execute(_ context.Context, request infrasandbox.Exec
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.executeKeys = append(r.executeKeys, request.IdempotencyKey)
+	r.executeRequests = append(r.executeRequests, request)
 	if len(r.executeResults) == 0 {
 		return infrasandbox.ExecuteResult{}, errors.New("unexpected execute")
 	}

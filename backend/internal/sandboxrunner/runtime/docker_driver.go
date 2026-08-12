@@ -4,8 +4,10 @@
 package runtime
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,20 +26,25 @@ var errDriverUnavailable = errors.New("sandbox runtime driver is unavailable")
 const dockerAPIPrefix = "/v1.43"
 
 const (
-	runtimeUser            = "10001:10001"
-	runtimeCleanupCommand  = "/opt/newx/bin/runtime-cleanup"
-	runtimeHealthCommand   = "/opt/newx/bin/runtime-health"
-	labelReuseKeyHash      = "com.newx.sandbox.reuse-key-hash"
-	labelScope             = "com.newx.sandbox.scope"
-	labelImageDigest       = "com.newx.sandbox.image-digest"
-	labelPolicyVersion     = "com.newx.sandbox.policy-version"
-	labelSchedulerVersion  = "com.newx.sandbox.scheduler-version"
-	labelCredentialVersion = "com.newx.sandbox.credential-generation"
-	labelDeploymentID      = "com.newx.sandbox.deployment-id"
-	labelCPUMilli          = "com.newx.sandbox.cpu-milli"
-	labelMemoryLimitMB     = "com.newx.sandbox.memory-limit-mb"
-	labelPIDLimit          = "com.newx.sandbox.pid-limit"
-	labelAllowNetwork      = "com.newx.sandbox.allow-network"
+	runtimeUser             = "10001:10001"
+	runtimeCleanupCommand   = "/opt/newx/bin/runtime-cleanup"
+	runtimeHealthCommand    = "/opt/newx/bin/runtime-health"
+	runtimeAdapterInputDir  = "/tmp"
+	runtimeAdapterInputFile = "newx-input.json"
+	runtimeAdapterInputPath = runtimeAdapterInputDir + "/" + runtimeAdapterInputFile
+	maxAdapterInputBytes    = 1 << 20
+	maxAdapterOutputBytes   = 8 << 20
+	labelReuseKeyHash       = "com.newx.sandbox.reuse-key-hash"
+	labelScope              = "com.newx.sandbox.scope"
+	labelImageDigest        = "com.newx.sandbox.image-digest"
+	labelPolicyVersion      = "com.newx.sandbox.policy-version"
+	labelSchedulerVersion   = "com.newx.sandbox.scheduler-version"
+	labelCredentialVersion  = "com.newx.sandbox.credential-generation"
+	labelDeploymentID       = "com.newx.sandbox.deployment-id"
+	labelCPUMilli           = "com.newx.sandbox.cpu-milli"
+	labelMemoryLimitMB      = "com.newx.sandbox.memory-limit-mb"
+	labelPIDLimit           = "com.newx.sandbox.pid-limit"
+	labelAllowNetwork       = "com.newx.sandbox.allow-network"
 )
 
 type DockerDriverConfig struct {
@@ -63,7 +70,10 @@ func NewDockerDriver(config DockerDriverConfig) (*DockerDriver, error) {
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return dialer.DialContext(ctx, "unix", socketPath)
 	}
-	return &DockerDriver{client: &http.Client{Transport: transport, Timeout: 15 * time.Second}, egressNetwork: config.EgressNetwork}, nil
+	// Execution and maintenance calls carry operation-specific context
+	// deadlines. A client-wide timeout would abort valid long-running Docker
+	// exec streams independently of the signed execution policy.
+	return &DockerDriver{client: &http.Client{Transport: transport}, egressNetwork: config.EgressNetwork}, nil
 }
 
 func (driver *DockerDriver) Create(ctx context.Context, specification Specification) (Container, error) {
@@ -92,6 +102,62 @@ func (driver *DockerDriver) PrepareForReuse(ctx context.Context, id string) erro
 
 func (driver *DockerDriver) Health(ctx context.Context, id string) error {
 	return driver.runFixedMaintenance(ctx, id, runtimeHealthCommand)
+}
+
+// StageAdapterInput writes the server-owned canonical request to one fixed
+// file in the container tmpfs. The archive has no caller-controlled paths,
+// modes, links, or metadata.
+func (driver *DockerDriver) StageAdapterInput(ctx context.Context, id string, input []byte) error {
+	if driver == nil || ctx == nil || !validContainerID(id) || len(input) == 0 || len(input) > maxAdapterInputBytes {
+		return errDriverConfiguration
+	}
+	archive, err := fixedInputArchive(input)
+	if err != nil {
+		return errDriverConfiguration
+	}
+	if _, err := driver.requestBytes(ctx, http.MethodPut, dockerAPIPrefix+"/containers/"+url.PathEscape(id)+"/archive?path="+url.QueryEscape(runtimeAdapterInputDir), archive, "application/x-tar", http.StatusOK, 0); err != nil {
+		return errDriverUnavailable
+	}
+	return nil
+}
+
+// RunAdapter invokes an image-baked adapter selected by a closed enum. It
+// never accepts a command, argument, shell, or host path from the caller.
+func (driver *DockerDriver) RunAdapter(ctx context.Context, id string, adapter Adapter, maxOutputBytes int64) (AdapterResult, error) {
+	if driver == nil || ctx == nil || !validContainerID(id) || maxOutputBytes <= 0 || maxOutputBytes > maxAdapterOutputBytes {
+		return AdapterResult{}, errDriverConfiguration
+	}
+	command, ok := fixedAdapterCommand(adapter)
+	if !ok {
+		return AdapterResult{}, errDriverConfiguration
+	}
+	var created struct {
+		ID string `json:"Id"`
+	}
+	request := dockerExecCreateRequest{AttachStdout: true, AttachStderr: true, User: runtimeUser, Cmd: []string{command}}
+	if err := driver.requestJSON(ctx, http.MethodPost, dockerAPIPrefix+"/containers/"+url.PathEscape(id)+"/exec", request, &created, http.StatusCreated); err != nil || !validContainerID(created.ID) {
+		return AdapterResult{}, errDriverUnavailable
+	}
+	// Docker multiplexes stdout and stderr into frames. Bound the wire response
+	// as well as the decoded streams, so an unhealthy runtime cannot exhaust the
+	// Runner process before validation.
+	wireLimit := maxOutputBytes*8 + 8*1024
+	wire, err := driver.requestBytes(ctx, http.MethodPost, dockerAPIPrefix+"/exec/"+url.PathEscape(created.ID)+"/start", mustJSON(dockerExecStartRequest{}), "application/json", http.StatusOK, wireLimit)
+	if err != nil {
+		return AdapterResult{}, errDriverUnavailable
+	}
+	stdout, stderr, err := decodeDockerMultiplexedOutput(wire, maxOutputBytes)
+	if err != nil {
+		return AdapterResult{}, errDriverUnavailable
+	}
+	var inspected struct {
+		Running  bool `json:"Running"`
+		ExitCode int  `json:"ExitCode"`
+	}
+	if err := driver.requestJSON(ctx, http.MethodGet, dockerAPIPrefix+"/exec/"+url.PathEscape(created.ID)+"/json", nil, &inspected, http.StatusOK); err != nil || inspected.Running || inspected.ExitCode < 0 {
+		return AdapterResult{}, errDriverUnavailable
+	}
+	return AdapterResult{ExitCode: inspected.ExitCode, Stdout: stdout, Stderr: stderr}, nil
 }
 
 func (driver *DockerDriver) Terminate(ctx context.Context, id string) error {
@@ -264,6 +330,11 @@ type dockerExecCreateRequest struct {
 	Cmd          []string `json:"Cmd"`
 }
 
+type dockerExecStartRequest struct {
+	Detach bool `json:"Detach"`
+	Tty    bool `json:"Tty"`
+}
+
 func (driver *DockerDriver) runFixedMaintenance(ctx context.Context, id, command string) error {
 	if driver == nil || ctx == nil || !validContainerID(id) || (command != runtimeCleanupCommand && command != runtimeHealthCommand) {
 		return errDriverConfiguration
@@ -320,6 +391,94 @@ func (driver *DockerDriver) requestJSON(ctx context.Context, method, path string
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 1024*1024))
 	return decoder.Decode(responseBody)
+}
+
+func (driver *DockerDriver) requestBytes(ctx context.Context, method, path string, requestBody []byte, contentType string, acceptedStatus int, maximumResponseBytes int64) ([]byte, error) {
+	if driver == nil || driver.client == nil || ctx == nil || !strings.HasPrefix(path, dockerAPIPrefix+"/") || maximumResponseBytes < 0 {
+		return nil, errDriverConfiguration
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, errDriverConfiguration
+	}
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	response, err := driver.client.Do(request)
+	if err != nil {
+		return nil, errDriverUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode != acceptedStatus {
+		return nil, errDriverUnavailable
+	}
+	if maximumResponseBytes == 0 {
+		return nil, nil
+	}
+	value, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	if err != nil || int64(len(value)) > maximumResponseBytes {
+		return nil, errDriverUnavailable
+	}
+	return value, nil
+}
+
+func fixedInputArchive(input []byte) ([]byte, error) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: runtimeAdapterInputFile, Mode: 0o400, Size: int64(len(input)), Format: tar.FormatUSTAR}); err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(input); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return archive.Bytes(), nil
+}
+
+func fixedAdapterCommand(adapter Adapter) (string, bool) {
+	switch adapter {
+	case AdapterAgentCode:
+		return "/opt/newx/bin/adapter-agent-code", true
+	case AdapterMCPStdio:
+		return "/opt/newx/bin/adapter-mcp-stdio", true
+	case AdapterPluginCode:
+		return "/opt/newx/bin/adapter-plugin-code", true
+	case AdapterAppDevRuntime:
+		return "/opt/newx/bin/adapter-appdev-runtime", true
+	default:
+		return "", false
+	}
+}
+
+func decodeDockerMultiplexedOutput(value []byte, maximumOutputBytes int64) ([]byte, []byte, error) {
+	var stdout, stderr []byte
+	for len(value) > 0 {
+		if len(value) < 8 || value[1] != 0 || value[2] != 0 || value[3] != 0 {
+			return nil, nil, errDriverUnavailable
+		}
+		stream, size := value[0], int(binary.BigEndian.Uint32(value[4:8]))
+		value = value[8:]
+		if size > len(value) || int64(len(stdout)+len(stderr)+size) > maximumOutputBytes {
+			return nil, nil, errDriverUnavailable
+		}
+		switch stream {
+		case 1:
+			stdout = append(stdout, value[:size]...)
+		case 2:
+			stderr = append(stderr, value[:size]...)
+		default:
+			return nil, nil, errDriverUnavailable
+		}
+		value = value[size:]
+	}
+	return stdout, stderr, nil
+}
+
+func mustJSON(value any) []byte {
+	encoded, _ := json.Marshal(value)
+	return encoded
 }
 
 func unixSocketPath(endpoint string) (string, bool) {

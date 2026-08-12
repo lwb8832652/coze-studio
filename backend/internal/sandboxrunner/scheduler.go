@@ -78,11 +78,38 @@ func NewRunnerScheduler(config RunnerSchedulerConfig) (*RunnerScheduler, error) 
 	}, nil
 }
 
+// ApplySchedulerSettings affects only future admission and dispatch. Existing
+// scheduled items retain their captured weight/version and running work keeps
+// its reservation until it reaches a terminal state.
+func (scheduler *RunnerScheduler) ApplySchedulerSettings(_ context.Context, settings domainsandbox.SchedulerSettings) error {
+	if scheduler == nil {
+		return ErrConfiguration
+	}
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil || normalized.Version == 0 {
+		return ErrConfiguration
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	if normalized.Version < scheduler.settings.Version {
+		return ErrConfiguration
+	}
+	if normalized.Version == scheduler.settings.Version {
+		return nil
+	}
+	scheduler.settings = normalized
+	scheduler.watermark.ReserveMB = normalized.HostMemoryReserveMB
+	return nil
+}
+
 func (scheduler *RunnerScheduler) Accept(ctx context.Context, command ExecuteCommand) (ExecutionProjection, error) {
 	if scheduler == nil || ctx == nil || command.Identity.SpaceID <= 0 || command.Identity.UserID <= 0 || command.Deadline.IsZero() || !command.Deadline.After(scheduler.now()) {
 		return ExecutionProjection{}, ErrProtocol
 	}
+	scheduler.mu.Lock()
+	settingsVersion := scheduler.settings.Version
 	workload, ok := scheduler.settings.Workloads[command.Scope]
+	scheduler.mu.Unlock()
 	if !ok || workload.Weight < 1 {
 		return ExecutionProjection{}, ErrProtocol
 	}
@@ -104,7 +131,7 @@ func (scheduler *RunnerScheduler) Accept(ctx context.Context, command ExecuteCom
 	if command.Deadline.Before(queueEnds) {
 		queueEnds = command.Deadline
 	}
-	item := scheduledItem{execution: ScheduledExecution{ExecutionID: stored.ExecutionID, Command: command, Weight: workload.Weight, ConfigurationVersion: scheduler.settings.Version}, spaceID: command.Identity.SpaceID, userID: command.Identity.UserID, projectID: command.Identity.ProjectID, enqueued: enqueued, queueEnds: queueEnds}
+	item := scheduledItem{execution: ScheduledExecution{ExecutionID: stored.ExecutionID, Command: command, Weight: workload.Weight, ConfigurationVersion: settingsVersion}, spaceID: command.Identity.SpaceID, userID: command.Identity.UserID, projectID: command.Identity.ProjectID, enqueued: enqueued, queueEnds: queueEnds}
 	if _, exists := scheduler.queues[item.spaceID]; !exists {
 		scheduler.spaceOrder = append(scheduler.spaceOrder, item.spaceID)
 	}
@@ -175,6 +202,37 @@ func (scheduler *RunnerScheduler) Finish(ctx context.Context, executionID string
 	return nil
 }
 
+// FinishResult commits the terminal result before returning scheduler capacity
+// to the pool. This ordering ensures polling cannot observe a released slot
+// whose execution output has not become visible yet.
+func (scheduler *RunnerScheduler) FinishResult(ctx context.Context, result infrasandbox.ExecuteResult) error {
+	if scheduler == nil || ctx == nil || !validCompletedResult(result) {
+		return ErrProtocol
+	}
+	scheduler.mu.Lock()
+	_, running := scheduler.running[result.ExecutionID]
+	scheduler.mu.Unlock()
+	if !running {
+		return ErrExecutionConflict
+	}
+	store, ok := scheduler.store.(ResultExecutionStore)
+	if !ok {
+		return ErrUnavailable
+	}
+	if _, err := store.Complete(ctx, result); err != nil {
+		return err
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	if current, ok := scheduler.running[result.ExecutionID]; ok {
+		if result.Status == infrasandbox.ExecutionStatusSucceeded || result.Status == infrasandbox.ExecutionStatusFailed || result.Status == infrasandbox.ExecutionStatusTimedOut {
+			scheduler.recordDurationLocked(current, scheduler.now().Sub(current.startedAt))
+		}
+		scheduler.releaseLocked(current)
+	}
+	return nil
+}
+
 func (scheduler *RunnerScheduler) Cancel(ctx context.Context, executionID string) error {
 	if scheduler == nil || ctx == nil || !validExecutionID(executionID) {
 		return ErrProtocol
@@ -193,8 +251,9 @@ func (scheduler *RunnerScheduler) Cancel(ctx context.Context, executionID string
 	return nil
 }
 
-// Recover rebuilds only accepted queue items and capacity reservations for
-// already-running work. It never re-dispatches a running execution.
+// Recover rebuilds accepted queue items. Running records are fenced failed:
+// Lifecycle recovery has already destroyed their containers, so retaining a
+// reservation would permanently consume capacity without a worker to finish it.
 func (scheduler *RunnerScheduler) Recover(ctx context.Context) error {
 	if scheduler == nil || ctx == nil {
 		return ErrProtocol
@@ -246,10 +305,12 @@ func (scheduler *RunnerScheduler) recoverOne(ctx context.Context, recovered Reco
 		}
 		scheduler.queues[item.spaceID] = append(scheduler.queues[item.spaceID], item)
 	case ExecutionStateRunning:
-		if !scheduler.canRunLocked(item) {
-			return ErrUnavailable
+		if resultStore, ok := scheduler.store.(ResultExecutionStore); ok {
+			_, err := resultStore.Complete(ctx, infrasandbox.ExecuteResult{ExecutionID: stored.ExecutionID, Status: infrasandbox.ExecutionStatusFailed})
+			return err
 		}
-		scheduler.reserveLocked(item)
+		_, err := scheduler.store.Transition(ctx, stored.ExecutionID, infrasandbox.ExecutionStatusFailed)
+		return err
 	default:
 		return ErrUnavailable
 	}
@@ -386,17 +447,44 @@ func (scheduler *RunnerScheduler) Snapshot() SchedulerSnapshot {
 	scheduler.mu.Lock()
 	defer scheduler.mu.Unlock()
 	queued := 0
+	queuedByScope := make(map[string]int)
 	for _, queue := range scheduler.queues {
 		queued += len(queue)
+		for _, item := range queue {
+			queuedByScope[string(item.execution.Command.Scope)]++
+		}
 	}
-	return SchedulerSnapshot{Queued: queued, Running: len(scheduler.running), UsedWeight: scheduler.usedWeight, TotalWeight: scheduler.settings.TotalWeight}
+	return SchedulerSnapshot{Queued: queued, QueuedByScope: queuedByScope, Running: len(scheduler.running), UsedWeight: scheduler.usedWeight, TotalWeight: scheduler.settings.TotalWeight}
+}
+
+// MemoryReserveState reports only whether the dispatcher has enough aggregate
+// memory headroom. It intentionally hides host memory totals and readings.
+func (scheduler *RunnerScheduler) MemoryReserveState(ctx context.Context) string {
+	if scheduler == nil || ctx == nil {
+		return memoryReserveUnknown
+	}
+	scheduler.mu.Lock()
+	watermark := scheduler.watermark
+	scheduler.mu.Unlock()
+	if watermark.Sampler == nil || watermark.ReserveMB < 1 {
+		return memoryReserveUnknown
+	}
+	available, err := watermark.Sampler.AvailableMemoryMB(ctx)
+	if err != nil {
+		return memoryReserveUnknown
+	}
+	if available < watermark.ReserveMB {
+		return memoryReserveBelowWatermark
+	}
+	return memoryReserveAvailable
 }
 
 type SchedulerSnapshot struct {
-	Queued      int
-	Running     int
-	UsedWeight  int
-	TotalWeight int
+	Queued        int
+	QueuedByScope map[string]int
+	Running       int
+	UsedWeight    int
+	TotalWeight   int
 }
 
 // QueueProjection intentionally contains only a same-space approximate

@@ -113,13 +113,15 @@ func TestSchedulerServiceRuntimeStatusIsSafeWhenUnavailableAndAvailable(t *testi
 	runner := &schedulerRunnerFake{status: NativeRunnerStatus{
 		Healthy: true, AppliedConfigVersion: 1, QueueDepth: 2, ActiveSlots: 1, SlotCapacity: 2,
 		QueueHighWatermark: 3, DrainingCount: 1, QuarantinedCount: 0,
+		QueueByScope:   map[domainsandbox.Scope]int{domainsandbox.ScopeAgent: 2},
+		IdleContainers: 1, ActiveContainers: 1, MemoryReserveState: "available",
 	}}
 	service, err = NewSchedulerService(SchedulerServiceOptions{Store: store, Runner: runner})
 	if err != nil {
 		t.Fatalf("NewSchedulerService(available) error = %v", err)
 	}
 	available, err := service.RuntimeStatus(context.Background(), testActor())
-	if err != nil || !available.Available || available.QueueDepth != 2 || available.ActiveSlots != 1 || available.ReasonCode != "" {
+	if err != nil || !available.Available || available.QueueDepth != 2 || available.ActiveSlots != 1 || available.QueueByScope[domainsandbox.ScopeAgent] != 2 || available.IdleContainers != 1 || available.MemoryReserveState != "available" || available.ReasonCode != "" {
 		t.Fatal("RuntimeStatus() did not return the safe available aggregate projection")
 	}
 }

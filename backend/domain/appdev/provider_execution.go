@@ -374,6 +374,7 @@ type ProviderExecution struct {
 	ID                           string
 	SpaceID                      string
 	ProjectID                    string
+	ActorUserID                  int64
 	Generation                   uint64
 	IdempotencyKey               string
 	DesiredState                 ProviderExecutionDesiredState
@@ -455,6 +456,7 @@ type RecoverableProviderExecution struct {
 	ID                     string
 	SpaceID                string
 	ProjectID              string
+	ActorUserID            int64
 	Generation             uint64
 	HasProviderExecution   bool
 	HasCheckpoint          bool

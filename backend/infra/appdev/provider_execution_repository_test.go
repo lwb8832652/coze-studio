@@ -303,6 +303,7 @@ func migrateProviderExecutionSQLiteExecutionTestSchema(db *gorm.DB) error {
             id TEXT NOT NULL PRIMARY KEY,
             space_id INTEGER NOT NULL,
             project_id TEXT NOT NULL,
+			actor_user_id INTEGER NOT NULL DEFAULT 0,
             generation INTEGER NOT NULL,
             idempotency_key BLOB NOT NULL,
             desired_state TEXT NOT NULL,
@@ -372,7 +373,7 @@ func seedProviderExecutionProject(t *testing.T, db *gorm.DB, spaceID int64, proj
 func providerExecutionStartInput(id, idempotencyKey string, now time.Time) domainappdev.EnsureProviderExecutionStartInput {
 	_ = now
 	return domainappdev.EnsureProviderExecutionStartInput{
-		ID: id, SpaceID: "1001", ProjectID: "project-a", IdempotencyKey: idempotencyKey,
+		ID: id, SpaceID: "1001", ProjectID: "project-a", ActorUserID: 42, IdempotencyKey: idempotencyKey,
 		ProviderKey: "provider-a", ProviderScope: domainsandbox.ScopeAppDev,
 	}
 }

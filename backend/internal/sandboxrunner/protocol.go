@@ -107,7 +107,7 @@ func parseExecute(body []byte) (ExecuteCommand, error) {
 		!validEntrypoint(wire.Entrypoint) || !validExecutePayload(wire, deadline.UTC()) {
 		return ExecuteCommand{}, ErrProtocol
 	}
-	return ExecuteCommand{Scope: wire.Scope, WorkloadKind: wire.WorkloadKind, IdempotencyKey: wire.IdempotencyKey, Deadline: deadline.UTC(), Entrypoint: wire.Entrypoint, RawBody: append([]byte(nil), body...)}, nil
+	return ExecuteCommand{Scope: wire.Scope, WorkloadKind: wire.WorkloadKind, IdempotencyKey: wire.IdempotencyKey, Deadline: deadline.UTC(), Entrypoint: wire.Entrypoint, Policy: wire.Policy, RawBody: append([]byte(nil), body...)}, nil
 }
 
 func validExecutePayload(wire executeWireRequest, deadline time.Time) bool {
@@ -300,8 +300,24 @@ func scopeMatchesWorkload(scope domainsandbox.Scope, workload infrasandbox.Workl
 }
 
 func scopeMatchesWorkloadEntrypoint(scope domainsandbox.Scope, workload infrasandbox.WorkloadKind, entrypoint string) bool {
-	return scopeMatchesWorkload(scope, workload) &&
-		(scope != domainsandbox.ScopePlugin || entrypoint == infrasandbox.PluginCodeRunnerEntrypoint)
+	if !scopeMatchesWorkload(scope, workload) {
+		return false
+	}
+	switch scope {
+	case domainsandbox.ScopeAgent:
+		return entrypoint == "agent/code/run"
+	case domainsandbox.ScopeMCPStdio:
+		return entrypoint == "mcp/stdio/invoke"
+	case domainsandbox.ScopePlugin:
+		return entrypoint == infrasandbox.PluginCodeRunnerEntrypoint
+	case domainsandbox.ScopeAppDev:
+		// These remain valid provider-protocol entrypoints. The concrete
+		// runner admission boundary separately rejects scopes whose immutable
+		// runtime image does not contain a reviewed adapter.
+		return entrypoint == "appdev/runtime" || entrypoint == "appdev/runtime/start"
+	default:
+		return false
+	}
 }
 
 func validExecutionID(value string) bool {

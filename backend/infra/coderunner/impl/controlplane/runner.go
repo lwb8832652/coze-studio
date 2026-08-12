@@ -15,6 +15,7 @@ import (
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 const (
@@ -229,6 +230,12 @@ func (r *runner) Run(
 		Policy:         policy,
 		Entrypoint:     route.entrypoint,
 		Stdin:          stdin,
+	}
+	if identity, ok := sandboxidentity.RequestFromContext(ctx); ok {
+		if identity.Scope != sandboxidentity.Scope(route.scope) {
+			return nil, coderunner.ErrCodeRunnerInvalidRequest
+		}
+		request.Identity = infrasandbox.ExecutionIdentity{SpaceID: identity.SpaceID, UserID: identity.UserID, ProjectID: identity.ProjectID, SessionID: identity.SessionID, ExecutionID: identity.ExecutionID}
 	}
 	execution, err := selection.Execute(ctx, request)
 	if err != nil && shouldReconcileCodeRunnerExecution(err) {

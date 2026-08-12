@@ -7,6 +7,7 @@ package sandboxidentity
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -30,6 +31,11 @@ const (
 	ScopePlugin   Scope = "plugin"
 )
 
+const (
+	ExecutionContextSigningKeysJSONEnv = "SANDBOX_EXECUTION_CONTEXT_SIGNING_KEYS_JSON"
+	ExecutionContextActiveKeyIDEnv     = "SANDBOX_EXECUTION_CONTEXT_ACTIVE_KEY_ID"
+)
+
 type Request struct {
 	Scope         Scope
 	SpaceID       int64
@@ -38,6 +44,33 @@ type Request struct {
 	SessionID     string
 	ExecutionID   string
 	RequestDigest []byte
+}
+
+type requestContextKey struct{}
+
+// WithRequest attaches only an already-authorized, server-owned execution
+// identity. It deliberately drops request digests: those are derived again
+// from the canonical provider body immediately before signing.
+func WithRequest(ctx context.Context, request Request) context.Context {
+	if ctx == nil || !validContextRequest(request) {
+		return ctx
+	}
+	request.RequestDigest = nil
+	return context.WithValue(ctx, requestContextKey{}, request)
+}
+
+// RequestFromContext returns a defensive copy. Values are accepted only after
+// the same scope matrix used by the signed envelope has been validated.
+func RequestFromContext(ctx context.Context) (Request, bool) {
+	if ctx == nil {
+		return Request{}, false
+	}
+	request, ok := ctx.Value(requestContextKey{}).(Request)
+	if !ok || !validContextRequest(request) {
+		return Request{}, false
+	}
+	request.RequestDigest = nil
+	return request, true
 }
 
 func (Request) String() string   { return "sandboxidentity.Request{identity:<redacted>}" }
@@ -62,6 +95,73 @@ type Keyring struct {
 	TTL         time.Duration
 	Now         func() time.Time
 	Nonce       func() (string, error)
+}
+
+// LoadKeyringFromEnv loads the server-side signer without exposing its key
+// material. Both values may be omitted while only legacy providers are in
+// use; a partial or malformed configuration is rejected.
+func LoadKeyringFromEnv(getenv func(string) string, ttl time.Duration) (Keyring, bool, error) {
+	if getenv == nil || ttl <= 0 {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	keysJSON := getenv(ExecutionContextSigningKeysJSONEnv)
+	activeKeyID := getenv(ExecutionContextActiveKeyIDEnv)
+	if keysJSON == "" && activeKeyID == "" {
+		return Keyring{}, false, nil
+	}
+	if keysJSON == "" || activeKeyID == "" || len(keysJSON) > 64*1024 {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	decoder := json.NewDecoder(strings.NewReader(keysJSON))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	if !decoder.More() {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	field, err := decoder.Token()
+	if err != nil || field != "keys" || !decoder.More() {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	keysOpening, err := decoder.Token()
+	if err != nil || keysOpening != json.Delim('{') {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	keys := make(map[string][]byte)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		keyID, ok := keyToken.(string)
+		if err != nil || !ok || len(keys) >= 128 {
+			return Keyring{}, false, ErrInvalidContext
+		}
+		var value string
+		if err := decoder.Decode(&value); err != nil {
+			return Keyring{}, false, ErrInvalidContext
+		}
+		if _, duplicate := keys[keyID]; duplicate {
+			return Keyring{}, false, ErrInvalidContext
+		}
+		keys[keyID] = []byte(value)
+	}
+	if closing, err := decoder.Token(); err != nil || closing != json.Delim('}') {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	if decoder.More() {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	if closing, err := decoder.Token(); err != nil || closing != json.Delim('}') {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	keyring, err := NewKeyring(activeKeyID, keys, ttl)
+	if err != nil {
+		return Keyring{}, false, ErrInvalidContext
+	}
+	return keyring, true, nil
 }
 
 func (Keyring) String() string   { return "sandboxidentity.Keyring{keys:<redacted>}" }
@@ -263,4 +363,20 @@ func validIdentifier(value string) bool {
 		}
 	}
 	return true
+}
+
+func validContextRequest(request Request) bool {
+	if request.SpaceID <= 0 || request.UserID <= 0 || !validIdentifier(request.ExecutionID) {
+		return false
+	}
+	switch request.Scope {
+	case ScopeAgent, ScopePlugin:
+		return request.ProjectID == "" && request.SessionID == ""
+	case ScopeAppDev:
+		return validIdentifier(request.ProjectID) && request.SessionID == ""
+	case ScopeMCPStdio:
+		return request.ProjectID == "" && validIdentifier(request.SessionID)
+	default:
+		return false
+	}
 }

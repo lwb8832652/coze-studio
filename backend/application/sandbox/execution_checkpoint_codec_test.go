@@ -48,7 +48,7 @@ func TestExecutionCheckpointCodecRoundTripAndAADBinding(t *testing.T) {
 		providerKey: "provider-a", scope: domainsandbox.ScopeAppDev,
 		leaseToken: "lease-token-0123456789", leaseFence: "lease-fence-0123456789",
 		leaseExpiryMilli: time.Now().Add(time.Minute).UnixMilli(), executionID: "execution-123",
-		queueStatusFeature: true, admissionLimit: 23,
+		queueStatusFeature: true, signedExecutionContextFeature: true, admissionLimit: 23,
 	}
 	envelope, err := codec.Seal(context.Background(), binding, checkpoint)
 	if err != nil || envelope == "" {
@@ -57,7 +57,9 @@ func TestExecutionCheckpointCodecRoundTripAndAADBinding(t *testing.T) {
 	opened, err := codec.Open(context.Background(), binding, envelope)
 	if err != nil || opened.providerKey != checkpoint.providerKey || opened.executionID != checkpoint.executionID ||
 		opened.leaseToken != checkpoint.leaseToken || opened.leaseFence != checkpoint.leaseFence ||
-		opened.queueStatusFeature != checkpoint.queueStatusFeature || opened.admissionLimit != checkpoint.admissionLimit {
+		opened.queueStatusFeature != checkpoint.queueStatusFeature ||
+		opened.signedExecutionContextFeature != checkpoint.signedExecutionContextFeature ||
+		opened.admissionLimit != checkpoint.admissionLimit {
 		t.Fatalf("Open() = %#v, %v", opened, err)
 	}
 	swapped := binding

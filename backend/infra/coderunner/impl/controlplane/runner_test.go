@@ -15,6 +15,7 @@ import (
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 func TestControlPlaneRunnerBuildsCanonicalAgentRequest(t *testing.T) {
@@ -105,6 +106,29 @@ func TestControlPlaneRunnerBuildsCanonicalPluginRequest(t *testing.T) {
 		request.WorkloadKind != infrasandbox.WorkloadPlugin ||
 		request.Entrypoint != "plugin/code/run" {
 		t.Fatalf("request identity = %#v", request)
+	}
+}
+
+func TestControlPlaneRunnerProjectsOnlyServerOwnedSandboxIdentity(t *testing.T) {
+	harness := newControlPlaneRunnerHarness(t)
+	runner := newControlPlaneRunnerForTest(t, harness.source, 4096)
+	ctx := sandboxidentity.WithRequest(context.Background(), sandboxidentity.Request{
+		Scope:       sandboxidentity.ScopeAgent,
+		SpaceID:     11,
+		UserID:      22,
+		ExecutionID: "run_33",
+	})
+
+	response, err := runner.Run(ctx, &coderunner.RunRequest{
+		Language: coderunner.Python,
+		Code:     "async def main(args): return {}",
+		Params:   map[string]any{},
+	})
+	if err != nil || response == nil {
+		t.Fatalf("Run() = %#v, %v", response, err)
+	}
+	if got := harness.selection.requests[0].Identity; got != (infrasandbox.ExecutionIdentity{SpaceID: 11, UserID: 22, ExecutionID: "run_33"}) {
+		t.Fatalf("request identity = %#v", got)
 	}
 }
 

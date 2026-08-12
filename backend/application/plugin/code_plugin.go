@@ -6,6 +6,8 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +20,11 @@ import (
 
 	pluginAPI "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop"
 	common "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop/common"
+	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/repository"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 const (
@@ -174,9 +178,13 @@ func (p *PluginApplicationService) DebugCodePlugin(ctx context.Context, req *plu
 	if runner == nil {
 		return nil, codePluginUnavailable(coderunner.ErrCodeRunnerUnavailable)
 	}
+	executionCtx, err := codePluginSandboxContext(ctx, plugin)
+	if err != nil {
+		return nil, err
+	}
 
 	startedAt := time.Now()
-	runResponse, runErr := runner.Run(ctx, &coderunner.RunRequest{
+	runResponse, runErr := runner.Run(executionCtx, &coderunner.RunRequest{
 		Purpose:  coderunner.PurposePlugin,
 		Code:     string(draft.Files[0].Content),
 		Params:   arguments,
@@ -640,6 +648,26 @@ func codeDebugFailure(revision int64, err error, duration time.Duration) *plugin
 			Revision:    revision,
 		},
 	}
+}
+
+func codePluginSandboxContext(ctx context.Context, plugin *entity.PluginInfo) (context.Context, error) {
+	if ctx == nil || plugin == nil || plugin.SpaceID <= 0 {
+		return nil, codePluginUnavailable(fmt.Errorf("code plugin execution identity is unavailable"))
+	}
+	userID := ctxutil.GetUIDFromCtx(ctx)
+	if userID == nil || *userID <= 0 {
+		return nil, codePluginPermission(fmt.Errorf("session is required"))
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, codePluginUnavailable(fmt.Errorf("create code plugin execution identity: %w", err))
+	}
+	return sandboxidentity.WithRequest(ctx, sandboxidentity.Request{
+		Scope:       sandboxidentity.ScopePlugin,
+		SpaceID:     plugin.SpaceID,
+		UserID:      *userID,
+		ExecutionID: "plugin-" + hex.EncodeToString(nonce),
+	}), nil
 }
 
 func codePluginSource(draft *entity.CodeDraft) (string, error) {

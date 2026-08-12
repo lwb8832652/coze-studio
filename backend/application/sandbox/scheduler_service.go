@@ -106,14 +106,33 @@ func (s *SchedulerService) RuntimeStatus(ctx context.Context, actor Actor) (*Sch
 		result.ReasonCode = SchedulerReasonProviderUnavailable
 		return result, nil
 	}
-	if status.QueueDepth < 0 || status.ActiveSlots < 0 || status.SlotCapacity < 0 || status.QueueHighWatermark < 0 || status.DrainingCount < 0 || status.QuarantinedCount < 0 {
+	if status.QueueDepth < 0 || status.ActiveSlots < 0 || status.SlotCapacity < 0 || status.QueueHighWatermark < 0 || status.DrainingCount < 0 || status.QuarantinedCount < 0 || status.IdleContainers < 0 || status.ActiveContainers < 0 || !validRuntimeStatusAggregate(status) {
 		return nil, domainsandbox.ErrUnavailable
 	}
 	result.Available = true
 	result.AppliedConfigVersion = status.AppliedConfigVersion
 	result.QueueDepth, result.ActiveSlots, result.SlotCapacity = status.QueueDepth, status.ActiveSlots, status.SlotCapacity
 	result.QueueHighWatermark, result.DrainingCount, result.QuarantinedCount = status.QueueHighWatermark, status.DrainingCount, status.QuarantinedCount
+	result.QueueByScope, result.IdleContainers, result.ActiveContainers, result.MemoryReserveState = cloneQueueByScope(status.QueueByScope), status.IdleContainers, status.ActiveContainers, status.MemoryReserveState
 	return result, nil
+}
+
+func validRuntimeStatusAggregate(status NativeRunnerStatus) bool {
+	if status.MemoryReserveState != "available" && status.MemoryReserveState != "below_watermark" && status.MemoryReserveState != "unknown" {
+		return false
+	}
+	queued := 0
+	for scope, count := range status.QueueByScope {
+		if !validSchedulerScope(scope) || count < 0 {
+			return false
+		}
+		queued += count
+	}
+	return queued == status.QueueDepth
+}
+
+func validSchedulerScope(scope domainsandbox.Scope) bool {
+	return scope == domainsandbox.ScopeAgent || scope == domainsandbox.ScopeMCPStdio || scope == domainsandbox.ScopeAppDev || scope == domainsandbox.ScopePlugin
 }
 
 func (s *SchedulerService) recordFailedUpdate(ctx context.Context, actor Actor, previousVersion, newVersion uint64, fields []string) {

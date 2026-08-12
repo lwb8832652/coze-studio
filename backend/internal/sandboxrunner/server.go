@@ -27,6 +27,7 @@ type ExecuteCommand struct {
 	IdempotencyKey string
 	Deadline       time.Time
 	Entrypoint     string
+	Policy         runtimePolicy
 	Identity       sandboxidentity.Request
 	RawBody        []byte
 }
@@ -55,6 +56,12 @@ type LifecycleManager interface {
 	Cancel(context.Context, string) error
 }
 
+// ReadinessProbe validates that the Runner can still reach its dedicated
+// rootless runtime without creating a tenant execution.
+type ReadinessProbe interface {
+	Ready(context.Context) error
+}
+
 // ArtifactPublisher accepts only short-lived artifact publication capabilities.
 // It must never persist or log their bearer fields.
 type ArtifactPublisher interface {
@@ -70,9 +77,44 @@ type ConfigurationSource interface {
 	Configuration(context.Context) (ConfigurationProjection, error)
 }
 
+// RuntimeStatusSource provides the authenticated operations projection. Its
+// response is deliberately aggregate-only: no tenant, execution, container,
+// command, artifact, endpoint, or credential data may cross this boundary.
+type RuntimeStatusSource interface {
+	RuntimeStatus(context.Context) (RuntimeStatusProjection, error)
+}
+
+// ConfigurationApplier validates and atomically activates a complete signed
+// scheduler snapshot. It intentionally accepts no partial mutations.
+type ConfigurationApplier interface {
+	ApplyConfiguration(context.Context, infrasandbox.SchedulerConfiguration) error
+}
+
 type ConfigurationProjection struct {
 	Schema  string `json:"schema"`
 	Version uint64 `json:"version"`
+}
+
+const runtimeStatusSchemaV1 = "coze.sandbox.runner_runtime_status.v1"
+
+const (
+	memoryReserveAvailable      = "available"
+	memoryReserveBelowWatermark = "below_watermark"
+	memoryReserveUnknown        = "unknown"
+)
+
+type RuntimeStatusProjection struct {
+	Schema                      string         `json:"schema"`
+	AppliedConfigurationVersion uint64         `json:"applied_configuration_version"`
+	Queued                      int            `json:"queued"`
+	QueuedByScope               map[string]int `json:"queued_by_scope"`
+	Running                     int            `json:"running"`
+	UsedWeight                  int            `json:"used_weight"`
+	TotalWeight                 int            `json:"total_weight"`
+	IdleContainers              int            `json:"idle_containers"`
+	ActiveContainers            int            `json:"active_containers"`
+	QuarantinedContainers       int            `json:"quarantined_containers"`
+	MemoryReserveState          string         `json:"memory_reserve_state"`
 }
 
 type acceptSchedulerFunc func(context.Context, ExecuteCommand) (ExecutionProjection, error)
@@ -82,35 +124,44 @@ func (f acceptSchedulerFunc) Accept(ctx context.Context, command ExecuteCommand)
 }
 
 type Server struct {
-	config        Config
-	scheduler     Scheduler
-	store         Store
-	lifecycle     LifecycleManager
-	artifacts     ArtifactPublisher
-	configuration ConfigurationSource
-	handler       http.Handler
+	config               Config
+	scheduler            Scheduler
+	store                Store
+	lifecycle            LifecycleManager
+	artifacts            ArtifactPublisher
+	configuration        ConfigurationSource
+	configurationApplier ConfigurationApplier
+	runtimeStatus        RuntimeStatusSource
+	readiness            ReadinessProbe
+	handler              http.Handler
 }
 
 type Dependencies struct {
-	Scheduler     Scheduler
-	Store         Store
-	Lifecycle     LifecycleManager
-	Artifacts     ArtifactPublisher
-	Configuration ConfigurationSource
+	Scheduler            Scheduler
+	Store                Store
+	Lifecycle            LifecycleManager
+	Artifacts            ArtifactPublisher
+	Configuration        ConfigurationSource
+	ConfigurationApplier ConfigurationApplier
+	RuntimeStatus        RuntimeStatusSource
+	Readiness            ReadinessProbe
 }
 
 func NewServer(config Config, dependencies Dependencies) (*Server, error) {
 	if dependencies.Scheduler == nil || config.AuthToken == "" || config.ContextVerifyKeys.ActiveKeyID == "" {
 		return nil, ErrConfiguration
 	}
-	server := &Server{config: config, scheduler: dependencies.Scheduler, store: dependencies.Store, lifecycle: dependencies.Lifecycle, artifacts: dependencies.Artifacts, configuration: dependencies.Configuration}
+	server := &Server{config: config, scheduler: dependencies.Scheduler, store: dependencies.Store, lifecycle: dependencies.Lifecycle, artifacts: dependencies.Artifacts, configuration: dependencies.Configuration, configurationApplier: dependencies.ConfigurationApplier, runtimeStatus: dependencies.RuntimeStatus, readiness: dependencies.Readiness}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", server.health)
+	mux.HandleFunc("GET /v1/metrics", server.metrics)
 	mux.HandleFunc("POST /v1/executions", server.execute)
 	mux.HandleFunc("GET /v1/executions/", server.control)
 	mux.HandleFunc("POST /v1/executions/", server.control)
 	mux.HandleFunc("POST /v1/executions:lookup", server.control)
 	mux.HandleFunc("GET /v1/configuration", server.control)
+	mux.HandleFunc("PUT /v1/configuration", server.control)
+	mux.HandleFunc("GET /v1/runtime-status", server.control)
 	mux.HandleFunc("/v1/", server.notFound)
 	server.handler = mux
 	return server, nil
@@ -128,7 +179,15 @@ func (s *Server) health(writer http.ResponseWriter, request *http.Request) {
 		writePublicError(writer, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"protocol_version": "v1", "status": domainsandbox.HealthStatusHealthy, "capabilities": []domainsandbox.Scope{domainsandbox.ScopeAgent, domainsandbox.ScopeAppDev, domainsandbox.ScopeMCPStdio, domainsandbox.ScopePlugin}, "features": []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}})
+	if s.readiness != nil && s.readiness.Ready(request.Context()) != nil {
+		writePublicError(writer, http.StatusServiceUnavailable, "UNAVAILABLE")
+		return
+	}
+	// The health contract is an admission boundary. Do not advertise a scope
+	// until its reviewed runtime adapter is present in the immutable execution
+	// image; claiming MCP/AppDev here would route real work to a guaranteed
+	// failure instead of allowing an existing compatible Provider to serve it.
+	writeJSON(writer, http.StatusOK, map[string]any{"protocol_version": "v1", "status": domainsandbox.HealthStatusHealthy, "capabilities": []domainsandbox.Scope{domainsandbox.ScopeAgent, domainsandbox.ScopePlugin}, "features": []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1, domainsandbox.ProviderFeatureSignedExecutionContext}})
 }
 
 func (s *Server) execute(writer http.ResponseWriter, request *http.Request) {
@@ -149,6 +208,10 @@ func (s *Server) execute(writer http.ResponseWriter, request *http.Request) {
 	}
 	command, err := parseExecute(raw)
 	if err != nil {
+		writePublicError(writer, http.StatusBadRequest, "INVALID_REQUEST")
+		return
+	}
+	if _, supported := adapterForCommand(command); !supported {
 		writePublicError(writer, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
@@ -203,6 +266,16 @@ func (s *Server) delegateControl(writer http.ResponseWriter, request *http.Reque
 			}
 			writeJSON(writer, http.StatusOK, configuration)
 			return nil
+		case path == "/v1/runtime-status":
+			if s.runtimeStatus == nil {
+				return ErrUnavailable
+			}
+			status, err := s.runtimeStatus.RuntimeStatus(request.Context())
+			if err != nil {
+				return err
+			}
+			writeJSON(writer, http.StatusOK, status)
+			return nil
 		case strings.HasSuffix(path, "/queue-status"):
 			if s.store == nil {
 				return ErrUnavailable
@@ -236,6 +309,26 @@ func (s *Server) delegateControl(writer http.ResponseWriter, request *http.Reque
 			return nil
 		}
 	}
+	if request.Method == http.MethodPut && path == "/v1/configuration" {
+		if s.configurationApplier == nil {
+			return ErrUnavailable
+		}
+		body := http.MaxBytesReader(writer, request.Body, maxRequestBytes)
+		defer body.Close()
+		raw, err := readAll(body)
+		if err != nil {
+			return ErrProtocol
+		}
+		configuration, err := infrasandbox.DecodeSchedulerConfiguration(raw)
+		if err != nil {
+			return ErrProtocol
+		}
+		if err := s.configurationApplier.ApplyConfiguration(request.Context(), configuration); err != nil {
+			return ErrProtocol
+		}
+		writer.WriteHeader(http.StatusNoContent)
+		return nil
+	}
 
 	body := http.MaxBytesReader(writer, request.Body, maxRequestBytes)
 	defer body.Close()
@@ -249,16 +342,10 @@ func (s *Server) delegateControl(writer http.ResponseWriter, request *http.Reque
 	}
 	switch {
 	case path == "/v1/executions:lookup":
-		if s.store == nil || parsed.Lookup == nil {
-			return ErrUnavailable
-		}
-		result, err := s.store.Lookup(request.Context(), *parsed.Lookup)
-		if err != nil {
-			return err
-		}
-		writer.Header().Set(infrasandbox.ExecutionLookupProtocolVersionHeader, infrasandbox.ExecutionLookupProtocolVersionV1)
-		writeLookupResult(writer, result)
-		return nil
+		// Reconciliation is not advertised by this runner. A future lookup
+		// contract must carry signed tenant identity before a caller-controlled
+		// operation ID can select an execution.
+		return ErrProtocol
 	case strings.HasSuffix(path, ":keep-alive"):
 		if s.lifecycle == nil {
 			return ErrUnavailable
@@ -343,7 +430,13 @@ func writeLookupResult(writer http.ResponseWriter, result infrasandbox.Execution
 }
 
 func validControlPath(method, path string) bool {
+	if method == http.MethodGet && path == "/v1/runtime-status" {
+		return true
+	}
 	if method == http.MethodGet && path == "/v1/configuration" {
+		return true
+	}
+	if method == http.MethodPut && path == "/v1/configuration" {
 		return true
 	}
 	if method == http.MethodPost && path == "/v1/executions:lookup" {

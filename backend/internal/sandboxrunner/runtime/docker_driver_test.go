@@ -4,6 +4,8 @@
 package runtime
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -39,6 +41,16 @@ func TestDockerDriverRejectsNonUnixEndpointAndUnsafeSpecification(t *testing.T) 
 				t.Fatal("Create() unexpectedly accepted unsafe specification")
 			}
 		})
+	}
+}
+
+func TestDockerDriverReliesOnExecutionContextInsteadOfGlobalClientTimeout(t *testing.T) {
+	driver, err := NewDockerDriver(DockerDriverConfig{Endpoint: "unix:///tmp/sandbox-runner.sock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if driver.client.Timeout != 0 {
+		t.Fatalf("global HTTP timeout = %s; long executions must use their request context deadline", driver.client.Timeout)
 	}
 }
 
@@ -131,6 +143,48 @@ func TestDockerDriverRejectsFailedRuntimeMaintenanceCommand(t *testing.T) {
 	}
 }
 
+func TestDockerDriverStagesBoundedInputAndRunsOnlyFixedAdapter(t *testing.T) {
+	endpoint, requests, closeServer := newUnixDockerServer(t)
+	defer closeServer()
+	requests.setExecOutput(dockerMultiplexedOutput(1, []byte("adapter output")))
+	driver, err := NewDockerDriver(DockerDriverConfig{Endpoint: endpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []byte(`{"request":"server-owned payload"}`)
+	if err := driver.StageAdapterInput(context.Background(), "container-1", input); err != nil {
+		t.Fatalf("StageAdapterInput() error = %v; requests=%v", err, requests.paths())
+	}
+	result, err := driver.RunAdapter(context.Background(), "container-1", AdapterAgentCode, 1024)
+	if err != nil {
+		t.Fatalf("RunAdapter() error = %v; requests=%v", err, requests.paths())
+	}
+	if result.ExitCode != 0 || string(result.Stdout) != "adapter output" || len(result.Stderr) != 0 {
+		t.Fatalf("adapter result = %#v", result)
+	}
+	if got := requests.execCommands(); !sameStrings(got, []string{"/opt/newx/bin/adapter-agent-code"}) {
+		t.Fatalf("adapter command = %v", got)
+	}
+	if got := requests.archiveInput(t); !bytes.Equal(got, input) {
+		t.Fatalf("staged input = %q, want %q", got, input)
+	}
+}
+
+func TestDockerDriverRejectsUnreviewedAdapterWithoutCallingRuntime(t *testing.T) {
+	endpoint, requests, closeServer := newUnixDockerServer(t)
+	defer closeServer()
+	driver, err := NewDockerDriver(DockerDriverConfig{Endpoint: endpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driver.RunAdapter(context.Background(), "container-1", Adapter("shell"), 1024); err == nil {
+		t.Fatal("RunAdapter() unexpectedly accepted unreviewed adapter")
+	}
+	if got := requests.paths(); len(got) != 0 {
+		t.Fatalf("unreviewed adapter made runtime calls: %v", got)
+	}
+}
+
 func TestDockerContainerSummaryReturnsOnlyManagedContainersAndQuarantinesInvalidLabels(t *testing.T) {
 	valid := validRuntimeSpecification()
 	request := newDockerCreateRequest(valid, "")
@@ -161,6 +215,7 @@ type capturedDockerRequests struct {
 	mu           sync.Mutex
 	requests     []capturedDockerRequest
 	execExitCode int
+	execOutput   []byte
 }
 type capturedDockerRequest struct {
 	method string
@@ -212,6 +267,38 @@ func (requests *capturedDockerRequests) execCommands() []string {
 	return commands
 }
 
+func (requests *capturedDockerRequests) setExecOutput(value []byte) {
+	requests.mu.Lock()
+	defer requests.mu.Unlock()
+	requests.execOutput = append([]byte(nil), value...)
+}
+
+func (requests *capturedDockerRequests) archiveInput(t *testing.T) []byte {
+	t.Helper()
+	requests.mu.Lock()
+	defer requests.mu.Unlock()
+	for _, request := range requests.requests {
+		if request.method != http.MethodPut || request.path != "/v1.43/containers/container-1/archive" {
+			continue
+		}
+		reader := tar.NewReader(bytes.NewReader(request.body))
+		header, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name != runtimeAdapterInputFile || header.Mode != 0o400 {
+			t.Fatalf("unsafe staged archive header: %#v", header)
+		}
+		value, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	t.Fatal("staged input archive was not captured")
+	return nil
+}
+
 func newUnixDockerServer(t *testing.T) (string, *capturedDockerRequests, func()) {
 	t.Helper()
 	directory, err := os.MkdirTemp("/private/tmp", "newx-dr-")
@@ -236,11 +323,17 @@ func newUnixDockerServer(t *testing.T) (string, *capturedDockerRequests, func())
 			_, _ = writer.Write([]byte(`{"Id":"container-1"}`))
 		case "/v1.43/containers/container-1/start":
 			writer.WriteHeader(http.StatusNoContent)
+		case "/v1.43/containers/container-1/archive":
+			writer.WriteHeader(http.StatusOK)
 		case "/v1.43/containers/container-1/exec":
 			writer.WriteHeader(http.StatusCreated)
 			_, _ = writer.Write([]byte(`{"Id":"exec-1"}`))
 		case "/v1.43/exec/exec-1/start":
+			requests.mu.Lock()
+			output := append([]byte(nil), requests.execOutput...)
+			requests.mu.Unlock()
 			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write(output)
 		case "/v1.43/exec/exec-1/json":
 			requests.mu.Lock()
 			exitCode := requests.execExitCode
@@ -252,6 +345,14 @@ func newUnixDockerServer(t *testing.T) (string, *capturedDockerRequests, func())
 	})}
 	go func() { _ = server.Serve(listener) }()
 	return "unix://" + path, requests, func() { _ = server.Close(); _ = listener.Close() }
+}
+
+func dockerMultiplexedOutput(stream byte, value []byte) []byte {
+	output := make([]byte, 8+len(value))
+	output[0] = stream
+	output[7] = byte(len(value))
+	copy(output[8:], value)
+	return output
 }
 
 func validRuntimeSpecification() Specification {

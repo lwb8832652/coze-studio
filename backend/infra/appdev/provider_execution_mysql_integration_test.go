@@ -92,13 +92,17 @@ func TestProviderExecutionMySQLIntegrationCAS(t *testing.T) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).Error; err != nil {
 		t.Fatal("create disposable AppDev project fixture table failed")
 	}
-	migrationPath := filepath.Join("..", "..", "..", "docker", "atlas", "migrations", "20260716000100_appdev_provider_executions.sql")
-	migration, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatal("read provider execution migration failed")
-	}
-	if err := db.WithContext(ctx).Exec(string(migration)).Error; err != nil {
-		t.Fatal("apply provider execution migration to disposable schema failed")
+	for _, migrationPath := range []string{
+		filepath.Join("..", "..", "..", "docker", "atlas", "migrations", "20260716000100_appdev_provider_executions.sql"),
+		filepath.Join("..", "..", "..", "docker", "atlas", "migrations", "20260812000100_appdev_provider_execution_actor.sql"),
+	} {
+		migration, err := os.ReadFile(migrationPath)
+		if err != nil {
+			t.Fatal("read provider execution migration failed")
+		}
+		if err := db.WithContext(ctx).Exec(string(migration)).Error; err != nil {
+			t.Fatal("apply provider execution migration to disposable schema failed")
+		}
 	}
 	if err := db.WithContext(ctx).Exec("INSERT INTO appdev_projects (id, space_id) VALUES (?, ?)", "project-a", 1001).Error; err != nil {
 		t.Fatal("seed disposable AppDev project failed")

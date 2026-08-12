@@ -4,6 +4,7 @@
 package sandboxidentity
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,37 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRequestContextRetainsOnlyValidatedServerOwnedIdentity(t *testing.T) {
+	request := Request{Scope: ScopeMCPStdio, SpaceID: 11, UserID: 22, SessionID: "session_33", ExecutionID: "exec_44", RequestDigest: []byte("must-not-be-propagated")}
+	ctx := WithRequest(context.Background(), request)
+	got, ok := RequestFromContext(ctx)
+	if !ok || got.Scope != request.Scope || got.SpaceID != request.SpaceID || got.UserID != request.UserID || got.SessionID != request.SessionID || got.ExecutionID != request.ExecutionID || got.RequestDigest != nil {
+		t.Fatalf("RequestFromContext() = %#v, %v", got, ok)
+	}
+	if _, ok := RequestFromContext(WithRequest(context.Background(), Request{Scope: ScopeMCPStdio, SpaceID: 11, UserID: 22, ExecutionID: "exec_44"})); ok {
+		t.Fatal("RequestFromContext() accepted invalid MCP identity")
+	}
+}
+
+func TestLoadKeyringFromEnvKeepsLegacyProvidersConfigurableAndRejectsPartialSecrets(t *testing.T) {
+	getenv := func(values map[string]string) func(string) string {
+		return func(key string) string { return values[key] }
+	}
+	if _, configured, err := LoadKeyringFromEnv(getenv(nil), time.Minute); err != nil || configured {
+		t.Fatalf("LoadKeyringFromEnv() legacy result = configured:%t err:%v", configured, err)
+	}
+	if _, _, err := LoadKeyringFromEnv(getenv(map[string]string{ExecutionContextSigningKeysJSONEnv: `{"keys":{"runner.v1":"0123456789abcdef"}}`}), time.Minute); err == nil {
+		t.Fatal("LoadKeyringFromEnv() accepted partial configuration")
+	}
+	keyring, configured, err := LoadKeyringFromEnv(getenv(map[string]string{
+		ExecutionContextSigningKeysJSONEnv: `{"keys":{"runner.v1":"0123456789abcdef"}}`,
+		ExecutionContextActiveKeyIDEnv:     "runner.v1",
+	}), time.Minute)
+	if err != nil || !configured || keyring.ActiveKeyID != "runner.v1" {
+		t.Fatalf("LoadKeyringFromEnv() = %#v, %t, %v", keyring, configured, err)
+	}
+}
 
 func TestExecutionIdentitySignsOnlyCanonicalSafeFields(t *testing.T) {
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)

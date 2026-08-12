@@ -260,25 +260,33 @@ type NativeRunnerStatus struct {
 	Healthy              bool
 	AppliedConfigVersion uint64
 	QueueDepth           int
+	QueueByScope         map[domainsandbox.Scope]int
 	ActiveSlots          int
 	SlotCapacity         int
 	QueueHighWatermark   int
 	DrainingCount        int
 	QuarantinedCount     int
+	IdleContainers       int
+	ActiveContainers     int
+	MemoryReserveState   string
 	ReasonCode           string
 }
 
 type SchedulerRuntimeStatusDTO struct {
-	Available            bool   `json:"available"`
-	DesiredConfigVersion uint64 `json:"desired_config_version"`
-	AppliedConfigVersion uint64 `json:"applied_config_version"`
-	QueueDepth           int    `json:"queue_depth"`
-	ActiveSlots          int    `json:"active_slots"`
-	SlotCapacity         int    `json:"slot_capacity"`
-	QueueHighWatermark   int    `json:"queue_high_watermark"`
-	DrainingCount        int    `json:"draining_count"`
-	QuarantinedCount     int    `json:"quarantined_count"`
-	ReasonCode           string `json:"reason_code,omitempty"`
+	Available            bool                        `json:"available"`
+	DesiredConfigVersion uint64                      `json:"desired_config_version"`
+	AppliedConfigVersion uint64                      `json:"applied_config_version"`
+	QueueDepth           int                         `json:"queue_depth"`
+	QueueByScope         map[domainsandbox.Scope]int `json:"queue_by_scope,omitempty"`
+	ActiveSlots          int                         `json:"active_slots"`
+	SlotCapacity         int                         `json:"slot_capacity"`
+	QueueHighWatermark   int                         `json:"queue_high_watermark"`
+	DrainingCount        int                         `json:"draining_count"`
+	QuarantinedCount     int                         `json:"quarantined_count"`
+	IdleContainers       int                         `json:"idle_containers"`
+	ActiveContainers     int                         `json:"active_containers"`
+	MemoryReserveState   string                      `json:"memory_reserve_state,omitempty"`
+	ReasonCode           string                      `json:"reason_code,omitempty"`
 }
 
 // NativeSchedulerRunner is deliberately narrow: Task 3 only persists desired

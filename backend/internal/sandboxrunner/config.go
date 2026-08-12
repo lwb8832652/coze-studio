@@ -23,17 +23,18 @@ import (
 var ErrConfiguration = errors.New("sandbox runner configuration is invalid")
 
 type Config struct {
-	DeploymentID      string
-	ListenAddr        string
-	TLSCertFile       string
-	TLSKeyFile        string
-	DebugLoopbackHTTP bool
-	AuthToken         string
-	ContextVerifyKeys sandboxidentity.Keyring
-	QueueKeys         keyringConfig
-	ActiveQueueKeyID  string
-	RootlessEndpoint  string
-	ExecutionImage    string
+	DeploymentID        string
+	ListenAddr          string
+	TLSCertFile         string
+	TLSKeyFile          string
+	DebugLoopbackHTTP   bool
+	AuthToken           string
+	ContextVerifyKeys   sandboxidentity.Keyring
+	SchedulerConfigKeys keyringConfig
+	QueueKeys           keyringConfig
+	ActiveQueueKeyID    string
+	RootlessEndpoint    string
+	ExecutionImage      string
 }
 
 func (Config) String() string   { return "sandboxrunner.Config{secrets:<redacted>}" }
@@ -79,6 +80,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	var err error
 	if config.ContextVerifyKeys, err = loadIdentityKeyring(getenv("SANDBOX_RUNNER_CONTEXT_VERIFY_KEYS_JSON")); err != nil {
+		return Config{}, ErrConfiguration
+	}
+	if config.SchedulerConfigKeys, err = loadKeyringConfig(getenv("SANDBOX_RUNNER_SCHEDULER_CONFIG_VERIFY_KEYS_JSON")); err != nil {
 		return Config{}, ErrConfiguration
 	}
 	if config.QueueKeys, err = loadKeyringConfig(getenv("SANDBOX_RUNNER_QUEUE_KEYS_JSON")); err != nil ||

@@ -4,18 +4,27 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/coze-dev/coze-studio/backend/internal/sandboxrunner"
 )
 
 func main() {
-	if _, err := sandboxrunner.LoadConfig(os.Getenv); err != nil {
+	config, err := sandboxrunner.LoadConfig(os.Getenv)
+	if err != nil {
 		log.Fatal("sandbox runner configuration is invalid")
 	}
-	// The scheduler, Redis store, and rootless lifecycle manager are composed by
-	// the later Runner runtime tasks. Refuse to bind before those dependencies
-	// exist rather than advertising a healthy execution service with no runtime.
-	log.Fatal("sandbox runner runtime dependencies are not configured")
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	runtime, err := sandboxrunner.NewProcessRuntime(ctx, config)
+	if err != nil {
+		log.Fatal("sandbox runner runtime dependencies are unavailable")
+	}
+	if err := runtime.Run(ctx, config); err != nil {
+		log.Fatal("sandbox runner stopped")
+	}
 }

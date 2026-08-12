@@ -50,6 +50,7 @@ func TestADKMCPRuntimeStdioProviderTransportBuildsCanonicalSecretSafeRequest(t *
 	require.Equal(t, infrasandbox.WorkloadMCPStdio, request.WorkloadKind)
 	require.Equal(t, "mcp/stdio/invoke", request.Entrypoint)
 	require.Equal(t, "mcp_stdio:operation_test", request.IdempotencyKey)
+	require.Equal(t, infrasandbox.ExecutionIdentity{SpaceID: 30, UserID: 7, SessionID: "thread-10-run-20", ExecutionID: "20"}, request.Identity)
 	require.Equal(t, testMCPStdioSecret, request.Env["MCP_TOKEN"])
 	require.Equal(t, []string{"MCP_TOKEN"}, request.Policy.AllowedEnvNames)
 	require.Equal(t, []string{"npx"}, request.Policy.AllowedExecutables)
@@ -568,6 +569,7 @@ func newMCPStdioProviderTransportForTest(
 
 func validMCPStdioProviderCall() ADKMCPRuntimeTransportCall {
 	call := validADKMCPRuntimeStdioCall()
+	call.Run.CreatorID = 7
 	call.Arguments = `{"query":"customer docs"}`
 	call.Server.Config = `{
 		"command":"npx",

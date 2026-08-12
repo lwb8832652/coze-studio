@@ -77,12 +77,12 @@ assert_contract(!atlas_config.match?(%r{(?:mysql|mariadb|postgres(?:ql)?)://}i),
                 'Atlas dev config must not contain a plaintext database URL')
 
 jobs = workflow.fetch('jobs', {})
-expected_jobs = %w[preflight build-server build-web deployment-blocked verify-images promote deploy]
+expected_jobs = %w[preflight build-server build-web build-sandbox-runner build-sandbox-runtime deployment-blocked verify-images promote deploy]
 assert_contract(jobs.keys.sort == expected_jobs.sort, 'workflow jobs must match the required state machine')
 assert_contract(!jobs.key?('migration-hold'), 'manual migration-hold job must be removed')
 assert_contract(!jobs.key?('migrate'), 'remote migrate job must be removed')
 
-%w[preflight build-server build-web verify-images promote].each do |job_name|
+%w[preflight build-server build-web build-sandbox-runner build-sandbox-runtime verify-images promote].each do |job_name|
   job = jobs.fetch(job_name)
   assert_contract(!job.key?('environment'),
                   "#{job_name} must use repository-level Actions configuration")
@@ -154,7 +154,9 @@ assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
 
 {
   'build-server' => ['backend/Dockerfile', 'coze-server'],
-  'build-web' => ['frontend/Dockerfile', 'coze-web']
+  'build-web' => ['frontend/Dockerfile', 'coze-web'],
+  'build-sandbox-runner' => ['backend/Dockerfile.sandbox-runner', 'coze-sandbox-runner'],
+  'build-sandbox-runtime' => ['deploy/sandbox-runner/Dockerfile.runtime', 'coze-sandbox-runtime']
 }.each do |job_name, (dockerfile, repository)|
   job = jobs.fetch(job_name)
   text = job_text(job)
@@ -174,8 +176,8 @@ assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
 end
 
 deployment_blocked = jobs.fetch('deployment-blocked')
-assert_contract(needs(deployment_blocked) == %w[preflight build-server build-web],
-                'deployment-blocked must wait for preflight and both build jobs')
+assert_contract(needs(deployment_blocked) == %w[preflight build-server build-web build-sandbox-runner build-sandbox-runtime],
+                'deployment-blocked must wait for preflight and all image build jobs')
 expected_deployment_blocked_if = normalized_expression(<<~'EXPRESSION')
   always() &&
   needs.preflight.result == 'success' &&
@@ -203,8 +205,8 @@ assert_contract(!job_text(deployment_blocked).include?('secrets.'),
                 'deployment-blocked diagnostics must not read secrets')
 
 verify = jobs.fetch('verify-images')
-assert_contract(needs(verify).sort == %w[build-server build-web preflight],
-                'verify-images must wait for preflight and both push builds')
+assert_contract(needs(verify).sort == %w[build-sandbox-runner build-sandbox-runtime build-server build-web preflight],
+                'verify-images must wait for preflight and all push builds')
 assert_contract(verify['timeout-minutes'] == 15, 'verify-images timeout must be 15 minutes')
 verify_if = verify['if'].to_s
 expected_verify_if = normalized_expression(<<~'EXPRESSION')
@@ -215,12 +217,16 @@ expected_verify_if = normalized_expression(<<~'EXPRESSION')
     (
       github.event_name == 'push' &&
       needs.build-server.result == 'success' &&
-      needs.build-web.result == 'success'
+      needs.build-web.result == 'success' &&
+      needs.build-sandbox-runner.result == 'success' &&
+      needs.build-sandbox-runtime.result == 'success'
     ) ||
     (
       github.event_name == 'workflow_dispatch' &&
       needs.build-server.result == 'skipped' &&
-      needs.build-web.result == 'skipped'
+      needs.build-web.result == 'skipped' &&
+      needs.build-sandbox-runner.result == 'skipped' &&
+      needs.build-sandbox-runtime.result == 'skipped'
     )
   )
 EXPRESSION
@@ -230,14 +236,14 @@ assert_contract(!verify_if.include?('migration_changed'),
                 'verified migration pushes must reach image verification')
 verify_text = job_text(verify)
 assert_contract(verify_text.include?('docker/login-action@v4'), 'verify-images must log in to ACR')
-%w[coze-server:dev- coze-web:dev- docker\ pull docker\ image\ inspect org.opencontainers.image.revision].each do |token|
+%w[coze-server:dev- coze-web:dev- coze-sandbox-runner:dev- coze-sandbox-runtime:dev- docker\ pull docker\ image\ inspect org.opencontainers.image.revision].each do |token|
   assert_contract(verify_text.include?(token.gsub('\\ ', ' ')), "verify-images is missing #{token}")
 end
 assert_contract(!verify_text.include?('docker/build-push-action'), 'dispatch must not rebuild images')
 
 promote = jobs.fetch('promote')
 assert_contract(
-  needs(promote) == %w[preflight build-server build-web verify-images],
+  needs(promote) == %w[preflight build-server build-web build-sandbox-runner build-sandbox-runtime verify-images],
   'promote dependencies are incomplete'
 )
 assert_contract(promote['timeout-minutes'] == 10, 'promote timeout must be 10 minutes')
@@ -255,12 +261,16 @@ expected_promote_if = normalized_expression(<<~'EXPRESSION')
     (
       github.event_name == 'push' &&
       needs.build-server.result == 'success' &&
-      needs.build-web.result == 'success'
+      needs.build-web.result == 'success' &&
+      needs.build-sandbox-runner.result == 'success' &&
+      needs.build-sandbox-runtime.result == 'success'
     ) ||
     (
       github.event_name == 'workflow_dispatch' &&
       needs.build-server.result == 'skipped' &&
-      needs.build-web.result == 'skipped'
+      needs.build-web.result == 'skipped' &&
+      needs.build-sandbox-runner.result == 'skipped' &&
+      needs.build-sandbox-runtime.result == 'skipped'
     )
   )
 EXPRESSION
@@ -282,9 +292,9 @@ assert_contract(!promote_if.include?("needs.verify-images.result == 'skipped'"),
 promote_text = job_text(promote)
 assert_contract(promote_text.include?('docker/login-action@v4'), 'promote must log in to ACR')
 assert_contract(promote_text.include?('docker/setup-buildx-action@v4'), 'promote must set up Buildx')
-assert_contract(promote_text.scan('docker buildx imagetools create').length == 2,
-                'promote must update exactly two mutable tags')
-%w[coze-server:dev coze-web:dev coze-server:dev- coze-web:dev-].each do |token|
+assert_contract(promote_text.scan('docker buildx imagetools create').length == 4,
+                'promote must update exactly four mutable tags')
+%w[coze-server:dev coze-web:dev coze-sandbox-runner:dev coze-sandbox-runtime:dev coze-server:dev- coze-web:dev- coze-sandbox-runner:dev- coze-sandbox-runtime:dev-].each do |token|
   assert_contract(promote_text.include?(token), "promote is missing #{token}")
 end
 

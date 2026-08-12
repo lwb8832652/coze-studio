@@ -169,10 +169,11 @@ func (s *sandboxRuntimeSelectionStub) snapshot() (infrasandbox.ExecuteRequest, i
 
 func sandboxRuntimeRequest() *appdevapp.RuntimeManagerRequest {
 	return &appdevapp.RuntimeManagerRequest{
-		SpaceID:    "1001",
-		ProjectID:  "project-1",
-		ProjectDir: "/Users/tester/private/project",
-		SourceURL:  "https://objects.example.com/source.zip?signature=must-not-log",
+		SpaceID:     "1001",
+		ActorUserID: 42,
+		ProjectID:   "project-1",
+		ProjectDir:  "/Users/tester/private/project",
+		SourceURL:   "https://objects.example.com/source.zip?signature=must-not-log",
 		Snapshot: &appdevapp.RuntimeSnapshotReference{
 			ID:          "snapshot-0123456789abcdef",
 			Path:        "source.zip",
@@ -237,6 +238,9 @@ func TestSandboxRuntimeManagerUsesScopeAppDevAndBoundedSafeExecuteRequest(t *tes
 	require.Equal(t, infrasandbox.WorkloadAppDev, request.WorkloadKind)
 	require.Equal(t, "appdev-runtime-1", request.IdempotencyKey)
 	require.Equal(t, "appdev/runtime", request.Entrypoint)
+	require.Equal(t, infrasandbox.ExecutionIdentity{
+		SpaceID: 1001, UserID: 42, ProjectID: "project-1", ExecutionID: "appdev-runtime-1",
+	}, request.Identity)
 	require.Empty(t, request.Env)
 	require.LessOrEqual(t, request.Deadline.Sub(time.Unix(2_000_100_000, 0).UTC()), 45*time.Second)
 	require.Equal(t, 512, request.Policy.MemoryLimitMB)

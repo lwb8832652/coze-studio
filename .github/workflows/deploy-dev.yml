@@ -252,9 +252,71 @@ jobs:
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
 
+  build-sandbox-runner:
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - name: Check out target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push immutable sandbox runner image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile.sandbox-runner
+          push: true
+          tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runner:dev-${{ needs.preflight.outputs.target_sha }}
+          build-args: |
+            GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+
+  build-sandbox-runtime:
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - name: Check out target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+
+      - name: Log in to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push immutable sandbox runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/sandbox-runner/Dockerfile.runtime
+          push: true
+          tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runtime:dev-${{ needs.preflight.outputs.target_sha }}
+          build-args: |
+            GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+
   deployment-blocked:
     runs-on: ubuntu-latest
-    needs: [preflight, build-server, build-web]
+    needs: [preflight, build-server, build-web, build-sandbox-runner, build-sandbox-runtime]
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
@@ -275,7 +337,7 @@ jobs:
   verify-images:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [preflight, build-server, build-web]
+    needs: [preflight, build-server, build-web, build-sandbox-runner, build-sandbox-runtime]
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
@@ -284,18 +346,24 @@ jobs:
         (
           github.event_name == 'push' &&
           needs.build-server.result == 'success' &&
-          needs.build-web.result == 'success'
+          needs.build-web.result == 'success' &&
+          needs.build-sandbox-runner.result == 'success' &&
+          needs.build-sandbox-runtime.result == 'success'
         ) ||
         (
           github.event_name == 'workflow_dispatch' &&
           needs.build-server.result == 'skipped' &&
-          needs.build-web.result == 'skipped'
+          needs.build-web.result == 'skipped' &&
+          needs.build-sandbox-runner.result == 'skipped' &&
+          needs.build-sandbox-runtime.result == 'skipped'
         )
       )
     env:
       TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
       SERVER_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}
       WEB_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}
+      SANDBOX_RUNNER_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runner:dev-${{ needs.preflight.outputs.target_sha }}
+      SANDBOX_RUNTIME_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runtime:dev-${{ needs.preflight.outputs.target_sha }}
     steps:
       - name: Log in to ACR
         uses: docker/login-action@v4
@@ -308,7 +376,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for image in "$SERVER_IMAGE" "$WEB_IMAGE"; do
+          for image in "$SERVER_IMAGE" "$WEB_IMAGE" "$SANDBOX_RUNNER_IMAGE" "$SANDBOX_RUNTIME_IMAGE"; do
             docker pull "$image"
             revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
             if [ "$revision" != "$TARGET_SHA" ]; then
@@ -320,7 +388,7 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [preflight, build-server, build-web, verify-images]
+    needs: [preflight, build-server, build-web, build-sandbox-runner, build-sandbox-runtime, verify-images]
     outputs:
       target_sha: ${{ needs.preflight.outputs.target_sha }}
     if: >-
@@ -336,12 +404,16 @@ jobs:
         (
           github.event_name == 'push' &&
           needs.build-server.result == 'success' &&
-          needs.build-web.result == 'success'
+          needs.build-web.result == 'success' &&
+          needs.build-sandbox-runner.result == 'success' &&
+          needs.build-sandbox-runtime.result == 'success'
         ) ||
         (
           github.event_name == 'workflow_dispatch' &&
           needs.build-server.result == 'skipped' &&
-          needs.build-web.result == 'skipped'
+          needs.build-web.result == 'skipped' &&
+          needs.build-sandbox-runner.result == 'skipped' &&
+          needs.build-sandbox-runtime.result == 'skipped'
         )
       )
     steps:
@@ -368,6 +440,20 @@ jobs:
           docker buildx imagetools create \
             --tag "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev" \
             "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}"
+
+      - name: Promote sandbox runner image
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runner:dev" \
+            "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runner:dev-${{ needs.preflight.outputs.target_sha }}"
+
+      - name: Promote sandbox runtime image
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runtime:dev" \
+            "${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runtime:dev-${{ needs.preflight.outputs.target_sha }}"
 
   deploy:
     runs-on: ubuntu-latest

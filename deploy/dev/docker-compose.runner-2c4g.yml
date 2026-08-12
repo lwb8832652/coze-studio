@@ -1,0 +1,167 @@
+# Copyright 2025 coze-dev Authors
+# SPDX-License-Identifier: Apache-2.0
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  nsqd:
+    image: nsqio/nsq:v1.3.0
+    pull_policy: missing
+    command:
+      - /nsqd
+      - --data-path=/data
+      - --mem-queue-size=0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 384m
+    cpus: 0.50
+    pids_limit: 128
+    expose:
+      - "4150"
+      - "4151"
+    volumes:
+      - nsq-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O - http://127.0.0.1:4151/ping | grep -qx OK
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - coze-dev
+    logging: *default-logging
+
+  coze-server:
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-server:${SERVER_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      COZE_MQ_TYPE: nsq
+      MQ_NAME_SERVER: nsqd:4150
+      AGENT_THREAD_RUNTIME_DEFAULT: eino_adk
+      AGENT_THREAD_EINO_ADK_ENABLED: "true"
+      AGENT_THREAD_WORKER_ENABLED: "true"
+      AGENT_THREAD_RESUME_WORKER_ENABLED: "true"
+      AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED: "true"
+    expose:
+      - "8888"
+    volumes:
+      - type: bind
+        source: ./app.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://127.0.0.1:8888/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      nsqd:
+        condition: service_healthy
+        restart: true
+    networks:
+      - coze-dev
+    logging: *default-logging
+
+  coze-sandbox-runner:
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-sandbox-runner:${SANDBOX_RUNNER_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    env_file:
+      - path: ${SANDBOX_RUNNER_ENV_FILE:-./sandbox-runner.env}
+        required: true
+    environment:
+      SANDBOX_RUNNER_ENABLED: "true"
+      SANDBOX_RUNNER_EMERGENCY_STOP: "false"
+      SANDBOX_RUNNER_LISTEN_ADDR: :9443
+      SANDBOX_RUNNER_ROOTLESS_ENDPOINT: unix:///app/runtime/docker.sock
+      SANDBOX_RUNNER_TLS_CERT_FILE: /app/secrets/sandbox-runner.crt
+      SANDBOX_RUNNER_TLS_KEY_FILE: /app/secrets/sandbox-runner.key
+      SANDBOX_RUNNER_EXECUTION_IMAGE: ${SANDBOX_RUNNER_EXECUTION_IMAGE:?SANDBOX_RUNNER_EXECUTION_IMAGE is required}
+    group_add:
+      - ${SANDBOX_RUNNER_ROOTLESS_SOCKET_GID:?SANDBOX_RUNNER_ROOTLESS_SOCKET_GID is required}
+    expose:
+      - "9443"
+    mem_limit: 192m
+    cpus: 0.20
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: ${SANDBOX_RUNNER_ROOTLESS_SOCKET:?SANDBOX_RUNNER_ROOTLESS_SOCKET is required}
+        target: /app/runtime/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SANDBOX_RUNNER_TLS_CERT_FILE:-./secrets/sandbox-runner.crt}
+        target: /app/secrets/sandbox-runner.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SANDBOX_RUNNER_TLS_KEY_FILE:-./secrets/sandbox-runner.key}
+        target: /app/secrets/sandbox-runner.key
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --no-check-certificate --quiet --tries=1 --spider https://127.0.0.1:9443/v1/health
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    networks:
+      - coze-dev
+    logging: *default-logging
+
+  coze-web:
+    image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-web:${WEB_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8888}:80"
+    depends_on:
+      coze-server:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://127.0.0.1/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - coze-dev
+    logging: *default-logging
+
+networks:
+  coze-dev:
+    driver: bridge
+
+volumes:
+  nsq-data:

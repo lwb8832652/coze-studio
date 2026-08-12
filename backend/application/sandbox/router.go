@@ -315,6 +315,13 @@ func (s *SelectedProvider) Execute(
 	ctx context.Context,
 	request infrasandbox.ExecuteRequest,
 ) (result infrasandbox.ExecuteResult, resultErr error) {
+	// Signed execution context is an opt-in Runner extension. Retaining it for
+	// legacy or third-party providers would turn a purely internal field into a
+	// new required transport capability, so those providers keep their exact
+	// pre-existing ExecuteRequest behavior.
+	if !s.HasFeature(domainsandbox.ProviderFeatureSignedExecutionContext) {
+		request.Identity = infrasandbox.ExecutionIdentity{}
+	}
 	startedAt := time.Now()
 	defer func() {
 		if s == nil {
@@ -819,14 +826,15 @@ func (s *SelectedProvider) markCleanupPending(contractCleanup bool) {
 // intentionally unexported; explicit formatters redact every internal value and
 // MarshalJSON rejects serialization rather than emitting a misleading object.
 type ExecutionCheckpoint struct {
-	providerKey        string
-	scope              domainsandbox.Scope
-	leaseToken         string
-	leaseFence         string
-	leaseExpiryMilli   int64
-	executionID        string
-	queueStatusFeature bool
-	admissionLimit     int
+	providerKey                   string
+	scope                         domainsandbox.Scope
+	leaseToken                    string
+	leaseFence                    string
+	leaseExpiryMilli              int64
+	executionID                   string
+	queueStatusFeature            bool
+	signedExecutionContextFeature bool
+	admissionLimit                int
 }
 
 func (ExecutionCheckpoint) String() string   { return "ExecutionCheckpoint{secrets:<redacted>}" }
@@ -860,8 +868,9 @@ func (s *SelectedProvider) Checkpoint() (ExecutionCheckpoint, error) {
 	return ExecutionCheckpoint{
 		providerKey: providerKey, scope: scope, leaseToken: token,
 		leaseFence: fence, leaseExpiryMilli: expiry, executionID: executionID,
-		queueStatusFeature: s.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1),
-		admissionLimit:     s.admissionLimit,
+		queueStatusFeature:            s.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1),
+		signedExecutionContextFeature: s.HasFeature(domainsandbox.ProviderFeatureSignedExecutionContext),
+		admissionLimit:                s.admissionLimit,
 	}, nil
 }
 
@@ -1366,7 +1375,10 @@ func (r *ProviderRouter) Resume(
 		descriptor.admissionLimit = checkpoint.admissionLimit
 		descriptor.features = nil
 		if checkpoint.queueStatusFeature {
-			descriptor.features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+			descriptor.features = append(descriptor.features, domainsandbox.ProviderFeatureQueueStatusV1)
+		}
+		if checkpoint.signedExecutionContextFeature {
+			descriptor.features = append(descriptor.features, domainsandbox.ProviderFeatureSignedExecutionContext)
 		}
 	} else {
 		descriptor.features = nil
