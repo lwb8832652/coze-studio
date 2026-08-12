@@ -32,12 +32,13 @@ import (
 type ADKCheckpointStoreFactory func(run *RunSummary) (adk.CheckPointStore, error)
 
 type ADKExecutor struct {
-	factory                     ADKAgentFactory
-	eventSink                   RunEventSink
-	checkpointStoreFactory      ADKCheckpointStoreFactory
-	usageCollector              UsageCollector
-	cancelRegistry              *ADKCancelRegistry
-	subagentRetrySourceResolver ADKSubagentRetrySourceResolver
+	factory                      ADKAgentFactory
+	eventSink                    RunEventSink
+	checkpointStoreFactory       ADKCheckpointStoreFactory
+	usageCollector               UsageCollector
+	cancelRegistry               *ADKCancelRegistry
+	subagentRetrySourceResolver  ADKSubagentRetrySourceResolver
+	adaptiveBootstrapCoordinator AdaptiveBootstrapCoordinator
 }
 
 type ADKExecutorOption func(*ADKExecutor)
@@ -53,6 +54,14 @@ func WithADKSubagentRetrySourceResolver(
 ) ADKExecutorOption {
 	return func(executor *ADKExecutor) {
 		executor.subagentRetrySourceResolver = resolver
+	}
+}
+
+func WithADKAdaptiveBootstrapCoordinator(
+	coordinator AdaptiveBootstrapCoordinator,
+) ADKExecutorOption {
+	return func(executor *ADKExecutor) {
+		executor.adaptiveBootstrapCoordinator = coordinator
 	}
 }
 
@@ -89,6 +98,11 @@ func (e *ADKExecutor) Execute(
 	messages, err := parseModelExecutorMessages(run.Input, "")
 	if err != nil {
 		return nil, err
+	}
+	if e.adaptiveBootstrapCoordinator != nil {
+		if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {
+			return nil, fmt.Errorf("bootstrap adaptive execution: %w", err)
+		}
 	}
 	executionCtx, cancelExecution := context.WithCancel(ctx)
 	defer cancelExecution()

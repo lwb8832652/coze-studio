@@ -19,6 +19,7 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -31,6 +32,69 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
+
+func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {
+	order := make([]string, 0, 3)
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			order = append(order, "factory")
+			return &scriptedADKAgent{run: func(context.Context) []*adk.AgentEvent {
+				return []*adk.AgentEvent{{AgentName: "lead", Output: &adk.AgentOutput{
+					MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("done", nil), Role: schema.Assistant},
+				}}}
+			}}, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			order = append(order, "store")
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) error {
+			order = append(order, "bootstrap")
+			return nil
+		})),
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10, RunID: 20,
+		Input: `{"messages":[{"role":"user","content":"research"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "done", result.Message)
+	require.Equal(t, []string{"bootstrap", "store", "factory"}, order)
+}
+
+func TestADKExecutorStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testing.T) {
+	bootstrapErr := errors.New("bootstrap rejected")
+	factoryCalls, storeCalls := 0, 0
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			factoryCalls++
+			return nil, errors.New("factory must not run")
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			storeCalls++
+			return nil, errors.New("store must not run")
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) error {
+			return bootstrapErr
+		})),
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10, RunID: 20,
+		Input: `{"messages":[{"role":"user","content":"research"}]}`,
+	})
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, bootstrapErr)
+	require.Zero(t, factoryCalls)
+	require.Zero(t, storeCalls)
+}
 
 func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) {
 	agent := &scriptedADKAgent{

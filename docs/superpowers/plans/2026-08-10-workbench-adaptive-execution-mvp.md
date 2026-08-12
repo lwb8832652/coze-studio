@@ -324,10 +324,15 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
 - [x] P1M-C2b 在 private `AdaptiveExecutionRepository` 实现 durable bootstrap 的 exact-tuple
       commit/readback，并以 internal/unsequenced `adaptive.admission`、`adaptive.decision` 和
       `workbench_control` checkpoint 存储；generic writer/reader 隔离这些保留事实。真实 MySQL
-      双连接验收仍待显式 disposable DSN/DDL gate；没有 coordinator 或 production execution edge，未接
-      `ADKExecutor.Execute/Resume`、runtime selector/handler、IDL、frontend 或 feature-gate production
-      behavior。该切片仍是 `implemented_unwired`，不代表 P1M 或 P1L PASS，whole-Thread DELETE guard
-      继续 hard-disabled。
+      双连接验收仍待显式 disposable DSN/DDL gate。该 repository 切片本身不接 runtime，不代表 P1M
+      或 P1L PASS，whole-Thread DELETE guard 继续 hard-disabled。
+- [x] P1M-C3a 只接已 enrolled、fresh、顶层 Eino ADK `Execute`：输入解析后、`buildRuntime` 前由
+      gate-off coordinator 先读 durable replay，首次才提交固定 baseline `execute/multi_step`；未
+      enrolled no-op 仅适用于已通过 Execute Thread/Run 身份校验且启动依赖已装配的明确 `task` 或既有
+      空 `RunKind` 顶层兼容形式；logical Journal root 可与 execution Run 不同，失败不得创建 checkpoint
+      store 或 Agent runtime。`Resume`、legacy runtime、gate-on、IDL 与 frontend/UI 暂不接；真实 MySQL
+      双连接验收继续记为 `NOT_VERIFIED`，P1M 未 PASS，P1L deferred 与 whole-Thread DELETE hard guard
+      不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

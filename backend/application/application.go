@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/plantask"
@@ -411,6 +412,16 @@ func Init(ctx context.Context) (err error) {
 		agentthread.WithADKSubagentRetrySourceResolver(
 			agentthread.NewApplicationADKSubagentRetrySourceResolver(
 				primaryServices.agentThreadSVC,
+			),
+		),
+		agentthread.WithADKAdaptiveBootstrapCoordinator(
+			agentthread.NewAdaptiveBootstrapCoordinator(
+				agentthread.AdaptiveBootstrapCoordinatorOptions{
+					AttemptReader: primaryServices.agentThreadSVC.JournalRecoveryRepository,
+					Repository:    threadrepository.NewAdaptiveExecutionRepository(infra.DB),
+					IDGen:         infra.IDGenSVC,
+					Now:           func() int64 { return time.Now().UnixMilli() },
+				},
 			),
 		),
 	)

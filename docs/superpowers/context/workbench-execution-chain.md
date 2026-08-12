@@ -148,12 +148,14 @@ P1M-C1 在此 admission 边界之后定义内部、mode-free 的纯 Go
 codec 和 domain validation；application 保持 C1 validator wrapper 与 sentinel alias，兼容既有错误
 合同。P1M-C2b 已在 private `AdaptiveExecutionRepository` 提交并只读回放 bootstrap 的
 `adaptive.admission`/`adaptive.decision` exact tuple 及 `workbench_control` checkpoint；generic
-writer/reader 隔离这些保留事实。该 C1/C2a/C2b 节点仍是 `implemented_unwired` 的 future contract
-boundary，不属于生产执行链：真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；没有
-coordinator、production execution edge、`ADKExecutor.Execute/Resume` consumer、runtime
-selector/handler、IDL、frontend 或 feature-gate production behavior。historical runtime controls 与
-package-private server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，
-whole-Thread DELETE guard 继续 hard-disabled。
+writer/reader 隔离这些保留事实。P1M-C3a 只增加一条窄生产边：已 enrolled、fresh、顶层 Eino ADK
+`Execute` 在输入解析后、`buildRuntime` 前调用 gate-off coordinator；它先读 exact replay，首次才
+提交固定 baseline decision。明确 `task` 和既有空 `RunKind` 顶层兼容形式在有效 Execute 身份及
+启动依赖已满足时，未 enrolled no-op；logical Journal root 可与 execution Run 不同。
+真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
+selector/handler、IDL 与 frontend/UI 仍未接。historical runtime controls 与 package-private
+server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
+DELETE guard 继续 hard-disabled。
 
 ## 持久化与异步执行
 
@@ -226,15 +228,16 @@ P1M-B/C 可在 guard 保持时继续，P1D 仍需完整 P1M 与 rolling-authorit
 Plan mutation 与 primitive 的锁顺序统一为先锁 `AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan
 mutation 仍然可达。
 
-`AdaptiveGate` 仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
-它，现有 `FinalizeRunSuccess` production caller 继续使用 nil gate；adaptive boundary 与 recovery
-source primitive 也没有 production caller。P1M-C1/C2a 的纯 Go snapshot/decision、strict canonical
-codec/domain validation 与 application compatibility wrapper，以及 C2b private durable bootstrap
-commit/readback 和 generic reserved-fact isolation 已实现；真实 MySQL 双连接验收仍待显式 disposable
-DSN/DDL gate。没有 coordinator、production execution edge、`ADKExecutor.Execute/Resume` consumer、
-runtime selector/handler、IDL、frontend 或 feature-gate production behavior。因此本阶段不在执行图中
-制造不存在的 production edge；P2 仍负责完整 VerificationResult codec、registry、producer、
-nullable-Plan authority 分支和 application/ADK 接线，并受上述两个 blocker 约束。
+`FinalizeRunSuccess` 的 `AdaptiveGate` 仍是 implemented-but-unwired repository gate，production caller
+继续使用 nil gate；recovery source primitive 也没有 production caller。P1M-C1/C2a 的纯 Go
+snapshot/decision、strict canonical codec/domain validation 与 application compatibility wrapper，以及
+C2b private durable bootstrap commit/readback 和 generic reserved-fact isolation 已实现。C3a 只让
+`ADKExecutor.Execute` 在构建 runtime 前调用 gate-off bootstrap coordinator；明确 `task` 和既有空
+`RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled no-op，失败不会创建
+checkpoint store 或 Agent。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
+`Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
+VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
+blocker 约束。
 
 ### Canonical Thread HTTP 契约
 

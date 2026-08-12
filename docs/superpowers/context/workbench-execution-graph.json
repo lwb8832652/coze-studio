@@ -408,11 +408,11 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b mode-free adaptive contract and durable bootstrap future boundary",
+      "label": "P1M-C1/C2a/C2b contract plus C3a conditional fresh Execute bootstrap",
       "layer": "application",
-      "kind": "internal_future_contract_boundary",
+      "kind": "conditional_runtime_boundary",
       "production_status": "current",
-      "runtime_scope": "compatibility_contract",
+      "runtime_scope": "canonical_runtime",
       "source_anchors": [
         {
           "path": "backend/domain/agentthread/entity/adaptive_execution.go",
@@ -448,6 +448,16 @@
           "path": "backend/domain/agentthread/repository/mysql.go",
           "symbol": "createBaseRunEvent",
           "locator": "func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).Bootstrap",
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSummary) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Execute",
+          "locator": "if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {"
         }
       ],
       "evidence": [
@@ -478,6 +488,14 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_test.go",
           "locator": "func TestThreadRepositoryGenericCheckpointSurfaceExcludesControlFacts(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
         }
       ]
     },
@@ -3893,6 +3911,42 @@
       ]
     },
     {
+      "id": "edge.adk_execute_delegates_adaptive_bootstrap",
+      "from": "runtime.adk_executor.execute",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adaptive_bootstrap_precedes_agent_build",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "runtime.adk_agent_factory.build",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "agent, store, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "require.Equal(t, []string{\"bootstrap\", \"store\", \"factory\"}, order)"
+        }
+      ]
+    },
+    {
       "id": "edge.factory_builds_chat_agent",
       "from": "runtime.adk_agent_factory.build",
       "to": "runtime.eino.chat_model_agent",
@@ -5561,6 +5615,7 @@
       "terminal": "runtime.event_sink.emit",
       "ordered_node_ids": [
         "runtime.adk_executor.execute",
+        "application.adaptive_mode_free_contract_boundary",
         "runtime.adk_agent_factory.build",
         "runtime.eino.chat_model_agent",
         "runtime.eino.runner",
@@ -5568,13 +5623,15 @@
         "runtime.event_sink.emit"
       ],
       "ordered_edge_ids": [
-        "edge.adk_builds_agent",
+        "edge.adk_execute_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_precedes_agent_build",
         "edge.factory_builds_chat_agent",
         "edge.chat_agent_precedes_runner",
         "edge.runner_emits_adk_events",
         "edge.mapper_emits_sink"
       ],
       "required_side_edge_ids": [
+        "edge.adk_builds_agent",
         "edge.adk_uses_eino",
         "edge.adk_adapts_mcp_go",
         "edge.factory_configures_ark",
@@ -5919,9 +5976,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D production wiring and P1M-C1/C2a/C2b adaptive bootstrap",
-      "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. P1M-C1 defines pure Go, mode-free AdaptiveAdmissionSnapshot/ExecutionDecision validators and a deterministic gate-off-only BaselineDecisionProducer. P1M-C2a adds pure domain adaptivecontract strict canonical admission/decision codec and fail-closed domain validation while application preserves C1 validator wrappers and sentinel aliases. P1M-C2b adds private durable bootstrap exact-tuple commit/readback and generic reserved-fact isolation for internal `adaptive.admission`/`adaptive.decision` and `workbench_control` facts, but real MySQL two-connection acceptance remains pending an explicitly gated disposable DSN/DDL environment. C2b has no coordinator or production execution edge: no ADKExecutor.Execute/Resume consumer, runtime selector/handler, IDL/frontend wiring, or feature-gate production behavior. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-B1 additionally freezes public Application submissions before runtime normalization while preserving one package-private server-owned ADK child compatibility seam and historical resume/retry/recovery Config inheritance. Historical runtime controls remain. P1M-A/B1/C1/C2a/C2b are not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a fresh Execute slice",
+      "status": "partially_wired",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a now adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. Historical runtime controls and the package-private server-owned ADK child compatibility seam remain, so P1M-A/B1/C1/C2a/C2b/C3a are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -6014,6 +6071,14 @@
         {
           "path": "backend/application/agentthread/adaptive_baseline_decision_test.go",
           "locator": "func TestBaselineDecisionProducerProducesFixedMultiStepDecision(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSummary) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
         }
       ]
     },
@@ -6159,11 +6224,13 @@
         "tool",
         "MCP",
         "AgentEvent",
-        "EventSink"
+        "EventSink",
+        "gate-off bootstrap"
       ],
       "smoke_node_ids": ["runtime.adk_executor.execute"],
       "required_node_ids": [
         "runtime.adk_executor.execute",
+        "application.adaptive_mode_free_contract_boundary",
         "runtime.adk_agent_factory.build",
         "runtime.eino.chat_model_agent",
         "runtime.eino.runner",
@@ -6171,7 +6238,8 @@
         "runtime.event_sink.emit"
       ],
       "required_edge_ids": [
-        "edge.adk_builds_agent",
+        "edge.adk_execute_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_precedes_agent_build",
         "edge.factory_builds_chat_agent",
         "edge.chat_agent_precedes_runner",
         "edge.runner_emits_adk_events",

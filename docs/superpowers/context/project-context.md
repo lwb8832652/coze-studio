@@ -133,10 +133,13 @@ admission/decision codec 与 domain validation，application 保持 C1 validator
 alias，兼容既有 `errors.Is` 合同。P1M-C2b 已在 private `AdaptiveExecutionRepository` 实现 durable
 bootstrap 的 exact-tuple commit/readback，并隔离 `adaptive.admission`、`adaptive.decision` 与
 `workbench_control` control checkpoint，通用 writer/reader 不可写入或枚举这些保留事实。这仍是
-P1M-B1 之后的 `implemented_unwired` 内部/未来合同边界：真实 MySQL 双连接验收仍待显式
-disposable DSN/DDL gate；没有 coordinator 或 production execution edge，也没有
-`ADKExecutor.Execute/Resume` consumer、runtime selector/handler、IDL、frontend 或 feature-gate
-production behavior。历史 runtime controls 与 package-private server-owned subagent compatibility
+P1M-B1 之后的内部合同边界。P1M-C3a 已把 gate-off coordinator 接入已 enrolled、fresh、顶层
+Eino ADK `Execute`：输入解析成功后先读 durable replay，首次才提交固定 baseline
+`execute/multi_step`，随后才允许创建 checkpoint store 与 Agent runtime；明确 `task` 和既有空
+`RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled 保持 no-op。logical
+Journal root 可以与当前 execution Run 不同。真实 MySQL 双连接验收仍待显式
+disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
+和 frontend/UI 未接。历史 runtime controls 与 package-private server-owned subagent compatibility
 seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
