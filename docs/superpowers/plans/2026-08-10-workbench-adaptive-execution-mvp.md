@@ -289,10 +289,16 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       Config/Context fixture 证明历史继承不被新 admission 改写。
 - [x] P1M-C1 定义纯 Go、mode-free `AdaptiveAdmissionSnapshot`/`ExecutionDecision` 和
       fail-closed validators；`BaselineDecisionProducer` 仅 gate-off、deterministic 地生成固定
-      `execute/multi_step` decision，gate-on fail closed。该内部 future contract 尚未接 codec、持久化、
-      coordinator、`ADKExecutor.Execute/Resume`、IDL 或前端；历史 runtime controls 和
+      `execute/multi_step` decision，gate-on fail closed。该内部 future contract 保持
+      `implemented_unwired`；历史 runtime controls 和
       package-private server-owned subagent compatibility seam 保持，故 P1M 未 PASS。P1L 继续 deferred，
       whole-Thread DELETE hard-disabled。
+- [x] P1M-C2a 在纯 domain `backend/domain/agentthread/adaptivecontract` 实现 strict canonical
+      admission/decision codec 与 fail-closed domain validation；application 保持 C1 validator wrapper
+      和 sentinel alias，兼容既有 `errors.Is` 合同。durable bootstrap commit/readback 仍不存在（C2b
+      pending）；没有 coordinator 或 production execution edge，未接
+      `ADKExecutor.Execute/Resume`、runtime selector/handler、IDL、frontend 或 feature-gate production
+      behavior。该切片不代表 P1M 或 P1L PASS，whole-Thread DELETE guard 继续 hard-disabled。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

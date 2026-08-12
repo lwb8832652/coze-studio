@@ -140,14 +140,18 @@ public Application 用例的新提交不能绕过 ingress freeze。`CreateRun` �
 与 lease recovery 不接收新的外部 Config/Context，而是原样继承已持久化来源；P1M-B1
 不改写历史 Run，也不代表 mode consumer 或完整 P1M 已退休。
 
-P1M-C1 在此 admission 边界之后仅定义内部、mode-free 的纯 Go
+P1M-C1 在此 admission 边界之后定义内部、mode-free 的纯 Go
 `AdaptiveAdmissionSnapshot`、`ExecutionDecision` 和 validators。它的
 `BaselineDecisionProducer` 无 I/O 且 deterministic；只在 gate-off 生成固定
-`execute/multi_step`、安全的服务端摘要和空 deliverables/checks，gate-on 明确拒绝。
-该 C1 节点是 implemented_unwired 的 future contract boundary，不属于生产执行链：尚无
-codec、durable persistence、coordinator、`ADKExecutor.Execute/Resume` consumer、IDL 或前端暴露。
-historical runtime controls 与 package-private server-owned subagent compatibility seam 继续存在；
-P1M 未 PASS。P1L 仍 deferred，whole-Thread DELETE 继续 hard-disabled。
+`execute/multi_step`、安全的服务端摘要和空 deliverables/checks，gate-on 明确拒绝。P1M-C2a 已在
+纯 domain `backend/domain/agentthread/adaptivecontract` 实现 strict canonical admission/decision
+codec 和 domain validation；application 保持 C1 validator wrapper 与 sentinel alias，兼容既有错误
+合同。该 C1/C2a 节点仍是 `implemented_unwired` 的 future contract boundary，不属于生产执行链：
+durable bootstrap commit/readback 尚不存在，C2b pending；没有 coordinator、production execution
+edge、`ADKExecutor.Execute/Resume` consumer、runtime selector/handler、IDL、frontend 或
+feature-gate production behavior。historical runtime controls 与 package-private server-owned
+subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread DELETE guard
+继续 hard-disabled。
 
 ## 持久化与异步执行
 
@@ -222,10 +226,13 @@ mutation 仍然可达。
 
 `AdaptiveGate` 仍是 implemented-but-unwired repository gate：application/ADK 生产代码没有构造
 它，现有 `FinalizeRunSuccess` production caller 继续使用 nil gate；adaptive boundary 与 recovery
-source primitive 也没有 production caller。P1M-C1 的纯 Go snapshot/decision/validator 与 gate-off
-baseline producer 同样没有 codec、persistence、coordinator 或 Execute/Resume consumer。因此本阶段不在执行图中制造不存在的 production edge；
-P2 仍负责完整 VerificationResult codec、registry、producer、nullable-Plan authority 分支和
-application/ADK 接线，并受上述两个 blocker 约束。
+source primitive 也没有 production caller。P1M-C1/C2a 的纯 Go snapshot/decision、strict canonical
+codec/domain validation 与 application compatibility wrapper 已实现，但 durable bootstrap
+commit/readback 尚未实现（C2b pending）；没有 coordinator、production execution edge、
+`ADKExecutor.Execute/Resume` consumer、runtime selector/handler、IDL、frontend 或 feature-gate
+production behavior。因此本阶段不在执行图中制造不存在的 production edge；P2 仍负责完整
+VerificationResult codec、registry、producer、nullable-Plan authority 分支和 application/ADK 接线，
+并受上述两个 blocker 约束。
 
 ### Canonical Thread HTTP 契约
 

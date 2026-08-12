@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/adaptivecontract"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
@@ -395,4 +396,62 @@ func TestValidateExecutionDecisionAgainstAdmissionReturnsDecisionValidationBefor
 	decision := validDecision(entity.ExecutionDecisionExecute, entity.ExecutionShapeMultiStep)
 	decision.DecisionID = ""
 	require.ErrorIs(t, ValidateExecutionDecisionAgainstAdmission(admission, decision), ErrExecutionDecisionInvalid)
+}
+
+func TestAdaptiveAdmissionValidatorsAliasDomainSentinels(t *testing.T) {
+	require.Same(t, adaptivecontract.ErrAdaptiveAdmissionInvalid, ErrAdaptiveAdmissionInvalid)
+	require.Same(t, adaptivecontract.ErrExecutionDecisionInvalid, ErrExecutionDecisionInvalid)
+	require.Same(t, adaptivecontract.ErrAdaptiveDecisionBlockedPolicy, ErrAdaptiveDecisionBlockedPolicy)
+}
+
+func TestAdaptiveSafeTextParityWithPublicProjectionFrozenCorpus(t *testing.T) {
+	corpus := []string{
+		"credential=secret", "token=secret", "Bearer abcdefgh", "api_key=secret", "access_token=secret", "client_secret=secret", "password=secret",
+		"http://example.test", "https://example.test", "file://private", "s3://bucket/key", "oss://bucket/key", "cos://bucket/key", "minio://bucket/key",
+		"/private/task", `C:\\private\\task`, `\\server\\share`, "safe visible text", "artifact-1",
+	}
+	fields := map[string]func(*entity.ExecutionDecision, string){
+		"goal_summary": func(v *entity.ExecutionDecision, raw string) { v.GoalSummary = raw },
+		"deliverables": func(v *entity.ExecutionDecision, raw string) { v.Deliverables = []string{raw} },
+		"safe_summary": func(v *entity.ExecutionDecision, raw string) { v.SafeSummary = raw },
+		"clarification_question": func(v *entity.ExecutionDecision, raw string) {
+			*v = validDecision(entity.ExecutionDecisionClarification, entity.ExecutionShapeEmpty)
+			v.ClarificationQuestion = &raw
+		},
+		"acceptance_checks_safe_description": func(v *entity.ExecutionDecision, raw string) { v.AcceptanceChecks[0].SafeDescription = raw },
+	}
+	for fieldName, set := range fields {
+		for _, raw := range corpus {
+			t.Run(fieldName+"/"+raw, func(t *testing.T) {
+				decision := validDecision(entity.ExecutionDecisionDirect, entity.ExecutionShapeEmpty)
+				set(&decision, raw)
+				gotInvalid := errors.Is(ValidateExecutionDecision(decision), ErrExecutionDecisionInvalid)
+				require.Equal(t, publicStringIsSensitive(raw), gotInvalid, raw)
+			})
+		}
+	}
+}
+
+func TestValidateExecutionDecisionRejectsSensitiveIdentifierFields(t *testing.T) {
+	const sensitiveIdentifier = "ghp_12345678"
+	fields := map[string]func(*entity.ExecutionDecision){
+		"decision_id": func(v *entity.ExecutionDecision) { v.DecisionID = sensitiveIdentifier },
+		"attempt_id":  func(v *entity.ExecutionDecision) { v.AttemptID = sensitiveIdentifier },
+		"acceptance_check_id": func(v *entity.ExecutionDecision) {
+			v.AcceptanceChecks[0].CheckID = sensitiveIdentifier
+		},
+		"acceptance_check_kind": func(v *entity.ExecutionDecision) {
+			v.AcceptanceChecks[0].Kind = sensitiveIdentifier
+		},
+		"acceptance_check_target_ref": func(v *entity.ExecutionDecision) {
+			v.AcceptanceChecks[0].TargetRef = sensitiveIdentifier
+		},
+	}
+	for fieldName, set := range fields {
+		t.Run(fieldName, func(t *testing.T) {
+			decision := validDecision(entity.ExecutionDecisionDirect, entity.ExecutionShapeEmpty)
+			set(&decision)
+			require.ErrorIs(t, ValidateExecutionDecision(decision), ErrExecutionDecisionInvalid)
+		})
+	}
 }

@@ -408,7 +408,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1 mode-free adaptive admission and baseline decision future contract boundary",
+      "label": "P1M-C1/C2a mode-free adaptive codec, domain validation, and compatibility future contract boundary",
       "layer": "application",
       "kind": "internal_future_contract_boundary",
       "production_status": "current",
@@ -418,6 +418,16 @@
           "path": "backend/domain/agentthread/entity/adaptive_execution.go",
           "symbol": "AdaptiveAdmissionSnapshot",
           "locator": "type AdaptiveAdmissionSnapshot struct {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract.go",
+          "symbol": "ValidateAdaptiveBootstrapPair",
+          "locator": "func ValidateAdaptiveBootstrapPair("
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec.go",
+          "symbol": "EncodeAdaptiveAdmission",
+          "locator": "func EncodeAdaptiveAdmission(snapshot entity.AdaptiveAdmissionSnapshot) ([]byte, string, error) {"
         },
         {
           "path": "backend/application/agentthread/adaptive_admission.go",
@@ -436,8 +446,16 @@
           "locator": "func TestAdaptiveExecutionContractHasNoTransportTagsOrRetiredControls(t *testing.T) {"
         },
         {
+          "path": "backend/domain/agentthread/adaptivecontract/contract_test.go",
+          "locator": "func TestValidateAdaptiveBootstrapPairRequiresC2BootstrapConstraints(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec_test.go",
+          "locator": "func TestAdaptiveCodecsRoundTripAndDoNotAlias(t *testing.T) {"
+        },
+        {
           "path": "backend/application/agentthread/adaptive_admission_test.go",
-          "locator": "func TestValidateAdaptiveAdmissionSnapshotAcceptsThreeSourceForms(t *testing.T) {"
+          "locator": "func TestAdaptiveAdmissionValidatorsAliasDomainSentinels(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/adaptive_baseline_decision_test.go",
@@ -5883,9 +5901,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D adaptive repository production wiring",
+      "term": "P0A/P0B/P0C/P0D production wiring and P1M-C2a durable bootstrap",
       "status": "implemented_not_wired",
-      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. P1M-C1 now adds pure Go, mode-free AdaptiveAdmissionSnapshot/ExecutionDecision validators and a deterministic gate-off-only BaselineDecisionProducer, but it has no codec, persistence, coordinator, ADKExecutor.Execute/Resume consumer, IDL or frontend exposure. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-B1 additionally freezes public Application submissions before runtime normalization while preserving one package-private server-owned ADK child compatibility seam and historical resume/retry/recovery Config inheritance. Historical runtime controls remain. P1M-A/B1/C1 are not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
+      "reason": "P0A implementation HEAD a1df1789b0b60c0916505711bcc1e5a1fa1410cd and P0B implement the private repository primitives for exact-tuple idempotent replay and recovery-source reads with workbench-adaptive-boundary.v2 event and checkpoint fingerprints plus bounded PlanItem refs. P0C adds no second finalizer: it extends the sole existing repository FinalizeRunSuccess request with an optional AdaptiveGate, while nil preserves existing writes and callers. P0D closes only named repository-path evidence for gate-on, gate-off, active lease recovery, cancellation, active-run deletion rejection and crash-after-commit replay; this is not a repository-wide deadlock-free claim. P1M-C1 defines pure Go, mode-free AdaptiveAdmissionSnapshot/ExecutionDecision validators and a deterministic gate-off-only BaselineDecisionProducer. P1M-C2a now adds pure domain adaptivecontract strict canonical admission/decision codec and fail-closed domain validation while application preserves C1 validator wrappers and sentinel aliases, but durable bootstrap commit/readback is absent and C2b is pending. C2a has no coordinator or production execution edge: no ADKExecutor.Execute/Resume consumer, runtime selector/handler, IDL/frontend wiring, or feature-gate production behavior. Two cross-packet P1 blockers remain: same-recovery rolling Plan authority still blocks P1D and P2, and the idle cascade has no closed lock order across historical Journal, generic boundary and exact replay. P1L is deferred; P1M-A isolates canonical whole-Thread DELETE with an HTTP hard guard, so the unsafe cascade is not externally reachable but remains locked against re-enable. P1M-B1 additionally freezes public Application submissions before runtime normalization while preserving one package-private server-owned ADK child compatibility seam and historical resume/retry/recovery Config inheritance. Historical runtime controls remain. P1M-A/B1/C1/C2a are not P1M PASS, and P1D still requires complete P1M plus rolling-authority closure. Direct Plan mutations remain reachable and P0A3 only reconciles Plan-to-Item lock order. AdaptiveGate remains implemented but unwired: application and ADK production code does not construct it, existing FinalizeRunSuccess callers continue with nil, and the adaptive boundary and recovery-source primitives have no production caller. No production adaptive edge is asserted.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -5936,12 +5954,28 @@
           "locator": "func TestAdaptiveExecutionContractHasNoTransportTagsOrRetiredControls(t *testing.T) {"
         },
         {
+          "path": "backend/domain/agentthread/adaptivecontract/contract.go",
+          "locator": "func ValidateAdaptiveBootstrapPair("
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec.go",
+          "locator": "func EncodeAdaptiveAdmission(snapshot entity.AdaptiveAdmissionSnapshot) ([]byte, string, error) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract_test.go",
+          "locator": "func TestValidateAdaptiveBootstrapPairRequiresC2BootstrapConstraints(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec_test.go",
+          "locator": "func TestAdaptiveCodecsRoundTripAndDoNotAlias(t *testing.T) {"
+        },
+        {
           "path": "backend/application/agentthread/adaptive_admission.go",
           "locator": "func ValidateAdaptiveAdmissionSnapshot(snapshot entity.AdaptiveAdmissionSnapshot) error {"
         },
         {
           "path": "backend/application/agentthread/adaptive_admission_test.go",
-          "locator": "func TestValidateAdaptiveAdmissionSnapshotAcceptsThreeSourceForms(t *testing.T) {"
+          "locator": "func TestAdaptiveAdmissionValidatorsAliasDomainSentinels(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/adaptive_baseline_decision.go",
