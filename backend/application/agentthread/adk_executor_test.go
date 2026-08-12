@@ -33,6 +33,100 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type recordingAdaptiveBootstrapCoordinator struct {
+	resumeFacts *AdaptiveBootstrapFacts
+	resumeErr   error
+	resumeCalls int
+	order       *[]string
+}
+
+func (c *recordingAdaptiveBootstrapCoordinator) Bootstrap(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error) {
+	return nil, nil
+}
+
+func (c *recordingAdaptiveBootstrapCoordinator) BootstrapResume(
+	context.Context,
+	*RunSummary,
+	*HarnessResumeInput,
+) (*AdaptiveBootstrapFacts, error) {
+	c.resumeCalls++
+	if c.order != nil {
+		*c.order = append(*c.order, "resume-bootstrap")
+	}
+	return c.resumeFacts, c.resumeErr
+}
+
+func TestADKExecutorResumeBootstrapsBeforeBuildingRuntime(t *testing.T) {
+	order := make([]string, 0, 3)
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	factoryErr := errors.New("stop after factory context inspection")
+	gotFacts := false
+	coordinator := &recordingAdaptiveBootstrapCoordinator{resumeFacts: facts, order: &order}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(ctx context.Context, _ *RunSummary) (adk.ResumableAgent, error) {
+			order = append(order, "factory")
+			got, ok := adaptiveBootstrapFactsFromContext(ctx)
+			gotFacts = ok
+			if ok {
+				require.Equal(t, facts, got)
+			}
+			return nil, factoryErr
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			order = append(order, "store")
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(coordinator),
+	)
+	input := &HarnessResumeInput{
+		Runtime: RuntimeModeEinoADK, RuntimeKey: "coze-run-20", SourceRunID: run.RunID,
+		ADKCheckpoint: &ADKCheckpointEnvelope{RuntimeKey: "coze-run-20"},
+	}
+
+	result, err := executor.Resume(context.Background(), run, input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, factoryErr)
+	require.Equal(t, 1, coordinator.resumeCalls)
+	require.True(t, gotFacts)
+	require.Equal(t, []string{"resume-bootstrap", "store", "factory"}, order)
+}
+
+func TestADKExecutorResumeStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testing.T) {
+	bootstrapErr := errors.New("resume bootstrap rejected")
+	factoryCalls, storeCalls := 0, 0
+	coordinator := &recordingAdaptiveBootstrapCoordinator{resumeErr: bootstrapErr}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			factoryCalls++
+			return nil, errors.New("factory must not run")
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			storeCalls++
+			return nil, errors.New("store must not run")
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(coordinator),
+	)
+	run := freshAdaptiveBootstrapRunForTest()
+	input := &HarnessResumeInput{
+		Runtime: RuntimeModeEinoADK, RuntimeKey: "coze-run-20", SourceRunID: run.RunID,
+		ADKCheckpoint: &ADKCheckpointEnvelope{RuntimeKey: "coze-run-20"},
+	}
+
+	result, err := executor.Resume(context.Background(), run, input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, bootstrapErr)
+	require.Equal(t, 1, coordinator.resumeCalls)
+	require.Zero(t, factoryCalls)
+	require.Zero(t, storeCalls)
+}
+
 func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {
 	order := make([]string, 0, 3)
 	run := freshAdaptiveBootstrapRunForTest()

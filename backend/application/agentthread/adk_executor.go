@@ -174,6 +174,13 @@ func (e *ADKExecutor) Resume(
 	if err != nil {
 		return nil, err
 	}
+	if e.adaptiveBootstrapCoordinator != nil {
+		facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)
+		if bootstrapErr != nil {
+			return nil, bootstrapErr
+		}
+		executionCtx = withAdaptiveBootstrapFacts(executionCtx, facts)
+	}
 	var paritySeed *ADKParityState
 	if input.ADKCheckpoint.ParityState != nil {
 		copy := cloneADKParityState(*input.ADKCheckpoint.ParityState)
