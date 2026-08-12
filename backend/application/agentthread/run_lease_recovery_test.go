@@ -34,7 +34,22 @@ import (
 func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
 	source := expiredRecoveryTestRun(200)
-	source.Config = `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	source.Config = `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9},
+		"requested_policy":"pro",
+		"mode":"pro",
+		"thinking_enabled":true,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4
+	}`
+	sourceConfig := source.Config
 	source.Context = `{"locale":"zh-CN","configurable":{"reasoning_effort":"high"}}`
 	service := newRunLeaseRecoveryTestService(source)
 	service.reconcileFailures = 1
@@ -96,7 +111,15 @@ func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 	require.Equal(t, source.ThreadID, created.ThreadID)
 	require.Equal(t, entity.RunStatusQueued, created.Status)
 	require.Equal(t, `{"messages":[]}`, created.Input)
-	require.Equal(t, source.Config, created.Config)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9}
+	}`, created.Config)
+	require.Equal(t, sourceConfig, source.Config)
 	require.Equal(t, source.Context, created.Context)
 	require.Equal(t, "reject", created.MultitaskStrategy)
 	require.Equal(t, "run-recovery:200:3", created.IdempotencyKey)

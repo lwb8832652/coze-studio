@@ -197,7 +197,18 @@ func (s *ApplicationService) RecoverJournal(
 		source.JournalRunID != req.RunID {
 		return nil, ErrJournalRecoveryInvalid
 	}
-
+	sourceRun := root
+	if source.ExecutionRunID != root.ID {
+		sourceRun, err = s.ThreadSVC.GetRun(
+			ctx, &domainservice.GetRunRequest{RunID: source.ExecutionRunID},
+		)
+		if err != nil {
+			return nil, err
+		}
+		if sourceRun == nil || sourceRun.ThreadID != root.ThreadID {
+			return nil, ErrJournalRecoveryInvalid
+		}
+	}
 	checkpoint, recoveryState, err := s.loadJournalRecoveryCheckpoint(ctx, source)
 	if err != nil {
 		return nil, err
@@ -211,23 +222,15 @@ func (s *ApplicationService) RecoverJournal(
 	if err := validateJournalRecoveryLedgerSnapshot(recoveryState.SideEffectLedger, ledgers); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrJournalRecoveryCheckpointUnsafe, err)
 	}
+	recoveryConfig, err := stripSubmittedExecutionControls(sourceRun.Config)
+	if err != nil {
+		return nil, err
+	}
 	ledgers, err = s.reconcileJournalRecoveryLedgers(ctx, req, source, ledgers)
 	if err != nil {
 		return nil, err
 	}
 
-	sourceRun := root
-	if source.ExecutionRunID != root.ID {
-		sourceRun, err = s.ThreadSVC.GetRun(
-			ctx, &domainservice.GetRunRequest{RunID: source.ExecutionRunID},
-		)
-		if err != nil {
-			return nil, err
-		}
-		if sourceRun == nil || sourceRun.ThreadID != root.ThreadID {
-			return nil, ErrJournalRecoveryInvalid
-		}
-	}
 	command, metadata, fingerprint, err := journalRecoveryPayloads(
 		root, sourceRun, source, checkpoint, req, ledgers,
 	)
@@ -253,7 +256,7 @@ func (s *ApplicationService) RecoverJournal(
 			ThreadID: req.ThreadID, AssistantID: sourceRun.AssistantID,
 			RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusQueued,
 			Command: command, Input: `{"messages":[]}`,
-			Config: sourceRun.Config, Context: sourceRun.Context, Metadata: metadata,
+			Config: recoveryConfig, Context: sourceRun.Context, Metadata: metadata,
 			StreamMode: sourceRun.StreamMode, MultitaskStrategy: "reject",
 			OnDisconnect: sourceRun.OnDisconnect, Durability: sourceRun.Durability,
 			IdempotencyKey:       req.IdempotencyKey,

@@ -173,6 +173,13 @@ P1M-C3g 又让 public `CreateRun` 拒绝 caller-owned child shape，只有 packa
 identity 在本地关闭 Plan、Subagent、thinking 与 reasoning，并在 adaptive facts 之后再次覆盖；因此
 旧历史 child Config 仍兼容且不会重新开启这些能力。builtin/single-agent 内存 child builder 保持不变，
 本切片不代表全部 child consumer 退休。
+继续按交付优先完成的 P1M-C3h1a 不新增执行边：Human interaction resume、ordinary
+non-Journal lease recovery 和 Journal recovery 仍使用各自现有的 Run bundle/create 链，
+但目标 Run Config 新写前仅删除来源 Config 顶层的七个退休字段。`runtime`、模型、
+资源、Token Usage、opaque 配置和 nested 同名字段保留；Context 与来源历史 Config
+均不改写。本切片不新增 Attempt enrollment，不把恢复目标接入
+`ADKExecutor.Resume`，不实现 legacy decoder、typed inheritance、IDL/UI；Human attempt rollover 和
+C3h2 继续 deferred。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private
@@ -263,7 +270,9 @@ backend；C3c 只让同一 admission 的 `SubagentsAllowed=false` 关闭该 Exec
 enrollment/completion 为分母，不新增 metrics emitter；C3f 只停止 public 新 Run config 写回七个退休
 字段并保留 runtime/合法业务配置；C3g 进一步拒绝 public child shape，只允许 package-private trusted seam
 持久化无七字段的 durable child，并由 Factory 对 exact child identity 本地强制关闭 Plan、Subagent 与
-reasoning。builtin/single-agent 内存 child builder 和其余 consumer 不变。真实 MySQL 双连接验收
+reasoning；C3h1a 只让 Human resume、ordinary non-Journal lease recovery 和 Journal recovery
+的目标 Config 新写删除顶层七字段，保留其余 Config、nested 字段与 Context，来源历史
+Config 不改。builtin/single-agent 内存 child builder 和其余 consumer 不变。真实 MySQL 双连接验收
 仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个

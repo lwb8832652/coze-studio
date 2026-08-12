@@ -2027,7 +2027,21 @@ func TestApplicationCreateRunCanonicalizesAllowedRuntimeContext(t *testing.T) {
 }
 
 func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
-	legacyConfig := `{"runtime":"eino_adk","requested_policy":"pro","mode":"pro"}`
+	legacyConfig := `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9},
+		"requested_policy":"pro",
+		"mode":"pro",
+		"thinking_enabled":true,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4
+	}`
 	legacyContext := `{"configurable":{"is_plan_mode":true,"subagent_enabled":true}}`
 	envelope := ADKCheckpointEnvelope{
 		EnvelopeVersion: 1,
@@ -2111,7 +2125,15 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
 	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
-	require.Equal(t, legacyConfig, domainSVC.createRunBundleReq.Run.Config)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9}
+	}`, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, legacyConfig, domainSVC.gotRun.Config)
 	require.Equal(t, legacyContext, domainSVC.createRunBundleReq.Run.Context)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(20), domainSVC.listCheckpointsReq.RunID)

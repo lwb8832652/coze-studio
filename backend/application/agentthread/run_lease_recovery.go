@@ -321,6 +321,10 @@ func (p *RunLeaseRecoveryProcessor) ensureRecoveryResumeRun(
 	if err != nil {
 		return nil, err
 	}
+	recoveryConfig, err := stripSubmittedExecutionControls(source.Config)
+	if err != nil {
+		return nil, err
+	}
 	run, err := p.app.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
 		ThreadID:          source.ThreadID,
 		AssistantID:       source.AssistantID,
@@ -328,7 +332,7 @@ func (p *RunLeaseRecoveryProcessor) ensureRecoveryResumeRun(
 		Status:            entity.RunStatusQueued,
 		Command:           command,
 		Input:             `{"messages":[]}`,
-		Config:            source.Config,
+		Config:            recoveryConfig,
 		Context:           source.Context,
 		Metadata:          metadata,
 		StreamMode:        source.StreamMode,

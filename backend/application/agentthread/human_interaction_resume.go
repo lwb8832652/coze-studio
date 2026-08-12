@@ -176,6 +176,10 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	if err != nil {
 		return nil, err
 	}
+	resumeConfig, err := stripSubmittedExecutionControls(sourceRun.Config)
+	if err != nil {
+		return nil, err
+	}
 	journalSource := RunEvent{
 		ThreadID:  req.ThreadID,
 		RunID:     req.SourceRunID,
@@ -196,7 +200,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 		Run: domainservice.CreateRunRequest{
 			ThreadID: req.ThreadID, AssistantID: sourceRun.AssistantID,
 			Status: domainentity.RunStatusQueued, Command: resumeCommand,
-			Input: `{"messages":[]}`, Config: sourceRun.Config, Context: sourceRun.Context,
+			Input: `{"messages":[]}`, Config: resumeConfig, Context: sourceRun.Context,
 			Metadata: metadata, StreamMode: sourceRun.StreamMode,
 			MultitaskStrategy: "reject", OnDisconnect: sourceRun.OnDisconnect,
 			Durability: sourceRun.Durability, IdempotencyKey: idempotencyKey,

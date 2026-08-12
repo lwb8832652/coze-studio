@@ -408,7 +408,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a-C3g delivery-first runtime and new-write retirement",
+      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h1a delivery-first runtime and new-write retirement",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -498,6 +498,21 @@
           "path": "backend/application/agentthread/adk_agent_factory.go",
           "symbol": "applyADKChildRuntimeSafetyPolicy",
           "locator": "func applyADKChildRuntimeSafetyPolicy("
+        },
+        {
+          "path": "backend/application/agentthread/human_interaction_resume.go",
+          "symbol": "(*ApplicationService).ResumeHumanInteraction",
+          "locator": "resumeConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery.go",
+          "symbol": "(*ApplicationService).RecoverJournal",
+          "locator": "recoveryConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "symbol": "(*RunLeaseRecoveryProcessor).ensureRecoveryResumeRun",
+          "locator": "recoveryConfig, err := stripSubmittedExecutionControls(source.Config)"
         }
       ],
       "evidence": [
@@ -576,6 +591,18 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryTreatsDurableChildIdentityAsSafeLocalPurpose(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery_test.go",
+          "locator": "func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {"
         }
       ]
     },
@@ -6064,9 +6091,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3g delivery-first slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h1a delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime and parser, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h1a adds no Attempt enrollment, does not connect these targets to ADKExecutor.Resume, and does not implement legacy decoding, typed inheritance, IDL or UI; Human attempt rollover and C3h2 remain deferred. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Legacy runtime and parser, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",

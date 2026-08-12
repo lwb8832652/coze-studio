@@ -158,6 +158,12 @@ Config 也不再包含七个退休字段。Factory 对这一 exact durable child
 Subagent、thinking 与 reasoning，并在 adaptive facts 投影后再次覆盖，因此旧历史 child Config 也保持
 更安全的兼容行为。builtin/single-agent 内存 child builder 暂未清理，且本切片不等于全部 child
 consumer 退休。
+继续按交付优先收口的 P1M-C3h1a 只修改三条已有恢复链的目标 Run 新写：Human
+interaction resume、ordinary non-Journal lease recovery 和 Journal recovery 在写入新 Config
+前，仅删除来源 Config 顶层的七个退休字段；`runtime`、模型、资源、Token Usage、
+opaque 配置和 nested 同名业务字段全部保留。来源历史 Config 与 Context 原样保持，
+本切片不新增 Attempt enrollment，不把这些新 Run 接入 `ADKExecutor.Resume`，也不实现
+legacy decoder、typed inheritance、IDL 或 UI。Human attempt rollover 与后续 C3h2 继续 deferred。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。
