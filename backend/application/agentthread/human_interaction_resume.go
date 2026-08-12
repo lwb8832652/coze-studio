@@ -27,11 +27,15 @@ import (
 	"time"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
-const humanInteractionResolvedEventType = "human.interaction.resolved"
+const (
+	humanInteractionResolvedEventType       = "human.interaction.resolved"
+	humanResumeJournalRolloverRequiredError = "journal-enrolled human interaction resume requires attempt rollover"
+)
 
 var (
 	ErrHumanInteractionResumeInvalid  = errors.New("human interaction resume request is invalid")
@@ -63,6 +67,31 @@ func (e *humanInteractionResumeSemanticError) Is(target error) bool {
 
 func newHumanInteractionResumeSemanticError(kind error, cause error) error {
 	return &humanInteractionResumeSemanticError{kind: kind, cause: cause}
+}
+
+func (s *ApplicationService) requireHumanResumeJournalRollover(ctx context.Context, sourceRunID int64) error {
+	if s == nil || s.JournalRecoveryRepository == nil {
+		return errors.New("journal attempt reader is unavailable")
+	}
+	attempt, err := s.JournalRecoveryRepository.GetActiveJournalAttempt(ctx, sourceRunID)
+	switch {
+	case err == nil && attempt != nil:
+		return newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New(humanResumeJournalRolloverRequiredError),
+		)
+	case err == nil:
+		return errors.New("journal attempt reader returned no result")
+	case errors.Is(err, domainrepo.ErrJournalNotEnrolled):
+		return nil
+	case errors.Is(err, domainrepo.ErrJournalAttemptTerminal):
+		return newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New(humanResumeJournalRolloverRequiredError),
+		)
+	default:
+		return err
+	}
 }
 
 func (s *ApplicationService) ResumeHumanInteraction(
@@ -131,6 +160,9 @@ func (s *ApplicationService) ResumeHumanInteraction(
 			return nil, err
 		}
 		return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(existing)}, nil
+	}
+	if err := s.requireHumanResumeJournalRollover(ctx, req.SourceRunID); err != nil {
+		return nil, err
 	}
 
 	checkpoint, envelope, err := s.latestActiveADKCheckpoint(ctx, req.ThreadID, req.SourceRunID)

@@ -164,6 +164,12 @@ interaction resume、ordinary non-Journal lease recovery 和 Journal recovery �
 opaque 配置和 nested 同名业务字段全部保留。来源历史 Config 与 Context 原样保持，
 本切片不新增 Attempt enrollment，不把这些新 Run 接入 `ADKExecutor.Resume`，也不实现
 legacy decoder、typed inheritance、IDL 或 UI。Human attempt rollover 与后续 C3h2 继续 deferred。
+P1M-C3h1b 在此基础上为 Human Resume 增加临时 fail-closed 门：existing idempotent replay
+仍最先返回；仅在 replay miss 后检查来源 Run 的 Journal enrollment，并在读取 checkpoint 或
+任何新写前拒绝 active/terminal enrolled Attempt，沿现有冲突映射返回 canonical
+`409 run_not_resumable`。明确 `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，其他
+repository/dependency 错误原样传播。该切片不实现 Human attempt rollover、Resume facts、
+IDL/UI 或 MySQL 验收，P1M/P1L 状态不变。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。

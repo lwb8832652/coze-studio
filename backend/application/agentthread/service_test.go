@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
@@ -2107,7 +2109,8 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 			Created: true,
 		},
 	}
-	app := &ApplicationService{ThreadSVC: domainSVC}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: domainrepo.ErrJournalNotEnrolled}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
 
 	resp, err := app.ResumeHumanInteraction(context.Background(), &ResumeHumanInteractionRequest{
 		ThreadID:    10,
@@ -2123,6 +2126,8 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	require.Equal(t, 1, journalRepo.calls)
+	require.Equal(t, int64(20), journalRepo.sourceRunID)
 	require.Equal(t, int64(21), resp.Run.RunID)
 	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
 	require.JSONEq(t, `{
@@ -2197,27 +2202,30 @@ func TestApplicationResumeHumanInteractionRejectsUnknownInterrupt(t *testing.T) 
 			"interrupt-1": {ID: "interrupt-1", Address: "lead/tool/approval"},
 		},
 	}
-	app := &ApplicationService{ThreadSVC: &recordingThreadService{
-		gotRun: &entity.Run{
-			ID:       20,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusInterrupted,
-		},
-		checkpoints: []*entity.Checkpoint{
-			{
-				ID:              503,
-				ThreadID:        10,
-				RunID:           20,
-				CheckpointNS:    "eino.adk",
-				RuntimeType:     "eino_adk",
-				RuntimeKey:      "checkpoint-1",
-				EnvelopeVersion: 1,
-				ChannelValues:   mustADKCheckpointEnvelopeJSON(t, envelope),
-				Metadata:        `{"runtime":"eino_adk"}`,
+	app := &ApplicationService{
+		ThreadSVC: &recordingThreadService{
+			gotRun: &entity.Run{
+				ID:       20,
+				ThreadID: 10,
+				SpaceID:  1,
+				Status:   entity.RunStatusInterrupted,
+			},
+			checkpoints: []*entity.Checkpoint{
+				{
+					ID:              503,
+					ThreadID:        10,
+					RunID:           20,
+					CheckpointNS:    "eino.adk",
+					RuntimeType:     "eino_adk",
+					RuntimeKey:      "checkpoint-1",
+					EnvelopeVersion: 1,
+					ChannelValues:   mustADKCheckpointEnvelopeJSON(t, envelope),
+					Metadata:        `{"runtime":"eino_adk"}`,
+				},
 			},
 		},
-	}}
+		JournalRecoveryRepository: &humanInteractionJournalRecoveryRepositoryStub{err: domainrepo.ErrJournalNotEnrolled},
+	}
 
 	resp, err := app.ResumeHumanInteraction(context.Background(), &ResumeHumanInteractionRequest{
 		ThreadID:    10,
@@ -2254,7 +2262,8 @@ func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testin
 			IdempotencyKey: "resume-key",
 		},
 	}
-	app := &ApplicationService{ThreadSVC: domainSVC}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: errors.New("journal lookup must not run")}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
 
 	resp, err := app.ResumeHumanInteraction(context.Background(), &ResumeHumanInteractionRequest{
 		ThreadID:       10,
@@ -2273,6 +2282,82 @@ func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testin
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
 	require.Nil(t, domainSVC.createRunReq)
+	require.Equal(t, 0, journalRepo.calls)
+}
+
+func TestApplicationResumeHumanInteractionRejectsJournalEnrolledSourceRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		attempt *entity.RunAttempt
+		err     error
+	}{
+		{name: "active attempt", attempt: &entity.RunAttempt{ID: 91, JournalRunID: 20, Status: entity.RunAttemptStatusRunning}},
+		{name: "terminal attempt", err: domainrepo.ErrJournalAttemptTerminal},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{gotRun: &entity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 1, Status: entity.RunStatusInterrupted,
+			}}
+			journalRepo := &humanInteractionJournalRecoveryRepositoryStub{attempt: tc.attempt, err: tc.err}
+			app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+
+			resp, err := app.ResumeHumanInteraction(context.Background(), validHumanInteractionResumeRequest())
+
+			require.Nil(t, resp)
+			require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+			require.EqualError(t, err, "journal-enrolled human interaction resume requires attempt rollover")
+			require.Equal(t, 1, journalRepo.calls)
+			require.Nil(t, domainSVC.listCheckpointsReq)
+			require.Nil(t, domainSVC.createRunBundleReq)
+		})
+	}
+}
+
+func TestApplicationResumeHumanInteractionPropagatesJournalLookupError(t *testing.T) {
+	wantErr := errors.New("journal lookup failed")
+	domainSVC := &recordingThreadService{gotRun: &entity.Run{
+		ID: 20, ThreadID: 10, SpaceID: 1, Status: entity.RunStatusInterrupted,
+	}}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: wantErr}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), validHumanInteractionResumeRequest())
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, wantErr)
+	require.Equal(t, 1, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func validHumanInteractionResumeRequest() *ResumeHumanInteractionRequest {
+	return &ResumeHumanInteractionRequest{
+		ThreadID: 10, SourceRunID: 20, InterruptID: "interrupt-1",
+		Response: HumanInteractionResponse{
+			Schema: humanInteractionResponseSchema, InteractionID: "hi_1",
+			Kind: HumanInteractionKindClarification, Decision: HumanInteractionDecisionAnswered,
+			Answer: "最近 7 天",
+		},
+	}
+}
+
+type humanInteractionJournalRecoveryRepositoryStub struct {
+	JournalRecoveryRepository
+	attempt     *entity.RunAttempt
+	err         error
+	calls       int
+	sourceRunID int64
+}
+
+func (s *humanInteractionJournalRecoveryRepositoryStub) GetActiveJournalAttempt(
+	_ context.Context,
+	sourceRunID int64,
+) (*entity.RunAttempt, error) {
+	s.calls++
+	s.sourceRunID = sourceRunID
+	return s.attempt, s.err
 }
 
 func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {

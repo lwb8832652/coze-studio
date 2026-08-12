@@ -180,6 +180,12 @@ non-Journal lease recovery 和 Journal recovery 仍使用各自现有的 Run bun
 均不改写。本切片不新增 Attempt enrollment，不把恢复目标接入
 `ADKExecutor.Resume`，不实现 legacy decoder、typed inheritance、IDL/UI；Human attempt rollover 和
 C3h2 继续 deferred。
+P1M-C3h1b 不增加执行边，只在既有 Human Resume 应用链加入临时 fail-closed gate：existing
+idempotent replay 保持第一优先；replay miss 后，`requireHumanResumeJournalRollover` 在 checkpoint
+读取及任何新写之前检查来源 Run，active 或 terminal enrolled Journal Attempt 均沿现有冲突语义返回
+canonical `409 run_not_resumable`。只有明确 `ErrJournalNotEnrolled` 继续 non-Journal Resume；其余
+repository/dependency 错误原样传播。Human rollover、Resume facts、IDL/UI、真实 MySQL 验收及
+P1M/P1L 均 deferred。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private

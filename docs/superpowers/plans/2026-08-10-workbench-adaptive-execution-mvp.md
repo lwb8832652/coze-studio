@@ -389,7 +389,7 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       包括 entity、数据库 CHECK、IDL/生成 client/API 映射。若本阶段不接受这组持久化/公共合同变化，
       Journal-enrolled Human resume 必须保持 fail closed，本项继续 `blocking_remaining`，不能宣称 P1M
       Resume 闭环完成；ordinary non-Journal recovery 也不得伪造 enrollment。
-- [ ] P1M-C3h1b 按交付优先先落临时安全门：Human Resume 保留 existing idempotent replay 优先；
+- [x] P1M-C3h1b 按交付优先先落临时安全门：Human Resume 保留 existing idempotent replay 优先；
       idempotency miss 后、checkpoint 或任何新写前，active 或 terminal 的已 enrolled Journal Attempt
       均返回现有 `ErrHumanInteractionResumeConflict`（canonical `409 run_not_resumable`）；只有明确
       `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，未知 repository/dependency 错误原样传播。
