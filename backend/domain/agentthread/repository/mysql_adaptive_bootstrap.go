@@ -204,9 +204,13 @@ func normalizeAdaptiveExecutionBootstrapRequest(
 		!adaptiveBootstrapExactNonEmpty(req.LeaseOwner, 191) ||
 		!adaptiveBootstrapExactNonEmpty(req.LeaseToken, 191) ||
 		!adaptiveBootstrapExactNonEmpty(req.OperationKey, 191) ||
-		req.Decision.CreatedAt != req.FactCreatedAt ||
-		req.Admission.Source != entity.AdaptiveAdmissionSourceFresh {
+		req.Decision.CreatedAt != req.FactCreatedAt {
 		return nil, bootstrapInvalidf("required bootstrap identity is invalid")
+	}
+	switch req.Admission.Source {
+	case entity.AdaptiveAdmissionSourceFresh, entity.AdaptiveAdmissionSourceTypedInheritance:
+	default:
+		return nil, bootstrapInvalidf("bootstrap admission source is unsupported")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
 		req.Admission,
@@ -328,11 +332,18 @@ func commitAdaptiveExecutionBootstrap(
 	if err := validateAdaptiveExecutionAttemptFence(attempt, boundary); err != nil {
 		return err
 	}
-	if attempt.SourceAttemptID != nil || attempt.SourceCheckpointID != nil || attempt.RecoveryIdempotencyKey != nil {
-		return bootstrapConflictf("bootstrap requires a fresh attempt")
+	switch req.Admission.Source {
+	case entity.AdaptiveAdmissionSourceFresh:
+		if attempt.SourceAttemptID != nil || attempt.SourceCheckpointID != nil || attempt.RecoveryIdempotencyKey != nil {
+			return bootstrapConflictf("fresh bootstrap attempt lineage is not empty")
+		}
+	case entity.AdaptiveAdmissionSourceTypedInheritance:
+		if err := lockAndValidateAdaptiveBootstrapTypedSource(tx, normalized, attempt); err != nil {
+			return err
+		}
 	}
 
-	checkpoint, admissionEvent, decisionEvent, err := newAdaptiveExecutionBootstrapRows(normalized)
+	checkpoint, admissionEvent, decisionEvent, err := newAdaptiveExecutionBootstrapRows(normalized, attempt)
 	if err != nil {
 		return err
 	}
@@ -427,10 +438,120 @@ func lockAdaptiveBootstrapCheckpoints(
 	return rows, nil
 }
 
+func lockAndValidateAdaptiveBootstrapTypedSource(
+	tx *gorm.DB,
+	normalized *adaptiveExecutionBootstrapNormalizedRequest,
+	target *runAttemptPO,
+) error {
+	if tx == nil || normalized == nil || target == nil {
+		return bootstrapInvalidf("typed bootstrap validation is missing")
+	}
+	req := normalized.request
+	if target.SourceAttemptID == nil || target.SourceCheckpointID == nil || target.RecoveryIdempotencyKey == nil {
+		return bootstrapConflictf("typed bootstrap lineage is incomplete")
+	}
+	discovered, err := discoverAdaptiveExecutionSourceAttempt(tx, req.JournalRunID, *target.SourceAttemptID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("source attempt discovery", err)
+	}
+	sourceRun, err := lockAdaptiveExecutionSourceRun(tx, discovered.ExecutionRunID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("source run", err)
+	}
+	sourceAttempt, err := lockAdaptiveExecutionSourceAttempt(tx, req.JournalRunID, *target.SourceAttemptID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("source attempt lock", err)
+	}
+	if sourceAttempt.ID != discovered.ID || sourceAttempt.ThreadID != discovered.ThreadID ||
+		sourceAttempt.JournalRunID != discovered.JournalRunID ||
+		sourceAttempt.ExecutionRunID != discovered.ExecutionRunID ||
+		sourceAttempt.AttemptID != discovered.AttemptID || sourceAttempt.ThreadID != req.ThreadID ||
+		sourceAttempt.JournalRunID != req.JournalRunID || sourceAttempt.Ordinal == 0 ||
+		target.Ordinal == 0 || sourceAttempt.Ordinal >= target.Ordinal ||
+		sourceAttempt.ExecutionRunID == req.ExecutionRunID {
+		return bootstrapConflictf("typed bootstrap source attempt drift")
+	}
+	if sourceRun.ID != sourceAttempt.ExecutionRunID || sourceRun.ThreadID != req.ThreadID {
+		return bootstrapConflictf("typed bootstrap source run drift")
+	}
+	sourceCheckpoint, err := lockAdaptiveExecutionSourceCheckpoint(tx, *target.SourceCheckpointID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("source checkpoint", err)
+	}
+	if sourceCheckpoint.ThreadID != req.ThreadID || sourceCheckpoint.RunID != sourceAttempt.ExecutionRunID ||
+		sourceCheckpoint.CheckpointNS != "eino.adk" || sourceCheckpoint.RuntimeType != "eino_adk" ||
+		sourceCheckpoint.RuntimeDeletedAt != 0 {
+		return bootstrapConflictf("typed bootstrap source checkpoint drift")
+	}
+	source, err := loadAdaptiveExecutionBootstrapResult(tx, ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: req.ThreadID, ExecutionRunID: sourceAttempt.ExecutionRunID,
+		JournalRunID: req.JournalRunID, AttemptID: sourceAttempt.AttemptID,
+	}, nil)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("source facts", err)
+	}
+	if source == nil || source.Authority.ExecutionGeneration != sourceRun.ExecutionGeneration ||
+		source.Admission.FeatureGateEnabled ||
+		(source.Admission.Source != entity.AdaptiveAdmissionSourceFresh &&
+			source.Admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance) ||
+		req.Admission.SourceRunID == nil || *req.Admission.SourceRunID != sourceAttempt.ExecutionRunID ||
+		req.Admission.SourceExecutionGeneration == nil ||
+		*req.Admission.SourceExecutionGeneration != source.Authority.ExecutionGeneration ||
+		req.Admission.FeatureGateEnabled != source.Admission.FeatureGateEnabled ||
+		req.Admission.Capabilities != source.Admission.Capabilities || req.Admission.Limits != source.Admission.Limits {
+		return bootstrapConflictf("typed bootstrap inherited policy drift")
+	}
+	return nil
+}
+
+func adaptiveBootstrapTypedSourceError(scope string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrAdaptiveExecutionLineageConflict) ||
+		errors.Is(err, ErrAdaptiveExecutionBootstrapInvalid) ||
+		errors.Is(err, ErrAdaptiveExecutionBootstrapNotFound) ||
+		errors.Is(err, ErrAdaptiveExecutionBootstrapConflict) {
+		return bootstrapConflictf("typed bootstrap %s is invalid: %v", scope, err)
+	}
+	return fmt.Errorf("typed bootstrap %s: %w", scope, err)
+}
+
+func validateAdaptiveBootstrapStoredLineage(
+	attempt *runAttemptPO,
+	metadata adaptiveBootstrapMetadata,
+	admission entity.AdaptiveAdmissionSnapshot,
+) error {
+	if attempt == nil {
+		return bootstrapConflictf("bootstrap attempt is missing")
+	}
+	sourceAttemptPresent := attempt.SourceAttemptID != nil
+	sourceCheckpointPresent := attempt.SourceCheckpointID != nil
+	recoveryKeyPresent := attempt.RecoveryIdempotencyKey != nil
+	if sourceAttemptPresent != sourceCheckpointPresent || sourceAttemptPresent != recoveryKeyPresent {
+		return bootstrapConflictf("bootstrap attempt lineage is partial")
+	}
+	if !sourceAttemptPresent {
+		if admission.Source != entity.AdaptiveAdmissionSourceFresh || metadata.SourceAttemptID != nil ||
+			metadata.SourceCheckpointID != nil || metadata.RecoveryIdempotencyKey != nil {
+			return bootstrapConflictf("fresh bootstrap lineage drift")
+		}
+		return nil
+	}
+	if admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance ||
+		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
+		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) ||
+		!adaptiveExecutionStringPointersEqual(metadata.RecoveryIdempotencyKey, attempt.RecoveryIdempotencyKey) {
+		return bootstrapConflictf("typed bootstrap lineage drift")
+	}
+	return nil
+}
+
 func newAdaptiveExecutionBootstrapRows(
 	normalized *adaptiveExecutionBootstrapNormalizedRequest,
+	attempt *runAttemptPO,
 ) (*checkpointPO, *runEventPO, *runEventPO, error) {
-	if normalized == nil {
+	if normalized == nil || attempt == nil {
 		return nil, nil, nil, bootstrapInvalidf("normalized bootstrap is missing")
 	}
 	req := normalized.request
@@ -442,6 +563,9 @@ func newAdaptiveExecutionBootstrapRows(
 		AdmissionEventKey: normalized.admissionEventKey, DecisionEventKey: normalized.decisionEventKey,
 		AdmissionDigest: normalized.admissionDigest, DecisionDigest: normalized.decisionDigest,
 		OperationKeyDigest: normalized.operationDigest, FactCreatedAt: req.FactCreatedAt,
+		SourceAttemptID:        adaptiveExecutionCloneStringPointer(attempt.SourceAttemptID),
+		SourceCheckpointID:     adaptiveExecutionCloneInt64Pointer(attempt.SourceCheckpointID),
+		RecoveryIdempotencyKey: adaptiveExecutionCloneStringPointer(attempt.RecoveryIdempotencyKey),
 	}
 	checkpoint := &checkpointPO{
 		ID: req.CheckpointID, ThreadID: req.ThreadID, RunID: req.ExecutionRunID,
@@ -574,7 +698,6 @@ func loadAdaptiveExecutionBootstrapResult(
 	if metadata.Schema != adaptiveBootstrapMetadataSchema || metadata.ThreadID != req.ThreadID ||
 		metadata.ExecutionRunID != req.ExecutionRunID || metadata.JournalRunID != req.JournalRunID ||
 		metadata.AttemptID != req.AttemptID || metadata.ExecutionGeneration == 0 ||
-		metadata.SourceAttemptID != nil || metadata.SourceCheckpointID != nil || metadata.RecoveryIdempotencyKey != nil ||
 		!adaptiveBootstrapLowerHex(metadata.AdmissionDigest) || !adaptiveBootstrapLowerHex(metadata.DecisionDigest) ||
 		!adaptiveBootstrapLowerHex(metadata.AdmissionEventFingerprint) || !adaptiveBootstrapLowerHex(metadata.DecisionEventFingerprint) ||
 		!adaptiveBootstrapLowerHex(metadata.OperationKeyDigest) || !adaptiveBootstrapLowerHex(metadata.CheckpointFingerprint) ||
@@ -624,6 +747,9 @@ func loadAdaptiveExecutionBootstrapResult(
 	admission, admissionCanonical, admissionDigest, err := adaptivecontract.DecodeAdaptiveAdmission(admissionEvent.Payload)
 	if err != nil || admissionDigest != metadata.AdmissionDigest || string(admissionCanonical) != string(admissionEvent.Payload) {
 		return nil, bootstrapConflictf("admission payload drift")
+	}
+	if err := validateAdaptiveBootstrapStoredLineage(&attempt, metadata, admission); err != nil {
+		return nil, err
 	}
 	decision, decisionCanonical, decisionDigest, err := adaptivecontract.DecodeExecutionDecision(decisionEvent.Payload)
 	if err != nil || decisionDigest != metadata.DecisionDigest || string(decisionCanonical) != string(decisionEvent.Payload) {
