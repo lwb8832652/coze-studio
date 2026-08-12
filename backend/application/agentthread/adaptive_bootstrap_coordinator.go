@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/adaptivecontract"
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
@@ -33,6 +34,7 @@ const adaptiveBootstrapIdentitySchema = "workbench-adaptive-bootstrap.v1"
 
 type AdaptiveBootstrapCoordinator interface {
 	Bootstrap(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error)
+	BootstrapResume(context.Context, *RunSummary, *HarnessResumeInput) (*AdaptiveBootstrapFacts, error)
 }
 
 type AdaptiveBootstrapCoordinatorFunc func(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error)
@@ -45,6 +47,14 @@ func (f AdaptiveBootstrapCoordinatorFunc) Bootstrap(
 		return nil, fmt.Errorf("adaptive bootstrap coordinator function is required")
 	}
 	return f(ctx, run)
+}
+
+func (f AdaptiveBootstrapCoordinatorFunc) BootstrapResume(
+	context.Context,
+	*RunSummary,
+	*HarnessResumeInput,
+) (*AdaptiveBootstrapFacts, error) {
+	return nil, fmt.Errorf("adaptive resume bootstrap coordinator function is required")
 }
 
 // AdaptiveBootstrapFacts are server-owned facts loaded from the durable C2
@@ -223,6 +233,193 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(
 		return nil, err
 	}
 	return facts, nil
+}
+
+func (c *adaptiveBootstrapCoordinator) BootstrapResume(
+	ctx context.Context,
+	run *RunSummary,
+	input *HarnessResumeInput,
+) (*AdaptiveBootstrapFacts, error) {
+	if run == nil || input == nil || c == nil || c.attemptReader == nil ||
+		c.repository == nil || c.idGen == nil || c.now == nil {
+		return nil, fmt.Errorf("adaptive resume bootstrap dependencies are required")
+	}
+	attempt, err := c.attemptReader.GetActiveJournalAttempt(ctx, run.RunID)
+	if errors.Is(err, domainrepo.ErrJournalNotEnrolled) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read active journal attempt for adaptive resume bootstrap: %w", err)
+	}
+	if err := validateAdaptiveBootstrapRecoveryResume(run, input, attempt); err != nil {
+		return nil, err
+	}
+
+	targetRead := domainrepo.ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID:       run.ThreadID,
+		ExecutionRunID: run.RunID,
+		JournalRunID:   attempt.JournalRunID,
+		AttemptID:      attempt.AttemptID,
+	}
+	target, err := c.repository.ReadAdaptiveExecutionBootstrap(ctx, targetRead)
+	if err == nil {
+		return adaptiveBootstrapRecoveryFactsFromDurableResult(run, input, attempt, target)
+	}
+	if !errors.Is(err, domainrepo.ErrAdaptiveExecutionBootstrapNotFound) {
+		return nil, fmt.Errorf("read target adaptive execution bootstrap: %w", err)
+	}
+
+	source, err := c.repository.ReadAdaptiveExecutionBootstrap(ctx, domainrepo.ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID:       run.ThreadID,
+		ExecutionRunID: input.SourceRunID,
+		JournalRunID:   attempt.JournalRunID,
+		AttemptID:      *attempt.SourceAttemptID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read source adaptive execution bootstrap: %w", err)
+	}
+	admission, err := typedAdaptiveAdmissionFromSource(
+		run.ThreadID,
+		attempt.JournalRunID,
+		input.SourceRunID,
+		*attempt.SourceAttemptID,
+		source,
+	)
+	if err != nil {
+		return nil, err
+	}
+	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
+		Admission: admission, DecisionID: adaptiveBootstrapStableKey("decision", run, attempt),
+		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("produce recovery adaptive decision: %w", err)
+	}
+	ids, err := c.idGen.GenMultiIDs(ctx, 3)
+	if err != nil {
+		return nil, fmt.Errorf("allocate recovery bootstrap identifiers: %w", err)
+	}
+	if len(ids) != 3 || ids[0] <= 0 || ids[1] <= 0 || ids[2] <= 0 ||
+		ids[0] == ids[1] || ids[0] == ids[2] || ids[1] == ids[2] {
+		return nil, fmt.Errorf("adaptive recovery bootstrap identifiers are invalid")
+	}
+	now := c.now()
+	if now <= 0 {
+		return nil, fmt.Errorf("adaptive recovery bootstrap clock is invalid")
+	}
+	committed, err := c.repository.CommitAdaptiveExecutionBootstrap(ctx, domainrepo.CommitAdaptiveExecutionBootstrapRequest{
+		ThreadID: run.ThreadID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+		OperationKey: adaptiveBootstrapStableKey("operation", run, attempt), Generation: run.ExecutionGeneration,
+		Now: now, FactCreatedAt: attempt.CreatedAt, Admission: admission, Decision: decision,
+		AdmissionEventID: ids[0], DecisionEventID: ids[1], CheckpointID: ids[2],
+	})
+	if err != nil {
+		return nil, fmt.Errorf("commit recovery adaptive bootstrap: %w", err)
+	}
+	return adaptiveBootstrapRecoveryFactsFromDurableResult(run, input, attempt, committed)
+}
+
+func validateAdaptiveBootstrapRecoveryResume(
+	run *RunSummary,
+	input *HarnessResumeInput,
+	attempt *domainentity.RunAttempt,
+) error {
+	if run.ThreadID <= 0 || run.RunID <= 0 || run.ExecutionGeneration == 0 ||
+		!adaptiveBootstrapIdentityPart(run.LeaseOwner, 191) || !adaptiveBootstrapIdentityPart(run.LeaseToken, 191) ||
+		input.ThreadID != run.ThreadID || input.RunID != run.RunID || input.SourceRunID <= 0 ||
+		input.SourceRunID == run.RunID || input.CheckpointID <= 0 || attempt == nil ||
+		attempt.ThreadID != run.ThreadID || attempt.ExecutionRunID != run.RunID || attempt.JournalRunID <= 0 ||
+		!adaptiveBootstrapIdentityPart(attempt.AttemptID, 64) || !attempt.Status.IsActive() ||
+		attempt.ActiveSlot == nil || *attempt.ActiveSlot != 1 || attempt.CreatedAt <= 0 || attempt.SourceAttemptID == nil ||
+		!adaptiveBootstrapIdentityPart(*attempt.SourceAttemptID, 64) || attempt.SourceCheckpointID == nil ||
+		*attempt.SourceCheckpointID != input.CheckpointID || attempt.RecoveryIdempotencyKey == nil ||
+		!adaptiveBootstrapIdentityPart(*attempt.RecoveryIdempotencyKey, 191) {
+		return fmt.Errorf("adaptive resume bootstrap target identity or lineage is invalid")
+	}
+	return nil
+}
+
+func typedAdaptiveAdmissionFromSource(
+	expectedThreadID int64,
+	expectedJournalRunID int64,
+	sourceRunID int64,
+	expectedSourceAttemptID string,
+	source *domainrepo.CommitAdaptiveExecutionBootstrapResult,
+) (domainentity.AdaptiveAdmissionSnapshot, error) {
+	if source == nil || expectedThreadID <= 0 || expectedJournalRunID <= 0 || sourceRunID <= 0 ||
+		!adaptiveBootstrapIdentityPart(expectedSourceAttemptID, 64) ||
+		source.Authority.ThreadID != expectedThreadID ||
+		source.Authority.ExecutionRunID != sourceRunID || source.Authority.JournalRunID <= 0 ||
+		source.Authority.JournalRunID != expectedJournalRunID ||
+		source.Authority.AttemptID != expectedSourceAttemptID ||
+		source.Authority.ExecutionGeneration == 0 || source.Admission.FeatureGateEnabled ||
+		(source.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh &&
+			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance) {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("adaptive recovery source facts are invalid")
+	}
+	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
+		source.Admission,
+		source.Decision,
+		adaptivecontract.BootstrapIdentity{
+			ExecutionRunID:      source.Authority.ExecutionRunID,
+			JournalRunID:        source.Authority.JournalRunID,
+			AttemptID:           source.Authority.AttemptID,
+			ExecutionGeneration: source.Authority.ExecutionGeneration,
+		},
+	); err != nil {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("validate adaptive recovery source facts: %w", err)
+	}
+	sourceGeneration := source.Authority.ExecutionGeneration
+	return domainentity.AdaptiveAdmissionSnapshot{
+		Schema:                    domainentity.AdaptiveAdmissionSchemaV1,
+		FeatureGateEnabled:        false,
+		Source:                    domainentity.AdaptiveAdmissionSourceTypedInheritance,
+		SourceRunID:               &sourceRunID,
+		SourceExecutionGeneration: &sourceGeneration,
+		Capabilities:              source.Admission.Capabilities,
+		Limits:                    source.Admission.Limits,
+	}, nil
+}
+
+func adaptiveBootstrapRecoveryFactsFromDurableResult(
+	run *RunSummary,
+	input *HarnessResumeInput,
+	attempt *domainentity.RunAttempt,
+	result *domainrepo.CommitAdaptiveExecutionBootstrapResult,
+) (*AdaptiveBootstrapFacts, error) {
+	if result == nil || run == nil || input == nil || attempt == nil ||
+		result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance ||
+		result.Admission.FeatureGateEnabled || result.Admission.SourceRunID == nil ||
+		*result.Admission.SourceRunID != input.SourceRunID ||
+		result.Authority.ThreadID != run.ThreadID || result.Authority.ExecutionRunID != run.RunID ||
+		result.Authority.JournalRunID != attempt.JournalRunID || result.Authority.AttemptID != attempt.AttemptID ||
+		result.Authority.ExecutionGeneration != run.ExecutionGeneration ||
+		result.Decision.ExecutionRunID != run.RunID || result.Decision.JournalRunID != attempt.JournalRunID ||
+		result.Decision.AttemptID != attempt.AttemptID ||
+		result.Decision.ExecutionGeneration != run.ExecutionGeneration || result.Decision.DecisionRevision != 1 ||
+		result.Decision.PlanScopeRunID == nil || *result.Decision.PlanScopeRunID != run.RunID ||
+		result.Decision.CreatedAt != attempt.CreatedAt {
+		return nil, fmt.Errorf("adaptive recovery bootstrap facts do not match the current target")
+	}
+	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
+		result.Admission,
+		result.Decision,
+		adaptivecontract.BootstrapIdentity{
+			ExecutionRunID:      result.Authority.ExecutionRunID,
+			JournalRunID:        result.Authority.JournalRunID,
+			AttemptID:           result.Authority.AttemptID,
+			ExecutionGeneration: result.Authority.ExecutionGeneration,
+		},
+	); err != nil {
+		return nil, fmt.Errorf("validate adaptive recovery bootstrap facts: %w", err)
+	}
+	return cloneAdaptiveBootstrapFacts(&AdaptiveBootstrapFacts{
+		Admission: result.Admission,
+		Decision:  result.Decision,
+	}), nil
 }
 
 func adaptiveBootstrapFactsFromDurableResult(

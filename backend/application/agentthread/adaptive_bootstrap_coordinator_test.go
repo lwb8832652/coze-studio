@@ -127,6 +127,397 @@ func TestAdaptiveBootstrapCoordinatorReplaysBeforeAllocatingIDs(t *testing.T) {
 	require.Empty(t, repo.commitRequests)
 }
 
+func TestAdaptiveBootstrapCoordinatorResumeReplaysTargetBeforeSourceAndIDs(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	target := adaptiveBootstrapTypedResultForTest(t, run, input, attempt, 3)
+	repo := &adaptiveBootstrapRepositoryStub{readResult: target}
+	ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:    repo,
+		IDGen:         ids,
+		Now:           func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Equal(t, target.Admission, facts.Admission)
+	require.Equal(t, target.Decision, facts.Decision)
+	require.Equal(t, []repository.ReadAdaptiveExecutionBootstrapRequest{{
+		ThreadID: 10, ExecutionRunID: 21, JournalRunID: 30, AttemptID: "attempt-2",
+	}}, repo.readRequests)
+	require.Equal(t, []int64{run.RunID}, coordinator.(*adaptiveBootstrapCoordinator).attemptReader.(*adaptiveBootstrapAttemptReaderStub).runIDs)
+	require.Empty(t, ids.counts)
+	require.Empty(t, repo.commitRequests)
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsTargetReplayDrift(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*repository.CommitAdaptiveExecutionBootstrapResult)
+	}{
+		{name: "created at", mutate: func(target *repository.CommitAdaptiveExecutionBootstrapResult) {
+			target.Decision.CreatedAt++
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			target := adaptiveBootstrapTypedResultForTest(t, run, input, attempt, 3)
+			test.mutate(target)
+			repo := &adaptiveBootstrapRepositoryStub{readResult: target}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {
+	for _, sourceKind := range []entity.AdaptiveAdmissionSource{
+		entity.AdaptiveAdmissionSourceFresh,
+		entity.AdaptiveAdmissionSourceTypedInheritance,
+	} {
+		t.Run(string(sourceKind), func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			source := adaptiveBootstrapSourceResultForTest(t, sourceKind)
+			target := adaptiveBootstrapTypedResultForTest(t, run, input, attempt, source.Authority.ExecutionGeneration)
+			repo := &adaptiveBootstrapRepositoryStub{
+				readResults:  []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+				readErrs:     []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+				commitResult: target,
+			}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.NoError(t, err)
+			require.Len(t, repo.readRequests, 2)
+			require.Equal(t, int64(21), repo.readRequests[0].ExecutionRunID)
+			require.Equal(t, int64(20), repo.readRequests[1].ExecutionRunID)
+			require.Equal(t, "attempt-1", repo.readRequests[1].AttemptID)
+			require.Equal(t, []int{3}, ids.counts)
+			require.Len(t, repo.commitRequests, 1)
+			req := repo.commitRequests[0]
+			require.Equal(t, entity.AdaptiveAdmissionSourceTypedInheritance, req.Admission.Source)
+			require.Equal(t, input.SourceRunID, *req.Admission.SourceRunID)
+			require.Equal(t, source.Authority.ExecutionGeneration, *req.Admission.SourceExecutionGeneration)
+			require.Equal(t, source.Admission.Capabilities, req.Admission.Capabilities)
+			require.Equal(t, source.Admission.Limits, req.Admission.Limits)
+			require.Equal(t, run.RunID, req.Decision.ExecutionRunID)
+			require.Equal(t, attempt.JournalRunID, req.Decision.JournalRunID)
+			require.Equal(t, attempt.AttemptID, req.Decision.AttemptID)
+			require.Equal(t, run.ExecutionGeneration, req.Decision.ExecutionGeneration)
+			require.Equal(t, uint64(1), req.Decision.DecisionRevision)
+			require.Equal(t, run.RunID, *req.Decision.PlanScopeRunID)
+			require.Equal(t, attempt.CreatedAt, req.Decision.CreatedAt)
+			require.Equal(t, req.Admission, facts.Admission)
+			require.Equal(t, req.Decision, facts.Decision)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeFailsClosed(t *testing.T) {
+	sentinel := errors.New("source read failed")
+	for _, test := range []struct {
+		name       string
+		mutate     func(*RunSummary, *HarnessResumeInput, *entity.RunAttempt)
+		attemptErr error
+		readResult *repository.CommitAdaptiveExecutionBootstrapResult
+		readErr    error
+		wantNoop   bool
+	}{
+		{name: "not enrolled", attemptErr: repository.ErrJournalNotEnrolled, wantNoop: true},
+		{name: "partial lineage", mutate: func(_ *RunSummary, _ *HarnessResumeInput, attempt *entity.RunAttempt) {
+			attempt.RecoveryIdempotencyKey = nil
+		}},
+		{name: "inactive slot", mutate: func(_ *RunSummary, _ *HarnessResumeInput, attempt *entity.RunAttempt) {
+			value := uint8(2)
+			attempt.ActiveSlot = &value
+		}},
+		{name: "checkpoint drift", mutate: func(_ *RunSummary, input *HarnessResumeInput, _ *entity.RunAttempt) {
+			input.CheckpointID++
+		}},
+		{name: "source read error", readErr: sentinel},
+		{name: "source not found", readErr: repository.ErrAdaptiveExecutionBootstrapNotFound},
+		{name: "nil source"},
+		{name: "legacy source", readResult: adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSource("legacy"))},
+		{name: "gate on source", readResult: func() *repository.CommitAdaptiveExecutionBootstrapResult {
+			result := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+			result.Admission.FeatureGateEnabled = true
+			return result
+		}()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			if test.mutate != nil {
+				test.mutate(run, input, attempt)
+			}
+			reader := &adaptiveBootstrapAttemptReaderStub{attempt: attempt, err: test.attemptErr}
+			repo := &adaptiveBootstrapRepositoryStub{
+				readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, test.readResult},
+				readErrs:    []error{repository.ErrAdaptiveExecutionBootstrapNotFound, test.readErr},
+			}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: reader, Repository: repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			if test.wantNoop {
+				require.NoError(t, err)
+				require.Nil(t, facts)
+				require.Empty(t, repo.readRequests)
+			} else {
+				require.Error(t, err)
+			}
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsTargetReadFailure(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result *repository.CommitAdaptiveExecutionBootstrapResult
+		err    error
+	}{
+		{name: "nil target"},
+		{name: "target conflict", err: repository.ErrAdaptiveExecutionBootstrapConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			repo := &adaptiveBootstrapRepositoryStub{readResult: test.result, readErr: test.err}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Len(t, repo.readRequests, 1)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsSourceAuthorityDrift(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*repository.CommitAdaptiveExecutionBootstrapResult)
+	}{
+		{name: "thread", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+			source.Authority.ThreadID++
+		}},
+		{name: "journal", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+			source.Authority.JournalRunID++
+			source.Decision.JournalRunID++
+		}},
+		{name: "attempt", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+			source.Authority.AttemptID = "wrong-attempt"
+			source.Decision.AttemptID = "wrong-attempt"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+			test.mutate(source)
+			repo := &adaptiveBootstrapRepositoryStub{
+				readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+				readErrs:    []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+			}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsSourcePairDrift(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*repository.CommitAdaptiveExecutionBootstrapResult)
+	}{
+		{name: "revision", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+			source.Decision.DecisionRevision = 2
+		}},
+		{name: "plan scope", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+			value := int64(999)
+			source.Decision.PlanScopeRunID = &value
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+			test.mutate(source)
+			repo := &adaptiveBootstrapRepositoryStub{
+				readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+				readErrs:    []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+			}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsCommitFailure(t *testing.T) {
+	commitErr := errors.New("commit failed")
+	for _, test := range []struct {
+		name                  string
+		commitErr             error
+		returnNilCommitResult bool
+	}{
+		{name: "error", commitErr: commitErr},
+		{name: "nil result", returnNilCommitResult: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+			repo := &adaptiveBootstrapRepositoryStub{
+				readResults:           []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+				readErrs:              []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+				commitErr:             test.commitErr,
+				returnNilCommitResult: test.returnNilCommitResult,
+			}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:    repo, IDGen: ids, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Equal(t, []int{3}, ids.counts)
+			require.Len(t, repo.commitRequests, 1)
+		})
+	}
+}
+
+func adaptiveBootstrapRecoveryResumeForTest() (*RunSummary, *HarnessResumeInput, *entity.RunAttempt) {
+	sourceAttemptID := "attempt-1"
+	sourceCheckpointID := int64(9001)
+	recoveryKey := "recover-2"
+	active := uint8(1)
+	return &RunSummary{
+			ThreadID: 10, RunID: 21, RunKind: RunKindTask, Status: RunStatusRunning,
+			LeaseOwner: "worker-2", LeaseToken: "lease-2", ExecutionGeneration: 4,
+		}, &HarnessResumeInput{
+			ThreadID: 10, RunID: 21, SourceRunID: 20, CheckpointID: 9001,
+		}, &entity.RunAttempt{
+			ThreadID: 10, JournalRunID: 30, ExecutionRunID: 21, AttemptID: "attempt-2",
+			Status: entity.RunAttemptStatusRunning, ActiveSlot: &active, CreatedAt: 800,
+			SourceAttemptID: &sourceAttemptID, SourceCheckpointID: &sourceCheckpointID,
+			RecoveryIdempotencyKey: &recoveryKey,
+		}
+}
+
+func adaptiveBootstrapTypedResultForTest(
+	t *testing.T,
+	run *RunSummary,
+	input *HarnessResumeInput,
+	attempt *entity.RunAttempt,
+	sourceGeneration uint64,
+) *repository.CommitAdaptiveExecutionBootstrapResult {
+	t.Helper()
+	sourceRunID := input.SourceRunID
+	admission := baselineAdaptiveAdmission()
+	admission.Source = entity.AdaptiveAdmissionSourceTypedInheritance
+	admission.SourceRunID = &sourceRunID
+	admission.SourceExecutionGeneration = &sourceGeneration
+	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
+		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
+		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+	})
+	require.NoError(t, err)
+	return &repository.CommitAdaptiveExecutionBootstrapResult{
+		Admission: admission,
+		Decision:  decision,
+		Authority: repository.AdaptiveExecutionBootstrapAuthority{
+			ThreadID: run.ThreadID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+			AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		},
+	}
+}
+
+func adaptiveBootstrapSourceResultForTest(
+	t *testing.T,
+	source entity.AdaptiveAdmissionSource,
+) *repository.CommitAdaptiveExecutionBootstrapResult {
+	t.Helper()
+	run := freshAdaptiveBootstrapRunForTest()
+	run.ExecutionGeneration = 3
+	attempt := freshAdaptiveBootstrapAttemptForTest()
+	admission := baselineAdaptiveAdmission()
+	admission.Source = source
+	if source == entity.AdaptiveAdmissionSourceTypedInheritance {
+		sourceRunID, sourceGeneration := int64(19), uint64(2)
+		admission.SourceRunID = &sourceRunID
+		admission.SourceExecutionGeneration = &sourceGeneration
+	}
+	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
+		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
+		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+	})
+	if source == entity.AdaptiveAdmissionSource("legacy") {
+		require.Error(t, err)
+		decision = entity.ExecutionDecision{}
+	} else {
+		require.NoError(t, err)
+	}
+	return &repository.CommitAdaptiveExecutionBootstrapResult{
+		Admission: admission,
+		Decision:  decision,
+		Authority: repository.AdaptiveExecutionBootstrapAuthority{
+			ThreadID: run.ThreadID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+			AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		},
+	}
+}
+
 func TestAdaptiveBootstrapCoordinatorRejectsReplayFromAnotherGeneration(t *testing.T) {
 	reader := &adaptiveBootstrapAttemptReaderStub{attempt: freshAdaptiveBootstrapAttemptForTest()}
 	repo := &adaptiveBootstrapRepositoryStub{readResult: &repository.CommitAdaptiveExecutionBootstrapResult{
@@ -269,19 +660,23 @@ type adaptiveBootstrapAttemptReaderStub struct {
 	attempt *entity.RunAttempt
 	err     error
 	calls   int
+	runIDs  []int64
 }
 
 func (s *adaptiveBootstrapAttemptReaderStub) GetActiveJournalAttempt(
-	context.Context,
-	int64,
+	_ context.Context,
+	runID int64,
 ) (*entity.RunAttempt, error) {
 	s.calls++
+	s.runIDs = append(s.runIDs, runID)
 	return s.attempt, s.err
 }
 
 type adaptiveBootstrapRepositoryStub struct {
 	readResult            *repository.CommitAdaptiveExecutionBootstrapResult
 	readErr               error
+	readResults           []*repository.CommitAdaptiveExecutionBootstrapResult
+	readErrs              []error
 	commitResult          *repository.CommitAdaptiveExecutionBootstrapResult
 	commitErr             error
 	returnNilCommitResult bool
@@ -294,6 +689,21 @@ func (s *adaptiveBootstrapRepositoryStub) ReadAdaptiveExecutionBootstrap(
 	req repository.ReadAdaptiveExecutionBootstrapRequest,
 ) (*repository.CommitAdaptiveExecutionBootstrapResult, error) {
 	s.readRequests = append(s.readRequests, req)
+	index := len(s.readRequests) - 1
+	if s.readResults != nil || s.readErrs != nil {
+		var result *repository.CommitAdaptiveExecutionBootstrapResult
+		var err error
+		if index < len(s.readResults) {
+			result = s.readResults[index]
+		}
+		if index < len(s.readErrs) {
+			err = s.readErrs[index]
+		}
+		if index >= len(s.readResults) && index >= len(s.readErrs) {
+			return nil, fmt.Errorf("unexpected adaptive bootstrap read %d", index+1)
+		}
+		return result, err
+	}
 	return s.readResult, s.readErr
 }
 
