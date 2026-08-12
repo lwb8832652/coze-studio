@@ -764,6 +764,9 @@ func (r *threadRepository) AppendJournalEvent(
 	if err != nil {
 		return nil, err
 	}
+	if isAdaptiveBootstrapReservedEventType(normalized.EventType) {
+		return nil, ErrAdaptiveExecutionReservedFact
+	}
 	if normalized.EventType == "run.lifecycle" {
 		payloadType, _ := validateJournalPayloadEnvelope(normalized.Payload)
 		if entity.RunAttemptStatus(normalized.Status).IsTerminal() || payloadType == "terminal" {
@@ -815,6 +818,9 @@ func (r *threadRepository) CreateRunEventWithJournalProjection(
 	if base.EventType == "" {
 		return nil, fmt.Errorf("run event type is required")
 	}
+	if isAdaptiveBootstrapReservedEventType(base.EventType) {
+		return nil, ErrAdaptiveExecutionReservedFact
+	}
 	if base.CreatedAt <= 0 {
 		base.CreatedAt = time.Now().UnixMilli()
 	}
@@ -850,6 +856,9 @@ func persistRunEventWithJournalProjectionTx(
 	if tx == nil || base == nil || basePO == nil {
 		return nil, fmt.Errorf("base run event is required")
 	}
+	if isAdaptiveBootstrapReservedEventType(base.EventType) {
+		return nil, ErrAdaptiveExecutionReservedFact
+	}
 	var projected *entity.JournalEvent
 	if journal != nil {
 		candidate := *journal
@@ -862,6 +871,8 @@ func persistRunEventWithJournalProjectionTx(
 		normalized, err := normalizeJournalEvent(&candidate)
 		if err != nil {
 			projectionFailed = true
+		} else if isAdaptiveBootstrapReservedEventType(normalized.EventType) {
+			return nil, ErrAdaptiveExecutionReservedFact
 		} else if normalized.EventType == "run.lifecycle" &&
 			entity.RunAttemptStatus(normalized.Status).IsTerminal() {
 			projectionFailed = true
@@ -1315,6 +1326,9 @@ func appendJournalEventLockedWithBase(
 	event *entity.JournalEvent,
 	base *entity.RunEvent,
 ) (*entity.JournalEvent, error) {
+	if event == nil || isAdaptiveBootstrapReservedEventType(event.EventType) {
+		return nil, ErrAdaptiveExecutionReservedFact
+	}
 	var existing runEventPO
 	err := tx.Where(
 		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",

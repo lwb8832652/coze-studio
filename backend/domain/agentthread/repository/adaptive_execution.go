@@ -42,6 +42,10 @@ var (
 	ErrAdaptiveExecutionSequenceConflict        = errors.New("adaptive execution sequence conflict")
 	ErrAdaptiveExecutionReplayConflict          = errors.New("adaptive execution replay conflict")
 	ErrAdaptiveExecutionRecoveryConflict        = errors.New("adaptive execution recovery conflict")
+	ErrAdaptiveExecutionBootstrapInvalid        = errors.New("adaptive execution bootstrap is invalid")
+	ErrAdaptiveExecutionBootstrapNotFound       = errors.New("adaptive execution bootstrap is not found")
+	ErrAdaptiveExecutionBootstrapConflict       = errors.New("adaptive execution bootstrap conflict")
+	ErrAdaptiveExecutionReservedFact            = errors.New("adaptive execution reserved fact")
 )
 
 const adaptiveVerifiedSuccessMaxPayloadBytes = 64 * 1024
@@ -398,6 +402,77 @@ type AdaptiveExecutionRepository interface {
 		ctx context.Context,
 		req ReadAdaptiveExecutionRecoverySourceRequest,
 	) (*CommitAdaptiveExecutionBoundaryResult, error)
+	CommitAdaptiveExecutionBootstrap(
+		ctx context.Context,
+		req CommitAdaptiveExecutionBootstrapRequest,
+	) (*CommitAdaptiveExecutionBootstrapResult, error)
+	ReadAdaptiveExecutionBootstrap(
+		ctx context.Context,
+		req ReadAdaptiveExecutionBootstrapRequest,
+	) (*CommitAdaptiveExecutionBootstrapResult, error)
+}
+
+// CommitAdaptiveExecutionBootstrapRequest is intentionally repository-private
+// surface: no handler, service, or runtime entry point receives it in C2.
+// Candidate IDs are only used for the first durable write; exact replay is
+// located by the derived event and checkpoint identities.
+type CommitAdaptiveExecutionBootstrapRequest struct {
+	ThreadID       int64
+	ExecutionRunID int64
+	JournalRunID   int64
+	AttemptID      string
+	LeaseOwner     string
+	LeaseToken     string
+	OperationKey   string
+	Generation     uint64
+	Now            int64
+	FactCreatedAt  int64
+
+	Admission entity.AdaptiveAdmissionSnapshot
+	Decision  entity.ExecutionDecision
+
+	AdmissionEventID int64
+	DecisionEventID  int64
+	CheckpointID     int64
+}
+
+type ReadAdaptiveExecutionBootstrapRequest struct {
+	ThreadID       int64
+	ExecutionRunID int64
+	JournalRunID   int64
+	AttemptID      string
+}
+
+// AdaptiveExecutionBootstrapAuthority contains only immutable identifiers and
+// digests. It never retains lease material or the raw operation key.
+type AdaptiveExecutionBootstrapAuthority struct {
+	ThreadID                  int64
+	ExecutionRunID            int64
+	JournalRunID              int64
+	AttemptID                 string
+	ExecutionGeneration       uint64
+	AdmissionEventID          int64
+	DecisionEventID           int64
+	CheckpointID              int64
+	AdmissionEventKey         string
+	DecisionEventKey          string
+	AdmissionDigest           string
+	DecisionDigest            string
+	AdmissionEventFingerprint string
+	DecisionEventFingerprint  string
+	OperationKeyDigest        string
+	CheckpointFingerprint     string
+	FactCreatedAt             int64
+}
+
+type CommitAdaptiveExecutionBootstrapResult struct {
+	Admission      entity.AdaptiveAdmissionSnapshot
+	Decision       entity.ExecutionDecision
+	AdmissionEvent *entity.RunEvent
+	DecisionEvent  *entity.RunEvent
+	Checkpoint     *entity.Checkpoint
+	Authority      AdaptiveExecutionBootstrapAuthority
+	Replayed       bool
 }
 
 type CommitAdaptiveExecutionBoundaryRequest struct {
@@ -459,6 +534,9 @@ func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundar
 	}
 	if req.Event.ID <= 0 || strings.TrimSpace(req.Event.EventType) == "" || req.Event.CreatedAt != req.Now {
 		return fmt.Errorf("%w: event is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	if req.Event.EventType == adaptiveBootstrapAdmissionEventType {
+		return ErrAdaptiveExecutionReservedFact
 	}
 	if _, err := runEventToPO(req.Event); err != nil {
 		return fmt.Errorf("%w: %v", ErrAdaptiveExecutionBoundaryInvalid, err)

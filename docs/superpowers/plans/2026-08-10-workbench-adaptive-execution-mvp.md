@@ -295,10 +295,14 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       whole-Thread DELETE hard-disabled。
 - [x] P1M-C2a 在纯 domain `backend/domain/agentthread/adaptivecontract` 实现 strict canonical
       admission/decision codec 与 fail-closed domain validation；application 保持 C1 validator wrapper
-      和 sentinel alias，兼容既有 `errors.Is` 合同。durable bootstrap commit/readback 仍不存在（C2b
-      pending）；没有 coordinator 或 production execution edge，未接
+      和 sentinel alias，兼容既有 `errors.Is` 合同。
+- [x] P1M-C2b 在 private `AdaptiveExecutionRepository` 实现 durable bootstrap 的 exact-tuple
+      commit/readback，并以 internal/unsequenced `adaptive.admission`、`adaptive.decision` 和
+      `workbench_control` checkpoint 存储；generic writer/reader 隔离这些保留事实。真实 MySQL
+      双连接验收仍待显式 disposable DSN/DDL gate；没有 coordinator 或 production execution edge，未接
       `ADKExecutor.Execute/Resume`、runtime selector/handler、IDL、frontend 或 feature-gate production
-      behavior。该切片不代表 P1M 或 P1L PASS，whole-Thread DELETE guard 继续 hard-disabled。
+      behavior。该切片仍是 `implemented_unwired`，不代表 P1M 或 P1L PASS，whole-Thread DELETE guard
+      继续 hard-disabled。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

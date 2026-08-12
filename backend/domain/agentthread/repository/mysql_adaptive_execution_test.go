@@ -3948,6 +3948,38 @@ func TestAdaptiveExecutionBoundaryDuplicateDecisionConflicts(t *testing.T) {
 	require.Equal(t, beforeReplay, snapshotAdaptiveExecutionDBForTest(t, db))
 }
 
+func TestAdaptiveExecutionBoundaryRetainsDecisionWriterButRejectsBootstrapAdmission(t *testing.T) {
+	t.Run("decision remains valid for the legacy plan boundary", func(t *testing.T) {
+		db := newAdaptiveExecutionRepositoryTestDB(t)
+		seedAdaptiveExecutionInitialState(t, db)
+		repo := NewAdaptiveExecutionRepository(db)
+		req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+		req.Event.EventType = "adaptive.decision"
+		req.Event.Payload = `{"schema":"workbench-adaptive-decision.v1","decision":"multi_step"}`
+
+		require.NoError(t, validateAdaptiveExecutionMutationRequest(req))
+		result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+		require.NoError(t, err)
+		require.Equal(t, "adaptive.decision", result.Event.EventType)
+	})
+
+	t.Run("admission is reserved for the bootstrap writer", func(t *testing.T) {
+		db := newAdaptiveExecutionRepositoryTestDB(t)
+		seedAdaptiveExecutionInitialState(t, db)
+		repo := NewAdaptiveExecutionRepository(db)
+		req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+		req.Event.EventType = "adaptive.admission"
+		req.Event.Payload = `{"schema":"workbench-adaptive-admission.v1","operation_key":"operation-1"}`
+
+		require.ErrorIs(t, validateAdaptiveExecutionMutationRequest(req), ErrAdaptiveExecutionReservedFact)
+		before := snapshotAdaptiveExecutionDBForTest(t, db)
+		result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionReservedFact)
+		require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+	})
+}
+
 func TestAdaptiveExecutionBoundaryDuplicateVerificationReplaysAfterRepositoryReload(t *testing.T) {
 	db := newAdaptiveExecutionRepositoryTestDB(t)
 	seedAdaptiveExecutionInitialState(t, db)

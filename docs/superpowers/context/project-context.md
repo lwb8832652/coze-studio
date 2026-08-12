@@ -130,12 +130,14 @@ P1M-C1 已定义纯 Go、无 product mode 的 `AdaptiveAdmissionSnapshot`、
 时确定性地产生固定 `execute/multi_step` decision，gate-on 明确返回 producer unavailable。P1M-C2a
 已在纯 domain `backend/domain/agentthread/adaptivecontract` 实现 strict canonical
 admission/decision codec 与 domain validation，application 保持 C1 validator wrapper 和 sentinel
-alias，兼容既有 `errors.Is` 合同。这仍是 P1M-B1 之后的 `implemented_unwired` 内部/未来合同边界：
-durable bootstrap commit/readback 尚不存在，C2b pending；没有 coordinator 或 production execution
-edge，也没有 `ADKExecutor.Execute/Resume` consumer、runtime selector/handler、IDL、frontend 或
-feature-gate production behavior。历史 runtime controls 与 package-private server-owned subagent
-compatibility seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍
-hard-disabled。
+alias，兼容既有 `errors.Is` 合同。P1M-C2b 已在 private `AdaptiveExecutionRepository` 实现 durable
+bootstrap 的 exact-tuple commit/readback，并隔离 `adaptive.admission`、`adaptive.decision` 与
+`workbench_control` control checkpoint，通用 writer/reader 不可写入或枚举这些保留事实。这仍是
+P1M-B1 之后的 `implemented_unwired` 内部/未来合同边界：真实 MySQL 双连接验收仍待显式
+disposable DSN/DDL gate；没有 coordinator 或 production execution edge，也没有
+`ADKExecutor.Execute/Resume` consumer、runtime selector/handler、IDL、frontend 或 feature-gate
+production behavior。历史 runtime controls 与 package-private server-owned subagent compatibility
+seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
 统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用

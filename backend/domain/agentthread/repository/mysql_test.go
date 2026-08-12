@@ -1595,6 +1595,59 @@ func TestThreadRepositoryListRunEventsFiltersAfterCursor(t *testing.T) {
 	require.Equal(t, int64(4), got[1].ID)
 }
 
+func TestThreadRepositoryGenericRunEventWriterRejectsReservedAdaptiveFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for index, eventType := range []string{"adaptive.admission", "adaptive.decision"} {
+		err := repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+			ID:        int64(index + 1),
+			ThreadID:  10,
+			RunID:     20,
+			EventType: eventType,
+			Payload:   `{}`,
+			CreatedAt: 100,
+		})
+		require.ErrorIs(t, err, ErrAdaptiveExecutionReservedFact)
+	}
+
+	var count int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestThreadRepositoryGenericRunEventListsHideInternalFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	internal := string(entity.JournalVisibilityInternal)
+	for _, event := range []*runEventPO{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: []byte(`{}`), CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "private.trace", Visibility: &internal, Payload: []byte(`{}`), CreatedAt: 200},
+		{ID: 3, ThreadID: 10, RunID: 21, EventType: "run.started", Payload: []byte(`{}`), CreatedAt: 300},
+	} {
+		require.NoError(t, db.Create(event).Error)
+	}
+	repo := NewThreadRepository(db)
+
+	runEvents, runTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runTotal)
+	require.Equal(t, []int64{1}, runEventIDs(runEvents))
+
+	threadEvents, threadTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), threadTotal)
+	require.Equal(t, []int64{1, 3}, runEventIDs(threadEvents))
+}
+
 func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1679,6 +1732,82 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	require.Equal(t, int64(1), byID.ParentCheckpointID)
 	require.Equal(t, "planner", byID.CheckpointNS)
 	require.Equal(t, `{"messages":["new"],"next":["tools"]}`, byID.ChannelValues)
+}
+
+func TestThreadRepositoryGenericCheckpointSurfaceExcludesControlFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&checkpointPO{}))
+
+	repo := NewThreadRepository(db)
+	control := &entity.Checkpoint{
+		ID:              1,
+		ThreadID:        10,
+		RunID:           20,
+		CheckpointNS:    "workbench.adaptive.bootstrap",
+		RuntimeType:     "workbench_control",
+		RuntimeKey:      "adaptive-bootstrap-control",
+		EnvelopeVersion: 1,
+		ChannelValues:   `{}`,
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{}`,
+		CreatedAt:       300,
+	}
+	require.ErrorIs(t, repo.CreateCheckpoint(context.Background(), control), ErrAdaptiveExecutionReservedFact)
+
+	for _, checkpoint := range []*checkpointPO{
+		{
+			ID: 1, ThreadID: 10, RunID: 20,
+			CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "eino-key",
+			EnvelopeVersion: 1, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+			PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 100,
+		},
+		{
+			ID: 2, ThreadID: 10, RunID: 20,
+			CheckpointNS: "workbench.adaptive.bootstrap", RuntimeType: "workbench_control", RuntimeKey: "adaptive-bootstrap-control",
+			EnvelopeVersion: 1, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+			PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 300,
+		},
+	} {
+		require.NoError(t, db.Create(checkpoint).Error)
+	}
+
+	checkpoints, total, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10, RunID: 20, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, []int64{1}, checkpointIDs(checkpoints))
+
+	controlOnly, controlTotal, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10, RuntimeType: "workbench_control", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Zero(t, controlTotal)
+	require.Empty(t, controlOnly)
+
+	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), latest.ID)
+
+	hidden, err := repo.GetCheckpoint(context.Background(), 2)
+	require.Nil(t, hidden)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	controlRuntime, err := repo.GetLatestRuntimeCheckpoint(
+		context.Background(), 10, 20, "workbench_control", "adaptive-bootstrap-control",
+	)
+	require.NoError(t, err)
+	require.Nil(t, controlRuntime)
+	require.ErrorIs(t, repo.DeleteRuntimeCheckpoint(
+		context.Background(), 10, 20, "workbench_control", "adaptive-bootstrap-control", 500,
+	), ErrAdaptiveExecutionReservedFact)
+
+	einoRuntime, err := repo.GetLatestRuntimeCheckpoint(context.Background(), 10, 20, "eino_adk", "eino-key")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), einoRuntime.ID)
+	require.NoError(t, repo.DeleteRuntimeCheckpoint(context.Background(), 10, 20, "eino_adk", "eino-key", 500))
 }
 
 func TestThreadRepositoryRejectsInvalidCheckpointJSON(t *testing.T) {

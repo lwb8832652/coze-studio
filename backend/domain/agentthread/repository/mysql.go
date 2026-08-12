@@ -2287,7 +2287,9 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 		pageSize = 100
 	}
 
-	query := r.db.WithContext(ctx).Model(&runEventPO{})
+	query := r.db.WithContext(ctx).
+		Model(&runEventPO{}).
+		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal))
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	} else {
@@ -2339,7 +2341,7 @@ func (r *threadRepository) CreateCheckpoint(ctx context.Context, checkpoint *ent
 func (r *threadRepository) GetCheckpoint(ctx context.Context, checkpointID int64) (*entity.Checkpoint, error) {
 	var po checkpointPO
 	if err := r.db.WithContext(ctx).
-		Where("id = ?", checkpointID).
+		Where("id = ? AND runtime_type <> ?", checkpointID, adaptiveBootstrapRuntimeType).
 		First(&po).Error; err != nil {
 		return nil, err
 	}
@@ -2356,7 +2358,10 @@ func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpoi
 		limit = 100
 	}
 
-	query := r.db.WithContext(ctx).Model(&checkpointPO{}).Where("thread_id = ?", req.ThreadID)
+	query := r.db.WithContext(ctx).
+		Model(&checkpointPO{}).
+		Where("thread_id = ?", req.ThreadID).
+		Where("runtime_type <> ?", adaptiveBootstrapRuntimeType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}
@@ -2389,6 +2394,7 @@ func (r *threadRepository) GetLatestCheckpoint(ctx context.Context, threadID int
 	var po checkpointPO
 	if err := r.db.WithContext(ctx).
 		Where("thread_id = ?", threadID).
+		Where("runtime_type <> ?", adaptiveBootstrapRuntimeType).
 		Order("created_at DESC, id DESC").
 		First(&po).Error; err != nil {
 		return nil, err
@@ -2402,14 +2408,19 @@ func (r *threadRepository) GetLatestRuntimeCheckpoint(
 	threadID, runID int64,
 	runtimeType, runtimeKey string,
 ) (*entity.Checkpoint, error) {
+	runtimeType = strings.TrimSpace(runtimeType)
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return nil, nil
+	}
+	runtimeKey = strings.TrimSpace(runtimeKey)
 	var po checkpointPO
 	err := r.db.WithContext(ctx).
 		Where(
 			"thread_id = ? AND run_id = ? AND runtime_type = ? AND runtime_key = ? AND runtime_deleted_at = 0",
 			threadID,
 			runID,
-			strings.TrimSpace(runtimeType),
-			strings.TrimSpace(runtimeKey),
+			runtimeType,
+			runtimeKey,
 		).
 		Order("created_at DESC, id DESC").
 		First(&po).Error
@@ -2429,6 +2440,11 @@ func (r *threadRepository) DeleteRuntimeCheckpoint(
 	runtimeType, runtimeKey string,
 	deletedAt int64,
 ) error {
+	runtimeType = strings.TrimSpace(runtimeType)
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return ErrAdaptiveExecutionReservedFact
+	}
+	runtimeKey = strings.TrimSpace(runtimeKey)
 	if deletedAt <= 0 {
 		return fmt.Errorf("runtime checkpoint deleted time is required")
 	}
@@ -2439,8 +2455,8 @@ func (r *threadRepository) DeleteRuntimeCheckpoint(
 			"thread_id = ? AND run_id = ? AND runtime_type = ? AND runtime_key = ? AND runtime_deleted_at = 0",
 			threadID,
 			runID,
-			strings.TrimSpace(runtimeType),
-			strings.TrimSpace(runtimeKey),
+			runtimeType,
+			runtimeKey,
 		).
 		Update("runtime_deleted_at", deletedAt).Error
 }
@@ -5796,7 +5812,27 @@ func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {
 	if db == nil || po == nil {
 		return fmt.Errorf("base run event is required")
 	}
+	if isAdaptiveBootstrapReservedEventType(po.EventType) {
+		return ErrAdaptiveExecutionReservedFact
+	}
 	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
+}
+
+// createAdaptiveBootstrapReservedRunEvent is deliberately private. Only the
+// durable bootstrap transaction and the legacy adaptive-decision boundary use
+// it; all generic run-event writers route through createBaseRunEvent instead.
+func createAdaptiveBootstrapReservedRunEvent(db *gorm.DB, po *runEventPO) error {
+	if db == nil || po == nil {
+		return fmt.Errorf("reserved adaptive run event is required")
+	}
+	if !isAdaptiveBootstrapReservedEventType(po.EventType) {
+		return ErrAdaptiveExecutionReservedFact
+	}
+	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
+}
+
+func isAdaptiveBootstrapReservedEventType(eventType string) bool {
+	return eventType == adaptiveBootstrapAdmissionEventType || eventType == adaptiveBootstrapDecisionEventType
 }
 
 func (po *runEventPO) toEntity() *entity.RunEvent {
@@ -5831,6 +5867,9 @@ func checkpointToPO(checkpoint *entity.Checkpoint) (*checkpointPO, error) {
 	runtimeType := strings.TrimSpace(checkpoint.RuntimeType)
 	if runtimeType == "" {
 		runtimeType = "legacy"
+	}
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return nil, ErrAdaptiveExecutionReservedFact
 	}
 
 	return &checkpointPO{

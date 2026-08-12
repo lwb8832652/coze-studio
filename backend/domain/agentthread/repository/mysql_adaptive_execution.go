@@ -3334,8 +3334,14 @@ func commitAdaptiveExecutionMutationLocked(
 		state.event == nil || state.checkpoint == nil || state.sequence == 0 {
 		return fmt.Errorf("%w: locked mutation state is invalid", ErrAdaptiveExecutionBoundaryInvalid)
 	}
-	if err := createBaseRunEvent(tx, state.event); err != nil {
-		return err
+	var eventErr error
+	if state.event.EventType == adaptiveBootstrapDecisionEventType {
+		eventErr = createAdaptiveBootstrapReservedRunEvent(tx, state.event)
+	} else {
+		eventErr = createBaseRunEvent(tx, state.event)
+	}
+	if eventErr != nil {
+		return eventErr
 	}
 	if err := tx.Create(state.checkpoint).Error; err != nil {
 		if isAdaptiveExecutionCheckpointPrimaryKeyConflict(err) {

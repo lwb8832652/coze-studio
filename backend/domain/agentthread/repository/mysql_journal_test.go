@@ -368,6 +368,31 @@ func TestJournalAppendValidatesEnvelopeAndFreezesDefaults(t *testing.T) {
 	require.Zero(t, attempt.LastCommittedSequence)
 }
 
+func TestJournalAppendRejectsReservedAdaptiveFacts(t *testing.T) {
+	for index, eventType := range []string{"adaptive.admission", "adaptive.decision"} {
+		t.Run(eventType, func(t *testing.T) {
+			db := newJournalRepositoryTestDB(t)
+			repo := NewThreadRepository(db)
+			seedJournalRun(t, db, 10, 1)
+			seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusPending, 1)
+
+			_, err := repo.AppendJournalEvent(context.Background(), &entity.JournalEvent{
+				ID:             int64(1100 + index),
+				ThreadID:       1,
+				RunID:          10,
+				IdempotencyKey: "reserved-" + eventType,
+				EventType:      eventType,
+				Payload:        journalTestPayload,
+			})
+			require.ErrorIs(t, err, ErrAdaptiveExecutionReservedFact)
+
+			var count int64
+			require.NoError(t, db.Model(&runEventPO{}).Count(&count).Error)
+			require.Zero(t, count)
+		})
+	}
+}
+
 func TestDisableActiveJournalProjectionIsPermanentAndIdempotent(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	repo := NewThreadRepository(db)
@@ -440,6 +465,51 @@ func TestRunEventJournalProjectionKeepsBaseAndJournalViews(t *testing.T) {
 	require.Len(t, journalEvents.Events, 1)
 	require.Equal(t, "action.terminal", journalEvents.Events[0].EventType)
 	require.NotContains(t, journalEvents.Events[0].Payload, "private output")
+}
+
+func TestRunEventJournalProjectionRejectsReservedAdaptiveFacts(t *testing.T) {
+	tests := []struct {
+		name    string
+		request CreateRunEventWithJournalProjectionRequest
+	}{
+		{
+			name: "reserved base event",
+			request: CreateRunEventWithJournalProjectionRequest{
+				Event: &entity.RunEvent{
+					ID: 1200, ThreadID: 1, RunID: 10, EventType: "adaptive.admission", Payload: `{}`, CreatedAt: 1000,
+				},
+			},
+		},
+		{
+			name: "reserved journal event",
+			request: CreateRunEventWithJournalProjectionRequest{
+				Event: &entity.RunEvent{
+					ID: 1201, ThreadID: 1, RunID: 10, EventType: "tool.completed", Payload: `{}`, CreatedAt: 1000,
+				},
+				Journal: &entity.JournalEvent{
+					ID: 1201, ThreadID: 1, RunID: 10, IdempotencyKey: "reserved-journal-decision",
+					EventType: "adaptive.decision", Payload: journalTestPayload, CreatedAt: 1000,
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newJournalRepositoryTestDB(t)
+			repo := NewThreadRepository(db)
+			seedJournalRun(t, db, 10, 1)
+			seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+			projectionRepo, ok := repo.(RunEventProjectionRepository)
+			require.True(t, ok)
+
+			_, err := projectionRepo.CreateRunEventWithJournalProjection(context.Background(), tt.request)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionReservedFact)
+
+			var count int64
+			require.NoError(t, db.Model(&runEventPO{}).Count(&count).Error)
+			require.Zero(t, count)
+		})
+	}
 }
 
 func TestCreateRunBundleProjectsResolvedConfirmationToSourceAttemptAtomically(t *testing.T) {
