@@ -287,6 +287,12 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       package-private ADK child provenance 只允许非零 parent 的精确 Subagent Run，未知 provenance
       fail closed。canonical typed error 映射为 422，Human/Subagent/Journal/lease recovery 用旧
       Config/Context fixture 证明历史继承不被新 admission 改写。
+- [x] P1M-C1 定义纯 Go、mode-free `AdaptiveAdmissionSnapshot`/`ExecutionDecision` 和
+      fail-closed validators；`BaselineDecisionProducer` 仅 gate-off、deterministic 地生成固定
+      `execute/multi_step` decision，gate-on fail closed。该内部 future contract 尚未接 codec、持久化、
+      coordinator、`ADKExecutor.Execute/Resume`、IDL 或前端；历史 runtime controls 和
+      package-private server-owned subagent compatibility seam 保持，故 P1M 未 PASS。P1L 继续 deferred，
+      whole-Thread DELETE hard-disabled。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

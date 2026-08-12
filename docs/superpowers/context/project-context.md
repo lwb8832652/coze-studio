@@ -125,6 +125,14 @@ closed；因此 canonical、Scheduled Task、飞书和其它 public Application 
 Subagent、Journal 与 lease recovery 仍原样继承已持久化 Config/Context。该兼容边界是有意的，
 P1M-B1 不等于 mode consumer 退休或完整 P1M PASS。
 
+P1M-C1 现已定义纯 Go、无 product mode 的 `AdaptiveAdmissionSnapshot`、
+`ExecutionDecision` 及 fail-closed validators；`BaselineDecisionProducer` 仅在 gate-off
+时确定性地产生固定 `execute/multi_step` decision，gate-on 明确返回 producer unavailable。
+这些是 P1M-B1 之后的内部/未来合同边界，当前仍是 implemented_unwired：没有 codec、持久化、
+coordinator、`ADKExecutor.Execute/Resume` consumer、IDL 或前端暴露。历史 runtime controls 与
+package-private server-owned subagent compatibility seam 仍存在；P1M 尚未 PASS。P1L 继续延期，
+whole-Thread DELETE 仍 hard-disabled。
+
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
 统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用
 `DeleteThreadIfIdle`。P1L 完成并在移除 guard 的同一候选 SHA 上重验前，底层 idle cascade
