@@ -35,8 +35,9 @@ func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {
 			Status:      entity.RunStatusRunning,
 		},
 	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 	recorder := NewApplicationADKSubagentRunRecorder(
-		&ApplicationService{ThreadSVC: domainSVC},
+		&ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy},
 	)
 
 	child, err := recorder.StartADKSubagentRun(
@@ -79,6 +80,7 @@ func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {
 		"requested_policy":"pro",
 		"mode":"pro",
 		"thinking_enabled":false,
+		"reasoning_effort":"medium",
 		"is_plan_mode":false,
 		"subagent_enabled":false,
 		"agent_name":"researcher",

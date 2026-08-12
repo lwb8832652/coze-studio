@@ -269,7 +269,11 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
 		return nil, err
 	}
-	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	runConfig, err := s.normalizeNewRunRuntimeConfig(
+		req.Config,
+		req.Context,
+		createRunSubmitted,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -917,7 +921,7 @@ func (s *ApplicationService) createRun(
 	default:
 		return nil, fmt.Errorf("create run provenance is invalid")
 	}
-	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context, provenance)
 	if err != nil {
 		return nil, err
 	}
@@ -1387,12 +1391,43 @@ func legacyAppendedMessageID(metadata string) int64 {
 	return 0
 }
 
-func (s *ApplicationService) normalizeNewRunRuntimeConfig(config, runContext string) (string, error) {
+func (s *ApplicationService) normalizeNewRunRuntimeConfig(
+	config string,
+	runContext string,
+	provenance createRunProvenance,
+) (string, error) {
 	if s.RuntimePolicy == nil {
 		return config, nil
 	}
 	normalized, _, err := normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
-	return normalized, err
+	if err != nil {
+		return "", err
+	}
+
+	switch provenance {
+	case createRunSubmitted:
+		return stripSubmittedExecutionControls(normalized)
+	case createRunServerOwnedSubagent:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("create run provenance is invalid")
+	}
+}
+
+func stripSubmittedExecutionControls(normalized string) (string, error) {
+	payload, err := parseDeerFlowRuntimePayload(normalized)
+	if err != nil {
+		return "", err
+	}
+	for _, field := range submittedExecutionControlFields {
+		delete(payload, field)
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", invalidRuntimeConfigf("encode normalized run config: %v", err)
+	}
+	return string(encoded), nil
 }
 
 func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {

@@ -553,13 +553,6 @@ func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeDefaults(t *te
 	require.NotNil(t, domainSVC.createThreadRunMessageReq)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"requested_policy":"auto",
-		"mode":"ultra",
-		"thinking_enabled":true,
-		"reasoning_effort":"high",
-		"is_plan_mode":true,
-		"subagent_enabled":true,
-		"max_concurrent_subagents":3,
 		"skills":{"enabled":true}
 	}`, domainSVC.createThreadRunMessageReq.Run.Config)
 }
@@ -1473,7 +1466,8 @@ func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
 			Created: true,
 		},
 	}
-	app := &ApplicationService{ThreadSVC: domainSVC}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
 
 	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
 		ThreadID:                 10,
@@ -1481,7 +1475,7 @@ func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
 		AssistantID:              "default",
 		Command:                  `{"retry":"current_task"}`,
 		Input:                    `{"messages":[{"role":"user","content":"继续分析"}]}`,
-		Config:                   `{"runtime":"eino_adk"}`,
+		Config:                   `{"runtime":"eino_adk","model_name":"deepseek-v4-pro","resources":{"mode":"business"},"token_usage":{"enabled":true},"opaque":{"keep":true}}`,
 		Context:                  `{"request":"context"}`,
 		Metadata:                 `{"caller":"keep"}`,
 		StreamMode:               `["messages-tuple","updates"]`,
@@ -1503,7 +1497,13 @@ func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {
 	require.Equal(t, "default", domainSVC.createRunBundleReq.Run.AssistantID)
 	require.JSONEq(t, `{"retry":"current_task"}`, domainSVC.createRunBundleReq.Run.Command)
 	require.Equal(t, `{"messages":[{"role":"user","content":"继续分析"}]}`, domainSVC.createRunBundleReq.Run.Input)
-	require.JSONEq(t, `{"runtime":"eino_adk"}`, domainSVC.createRunBundleReq.Run.Config)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"model_name":"deepseek-v4-pro",
+		"resources":{"mode":"business"},
+		"token_usage":{"enabled":true},
+		"opaque":{"keep":true}
+	}`, domainSVC.createRunBundleReq.Run.Config)
 	require.Equal(t, `{"request":"context"}`, domainSVC.createRunBundleReq.Run.Context)
 	require.JSONEq(t, `{"caller":"keep","attempt_kind":"retry","source_run_id":3001}`, domainSVC.createRunBundleReq.Run.Metadata)
 	require.Equal(t, `["messages-tuple","updates"]`, domainSVC.createRunBundleReq.Run.StreamMode)
@@ -2053,14 +2053,7 @@ func TestApplicationCreateRunCanonicalizesAllowedRuntimeContext(t *testing.T) {
 	require.NotNil(t, domainSVC.createRunBundleReq)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"requested_policy":"auto",
-		"mode":"ultra",
-		"model_name":"deepseek-v4-pro",
-		"thinking_enabled":true,
-		"reasoning_effort":"high",
-		"is_plan_mode":true,
-		"subagent_enabled":true,
-		"max_concurrent_subagents":3
+		"model_name":"deepseek-v4-pro"
 	}`, domainSVC.createRunBundleReq.Run.Config)
 }
 

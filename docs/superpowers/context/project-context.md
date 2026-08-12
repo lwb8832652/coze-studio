@@ -149,7 +149,11 @@ provider-capability middleware 不再消费这些旧控制；持久化 Config �
 P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment 仅允许明确
 `runtime=eino_adk` 的 fresh 顶层 task，并继续服从既有 rollout/kill-switch；completed 完整性指标
 只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，也未定义
-新的 server inference policy。
+新的 server inference policy。P1M-C3f 又把 public `CreateTaskThread`、`CreateRun` 与 top-level retry
+的规范化结果收口为新写合同：server policy 仍先完成校验与合法 config/context 合并，但持久化前只从
+顶层删除七个退休执行控制字段；`runtime=eino_adk`、模型、资源、Token Usage 与其它合法 opaque 配置
+继续保留。package-private server-owned ADK child 仍保留历史禁用字段，避免兼容 child 在没有 fresh
+adaptive facts 时重新开启 Plan、Subagent 或 reasoning。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。

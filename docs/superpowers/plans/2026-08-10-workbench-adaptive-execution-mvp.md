@@ -359,6 +359,12 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       判断 `Mode`。本切片不新增 metrics emitter、不定义新的 server inference policy，也不扩到
       Resume、legacy、gate-on、IDL/UI；真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L
       继续 deferred，whole-Thread DELETE guard 不变。
+- [x] P1M-C3f 按交付优先只停止 public 新 Run 写回七个退休执行控制字段：
+      `CreateTaskThread`、`CreateRun` 与 top-level retry 继续先执行 runtime policy 校验和合法
+      config/context 合并，再仅删除规范化结果顶层的七字段；保留 `runtime=eino_adk`、模型、资源、
+      Token Usage 与其它 opaque 配置。package-private server-owned ADK child compatibility seam 继续
+      保留历史禁用字段；不扩到 Resume、历史 Run 重写、legacy parser、IDL/UI 或 consumer 全退休。
+      真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE guard 不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

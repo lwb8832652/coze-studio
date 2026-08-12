@@ -164,7 +164,10 @@ primary/failover model option 和 provider-capability middleware 因而使用同
 推理 policy。P1M-C3e 按交付优先只退休 Journal enrollment/completed metrics 的旧 mode consumer：
 enrollment 仅接受明确 `runtime=eino_adk` 的 fresh 顶层 task，并保留既有 rollout/kill-switch；completed
 完整性指标只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，
-也未定义 server inference policy。
+也未定义 server inference policy。P1M-C3f 只收口 public new-write config：`CreateTaskThread`、
+`CreateRun` 与 top-level retry 仍先执行 server policy normalization，再在持久化前删除规范化结果顶层的
+七个退休执行控制字段；`runtime=eino_adk` 与合法模型、资源、Token Usage、opaque 配置继续保留，
+package-private server-owned ADK child compatibility seam 不变。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private
@@ -252,7 +255,8 @@ checkpoint store 或 Agent。C3b 只让该 durable facts 控制同一 fresh Exec
 backend；C3c 只让同一 admission 的 `SubagentsAllowed=false` 关闭该 Execute 的 Subagent 工具、prompt
 与 limit middleware；C3d 只中和该 Execute 的旧 reasoning controls，不建立新推理 policy；C3e
 只让 Journal enrollment 以明确 Eino ADK fresh 顶层 task 为准，并让 completed 完整性指标以真实
-enrollment/completion 为分母，不新增 metrics emitter。其余 consumer 不变。真实 MySQL 双连接验收
+enrollment/completion 为分母，不新增 metrics emitter；C3f 只停止 public 新 Run config 写回七个退休
+字段，保留 runtime/合法业务配置与 server-owned child compatibility seam。其余 consumer 不变。真实 MySQL 双连接验收
 仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
