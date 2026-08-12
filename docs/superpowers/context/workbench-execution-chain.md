@@ -167,7 +167,12 @@ enrollment 仅接受明确 `runtime=eino_adk` 的 fresh 顶层 task，并保留�
 也未定义 server inference policy。P1M-C3f 只收口 public new-write config：`CreateTaskThread`、
 `CreateRun` 与 top-level retry 仍先执行 server policy normalization，再在持久化前删除规范化结果顶层的
 七个退休执行控制字段；`runtime=eino_adk` 与合法模型、资源、Token Usage、opaque 配置继续保留，
-package-private server-owned ADK child compatibility seam 不变。
+P1M-C3g 又让 public `CreateRun` 拒绝 caller-owned child shape，只有 package-private trusted child seam
+可以持久化 exact `ParentRunID > 0 && RunKind=subagent` child；这些 child 的 Config 新写也删除七个退休
+字段。异步 child 或 source-child retry 进入同一个 Agent Factory 时，Factory 根据 exact durable child
+identity 在本地关闭 Plan、Subagent、thinking 与 reasoning，并在 adaptive facts 之后再次覆盖；因此
+旧历史 child Config 仍兼容且不会重新开启这些能力。builtin/single-agent 内存 child builder 保持不变，
+本切片不代表全部 child consumer 退休。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private
@@ -256,7 +261,9 @@ backend；C3c 只让同一 admission 的 `SubagentsAllowed=false` 关闭该 Exec
 与 limit middleware；C3d 只中和该 Execute 的旧 reasoning controls，不建立新推理 policy；C3e
 只让 Journal enrollment 以明确 Eino ADK fresh 顶层 task 为准，并让 completed 完整性指标以真实
 enrollment/completion 为分母，不新增 metrics emitter；C3f 只停止 public 新 Run config 写回七个退休
-字段，保留 runtime/合法业务配置与 server-owned child compatibility seam。其余 consumer 不变。真实 MySQL 双连接验收
+字段并保留 runtime/合法业务配置；C3g 进一步拒绝 public child shape，只允许 package-private trusted seam
+持久化无七字段的 durable child，并由 Factory 对 exact child identity 本地强制关闭 Plan、Subagent 与
+reasoning。builtin/single-agent 内存 child builder 和其余 consumer 不变。真实 MySQL 双连接验收
 仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个

@@ -341,12 +341,13 @@ func TestCanonicalSubagentRunRetryErrors(t *testing.T) {
 	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, failedChild.RunID))
 
 	foreignKey := "canonical-retry-foreign"
+	foreignThread := createCanonicalTestThread(t, 1001, "retry foreign idempotency", `{}`)
 	createCanonicalRunForUsageRetryWithMetadata(
 		t,
-		thread.ThreadID,
-		parent.RunID,
-		appagentthread.RunKindSubagent,
-		appagentthread.RunStatusRunning,
+		foreignThread.ThreadID,
+		0,
+		appagentthread.RunKindTask,
+		appagentthread.RunStatusPending,
 		canonicalScopedIdempotencyKey(2, foreignKey),
 		fmt.Sprintf(`{"source_run_id":%d}`, failedChild.RunID),
 	)
@@ -461,10 +462,18 @@ func createCanonicalRunForUsageRetryWithMetadata(
 	metadata string,
 ) *appagentthread.RunSummary {
 	t.Helper()
-	assistantID := "lead-agent"
 	if kind == appagentthread.RunKindSubagent {
-		assistantID = "singleagent:1001"
+		require.Equal(t, appagentthread.RunStatusRunning, status)
+		parentResponse, err := appagentthread.SVC.GetRun(
+			context.Background(),
+			&appagentthread.GetRunRequest{RunID: parentRunID},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, parentResponse)
+		require.NotNil(t, parentResponse.Run)
+		return createCanonicalServerOwnedSubagentFixture(t, parentResponse.Run)
 	}
+	assistantID := "lead-agent"
 	resp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
 		ThreadID:       threadID,
 		ParentRunID:    parentRunID,
@@ -481,6 +490,30 @@ func createCanonicalRunForUsageRetryWithMetadata(
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Run)
 	return resp.Run
+}
+
+func createCanonicalServerOwnedSubagentFixture(
+	t *testing.T,
+	parent *appagentthread.RunSummary,
+) *appagentthread.RunSummary {
+	t.Helper()
+	require.NotNil(t, parent)
+	recorder := appagentthread.NewApplicationADKSubagentRunRecorder(appagentthread.SVC)
+	child, err := recorder.StartADKSubagentRun(
+		context.Background(),
+		appagentthread.ADKSubagentRunStartRequest{
+			Parent:          parent,
+			ArgumentsInJSON: `{}`,
+			Definition: appagentthread.ADKSubagentDefinition{
+				Name:        "researcher",
+				Description: "Research test fixture.",
+				AgentID:     1001,
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, child)
+	return child
 }
 
 func failCanonicalRunForUsageRetry(t *testing.T, runID int64) {

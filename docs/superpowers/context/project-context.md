@@ -152,8 +152,12 @@ P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment
 新的 server inference policy。P1M-C3f 又把 public `CreateTaskThread`、`CreateRun` 与 top-level retry
 的规范化结果收口为新写合同：server policy 仍先完成校验与合法 config/context 合并，但持久化前只从
 顶层删除七个退休执行控制字段；`runtime=eino_adk`、模型、资源、Token Usage 与其它合法 opaque 配置
-继续保留。package-private server-owned ADK child 仍保留历史禁用字段，避免兼容 child 在没有 fresh
-adaptive facts 时重新开启 Plan、Subagent 或 reasoning。
+继续保留。P1M-C3g 再收口 child 新写：public `CreateRun` 拒绝 caller-owned child shape，只有
+package-private trusted child seam 可以持久化 `ParentRunID > 0 && RunKind=subagent` 的 child；该新写
+Config 也不再包含七个退休字段。Factory 对这一 exact durable child identity 在本地强制关闭 Plan、
+Subagent、thinking 与 reasoning，并在 adaptive facts 投影后再次覆盖，因此旧历史 child Config 也保持
+更安全的兼容行为。builtin/single-agent 内存 child builder 暂未清理，且本切片不等于全部 child
+consumer 退休。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。

@@ -911,6 +911,9 @@ func (s *ApplicationService) createRun(
 	}
 	switch provenance {
 	case createRunSubmitted:
+		if req.ParentRunID != 0 || req.RunKind == RunKindSubagent {
+			return nil, fmt.Errorf("child runs are server-owned")
+		}
 		if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
 			return nil, err
 		}
@@ -1396,19 +1399,21 @@ func (s *ApplicationService) normalizeNewRunRuntimeConfig(
 	runContext string,
 	provenance createRunProvenance,
 ) (string, error) {
-	if s.RuntimePolicy == nil {
+	if s.RuntimePolicy == nil && provenance == createRunSubmitted {
 		return config, nil
 	}
-	normalized, _, err := normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
-	if err != nil {
-		return "", err
+	normalized := config
+	if s.RuntimePolicy != nil {
+		var err error
+		normalized, _, err = normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	switch provenance {
-	case createRunSubmitted:
+	case createRunSubmitted, createRunServerOwnedSubagent:
 		return stripSubmittedExecutionControls(normalized)
-	case createRunServerOwnedSubagent:
-		return normalized, nil
 	default:
 		return "", fmt.Errorf("create run provenance is invalid")
 	}

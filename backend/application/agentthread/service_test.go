@@ -1328,65 +1328,34 @@ func TestApplicationTokenUsageMethodsMapDomainUsage(t *testing.T) {
 	require.Equal(t, int64(20), threadResp.Aggregate.LeadAgentTokens)
 }
 
-func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
-	domainSVC := &recordingThreadService{
-		createdRun: &entity.Run{
-			ID:                200,
-			ThreadID:          10,
-			ParentRunID:       100,
-			SpaceID:           1,
-			CreatorID:         2,
-			AssistantID:       "default",
-			RunKind:           entity.RunKindSubagent,
-			Status:            entity.RunStatusPending,
-			Command:           `{}`,
-			Input:             `{"messages":[]}`,
-			Config:            `{"runtime":"eino_adk","custom":"keep"}`,
-			Context:           `{"source":"web"}`,
-			Metadata:          `{"trace":"abc"}`,
-			StreamMode:        `["messages","updates"]`,
-			MultitaskStrategy: "enqueue",
-			OnDisconnect:      "continue",
-			Durability:        "async",
-			IdempotencyKey:    "idem-1",
-			CreatedAt:         300,
-			UpdatedAt:         301,
-		},
+func TestApplicationCreateRunRejectsCallerOwnedChildShape(t *testing.T) {
+	tests := []struct {
+		name        string
+		parentRunID int64
+		runKind     RunKind
+	}{
+		{name: "parent identity", parentRunID: 100, runKind: RunKindTask},
+		{name: "subagent kind", runKind: RunKindSubagent},
+		{name: "complete child shape", parentRunID: 100, runKind: RunKindSubagent},
 	}
-	app := &ApplicationService{ThreadSVC: domainSVC}
-	initialStatus := RunStatusQueued
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{}
+			app := &ApplicationService{ThreadSVC: domainSVC}
 
-	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
-		ThreadID:       10,
-		ParentRunID:    100,
-		AssistantID:    "default",
-		RunKind:        RunKindSubagent,
-		Input:          `{"messages":[]}`,
-		Config:         `{"runtime":"eino_adk","custom":"keep"}`,
-		Context:        `{"source":"web"}`,
-		Metadata:       `{"trace":"abc"}`,
-		IdempotencyKey: "idem-1",
-		Status:         initialStatus,
-	})
+			resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+				ThreadID:    10,
+				ParentRunID: test.parentRunID,
+				RunKind:     test.runKind,
+				Input:       `{"messages":[]}`,
+			})
 
-	require.NoError(t, err)
-	require.Equal(t, int64(10), domainSVC.createRunReq.ThreadID)
-	require.Equal(t, int64(100), domainSVC.createRunReq.ParentRunID)
-	require.Equal(t, "default", domainSVC.createRunReq.AssistantID)
-	require.Equal(t, entity.RunKindSubagent, domainSVC.createRunReq.RunKind)
-	require.Equal(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Equal(t, `{"runtime":"eino_adk","custom":"keep"}`, domainSVC.createRunReq.Config)
-	require.Equal(t, `{"source":"web"}`, domainSVC.createRunReq.Context)
-	require.Equal(t, `{"trace":"abc"}`, domainSVC.createRunReq.Metadata)
-	require.Equal(t, "idem-1", domainSVC.createRunReq.IdempotencyKey)
-	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
-	require.Equal(t, int64(200), resp.Run.RunID)
-	require.Equal(t, int64(10), resp.Run.ThreadID)
-	require.Equal(t, int64(100), resp.Run.ParentRunID)
-	require.Equal(t, RunKindSubagent, resp.Run.RunKind)
-	require.Equal(t, RunStatusPending, resp.Run.Status)
-	require.Equal(t, `{"messages":[]}`, resp.Run.Input)
-	require.Equal(t, `["messages","updates"]`, resp.Run.StreamMode)
+			require.Nil(t, resp)
+			require.ErrorContains(t, err, "child runs are server-owned")
+			require.Nil(t, domainSVC.createRunReq)
+			require.Nil(t, domainSVC.createRunBundleReq)
+		})
+	}
 }
 
 func TestApplicationCreateRunMessageMetadataUsesAtomicBundle(t *testing.T) {

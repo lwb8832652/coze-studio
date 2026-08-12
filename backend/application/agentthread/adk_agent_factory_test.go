@@ -375,6 +375,56 @@ func TestADKAgentFactoryDoesNotPropagateParentAdaptiveFactsToNestedBuilds(t *tes
 	require.False(t, nestedFacts)
 }
 
+func TestADKAgentFactoryTreatsDurableChildIdentityAsSafeLocalPurpose(t *testing.T) {
+	run := &RunSummary{
+		RunID:       20,
+		ThreadID:    10,
+		ParentRunID: 15,
+		RunKind:     RunKindSubagent,
+		Config:      `{"runtime":"eino_adk","agent_name":"researcher"}`,
+	}
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	definitionCalls := 0
+	toolProvider := NewADKSubagentToolProvider(
+		nil,
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return nil, nil
+		}),
+		nil,
+	)
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		toolProvider,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(context.Background(), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, got.RuntimeConfig.PlanCapabilityEnabled())
+	require.False(t, got.RuntimeConfig.SubagentCapabilityEnabled())
+	require.Zero(t, got.RuntimeConfig.MaxConcurrentSubagents)
+	require.True(t, got.RuntimeConfig.ThinkingExplicit)
+	require.True(t, got.RuntimeConfig.ReasoningEffortExplicit)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+	require.Empty(t, got.RuntimeConfig.ReasoningEffort)
+	require.Zero(t, definitionCalls)
+}
+
 func TestADKAgentFactoryAppliesDurableLeadPromptOverlay(t *testing.T) {
 	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
 	var gotModelID int64

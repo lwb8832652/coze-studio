@@ -365,6 +365,13 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       Token Usage 与其它 opaque 配置。package-private server-owned ADK child compatibility seam 继续
       保留历史禁用字段；不扩到 Resume、历史 Run 重写、legacy parser、IDL/UI 或 consumer 全退休。
       真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE guard 不变。
+- [x] P1M-C3g 按交付优先只收口 durable child 新写与 Factory 安全：public `CreateRun` 拒绝
+      caller-owned child shape，仅 package-private trusted seam 可以持久化 exact
+      `ParentRunID > 0 && RunKind=subagent` child，且其新写 Config 不再包含七个退休字段；Factory 对
+      exact durable child identity 本地强制关闭 Plan、Subagent、thinking 与 reasoning，并在 adaptive
+      facts 投影后再次覆盖，使旧历史 child Config 继续安全兼容。builtin/single-agent 内存 child
+      builder、`Resume`、legacy parser、IDL/UI 与全部 consumer 退休继续 deferred；真实 MySQL 双连接仍
+      `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE guard 不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

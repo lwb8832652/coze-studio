@@ -380,13 +380,7 @@ func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *te
 	thread := createCanonicalTestThread(t, 1001, "canonical retry validation", `{}`)
 	failed := createCanonicalRunFixture(t, thread.ThreadID, "failed source")
 	failCanonicalRunFixture(t, failed, "runtime_failed", "failed")
-	childResponse, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: thread.ThreadID, ParentRunID: failed.RunID,
-		RunKind: appagentthread.RunKindSubagent, Input: `{"messages":[{"role":"user","content":"child"}]}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, childResponse)
-	require.NotNil(t, childResponse.Run)
+	child := createCanonicalServerOwnedSubagentFixture(t, failed)
 	otherThread := createCanonicalTestThread(t, 1001, "other retry source", `{}`)
 	crossThread := createCanonicalRunFixture(t, otherThread.ThreadID, "cross thread source")
 	failCanonicalRunFixture(t, crossThread, "runtime_failed", "failed")
@@ -402,7 +396,7 @@ func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *te
 	}{
 		{name: "missing source", coze: `{"attempt_kind":"retry","source_run_id":"999999"}`, status: http.StatusNotFound},
 		{name: "cross thread source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, crossThread.RunID), status: http.StatusNotFound},
-		{name: "child source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, childResponse.Run.RunID), status: http.StatusUnprocessableEntity},
+		{name: "child source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, child.RunID), status: http.StatusUnprocessableEntity},
 		{name: "non failed source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, active.RunID), status: http.StatusConflict},
 		{name: "malformed source", coze: `{"attempt_kind":"retry","source_run_id":"not-an-id"}`, status: http.StatusUnprocessableEntity},
 		{name: "numeric source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":%d}`, failed.RunID), status: http.StatusUnprocessableEntity},

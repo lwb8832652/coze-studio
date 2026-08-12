@@ -174,11 +174,6 @@ func adkSubagentRunPayloads(
 ) (string, string, error) {
 	configPayload := map[string]any{
 		"runtime":           string(RuntimeModeEinoADK),
-		"requested_policy":  string(DeerFlowRequestedPolicyPro),
-		"mode":              string(DeerFlowModePro),
-		"thinking_enabled":  false,
-		"is_plan_mode":      false,
-		"subagent_enabled":  false,
 		"agent_name":        definition.Name,
 		"agent_description": definition.Description,
 		"full_chat_history": definition.FullChatHistoryAsInput,

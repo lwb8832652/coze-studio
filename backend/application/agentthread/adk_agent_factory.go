@@ -209,7 +209,7 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
-	adaptiveSubagentPolicy := false
+	adaptiveSubagentPolicy := applyADKChildRuntimeSafetyPolicy(run, &runtimeConfig)
 	if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {
 		ctx = withoutAdaptiveBootstrapFacts(ctx)
 		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
@@ -235,6 +235,9 @@ func (f *ApplicationADKAgentFactory) Build(
 		runtimeConfig.ThinkingEnabled = false
 		runtimeConfig.ReasoningEffortExplicit = true
 		runtimeConfig.ReasoningEffort = ""
+	}
+	if applyADKChildRuntimeSafetyPolicy(run, &runtimeConfig) {
+		adaptiveSubagentPolicy = true
 	}
 	overlay := ADKLeadPromptOverlay{}
 	if f.promptOverlayProvider != nil {
@@ -407,6 +410,26 @@ func (f *ApplicationADKAgentFactory) Build(
 	}
 
 	return agent, nil
+}
+
+func applyADKChildRuntimeSafetyPolicy(
+	run *RunSummary,
+	runtimeConfig *DeerFlowRuntimeConfig,
+) bool {
+	if run == nil || runtimeConfig == nil || run.ParentRunID <= 0 || run.RunKind != RunKindSubagent {
+		return false
+	}
+	runtimeConfig.PlanModeExplicit = true
+	runtimeConfig.IsPlanMode = false
+	runtimeConfig.SubagentExplicit = true
+	runtimeConfig.SubagentEnabled = false
+	runtimeConfig.SubagentMaximumExplicit = true
+	runtimeConfig.MaxConcurrentSubagents = 0
+	runtimeConfig.ThinkingExplicit = true
+	runtimeConfig.ThinkingEnabled = false
+	runtimeConfig.ReasoningEffortExplicit = true
+	runtimeConfig.ReasoningEffort = ""
+	return true
 }
 
 func prepareADKChatModelForRun(

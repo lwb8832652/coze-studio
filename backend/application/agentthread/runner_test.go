@@ -1633,12 +1633,12 @@ func TestSubagentRetryPublicCommandRunsThroughProductionWorker(t *testing.T) {
 		Input:    `{"messages":[{"role":"user","content":"分析资料"}]}`,
 	})
 	require.NoError(t, err)
-	childResp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+	childResp, err := app.createRun(context.Background(), &CreateRunRequest{
 		ThreadID:    threadResp.Thread.ThreadID,
 		ParentRunID: parentResp.Run.RunID,
 		RunKind:     RunKindSubagent,
 		Input:       `{"messages":[{"role":"user","content":"检索资料"}]}`,
-	})
+	}, createRunServerOwnedSubagent)
 	require.NoError(t, err)
 	require.NoError(t, db.Table("agent_runs").Where("id = ?", parentResp.Run.RunID).
 		Updates(map[string]any{"status": string(RunStatusRunning)}).Error)
