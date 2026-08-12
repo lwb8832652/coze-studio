@@ -158,10 +158,13 @@ admission/decision 覆盖本地 Plan capability；现有 Todo prompt 与 `ADKMid
 不匹配或 blocked facts 在创建 Agent 前 fail closed。P1M-C3c 再以同一 admission 的
 `SubagentsAllowed=false` 同步关闭 local runtime config 的 Subagent prompt/limit middleware，并让标准
 Subagent tool provider 在解析 definition、构建 child 前只返回 base tools；一次性私有 disable 信号在
-调用 base provider 前已清掉，不会传播到 child。
+调用 base provider 前已清掉，不会传播到 child。P1M-C3d 再把同一 fresh Execute 的旧
+`mode`/`thinking_enabled`/`reasoning_effort` 影响中和为 local thinking false 与空 reasoning effort，
+primary/failover model option 和 provider-capability middleware 因而使用同一安全中性请求；未定义新
+推理 policy。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference、Journal enrollment/metrics
-consumer 仍未切换。historical runtime controls 与 package-private
+中的真正 server inference policy 与 Journal consumer 仍未切换。historical runtime controls 与 package-private
 server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
 DELETE guard 继续 hard-disabled。
 
@@ -244,7 +247,8 @@ C2b private durable bootstrap commit/readback 和 generic reserved-fact isolatio
 `RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled no-op，失败不会创建
 checkpoint store 或 Agent。C3b 只让该 durable facts 控制同一 fresh Execute 的 Todo prompt 与 Plan
 backend；C3c 只让同一 admission 的 `SubagentsAllowed=false` 关闭该 Execute 的 Subagent 工具、prompt
-与 limit middleware；其余 consumer 不变。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
+与 limit middleware；C3d 只中和该 Execute 的旧 reasoning controls，不建立新推理 policy；其余
+consumer 不变。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
 blocker 约束。

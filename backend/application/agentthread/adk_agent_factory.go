@@ -231,6 +231,10 @@ func (f *ApplicationADKAgentFactory) Build(
 		if !runtimeConfig.SubagentEnabled {
 			runtimeConfig.MaxConcurrentSubagents = 0
 		}
+		runtimeConfig.ThinkingExplicit = true
+		runtimeConfig.ThinkingEnabled = false
+		runtimeConfig.ReasoningEffortExplicit = true
+		runtimeConfig.ReasoningEffort = ""
 	}
 	overlay := ADKLeadPromptOverlay{}
 	if f.promptOverlayProvider != nil {

@@ -817,6 +817,50 @@ func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
 	require.Equal(t, []string{"reasoning:high", "thinking:true"}, chatModel.options.Stop)
 }
 
+func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{
+		"mode":"ultra",
+		"reasoning_effort":"high",
+		"thinking_enabled":true
+	}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+	}
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(
+		withAdaptiveBootstrapFacts(context.Background(), facts),
+		run,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.True(t, got.RuntimeConfig.ThinkingExplicit)
+	require.True(t, got.RuntimeConfig.ReasoningEffortExplicit)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+	require.Empty(t, got.RuntimeConfig.ReasoningEffort)
+	require.Zero(t, chatModel.reasoningProjects)
+	require.Nil(t, chatModel.options)
+}
+
 func TestADKAgentFactoryPreservesHistoricalCamelCaseReasoningOptions(t *testing.T) {
 	chatModel := &reasoningProjectingChatModel{
 		recordingChatModel: recordingChatModel{

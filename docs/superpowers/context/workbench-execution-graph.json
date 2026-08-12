@@ -408,7 +408,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a/C3b/C3c conditional fresh Execute bootstrap, Plan, and Subagent capability",
+      "label": "P1M-C1/C2a/C2b contract plus C3a-C3d conditional fresh Execute bootstrap and capability projection",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -514,6 +514,10 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {"
         }
       ]
     },
@@ -6002,9 +6006,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a/C3b/C3c fresh Execute Plan and Subagent slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3d fresh Execute slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. Reasoning/model inference, Journal enrollment/metrics and other historical runtime controls plus the package-private server-owned ADK child compatibility seam remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. A true server inference policy, Journal enrollment/metrics and other historical runtime controls plus the package-private server-owned ADK child compatibility seam remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -6109,6 +6113,10 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {"
         }
       ]
     },

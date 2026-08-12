@@ -346,6 +346,13 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       无 facts 的未接入路径继续保留历史兼容。Resume、reasoning/model inference、Journal
       enrollment/metrics、legacy、gate-on、IDL/UI 均不在本切片；真实 MySQL 双连接仍
       `NOT_VERIFIED`，P1M 未 PASS，P1L/DELETE guard 不变。
+- [x] P1M-C3d 继续限定同一 fresh Execute：Factory 在 durable facts 已重验后，将旧
+      `mode`、`thinking_enabled`、`reasoning_effort` 对当前本地 runtime config 的影响中和为
+      `ThinkingEnabled=false`、空 `ReasoningEffort`，使 primary/failover model option projection 与
+      provider-capability middleware 使用同一安全中性请求；不改持久化 Config，也不引入新的推理
+      policy。无 facts 的未接入路径继续保留历史兼容。Resume、Journal enrollment/metrics、legacy、
+      gate-on、IDL/UI 均不在本切片；真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/DELETE
+      guard 不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知
@@ -362,8 +369,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
 - [ ] 实现 `BaselineDecisionProducer`：固定输出 `execute/multi_step`、服务端固定 safe summary、空
       deliverables/checks；P1M 生产只安装该 producer，若持久化快照的 gate=true 则明确返回
       `ErrAdaptiveProducerUnavailable`，直到 P1D 安装 adaptive producer，不能增加第二个隐藏分类器。
-- [ ] fresh 顶层 Execute 的 Plan capability 与 Subagent 禁用已由 P1M-C3b/C3c 切到 durable
-      admission/decision；继续把 Resume/历史兼容 Plan 路径、reasoning/model inference、Journal enrollment/metrics
+- [ ] fresh 顶层 Execute 的 Plan capability、Subagent 禁用与旧 reasoning 控制中和已由
+      P1M-C3b/C3c/C3d 切到 durable admission/decision；继续把 Resume/历史兼容 Plan 路径、真正的
+      server inference policy、Journal enrollment/metrics
       切换到 admission、purpose binding 与 server inference config，再删除 mode consumer；
       `RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
 - [ ] 把 root、附件、follow-up、retry、resume 与 child/retry config 写入全部切到审核后的 canonical
