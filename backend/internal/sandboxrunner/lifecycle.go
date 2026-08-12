@@ -283,7 +283,8 @@ func (lifecycle *Lifecycle) destroyAndQuarantine(ctx context.Context, containerI
 }
 
 func (lifecycle *Lifecycle) specification(key string, request LifecycleRequest) sandboxruntime.Specification {
-	return sandboxruntime.Specification{ReuseKeyHash: lifecycleHash(key), Scope: string(request.Scope), ImageDigest: request.ImageDigest, PolicyVersion: request.PolicyVersion, SchedulerVersion: request.SchedulerVersion, CredentialGeneration: request.CredentialGeneration, DeploymentID: lifecycle.deploymentID}
+	workload := lifecycle.settings.Workloads[request.Scope]
+	return sandboxruntime.Specification{ReuseKeyHash: lifecycleHash(key), Scope: string(request.Scope), ImageDigest: request.ImageDigest, PolicyVersion: request.PolicyVersion, SchedulerVersion: request.SchedulerVersion, CredentialGeneration: request.CredentialGeneration, DeploymentID: lifecycle.deploymentID, CPUMilli: int(workload.CPULimit), MemoryLimitMB: workload.MemoryLimitMB, PIDLimit: workload.PIDLimit}
 }
 
 func (lifecycle *Lifecycle) matches(specification sandboxruntime.Specification, key string, request LifecycleRequest) bool {

@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+# alpine:3.22.0 multi-architecture index digest, resolved from the Docker
+# Official Image before
+# this file was added. Update only through the image review process.
+FROM alpine:3.22.0@sha256:8a1f59ffb675680d47db6337b49d22281a139e9d709335b492be023728e11715
+
+LABEL org.opencontainers.image.title="newx-sandbox-runtime"
+LABEL org.opencontainers.image.description="Unprivileged fixed-entrypoint runtime for NewX Sandbox Runner"
+
+RUN apk add --no-cache ca-certificates nodejs python3 && \
+    addgroup -S -g 10001 sandbox && \
+    adduser -S -D -H -u 10001 -G sandbox sandbox && \
+    install -d -o 10001 -g 10001 -m 0700 /workspace /run/newx-secrets && \
+    install -d -o 10001 -g 10001 -m 1777 /tmp
+
+COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-idle /opt/newx/bin/runtime-idle
+COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-cleanup /opt/newx/bin/runtime-cleanup
+COPY --chmod=0555 deploy/sandbox-runner/runtime/runtime-health /opt/newx/bin/runtime-health
+
+USER 10001:10001
+WORKDIR /workspace
+
+ENV HOME=/workspace \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
+# The Runner only creates this immutable image and invokes fixed maintenance
+# commands. Task 11 adds the four reviewed workload adapters; there is no
+# caller-controlled shell, image, or command path in this image contract.
+ENTRYPOINT ["/opt/newx/bin/runtime-idle"]

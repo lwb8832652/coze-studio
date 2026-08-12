@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+# These are Docker tmpfs paths created by the Driver. Never remove the
+# workspace here: its lifecycle is controlled by the reviewed scope adapter.
+find /tmp -xdev -mindepth 1 -delete
+find /run/newx-secrets -xdev -mindepth 1 -delete

@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+test "$(id -u)" = "10001"
+test -d /tmp && test -w /tmp
+test -d /run/newx-secrets && test -w /run/newx-secrets
+test ! -S /var/run/docker.sock
+command -v python3 >/dev/null
+command -v node >/dev/null

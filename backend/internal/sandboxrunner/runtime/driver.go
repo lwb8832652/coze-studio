@@ -15,6 +15,7 @@ type ContainerState string
 const (
 	ContainerStateRunning ContainerState = "running"
 	ContainerStateIdle    ContainerState = "idle"
+	ContainerStateStopped ContainerState = "stopped"
 )
 
 // Specification contains only reviewed runtime labels. ReuseKeyHash is
@@ -27,6 +28,10 @@ type Specification struct {
 	SchedulerVersion     uint64
 	CredentialGeneration string
 	DeploymentID         string
+	CPUMilli             int
+	MemoryLimitMB        int
+	PIDLimit             int
+	AllowNetwork         bool
 }
 
 type Container struct {
