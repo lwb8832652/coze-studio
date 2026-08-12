@@ -333,6 +333,12 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       store 或 Agent runtime。`Resume`、legacy runtime、gate-on、IDL 与 frontend/UI 暂不接；真实 MySQL
       双连接验收继续记为 `NOT_VERIFIED`，P1M 未 PASS，P1L deferred 与 whole-Thread DELETE hard guard
       不变。
+- [x] P1M-C3b 只消费 C3a 的 durable/replayed facts：`ADKExecutor.Execute` 用私有 context 交给
+      `ApplicationADKAgentFactory`，Factory 重新校验 identity/policy 后只覆盖本地 Plan capability，
+      使 Todo prompt 与 Plan backend 同时服从 `PlanAllowed + execute/multi_step`；direct 不建 Plan，
+      invalid/blocked facts fail closed，无 facts 的未接入路径保留历史兼容。Subagent、reasoning/model
+      inference、Journal enrollment/metrics、Resume、legacy、gate-on、IDL/UI 都不在本切片；真实 MySQL
+      双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/DELETE guard 不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知
@@ -349,7 +355,8 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
 - [ ] 实现 `BaselineDecisionProducer`：固定输出 `execute/multi_step`、服务端固定 safe summary、空
       deliverables/checks；P1M 生产只安装该 producer，若持久化快照的 gate=true 则明确返回
       `ErrAdaptiveProducerUnavailable`，直到 P1D 安装 adaptive producer，不能增加第二个隐藏分类器。
-- [ ] 先把 Plan capability、Subagent 禁用、reasoning/model inference、Journal enrollment/metrics
+- [ ] fresh 顶层 Execute 的 Plan capability 已由 P1M-C3b 切到 durable admission/decision；继续把
+      Resume/历史兼容 Plan 路径、Subagent 禁用、reasoning/model inference、Journal enrollment/metrics
       切换到 admission、purpose binding 与 server inference config，再删除 mode consumer；
       `RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
 - [ ] 把 root、附件、follow-up、retry、resume 与 child/retry config 写入全部切到审核后的 canonical

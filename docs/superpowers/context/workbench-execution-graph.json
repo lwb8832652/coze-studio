@@ -408,7 +408,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a conditional fresh Execute bootstrap",
+      "label": "P1M-C1/C2a/C2b contract plus C3a/C3b conditional fresh Execute bootstrap and Plan capability",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -452,12 +452,17 @@
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
           "symbol": "(*adaptiveBootstrapCoordinator).Bootstrap",
-          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSummary) error {"
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
         },
         {
           "path": "backend/application/agentthread/adk_executor.go",
           "symbol": "(*ADKExecutor).Execute",
-          "locator": "if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {"
+          "locator": "facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "symbol": "(*ApplicationADKAgentFactory).Build",
+          "locator": "if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {"
         }
       ],
       "evidence": [
@@ -496,6 +501,10 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
         }
       ]
     },
@@ -2263,12 +2272,20 @@
         {
           "path": "backend/application/agentthread/adk_middleware.go",
           "locator": "ADKMiddlewarePlanTask,"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {"
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_middleware_test.go",
           "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
         }
       ]
     },
@@ -3920,7 +3937,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_executor.go",
-          "locator": "if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {"
+          "locator": "facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)"
         },
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
@@ -5976,9 +5993,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a fresh Execute slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a/C3b fresh Execute Plan slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a now adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. Historical runtime controls and the package-private server-owned ADK child compatibility seam remain, so P1M-A/B1/C1/C2a/C2b/C3a are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Resume, legacy runtime, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. Subagent, reasoning/model inference, Journal enrollment/metrics and other historical runtime controls plus the package-private server-owned ADK child compatibility seam remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -6074,7 +6091,7 @@
         },
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
-          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSummary) error {"
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
         },
         {
           "path": "backend/application/agentthread/adk_executor_test.go",

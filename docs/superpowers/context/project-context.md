@@ -137,9 +137,13 @@ P1M-B1 之后的内部合同边界。P1M-C3a 已把 gate-off coordinator 接入�
 Eino ADK `Execute`：输入解析成功后先读 durable replay，首次才提交固定 baseline
 `execute/multi_step`，随后才允许创建 checkpoint store 与 Agent runtime；明确 `task` 和既有空
 `RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled 保持 no-op。logical
-Journal root 可以与当前 execution Run 不同。真实 MySQL 双连接验收仍待显式
+Journal root 可以与当前 execution Run 不同。P1M-C3b 又把该 durable/replayed admission 与 decision
+作为这一条 fresh Execute 链的 Plan capability 权威：Factory 在创建提示词和 middleware 前只覆盖
+本地 Plan capability，因此 Todo prompt 与 Plan backend 同步受控；无 facts 的未接入路径保留历史
+兼容，无效或不匹配 facts fail closed。真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
-和 frontend/UI 未接。历史 runtime controls 与 package-private server-owned subagent compatibility
+和 frontend/UI 未接；Subagent、reasoning/model inference、Journal enrollment/metrics 仍使用历史
+consumer。历史 runtime controls 与 package-private server-owned subagent compatibility
 seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后

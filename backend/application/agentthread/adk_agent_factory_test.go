@@ -34,6 +34,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	toolutils "github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -185,6 +186,114 @@ func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
 			require.Equal(t, test.wantSubagent, strings.Contains(instruction, "<subagent_system>"))
 		})
 	}
+}
+
+func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    string
+		facts     func(*AdaptiveBootstrapFacts)
+		withFacts bool
+		wantPlan  bool
+		wantErr   error
+	}{
+		{
+			name: "multi step overrides retired plan false", config: `{"mode":"pro","is_plan_mode":false}`,
+			withFacts: true, wantPlan: true,
+		},
+		{
+			name: "direct overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantPlan: false,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Decision.Decision = entity.ExecutionDecisionDirect
+				facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+				facts.Decision.PlanScopeRunID = nil
+			},
+		},
+		{
+			name: "missing facts preserves compatibility", config: `{"mode":"pro","is_plan_mode":true}`,
+			wantPlan: true,
+		},
+		{
+			name: "blocked facts fail closed", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantErr: ErrAdaptiveDecisionBlockedPolicy,
+			facts: func(facts *AdaptiveBootstrapFacts) { facts.Admission.Capabilities.PlanAllowed = false },
+		},
+		{
+			name: "stale generation fails closed", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantErr: ErrExecutionDecisionInvalid,
+			facts: func(facts *AdaptiveBootstrapFacts) { facts.Decision.ExecutionGeneration-- },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := freshAdaptiveBootstrapRunForTest()
+			run.Config = test.config
+			ctx := context.Background()
+			if test.withFacts {
+				facts := adaptiveBootstrapFactsForRunTest(t, run)
+				if test.facts != nil {
+					test.facts(facts)
+				}
+				ctx = withAdaptiveBootstrapFacts(ctx, facts)
+			}
+			chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+			var got ADKMiddlewareBuildInput
+			factory := NewApplicationADKAgentFactory(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+				nil,
+				ADKMiddlewareFactoryFunc(func(_ context.Context, input ADKMiddlewareBuildInput) (ADKMiddlewareBundle, error) {
+					got = input
+					return ADKMiddlewareBundle{}, nil
+				}),
+			)
+
+			agent, err := factory.Build(ctx, run)
+			if test.wantErr != nil {
+				if errors.Is(test.wantErr, ErrExecutionDecisionInvalid) {
+					require.ErrorContains(t, err, "does not match the current run")
+				} else {
+					require.ErrorIs(t, err, test.wantErr)
+				}
+				require.Nil(t, agent)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.wantPlan, got.RuntimeConfig.PlanCapabilityEnabled())
+			events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+				Messages: []*schema.Message{schema.UserMessage("work")},
+			})
+			require.NotEmpty(t, events)
+			require.NoError(t, events[len(events)-1].Err)
+			require.Equal(t, test.wantPlan, strings.Contains(chatModel.messages[0].Content, "<todo_system>"))
+		})
+	}
+}
+
+func TestADKAgentFactoryDoesNotPropagateParentAdaptiveFactsToNestedBuilds(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{"mode":"pro","is_plan_mode":false}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	var nestedFacts bool
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return &recordingChatModel{resp: schema.AssistantMessage("done", nil)}, true, nil
+		},
+		ADKToolProviderFunc(func(ctx context.Context, _ *RunSummary) ([]tool.BaseTool, error) {
+			_, nestedFacts = adaptiveBootstrapFactsFromContext(ctx)
+			return nil, nil
+		}),
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, nestedFacts)
 }
 
 func TestADKAgentFactoryAppliesDurableLeadPromptOverlay(t *testing.T) {

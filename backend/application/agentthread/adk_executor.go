@@ -100,9 +100,11 @@ func (e *ADKExecutor) Execute(
 		return nil, err
 	}
 	if e.adaptiveBootstrapCoordinator != nil {
-		if err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run); err != nil {
+		facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)
+		if err != nil {
 			return nil, fmt.Errorf("bootstrap adaptive execution: %w", err)
 		}
+		ctx = withAdaptiveBootstrapFacts(ctx, facts)
 	}
 	executionCtx, cancelExecution := context.WithCancel(ctx)
 	defer cancelExecution()

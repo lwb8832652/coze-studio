@@ -35,9 +35,15 @@ import (
 
 func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {
 	order := make([]string, 0, 3)
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Input = `{"messages":[{"role":"user","content":"research"}]}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
 	executor := NewADKExecutor(
-		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+		ADKAgentFactoryFunc(func(ctx context.Context, _ *RunSummary) (adk.ResumableAgent, error) {
 			order = append(order, "factory")
+			got, ok := adaptiveBootstrapFactsFromContext(ctx)
+			require.True(t, ok)
+			require.Equal(t, facts, got)
 			return &scriptedADKAgent{run: func(context.Context) []*adk.AgentEvent {
 				return []*adk.AgentEvent{{AgentName: "lead", Output: &adk.AgentOutput{
 					MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("done", nil), Role: schema.Assistant},
@@ -50,16 +56,13 @@ func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {
 			return newMemoryADKCheckpointStore(), nil
 		},
 		nil,
-		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) error {
+		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error) {
 			order = append(order, "bootstrap")
-			return nil
+			return facts, nil
 		})),
 	)
 
-	result, err := executor.Execute(context.Background(), &RunSummary{
-		ThreadID: 10, RunID: 20,
-		Input: `{"messages":[{"role":"user","content":"research"}]}`,
-	})
+	result, err := executor.Execute(context.Background(), run)
 
 	require.NoError(t, err)
 	require.Equal(t, "done", result.Message)
@@ -80,8 +83,8 @@ func TestADKExecutorStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testing.T) {
 			return nil, errors.New("store must not run")
 		},
 		nil,
-		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) error {
-			return bootstrapErr
+		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error) {
+			return nil, bootstrapErr
 		})),
 	)
 

@@ -32,6 +32,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	arkruntime "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"google.golang.org/genai"
 )
@@ -207,6 +208,22 @@ func (f *ApplicationADKAgentFactory) Build(
 	runtimeConfig, err := ParseDeerFlowRuntimeConfig(run.Config)
 	if err != nil {
 		return nil, err
+	}
+	if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {
+		ctx = withoutAdaptiveBootstrapFacts(ctx)
+		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
+			return nil, fmt.Errorf("validate adaptive bootstrap plan capability: %w", err)
+		}
+		if run.ExecutionGeneration == 0 || facts.Decision.DecisionRevision != 1 ||
+			facts.Decision.ExecutionRunID != run.RunID ||
+			facts.Decision.ExecutionGeneration != run.ExecutionGeneration ||
+			(facts.Decision.PlanScopeRunID != nil && *facts.Decision.PlanScopeRunID != run.RunID) {
+			return nil, fmt.Errorf("adaptive bootstrap plan capability does not match the current run")
+		}
+		runtimeConfig.PlanModeExplicit = true
+		runtimeConfig.IsPlanMode = facts.Admission.Capabilities.PlanAllowed &&
+			facts.Decision.Decision == domainentity.ExecutionDecisionExecute &&
+			facts.Decision.ExecutionShape == domainentity.ExecutionShapeMultiStep
 	}
 	overlay := ADKLeadPromptOverlay{}
 	if f.promptOverlayProvider != nil {

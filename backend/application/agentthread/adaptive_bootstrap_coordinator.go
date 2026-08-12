@@ -32,16 +32,51 @@ import (
 const adaptiveBootstrapIdentitySchema = "workbench-adaptive-bootstrap.v1"
 
 type AdaptiveBootstrapCoordinator interface {
-	Bootstrap(context.Context, *RunSummary) error
+	Bootstrap(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error)
 }
 
-type AdaptiveBootstrapCoordinatorFunc func(context.Context, *RunSummary) error
+type AdaptiveBootstrapCoordinatorFunc func(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error)
 
-func (f AdaptiveBootstrapCoordinatorFunc) Bootstrap(ctx context.Context, run *RunSummary) error {
+func (f AdaptiveBootstrapCoordinatorFunc) Bootstrap(
+	ctx context.Context,
+	run *RunSummary,
+) (*AdaptiveBootstrapFacts, error) {
 	if f == nil {
-		return fmt.Errorf("adaptive bootstrap coordinator function is required")
+		return nil, fmt.Errorf("adaptive bootstrap coordinator function is required")
 	}
 	return f(ctx, run)
+}
+
+// AdaptiveBootstrapFacts are server-owned facts loaded from the durable C2
+// bootstrap boundary. They are carried only through the current Execute
+// context and are never projected into request config or metadata.
+type AdaptiveBootstrapFacts struct {
+	Admission domainentity.AdaptiveAdmissionSnapshot
+	Decision  domainentity.ExecutionDecision
+}
+
+type adaptiveBootstrapFactsContextKey struct{}
+
+func withAdaptiveBootstrapFacts(ctx context.Context, facts *AdaptiveBootstrapFacts) context.Context {
+	if facts == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, adaptiveBootstrapFactsContextKey{}, cloneAdaptiveBootstrapFacts(facts))
+}
+
+func adaptiveBootstrapFactsFromContext(ctx context.Context) (*AdaptiveBootstrapFacts, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	facts, ok := ctx.Value(adaptiveBootstrapFactsContextKey{}).(*AdaptiveBootstrapFacts)
+	if !ok || facts == nil {
+		return nil, false
+	}
+	return cloneAdaptiveBootstrapFacts(facts), true
+}
+
+func withoutAdaptiveBootstrapFacts(ctx context.Context) context.Context {
+	return context.WithValue(ctx, adaptiveBootstrapFactsContextKey{}, (*AdaptiveBootstrapFacts)(nil))
 }
 
 type AdaptiveBootstrapAttemptReader interface {
@@ -86,33 +121,36 @@ func NewAdaptiveBootstrapCoordinator(options AdaptiveBootstrapCoordinatorOptions
 	}
 }
 
-func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSummary) error {
+func (c *adaptiveBootstrapCoordinator) Bootstrap(
+	ctx context.Context,
+	run *RunSummary,
+) (*AdaptiveBootstrapFacts, error) {
 	if run == nil {
-		return fmt.Errorf("adaptive bootstrap run is required")
+		return nil, fmt.Errorf("adaptive bootstrap run is required")
 	}
 	if run.ParentRunID != 0 || (run.RunKind != "" && run.RunKind != RunKindTask) {
-		return nil
+		return nil, nil
 	}
 	if c == nil || c.attemptReader == nil || c.repository == nil || c.idGen == nil || c.now == nil {
-		return fmt.Errorf("adaptive bootstrap dependencies are required")
+		return nil, fmt.Errorf("adaptive bootstrap dependencies are required")
 	}
 	if run.ThreadID <= 0 || run.RunID <= 0 {
-		return fmt.Errorf("adaptive bootstrap run identity is invalid")
+		return nil, fmt.Errorf("adaptive bootstrap run identity is invalid")
 	}
 
 	attempt, err := c.attemptReader.GetActiveJournalAttempt(ctx, run.RunID)
 	if errors.Is(err, domainrepo.ErrJournalNotEnrolled) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read active journal attempt for adaptive bootstrap: %w", err)
+		return nil, fmt.Errorf("read active journal attempt for adaptive bootstrap: %w", err)
 	}
 	if run.ExecutionGeneration == 0 || !adaptiveBootstrapIdentityPart(run.LeaseOwner, 191) ||
 		!adaptiveBootstrapIdentityPart(run.LeaseToken, 191) {
-		return fmt.Errorf("adaptive bootstrap run identity is invalid")
+		return nil, fmt.Errorf("adaptive bootstrap run identity is invalid")
 	}
 	if !adaptiveBootstrapFreshAttempt(run, attempt) {
-		return fmt.Errorf("adaptive bootstrap requires the current fresh journal attempt")
+		return nil, fmt.Errorf("adaptive bootstrap requires the current fresh journal attempt")
 	}
 
 	readRequest := domainrepo.ReadAdaptiveExecutionBootstrapRequest{
@@ -124,15 +162,16 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSu
 	result, err := c.repository.ReadAdaptiveExecutionBootstrap(ctx, readRequest)
 	if err == nil {
 		if result == nil {
-			return fmt.Errorf("adaptive bootstrap replay result is required")
+			return nil, fmt.Errorf("adaptive bootstrap replay result is required")
 		}
-		if result.Authority.ExecutionGeneration != run.ExecutionGeneration {
-			return fmt.Errorf("adaptive bootstrap replay generation does not match the current run claim")
+		facts, validateErr := adaptiveBootstrapFactsFromDurableResult(run, attempt, result)
+		if validateErr != nil {
+			return nil, validateErr
 		}
-		return nil
+		return facts, nil
 	}
 	if !errors.Is(err, domainrepo.ErrAdaptiveExecutionBootstrapNotFound) {
-		return fmt.Errorf("read adaptive execution bootstrap: %w", err)
+		return nil, fmt.Errorf("read adaptive execution bootstrap: %w", err)
 	}
 
 	operationKey := adaptiveBootstrapStableKey("operation", run, attempt)
@@ -150,19 +189,19 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSu
 		CreatedAt:           attempt.CreatedAt,
 	})
 	if err != nil {
-		return fmt.Errorf("produce baseline adaptive decision: %w", err)
+		return nil, fmt.Errorf("produce baseline adaptive decision: %w", err)
 	}
 	ids, err := c.idGen.GenMultiIDs(ctx, 3)
 	if err != nil {
-		return fmt.Errorf("allocate adaptive bootstrap identifiers: %w", err)
+		return nil, fmt.Errorf("allocate adaptive bootstrap identifiers: %w", err)
 	}
 	if len(ids) != 3 || ids[0] <= 0 || ids[1] <= 0 || ids[2] <= 0 ||
 		ids[0] == ids[1] || ids[0] == ids[2] || ids[1] == ids[2] {
-		return fmt.Errorf("adaptive bootstrap identifiers are invalid")
+		return nil, fmt.Errorf("adaptive bootstrap identifiers are invalid")
 	}
 	now := c.now()
 	if now <= 0 {
-		return fmt.Errorf("adaptive bootstrap clock is invalid")
+		return nil, fmt.Errorf("adaptive bootstrap clock is invalid")
 	}
 	committed, err := c.repository.CommitAdaptiveExecutionBootstrap(ctx, domainrepo.CommitAdaptiveExecutionBootstrapRequest{
 		ThreadID: run.ThreadID, ExecutionRunID: run.RunID,
@@ -174,12 +213,79 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(ctx context.Context, run *RunSu
 		AdmissionEventID: ids[0], DecisionEventID: ids[1], CheckpointID: ids[2],
 	})
 	if err != nil {
-		return fmt.Errorf("commit adaptive execution bootstrap: %w", err)
+		return nil, fmt.Errorf("commit adaptive execution bootstrap: %w", err)
 	}
 	if committed == nil {
-		return fmt.Errorf("adaptive bootstrap commit result is required")
+		return nil, fmt.Errorf("adaptive bootstrap commit result is required")
 	}
-	return nil
+	facts, err := adaptiveBootstrapFactsFromDurableResult(run, attempt, committed)
+	if err != nil {
+		return nil, err
+	}
+	return facts, nil
+}
+
+func adaptiveBootstrapFactsFromDurableResult(
+	run *RunSummary,
+	attempt *domainentity.RunAttempt,
+	result *domainrepo.CommitAdaptiveExecutionBootstrapResult,
+) (*AdaptiveBootstrapFacts, error) {
+	if result == nil || run == nil || attempt == nil {
+		return nil, fmt.Errorf("adaptive bootstrap durable facts do not match the current run claim")
+	}
+	if result.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh ||
+		result.Admission.FeatureGateEnabled || result.Decision.DecisionRevision != 1 ||
+		result.Authority.ExecutionGeneration != run.ExecutionGeneration ||
+		result.Decision.ExecutionGeneration != run.ExecutionGeneration {
+		return nil, fmt.Errorf("adaptive bootstrap replay generation does not match the current run claim")
+	}
+	if result.Authority.ThreadID != run.ThreadID || result.Authority.ExecutionRunID != run.RunID ||
+		result.Authority.JournalRunID != attempt.JournalRunID || result.Authority.AttemptID != attempt.AttemptID ||
+		result.Decision.ExecutionRunID != run.RunID || result.Decision.JournalRunID != attempt.JournalRunID ||
+		result.Decision.AttemptID != attempt.AttemptID ||
+		(result.Decision.PlanScopeRunID != nil && *result.Decision.PlanScopeRunID != run.RunID) {
+		return nil, fmt.Errorf("adaptive bootstrap durable facts do not match the current run claim")
+	}
+	if err := ValidateExecutionDecisionAgainstAdmission(result.Admission, result.Decision); err != nil {
+		return nil, fmt.Errorf("validate adaptive bootstrap durable facts: %w", err)
+	}
+	return cloneAdaptiveBootstrapFacts(&AdaptiveBootstrapFacts{
+		Admission: result.Admission,
+		Decision:  result.Decision,
+	}), nil
+}
+
+func cloneAdaptiveBootstrapFacts(facts *AdaptiveBootstrapFacts) *AdaptiveBootstrapFacts {
+	if facts == nil {
+		return nil
+	}
+	clone := *facts
+	if facts.Admission.SourceRunID != nil {
+		value := *facts.Admission.SourceRunID
+		clone.Admission.SourceRunID = &value
+	}
+	if facts.Admission.SourceExecutionGeneration != nil {
+		value := *facts.Admission.SourceExecutionGeneration
+		clone.Admission.SourceExecutionGeneration = &value
+	}
+	if facts.Decision.Deliverables != nil {
+		clone.Decision.Deliverables = append([]string{}, facts.Decision.Deliverables...)
+	}
+	if facts.Decision.AcceptanceChecks != nil {
+		clone.Decision.AcceptanceChecks = append(
+			[]domainentity.AdaptiveAcceptanceCheck{},
+			facts.Decision.AcceptanceChecks...,
+		)
+	}
+	if facts.Decision.PlanScopeRunID != nil {
+		value := *facts.Decision.PlanScopeRunID
+		clone.Decision.PlanScopeRunID = &value
+	}
+	if facts.Decision.ClarificationQuestion != nil {
+		value := *facts.Decision.ClarificationQuestion
+		clone.Decision.ClarificationQuestion = &value
+	}
+	return &clone
 }
 
 func baselineAdaptiveAdmission() domainentity.AdaptiveAdmissionSnapshot {

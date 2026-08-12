@@ -152,8 +152,13 @@ writer/reader 隔离这些保留事实。P1M-C3a 只增加一条窄生产边：�
 `Execute` 在输入解析后、`buildRuntime` 前调用 gate-off coordinator；它先读 exact replay，首次才
 提交固定 baseline decision。明确 `task` 和既有空 `RunKind` 顶层兼容形式在有效 Execute 身份及
 启动依赖已满足时，未 enrolled no-op；logical Journal root 可与 execution Run 不同。
+P1M-C3b 在同一链上把回读或提交返回的 server-owned facts 传给 Agent Factory，并只以其
+admission/decision 覆盖本地 Plan capability；现有 Todo prompt 与 `ADKMiddlewareAssembler.Build`
+中的 Plan backend 因而一致，不改变 middleware order。无 facts 的未接入路径保留历史兼容，
+不匹配或 blocked facts 在创建 Agent 前 fail closed。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
-selector/handler、IDL 与 frontend/UI 仍未接。historical runtime controls 与 package-private
+selector/handler、IDL 与 frontend/UI 仍未接；Subagent、reasoning/model inference、Journal
+enrollment/metrics consumer 仍未切换。historical runtime controls 与 package-private
 server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
 DELETE guard 继续 hard-disabled。
 
@@ -234,7 +239,8 @@ snapshot/decision、strict canonical codec/domain validation 与 application com
 C2b private durable bootstrap commit/readback 和 generic reserved-fact isolation 已实现。C3a 只让
 `ADKExecutor.Execute` 在构建 runtime 前调用 gate-off bootstrap coordinator；明确 `task` 和既有空
 `RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled no-op，失败不会创建
-checkpoint store 或 Agent。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
+checkpoint store 或 Agent。C3b 只让该 durable facts 控制同一 fresh Execute 的 Todo prompt 与 Plan
+backend；其余 consumer 不变。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
 blocker 约束。

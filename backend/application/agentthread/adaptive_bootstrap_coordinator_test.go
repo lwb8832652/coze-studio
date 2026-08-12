@@ -44,9 +44,10 @@ func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {
 		Now:           func() int64 { return 999 },
 	})
 
-	err := coordinator.Bootstrap(context.Background(), run)
+	facts, err := coordinator.Bootstrap(context.Background(), run)
 
 	require.NoError(t, err)
+	require.NotNil(t, facts)
 	require.Equal(t, 1, reader.calls)
 	require.Len(t, repo.readRequests, 1)
 	require.Equal(t, repository.ReadAdaptiveExecutionBootstrapRequest{
@@ -86,6 +87,8 @@ func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {
 	require.Equal(t, uint64(1), req.Decision.DecisionRevision)
 	require.Equal(t, int64(20), *req.Decision.PlanScopeRunID)
 	require.Equal(t, int64(700), req.Decision.CreatedAt)
+	require.Equal(t, req.Admission, facts.Admission)
+	require.Equal(t, req.Decision, facts.Decision)
 
 	otherRepo := &adaptiveBootstrapRepositoryStub{readErr: repository.ErrAdaptiveExecutionBootstrapNotFound}
 	otherCoordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
@@ -96,24 +99,28 @@ func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {
 	})
 	otherRun := *run
 	otherRun.LeaseOwner, otherRun.LeaseToken = "another-worker", "another-lease"
-	require.NoError(t, otherCoordinator.Bootstrap(context.Background(), &otherRun))
+	otherFacts, err := otherCoordinator.Bootstrap(context.Background(), &otherRun)
+	require.NoError(t, err)
+	require.NotNil(t, otherFacts)
 	require.Equal(t, req.OperationKey, otherRepo.commitRequests[0].OperationKey)
 	require.Equal(t, req.Decision.DecisionID, otherRepo.commitRequests[0].Decision.DecisionID)
 }
 
 func TestAdaptiveBootstrapCoordinatorReplaysBeforeAllocatingIDs(t *testing.T) {
 	reader := &adaptiveBootstrapAttemptReaderStub{attempt: freshAdaptiveBootstrapAttemptForTest()}
-	repo := &adaptiveBootstrapRepositoryStub{readResult: &repository.CommitAdaptiveExecutionBootstrapResult{
-		Authority: repository.AdaptiveExecutionBootstrapAuthority{ExecutionGeneration: 4},
-	}}
+	run := freshAdaptiveBootstrapRunForTest()
+	attempt := freshAdaptiveBootstrapAttemptForTest()
+	repo := &adaptiveBootstrapRepositoryStub{readResult: adaptiveBootstrapResultForTest(t, run, attempt)}
 	ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
 	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
 		AttemptReader: reader, Repository: repo, IDGen: ids, Now: func() int64 { return 999 },
 	})
 
-	err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+	facts, err := coordinator.Bootstrap(context.Background(), run)
 
 	require.NoError(t, err)
+	require.Equal(t, repo.readResult.Admission, facts.Admission)
+	require.Equal(t, repo.readResult.Decision, facts.Decision)
 	require.Equal(t, 1, reader.calls)
 	require.Len(t, repo.readRequests, 1)
 	require.Empty(t, ids.counts)
@@ -133,7 +140,7 @@ func TestAdaptiveBootstrapCoordinatorRejectsReplayFromAnotherGeneration(t *testi
 		Now:           func() int64 { return 999 },
 	})
 
-	err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+	_, err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
 
 	require.ErrorContains(t, err, "generation does not match")
 	require.Empty(t, ids.counts)
@@ -152,9 +159,10 @@ func TestAdaptiveBootstrapCoordinatorSkipsNotEnrolledRun(t *testing.T) {
 	run.ExecutionGeneration = 0
 	run.LeaseOwner = ""
 	run.LeaseToken = ""
-	err := coordinator.Bootstrap(context.Background(), run)
+	facts, err := coordinator.Bootstrap(context.Background(), run)
 
 	require.NoError(t, err)
+	require.Nil(t, facts)
 	require.Equal(t, 1, reader.calls)
 	require.Empty(t, repo.readRequests)
 	require.Empty(t, ids.counts)
@@ -217,7 +225,7 @@ func TestAdaptiveBootstrapCoordinatorRejectsUnsafeFreshAttemptBeforeWriting(t *t
 				AttemptReader: reader, Repository: repo, IDGen: ids, Now: func() int64 { return 999 },
 			})
 
-			err := coordinator.Bootstrap(context.Background(), run)
+			_, err := coordinator.Bootstrap(context.Background(), run)
 
 			require.Error(t, err)
 			require.Empty(t, repo.readRequests)
@@ -295,7 +303,15 @@ func (s *adaptiveBootstrapRepositoryStub) CommitAdaptiveExecutionBootstrap(
 ) (*repository.CommitAdaptiveExecutionBootstrapResult, error) {
 	s.commitRequests = append(s.commitRequests, req)
 	if s.commitResult == nil && s.commitErr == nil && !s.returnNilCommitResult {
-		s.commitResult = &repository.CommitAdaptiveExecutionBootstrapResult{}
+		s.commitResult = &repository.CommitAdaptiveExecutionBootstrapResult{
+			Admission: req.Admission,
+			Decision:  req.Decision,
+			Authority: repository.AdaptiveExecutionBootstrapAuthority{
+				ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+				JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+				ExecutionGeneration: req.Generation,
+			},
+		}
 	}
 	return s.commitResult, s.commitErr
 }
@@ -322,7 +338,7 @@ func TestAdaptiveBootstrapCoordinatorSurfacesPreReadFailure(t *testing.T) {
 		AttemptReader: reader, Repository: repo, IDGen: &adaptiveBootstrapIDGeneratorStub{}, Now: func() int64 { return 999 },
 	})
 
-	err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+	_, err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
 
 	require.ErrorIs(t, err, readErr)
 	require.Empty(t, repo.commitRequests)
@@ -341,7 +357,7 @@ func TestAdaptiveBootstrapCoordinatorRejectsMissingCommitResult(t *testing.T) {
 		Now:           func() int64 { return 999 },
 	})
 
-	err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+	_, err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
 
 	require.ErrorContains(t, err, "commit result is required")
 	require.Len(t, repo.commitRequests, 1)
@@ -351,9 +367,57 @@ func TestAdaptiveBootstrapCoordinatorFuncRejectsNilFunction(t *testing.T) {
 	var coordinator AdaptiveBootstrapCoordinator = AdaptiveBootstrapCoordinatorFunc(nil)
 
 	require.NotPanics(t, func() {
-		err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+		_, err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
 		require.ErrorContains(t, err, "coordinator function is required")
 	})
+}
+
+func TestAdaptiveBootstrapCoordinatorRejectsInvalidDurableFacts(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	attempt := freshAdaptiveBootstrapAttemptForTest()
+	result := adaptiveBootstrapResultForTest(t, run, attempt)
+	result.Decision.ExecutionRunID++
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:    &adaptiveBootstrapRepositoryStub{readResult: result},
+		IDGen:         &adaptiveBootstrapIDGeneratorStub{},
+		Now:           func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.Bootstrap(context.Background(), run)
+
+	require.Nil(t, facts)
+	require.ErrorContains(t, err, "durable facts")
+}
+
+func adaptiveBootstrapResultForTest(
+	t *testing.T,
+	run *RunSummary,
+	attempt *entity.RunAttempt,
+) *repository.CommitAdaptiveExecutionBootstrapResult {
+	t.Helper()
+	admission := baselineAdaptiveAdmission()
+	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
+		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
+		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+	})
+	require.NoError(t, err)
+	return &repository.CommitAdaptiveExecutionBootstrapResult{
+		Admission: admission,
+		Decision:  decision,
+		Authority: repository.AdaptiveExecutionBootstrapAuthority{
+			ThreadID: run.ThreadID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+			AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		},
+	}
+}
+
+func adaptiveBootstrapFactsForRunTest(t *testing.T, run *RunSummary) *AdaptiveBootstrapFacts {
+	t.Helper()
+	result := adaptiveBootstrapResultForTest(t, run, freshAdaptiveBootstrapAttemptForTest())
+	return &AdaptiveBootstrapFacts{Admission: result.Admission, Decision: result.Decision}
 }
 
 func ExampleAdaptiveBootstrapCoordinator_stableIdentity() {
