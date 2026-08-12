@@ -34,3 +34,17 @@ type ExecutionStore interface {
 	Transition(context.Context, string, infrasandbox.ExecutionStatus) (StoredExecution, error)
 	Recover(context.Context) ([]StoredExecution, error)
 }
+
+// RecoveredExecution is decrypted only inside the trusted Runner process. It
+// supplies enough information to rebuild an in-memory schedule after restart.
+type RecoveredExecution struct {
+	Stored  StoredExecution
+	Command ExecuteCommand
+}
+
+// RecoverableExecutionStore is optional so non-durable test or transitional
+// stores keep the minimal ExecutionStore contract.
+type RecoverableExecutionStore interface {
+	ExecutionStore
+	RecoverExecutions(context.Context) ([]RecoveredExecution, error)
+}

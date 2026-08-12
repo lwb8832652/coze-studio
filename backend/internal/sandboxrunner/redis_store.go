@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
@@ -304,6 +305,18 @@ func (store *RedisStore) Cancel(ctx context.Context, executionID string) error {
 }
 
 func (store *RedisStore) Recover(ctx context.Context) ([]StoredExecution, error) {
+	recovered, err := store.RecoverExecutions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]StoredExecution, 0, len(recovered))
+	for _, execution := range recovered {
+		values = append(values, execution.Stored)
+	}
+	return values, nil
+}
+
+func (store *RedisStore) RecoverExecutions(ctx context.Context) ([]RecoveredExecution, error) {
 	if store == nil || store.client == nil || ctx == nil {
 		return nil, ErrProtocol
 	}
@@ -314,7 +327,7 @@ func (store *RedisStore) Recover(ctx context.Context) ([]StoredExecution, error)
 	if len(executionIDs) > store.maxQueueDepth {
 		return nil, ErrUnavailable
 	}
-	recovered := make([]StoredExecution, 0, len(executionIDs))
+	recovered := make([]RecoveredExecution, 0, len(executionIDs))
 	seen := make(map[string]struct{}, len(executionIDs))
 	for _, executionID := range executionIDs {
 		if !validExecutionID(executionID) {
@@ -324,17 +337,54 @@ func (store *RedisStore) Recover(ctx context.Context) ([]StoredExecution, error)
 			return nil, ErrUnavailable
 		}
 		seen[executionID] = struct{}{}
-		stored, err := store.Get(ctx, executionID)
+		payload, err := store.loadPersisted(ctx, executionID)
 		if err != nil {
 			// A separately expired record is stale index data. It is not evidence
 			// to create a new logical execution, so it is skipped fail-closed.
 			continue
 		}
-		if stored.State == ExecutionStateAccepted || stored.State == ExecutionStateRunning {
-			recovered = append(recovered, stored)
+		if payload.State == ExecutionStateAccepted || payload.State == ExecutionStateRunning {
+			command, err := recoveredCommand(payload)
+			if err != nil {
+				return nil, ErrUnavailable
+			}
+			recovered = append(recovered, RecoveredExecution{Stored: storedProjection(payload), Command: command})
 		}
 	}
 	return recovered, nil
+}
+
+func (store *RedisStore) loadPersisted(ctx context.Context, executionID string) (persistedExecution, error) {
+	value, err := store.client.Get(ctx, store.executionKey(executionID)).Result()
+	if err != nil {
+		return persistedExecution{}, ErrUnavailable
+	}
+	payload, err := store.open(value)
+	if err != nil || payload.ExecutionID != executionID || payload.Schema != "coze.sandbox.runner_execution.v1" || !validPersistedExecution(payload) {
+		return persistedExecution{}, ErrUnavailable
+	}
+	return payload, nil
+}
+
+func recoveredCommand(payload persistedExecution) (ExecuteCommand, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(payload.RequestEnvelope)
+	if err != nil {
+		return ExecuteCommand{}, err
+	}
+	command, err := parseExecute(raw)
+	if err != nil || command.Scope != domainsandbox.Scope(payload.Scope) || command.WorkloadKind != infrasandbox.WorkloadKind(payload.WorkloadKind) || command.Deadline.UnixMilli() != payload.DeadlineUnixMS {
+		return ExecuteCommand{}, ErrProtocol
+	}
+	identity, err := decodeIdentity(payload.Identity)
+	if err != nil || redisHash(payload.Identity) != payload.IdentityDigest {
+		return ExecuteCommand{}, ErrProtocol
+	}
+	digest := sha256.Sum256(raw)
+	if hex.EncodeToString(digest[:]) != payload.RequestDigest {
+		return ExecuteCommand{}, ErrProtocol
+	}
+	command.Identity = identity
+	return command, nil
 }
 
 func (store *RedisStore) seal(payload persistedExecution) (string, error) {

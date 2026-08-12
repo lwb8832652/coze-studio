@@ -251,18 +251,18 @@ func TestRedisStoreEnforcesSpaceAndUserQueueLimits(t *testing.T) {
 func TestRedisStoreRecoveryReturnsOnlyNonTerminalExecutions(t *testing.T) {
 	store, _ := newRedisStoreFixture(t, "key-1")
 	store.maxQueueDepth, store.perSpaceQueueDepth, store.perUserQueueDepth = 3, 3, 3
-	accepted, _, err := store.Accept(context.Background(), validStoredCommand(t, "operation-recover-accepted", "accepted request"))
+	accepted, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "operation-recover-accepted", 11, 12, "project-accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	running, _, err := store.Accept(context.Background(), validStoredCommand(t, "operation-recover-running", "running request"))
+	running, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "operation-recover-running", 12, 13, "project-running"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Transition(context.Background(), running.ExecutionID, ExecutionStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	terminal, _, err := store.Accept(context.Background(), validStoredCommand(t, "operation-recover-terminal", "terminal request"))
+	terminal, _, err := store.Accept(context.Background(), recoverableStoredCommand(t, "operation-recover-terminal", 13, 14, "project-terminal"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +275,37 @@ func TestRedisStoreRecoveryReturnsOnlyNonTerminalExecutions(t *testing.T) {
 	}
 	if recovered[0].ExecutionID != accepted.ExecutionID || recovered[1].ExecutionID != running.ExecutionID {
 		t.Fatalf("recovery order = %#v", recovered)
+	}
+}
+
+func TestRedisStoreRecoveryRehydratesOnlyAuthenticatedExecutionCommands(t *testing.T) {
+	store, server := newRedisStoreFixture(t, "key-1")
+	acceptedCommand := recoverableStoredCommand(t, "operation-recover-command-accepted", 11, 12, "project-accepted")
+	accepted, _, err := store.Accept(context.Background(), acceptedCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runningCommand := recoverableStoredCommand(t, "operation-recover-command-running", 12, 13, "project-running")
+	running, _, err := store.Accept(context.Background(), runningCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Transition(context.Background(), running.ExecutionID, ExecutionStateRunning); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.RecoverExecutions(context.Background())
+	if err != nil || len(recovered) != 2 {
+		t.Fatalf("recovered/error = %#v/%v", recovered, err)
+	}
+	if recovered[0].Stored.ExecutionID != accepted.ExecutionID || recovered[0].Command.IdempotencyKey != acceptedCommand.IdempotencyKey || recovered[0].Command.Identity.SpaceID != acceptedCommand.Identity.SpaceID ||
+		recovered[1].Stored.ExecutionID != running.ExecutionID || recovered[1].Command.IdempotencyKey != runningCommand.IdempotencyKey {
+		t.Fatalf("recovered commands = %#v", recovered)
+	}
+	if err := server.Set(store.executionKey(accepted.ExecutionID), `{"schema":"coze.sandbox.runner_encrypted_execution.v1","key_id":"key-1","deployment_id":"invalid","nonce":"bad","ciphertext":"bad"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecoverExecutions(context.Background()); err != nil {
+		t.Fatalf("stale tampered record should be skipped, got %v", err)
 	}
 }
 
@@ -360,4 +391,16 @@ func validStoredCommand(t *testing.T, operationID, body string) ExecuteCommand {
 	t.Helper()
 	digest := sha256.Sum256([]byte(body))
 	return ExecuteCommand{IdempotencyKey: operationID, Scope: "appdev", WorkloadKind: "appdev", Entrypoint: "main.py", RawBody: []byte(body), Deadline: time.Now().Add(time.Minute), Identity: sandboxidentity.Request{SpaceID: 11, UserID: 12, ProjectID: "project-22", ExecutionID: "exec-context", RequestDigest: digest[:]}}
+}
+
+func recoverableStoredCommand(t *testing.T, operationID string, spaceID, userID int64, projectID string) ExecuteCommand {
+	t.Helper()
+	raw := []byte(strings.Replace(validExecuteWireBody(t), "runner-test-operation", operationID, 1))
+	command, err := parseExecute(raw)
+	if err != nil {
+		t.Fatalf("parse recoverable command: %v", err)
+	}
+	digest := sha256.Sum256(raw)
+	command.Identity = sandboxidentity.Request{SpaceID: spaceID, UserID: userID, ProjectID: projectID, ExecutionID: "exec-context", RequestDigest: digest[:]}
+	return command
 }
