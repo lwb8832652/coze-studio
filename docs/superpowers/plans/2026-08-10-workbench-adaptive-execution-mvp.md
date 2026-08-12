@@ -353,6 +353,12 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       policy。无 facts 的未接入路径继续保留历史兼容。Resume、Journal enrollment/metrics、legacy、
       gate-on、IDL/UI 均不在本切片；真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/DELETE
       guard 不变。
+- [x] P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：`JournalFeatureGate` enrollment
+      不再解析 product mode，仅允许明确 `runtime=eino_adk`、fresh、顶层 task，并继续服从既有
+      rollout/kill-switch；completed 完整性指标分母仅使用真实 `Enrolled && Completed`，不再携带或
+      判断 `Mode`。本切片不新增 metrics emitter、不定义新的 server inference policy，也不扩到
+      Resume、legacy、gate-on、IDL/UI；真实 MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L
+      继续 deferred，whole-Thread DELETE guard 不变。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知
@@ -370,9 +376,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       deliverables/checks；P1M 生产只安装该 producer，若持久化快照的 gate=true 则明确返回
       `ErrAdaptiveProducerUnavailable`，直到 P1D 安装 adaptive producer，不能增加第二个隐藏分类器。
 - [ ] fresh 顶层 Execute 的 Plan capability、Subagent 禁用与旧 reasoning 控制中和已由
-      P1M-C3b/C3c/C3d 切到 durable admission/decision；继续把 Resume/历史兼容 Plan 路径、真正的
-      server inference policy、Journal enrollment/metrics
-      切换到 admission、purpose binding 与 server inference config，再删除 mode consumer；
+      P1M-C3b/C3c/C3d 切到 durable admission/decision，Journal enrollment/completed metrics 的旧
+      mode consumer 已由 C3e 退休；继续把 Resume/历史兼容 Plan 路径和真正的 server inference
+      policy 切换到 admission、purpose binding 与 server inference config，再删除其余 mode consumer；
       `RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
 - [ ] 把 root、附件、follow-up、retry、resume 与 child/retry config 写入全部切到审核后的 canonical
       typed V2 envelope；先证明 IDL/生成 client 能无损承载现有模型、Skill、MCP、知识库和数据库选择，

@@ -146,9 +146,13 @@ provider；provider 在解析 definition 或构建 child Agent 前返回 base to
 base provider。P1M-C3d 再把同一 fresh Execute 的旧 `mode`/`thinking_enabled`/`reasoning_effort`
 影响中和为本地安全请求（thinking false、reasoning effort 空），使 primary/failover model option 与
 provider-capability middleware 不再消费这些旧控制；持久化 Config 不变，也未引入新推理 policy。
+P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment 仅允许明确
+`runtime=eino_adk` 的 fresh 顶层 task，并继续服从既有 rollout/kill-switch；completed 完整性指标
+只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，也未定义
+新的 server inference policy。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
-和 frontend/UI 未接；真正的 server inference policy、Journal enrollment/metrics 仍未实现。
+和 frontend/UI 未接；真正的 server inference policy 仍未实现。
 历史 runtime controls 与 package-private server-owned subagent compatibility
 seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 

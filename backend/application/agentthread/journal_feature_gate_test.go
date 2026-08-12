@@ -114,30 +114,50 @@ func TestJournalFeatureGateRefreshesKillSwitchWithinThirtySeconds(t *testing.T) 
 	require.Equal(t, 2, provider.calls)
 }
 
-func TestJournalFeatureGateEnrollsOnlyProAndUltraRootTasks(t *testing.T) {
+func TestJournalFeatureGateUsesServerRuntimeInsteadOfRetiredModeForEnrollment(t *testing.T) {
 	gate := NewJournalFeatureGate(
 		&journalConfigProviderStub{configuration: enabledJournalConfiguration()},
 		JournalFeatureGateOptions{},
 	)
 
 	for _, test := range []struct {
-		name     string
-		mode     DeerFlowMode
-		runKind  domainentity.RunKind
-		parentID int64
-		want     bool
+		name      string
+		runConfig string
+		runKind   domainentity.RunKind
+		parentID  int64
+		want      bool
 	}{
-		{name: "pro", mode: DeerFlowModePro, runKind: domainentity.RunKindTask, want: true},
-		{name: "ultra", mode: DeerFlowModeUltra, runKind: domainentity.RunKindTask, want: true},
-		{name: "child pro", mode: DeerFlowModePro, runKind: domainentity.RunKindTask, parentID: 9},
-		{name: "subagent ultra", mode: DeerFlowModeUltra, runKind: domainentity.RunKindSubagent},
+		{
+			name: "eino adk without retired controls", runConfig: `{"runtime":"eino_adk"}`,
+			runKind: domainentity.RunKindTask, want: true,
+		},
+		{
+			name: "eino adk ignores historical mode", runConfig: `{"runtime":"eino_adk","mode":"pro"}`,
+			runKind: domainentity.RunKindTask, want: true,
+		},
+		{
+			name: "legacy cannot enroll through historical mode", runConfig: `{"runtime":"legacy","mode":"ultra"}`,
+			runKind: domainentity.RunKindTask,
+		},
+		{
+			name: "missing runtime cannot enroll through historical mode", runConfig: `{"mode":"ultra"}`,
+			runKind: domainentity.RunKindTask,
+		},
+		{
+			name: "child task", runConfig: `{"runtime":"eino_adk"}`,
+			runKind: domainentity.RunKindTask, parentID: 9,
+		},
+		{
+			name: "subagent", runConfig: `{"runtime":"eino_adk"}`,
+			runKind: domainentity.RunKindSubagent,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			decision, err := gate.DecideEnrollment(context.Background(), JournalEnrollmentInput{
 				SpaceID:     42,
 				RunKind:     test.runKind,
 				ParentRunID: test.parentID,
-				RunConfig:   `{"runtime":"eino_adk","mode":"` + string(test.mode) + `"}`,
+				RunConfig:   test.runConfig,
 			})
 			require.NoError(t, err)
 			require.Equal(t, test.want, decision.Enrolled)
@@ -149,7 +169,7 @@ func TestJournalFeatureGateEnrollsOnlyProAndUltraRootTasks(t *testing.T) {
 	}
 }
 
-func TestJournalFeatureGateEnrollsAutomaticRootTasks(t *testing.T) {
+func TestJournalFeatureGateEnrollsModeFreeEinoADKRootTasks(t *testing.T) {
 	gate := NewJournalFeatureGate(
 		&journalConfigProviderStub{configuration: enabledJournalConfiguration()},
 		JournalFeatureGateOptions{},
@@ -158,12 +178,27 @@ func TestJournalFeatureGateEnrollsAutomaticRootTasks(t *testing.T) {
 	decision, err := gate.DecideEnrollment(context.Background(), JournalEnrollmentInput{
 		SpaceID:   42,
 		RunKind:   domainentity.RunKindTask,
-		RunConfig: `{"runtime":"eino_adk","requested_policy":"auto"}`,
+		RunConfig: `{"runtime":"eino_adk"}`,
 	})
 
 	require.NoError(t, err)
 	require.True(t, decision.Enrolled)
 	require.True(t, decision.SnapshotsEnabled)
+}
+
+func TestJournalFeatureGateRejectsUnknownEnrollmentRuntime(t *testing.T) {
+	gate := NewJournalFeatureGate(
+		&journalConfigProviderStub{configuration: enabledJournalConfiguration()},
+		JournalFeatureGateOptions{},
+	)
+
+	_, err := gate.DecideEnrollment(context.Background(), JournalEnrollmentInput{
+		SpaceID:   42,
+		RunKind:   domainentity.RunKindTask,
+		RunConfig: `{"runtime":"typo"}`,
+	})
+
+	require.ErrorContains(t, err, "unsupported journal enrollment runtime")
 }
 
 func TestApplicationCreateTaskThreadPersistsJournalEnrollmentInAtomicBundle(t *testing.T) {

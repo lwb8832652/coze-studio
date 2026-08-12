@@ -161,10 +161,13 @@ Subagent tool provider 在解析 definition、构建 child 前只返回 base too
 调用 base provider 前已清掉，不会传播到 child。P1M-C3d 再把同一 fresh Execute 的旧
 `mode`/`thinking_enabled`/`reasoning_effort` 影响中和为 local thinking false 与空 reasoning effort，
 primary/failover model option 和 provider-capability middleware 因而使用同一安全中性请求；未定义新
-推理 policy。
+推理 policy。P1M-C3e 按交付优先只退休 Journal enrollment/completed metrics 的旧 mode consumer：
+enrollment 仅接受明确 `runtime=eino_adk` 的 fresh 顶层 task，并保留既有 rollout/kill-switch；completed
+完整性指标只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，
+也未定义 server inference policy。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
-selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference、Journal enrollment/metrics
-中的真正 server inference policy 与 Journal consumer 仍未切换。historical runtime controls 与 package-private
+selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
+policy 仍未切换。historical runtime controls 与 package-private
 server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
 DELETE guard 继续 hard-disabled。
 
@@ -247,8 +250,10 @@ C2b private durable bootstrap commit/readback 和 generic reserved-fact isolatio
 `RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled no-op，失败不会创建
 checkpoint store 或 Agent。C3b 只让该 durable facts 控制同一 fresh Execute 的 Todo prompt 与 Plan
 backend；C3c 只让同一 admission 的 `SubagentsAllowed=false` 关闭该 Execute 的 Subagent 工具、prompt
-与 limit middleware；C3d 只中和该 Execute 的旧 reasoning controls，不建立新推理 policy；其余
-consumer 不变。真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate，且
+与 limit middleware；C3d 只中和该 Execute 的旧 reasoning controls，不建立新推理 policy；C3e
+只让 Journal enrollment 以明确 Eino ADK fresh 顶层 task 为准，并让 completed 完整性指标以真实
+enrollment/completion 为分母，不新增 metrics emitter。其余 consumer 不变。真实 MySQL 双连接验收
+仍待显式 disposable DSN/DDL gate，且
 `Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
 blocker 约束。
