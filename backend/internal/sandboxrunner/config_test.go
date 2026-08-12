@@ -13,6 +13,7 @@ func TestLoadConfigFailsClosedForMissingOrUnsafeRuntimeSettings(t *testing.T) {
 	valid := validRunnerEnvironment()
 	for name, mutate := range map[string]func(map[string]string){
 		"disabled":                     func(values map[string]string) { values["SANDBOX_RUNNER_ENABLED"] = "false" },
+		"missing deployment id":        func(values map[string]string) { delete(values, "SANDBOX_RUNNER_DEPLOYMENT_ID") },
 		"missing authentication token": func(values map[string]string) { delete(values, "SANDBOX_RUNNER_AUTH_TOKEN") },
 		"mutable image tag": func(values map[string]string) {
 			values["SANDBOX_RUNNER_EXECUTION_IMAGE"] = "registry.example/runtime:latest"
@@ -118,6 +119,7 @@ func TestLoadConfigRejectsMalformedLoopbackDebugSettings(t *testing.T) {
 func validRunnerEnvironment() map[string]string {
 	return map[string]string{
 		"SANDBOX_RUNNER_ENABLED":                  "true",
+		"SANDBOX_RUNNER_DEPLOYMENT_ID":            "runner-dev-1",
 		"SANDBOX_RUNNER_LISTEN_ADDR":              ":9443",
 		"SANDBOX_RUNNER_TLS_CERT_FILE":            "/run/secrets/sandbox-runner.crt",
 		"SANDBOX_RUNNER_TLS_KEY_FILE":             "/run/secrets/sandbox-runner.key",

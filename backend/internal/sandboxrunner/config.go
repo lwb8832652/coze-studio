@@ -23,6 +23,7 @@ import (
 var ErrConfiguration = errors.New("sandbox runner configuration is invalid")
 
 type Config struct {
+	DeploymentID      string
 	ListenAddr        string
 	TLSCertFile       string
 	TLSKeyFile        string
@@ -49,6 +50,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, ErrConfiguration
 	}
 	config := Config{
+		DeploymentID:     strings.TrimSpace(getenv("SANDBOX_RUNNER_DEPLOYMENT_ID")),
 		ListenAddr:       strings.TrimSpace(getenv("SANDBOX_RUNNER_LISTEN_ADDR")),
 		TLSCertFile:      strings.TrimSpace(getenv("SANDBOX_RUNNER_TLS_CERT_FILE")),
 		TLSKeyFile:       strings.TrimSpace(getenv("SANDBOX_RUNNER_TLS_KEY_FILE")),
@@ -62,7 +64,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, ErrConfiguration
 	}
 	config.DebugLoopbackHTTP = debugValue == "true"
-	if config.ListenAddr == "" || len(config.AuthToken) < 16 || !validUnixEndpoint(config.RootlessEndpoint) ||
+	if !validKeyID(config.DeploymentID) || config.ListenAddr == "" || len(config.AuthToken) < 16 || !validUnixEndpoint(config.RootlessEndpoint) ||
 		!validDigestImage(config.ExecutionImage) || !validListener(config.ListenAddr) {
 		return Config{}, ErrConfiguration
 	}
