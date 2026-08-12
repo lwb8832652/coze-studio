@@ -29,10 +29,21 @@ type ProviderLookup interface {
 // ProviderDescriptor is the bounded, non-secret input to adapter eligibility
 // checks and the observable portion of a runtime selection.
 type ProviderDescriptor struct {
-	ProviderKey  string                      `json:"provider_key"`
-	ProviderType domainsandbox.ProviderType  `json:"provider_type"`
-	Scope        domainsandbox.Scope         `json:"scope"`
-	Policy       domainsandbox.RuntimePolicy `json:"policy"`
+	ProviderKey    string                      `json:"provider_key"`
+	ProviderType   domainsandbox.ProviderType  `json:"provider_type"`
+	Scope          domainsandbox.Scope         `json:"scope"`
+	Policy         domainsandbox.RuntimePolicy `json:"policy"`
+	features       []domainsandbox.ProviderFeature
+	admissionLimit int
+}
+
+func (d ProviderDescriptor) HasFeature(feature domainsandbox.ProviderFeature) bool {
+	for _, candidate := range d.features {
+		if candidate == feature {
+			return true
+		}
+	}
+	return false
 }
 
 // RuntimeProviderFactory keeps environment and adapter-specific checks outside
@@ -472,6 +483,37 @@ func (s *SelectedProvider) Status(ctx context.Context) (infrasandbox.ExecuteResu
 	return normalized, nil
 }
 
+// QueueStatus reads the provider queue projection without changing the
+// execution lifecycle. It is available only when the selected provider
+// explicitly advertised the optional protocol feature.
+func (s *SelectedProvider) QueueStatus(ctx context.Context) (infrasandbox.QueueStatus, error) {
+	if s == nil || s.runtime == nil || ctx == nil {
+		return infrasandbox.QueueStatus{}, domainsandbox.ErrInvalidInput
+	}
+	queueStatus, ok := s.runtime.(infrasandbox.QueueStatusProvider)
+	if !ok || !s.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1) {
+		return infrasandbox.QueueStatus{}, domainsandbox.ErrConfigurationInvalid
+	}
+	s.mu.Lock()
+	if (s.state != selectedProviderActive && s.state != selectedProviderCanceling && s.state != selectedProviderUncertain) || s.executionID == "" {
+		s.mu.Unlock()
+		return infrasandbox.QueueStatus{}, domainsandbox.ErrExecutionForbidden
+	}
+	executionID := s.executionID
+	callCtx, finishIO, ok := s.beginIOLocked(ctx)
+	if !ok {
+		s.mu.Unlock()
+		return infrasandbox.QueueStatus{}, domainsandbox.ErrExecutionForbidden
+	}
+	s.mu.Unlock()
+	defer finishIO()
+	status, err := queueStatus.QueueStatus(callCtx, executionID)
+	if err != nil {
+		return infrasandbox.QueueStatus{}, normalizeOperationalError(callCtx, err)
+	}
+	return status, nil
+}
+
 // BeginBuild invokes the optional AppDev build control capability without
 // exposing the selected runtime. It participates in the same lifecycle drain
 // as Status/Cancel, so cleanup prevents new control I/O and can drain it.
@@ -777,12 +819,14 @@ func (s *SelectedProvider) markCleanupPending(contractCleanup bool) {
 // intentionally unexported; explicit formatters redact every internal value and
 // MarshalJSON rejects serialization rather than emitting a misleading object.
 type ExecutionCheckpoint struct {
-	providerKey      string
-	scope            domainsandbox.Scope
-	leaseToken       string
-	leaseFence       string
-	leaseExpiryMilli int64
-	executionID      string
+	providerKey        string
+	scope              domainsandbox.Scope
+	leaseToken         string
+	leaseFence         string
+	leaseExpiryMilli   int64
+	executionID        string
+	queueStatusFeature bool
+	admissionLimit     int
 }
 
 func (ExecutionCheckpoint) String() string   { return "ExecutionCheckpoint{secrets:<redacted>}" }
@@ -816,6 +860,8 @@ func (s *SelectedProvider) Checkpoint() (ExecutionCheckpoint, error) {
 	return ExecutionCheckpoint{
 		providerKey: providerKey, scope: scope, leaseToken: token,
 		leaseFence: fence, leaseExpiryMilli: expiry, executionID: executionID,
+		queueStatusFeature: s.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1),
+		admissionLimit:     s.admissionLimit,
 	}, nil
 }
 
@@ -998,6 +1044,7 @@ type ProviderRouter struct {
 	now                           func() time.Time
 	metrics                       SandboxMetricsRecorder
 	runtimeAudit                  SandboxRuntimeAuditRecorder
+	schedulerSettings             domainsandbox.SchedulerSettingsRepository
 }
 
 func NewProviderRouter(
@@ -1018,6 +1065,14 @@ func (r *ProviderRouter) SetMetricsRecorder(metrics SandboxMetricsRecorder) {
 func (r *ProviderRouter) SetRuntimeAuditRecorder(recorder SandboxRuntimeAuditRecorder) {
 	if r != nil {
 		r.runtimeAudit = recorder
+	}
+}
+
+// SetSchedulerSettingsRepository injects the versioned scheduler snapshot for
+// Runner providers. It deliberately keeps NewProviderRouter source-compatible.
+func (r *ProviderRouter) SetSchedulerSettingsRepository(repository domainsandbox.SchedulerSettingsRepository) {
+	if r != nil {
+		r.schedulerSettings = repository
 	}
 }
 
@@ -1070,13 +1125,19 @@ func (r *ProviderRouter) Resolve(
 		r.recordProviderSelection(ctx, request.Scope, "", err)
 		return nil, err
 	}
+	admissionLimit, err := r.resolveAdmissionLimit(ctx, descriptor)
+	if err != nil {
+		r.recordProviderSelection(ctx, request.Scope, descriptor.ProviderType, err)
+		return nil, err
+	}
+	descriptor.admissionLimit = admissionLimit
 
 	expiryUnixMilli, err := r.limiter.Acquire(
 		ctx,
 		descriptor.ProviderKey,
 		request.leaseToken,
 		request.leaseFence,
-		descriptor.Policy.MaxConcurrency,
+		descriptor.admissionLimit,
 		r.leaseDuration,
 	)
 	if err != nil {
@@ -1190,9 +1251,14 @@ func (r *ProviderRouter) LookupProviderExecution(
 	if err != nil {
 		return unknown, err
 	}
+	admissionLimit, err := r.resolveAdmissionLimit(ctx, descriptor)
+	if err != nil {
+		return unknown, err
+	}
+	descriptor.admissionLimit = admissionLimit
 	expiryUnixMilli, err := r.limiter.Acquire(
 		ctx, descriptor.ProviderKey, request.leaseToken, request.leaseFence,
-		descriptor.Policy.MaxConcurrency, r.leaseDuration,
+		descriptor.admissionLimit, r.leaseDuration,
 	)
 	if err != nil {
 		return unknown, normalizeOperationalError(ctx, err)
@@ -1296,6 +1362,16 @@ func (r *ProviderRouter) Resume(
 	if err != nil {
 		return nil, err
 	}
+	if checkpoint.admissionLimit > 0 {
+		descriptor.admissionLimit = checkpoint.admissionLimit
+		descriptor.features = nil
+		if checkpoint.queueStatusFeature {
+			descriptor.features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+		}
+	} else {
+		descriptor.features = nil
+		descriptor.admissionLimit = descriptor.Policy.MaxConcurrency
+	}
 	runtime, buildErr := r.buildPreparedRuntime(ctx, provider, descriptor.Scope)
 	if buildErr != nil {
 		r.registerPendingBuildCleanup(pendingCleanupKey, runtime, lease)
@@ -1389,11 +1465,46 @@ func (r *ProviderRouter) prepareRuntime(
 	descriptor := ProviderDescriptor{
 		ProviderKey: provider.ProviderKey, ProviderType: provider.Type,
 		Scope: scope, Policy: cloneRuntimePolicy(policy),
+		features: append([]domainsandbox.ProviderFeature(nil), provider.Health.Features...),
 	}
 	if err := r.factory.ValidateConfig(ctx, descriptor); err != nil {
 		return ProviderDescriptor{}, domainsandbox.Provider{}, normalizeOperationalError(ctx, err)
 	}
 	return descriptor, cloneProviderForAdapter(*provider, policy), nil
+}
+
+func providerAdmissionLimit(
+	descriptor ProviderDescriptor,
+	settings domainsandbox.SchedulerSettings,
+) (int, error) {
+	if descriptor.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1) {
+		if settings.MaxOutstanding < 1 {
+			return 0, domainsandbox.ErrConfigurationInvalid
+		}
+		return settings.MaxOutstanding, nil
+	}
+	if descriptor.Policy.MaxConcurrency < 1 {
+		return 0, domainsandbox.ErrConfigurationInvalid
+	}
+	return descriptor.Policy.MaxConcurrency, nil
+}
+
+func (r *ProviderRouter) resolveAdmissionLimit(ctx context.Context, descriptor ProviderDescriptor) (int, error) {
+	if !descriptor.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1) {
+		return providerAdmissionLimit(descriptor, domainsandbox.SchedulerSettings{})
+	}
+	if r == nil || r.schedulerSettings == nil {
+		return 0, domainsandbox.ErrConfigurationInvalid
+	}
+	settings, err := r.schedulerSettings.GetSchedulerSettings(ctx)
+	if err != nil {
+		return 0, normalizeOperationalError(ctx, err)
+	}
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil {
+		return 0, domainsandbox.ErrConfigurationInvalid
+	}
+	return providerAdmissionLimit(descriptor, normalized)
 }
 
 func (r *ProviderRouter) buildPreparedRuntime(
@@ -1881,6 +1992,7 @@ func cloneProviderForAdapter(
 ) domainsandbox.Provider {
 	provider.Scopes = append([]domainsandbox.Scope(nil), provider.Scopes...)
 	provider.Health.Capabilities = append([]domainsandbox.Scope(nil), provider.Health.Capabilities...)
+	provider.Health.Features = append([]domainsandbox.ProviderFeature(nil), provider.Health.Features...)
 	provider.Policy = cloneRuntimePolicy(policy)
 	return provider
 }

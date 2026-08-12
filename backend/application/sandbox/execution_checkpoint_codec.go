@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	executionCheckpointPlaintextVersion  byte = 1
+	executionCheckpointPlaintextVersion  byte = 2
+	executionCheckpointLegacyVersion     byte = 1
 	maxExecutionCheckpointPlaintextBytes      = 4096
 	checkpointAADPurpose                      = "appdev_provider_executions:execution_checkpoint:v1"
 )
@@ -113,7 +114,9 @@ func validateExecutionCheckpointForBinding(checkpoint ExecutionCheckpoint, bindi
 	if checkpoint.providerKey != binding.ProviderKey || checkpoint.scope != binding.Scope ||
 		domainsandbox.ValidateProviderKey(checkpoint.providerKey) != nil || !validRouterScope(checkpoint.scope) ||
 		!validOpaqueLeaseToken(checkpoint.leaseToken) || !validOpaqueLeaseToken(checkpoint.leaseFence) ||
-		checkpoint.leaseExpiryMilli <= 0 || !validRouterExecutionID(checkpoint.executionID) {
+		checkpoint.leaseExpiryMilli <= 0 || !validRouterExecutionID(checkpoint.executionID) ||
+		checkpoint.admissionLimit < 0 || checkpoint.admissionLimit > 4096 ||
+		(checkpoint.admissionLimit == 0 && checkpoint.queueStatusFeature) {
 		return ErrExecutionCheckpointCodec
 	}
 	return nil
@@ -137,14 +140,25 @@ func encodeExecutionCheckpoint(checkpoint ExecutionCheckpoint) ([]byte, error) {
 	if err := binary.Write(buffer, binary.BigEndian, checkpoint.leaseExpiryMilli); err != nil || buffer.Len() > maxExecutionCheckpointPlaintextBytes {
 		return nil, ErrExecutionCheckpointCodec
 	}
+	var flags byte
+	if checkpoint.queueStatusFeature {
+		flags = 1
+	}
+	if err := buffer.WriteByte(flags); err != nil ||
+		binary.Write(buffer, binary.BigEndian, uint32(checkpoint.admissionLimit)) != nil ||
+		buffer.Len() > maxExecutionCheckpointPlaintextBytes {
+		return nil, ErrExecutionCheckpointCodec
+	}
 	return buffer.Bytes(), nil
 }
 
 func decodeExecutionCheckpoint(plaintext []byte) (ExecutionCheckpoint, error) {
 	if len(plaintext) < 4 || len(plaintext) > maxExecutionCheckpointPlaintextBytes ||
-		!bytes.Equal(plaintext[:3], []byte("ECP")) || plaintext[3] != executionCheckpointPlaintextVersion {
+		!bytes.Equal(plaintext[:3], []byte("ECP")) ||
+		(plaintext[3] != executionCheckpointLegacyVersion && plaintext[3] != executionCheckpointPlaintextVersion) {
 		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
 	}
+	version := plaintext[3]
 	reader := bytes.NewReader(plaintext[4:])
 	values := make([]string, 5)
 	for index := range values {
@@ -155,13 +169,30 @@ func decodeExecutionCheckpoint(plaintext []byte) (ExecutionCheckpoint, error) {
 		values[index] = value
 	}
 	var expiry int64
-	if err := binary.Read(reader, binary.BigEndian, &expiry); err != nil || reader.Len() != 0 {
+	if err := binary.Read(reader, binary.BigEndian, &expiry); err != nil {
 		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
 	}
-	return ExecutionCheckpoint{
+	checkpoint := ExecutionCheckpoint{
 		providerKey: values[0], scope: domainsandbox.Scope(values[1]),
 		leaseToken: values[2], leaseFence: values[3], executionID: values[4], leaseExpiryMilli: expiry,
-	}, nil
+	}
+	if version == executionCheckpointLegacyVersion {
+		if reader.Len() != 0 {
+			return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
+		}
+		return checkpoint, nil
+	}
+	flags, err := reader.ReadByte()
+	if err != nil || flags&^byte(1) != 0 {
+		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
+	}
+	var admissionLimit uint32
+	if err := binary.Read(reader, binary.BigEndian, &admissionLimit); err != nil || reader.Len() != 0 || admissionLimit > 4096 {
+		return ExecutionCheckpoint{}, ErrExecutionCheckpointCodec
+	}
+	checkpoint.queueStatusFeature = flags&1 != 0
+	checkpoint.admissionLimit = int(admissionLimit)
+	return checkpoint, nil
 }
 
 func writeExecutionCheckpointString(buffer *bytes.Buffer, value string) error {

@@ -192,6 +192,7 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	if err != nil {
 		return fmt.Errorf("create sandbox provider router: %w", err)
 	}
+	router.SetSchedulerSettingsRepository(repository)
 	router.SetMetricsRecorder(metrics)
 	if auditRepository, ok := any(repository).(domainsandbox.ProviderAuditRepository); ok {
 		router.SetRuntimeAuditRecorder(appsandbox.NewProviderRuntimeAuditRecorder(

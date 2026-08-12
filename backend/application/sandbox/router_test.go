@@ -91,6 +91,200 @@ func TestProviderRouterPluginScopeFailsClosedWhenProviderDoesNotSupportIt(t *tes
 	}
 }
 
+func TestProviderRouterFeatureAwareAdmissionLimitUsesPersistedSchedulerSettings(t *testing.T) {
+	now := time.Unix(2_000_000_030, 0).UTC()
+	for name, test := range map[string]struct {
+		features      []domainsandbox.ProviderFeature
+		settings      domainsandbox.SchedulerSettings
+		settingsErr   error
+		setRepository bool
+		wantLimit     int
+		wantErr       error
+	}{
+		"legacy provider retains policy concurrency": {
+			settings:  domainsandbox.DefaultSchedulerSettings(),
+			wantLimit: 2,
+		},
+		"queue provider uses max outstanding": {
+			features:      []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+			settings:      schedulerSettingsWithMaxOutstanding(19),
+			setRepository: true,
+			wantLimit:     19,
+		},
+		"queue provider fails closed without repository": {
+			features: []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+			wantErr:  domainsandbox.ErrConfigurationInvalid,
+		},
+		"queue provider fails closed when settings read fails": {
+			features:      []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+			settingsErr:   errors.New("scheduler repository unavailable"),
+			setRepository: true,
+			wantErr:       domainsandbox.ErrUnavailable,
+		},
+		"queue provider fails closed for invalid settings": {
+			features:      []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+			settings:      schedulerSettingsWithMaxOutstanding(0),
+			setRepository: true,
+			wantErr:       domainsandbox.ErrConfigurationInvalid,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := healthyRouterProvider(now)
+			provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+			provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+			provider.Health.Features = append([]domainsandbox.ProviderFeature(nil), test.features...)
+			limits := make([]int, 0, 2)
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{}, &capacityLimiterFuncs{
+				acquire: func(_ context.Context, _ string, _ string, _ string, limit int, _ time.Duration) (int64, error) {
+					limits = append(limits, limit)
+					return now.Add(time.Minute).UnixMilli(), nil
+				},
+			})
+			repository := &schedulerSettingsRepositoryFake{settings: test.settings, err: test.settingsErr}
+			if test.setRepository {
+				router.SetSchedulerSettingsRepository(repository)
+			}
+
+			request, err := NewResolveProviderRequest(testRouterProviderKey, domainsandbox.ScopeAppDev)
+			if err != nil {
+				t.Fatalf("NewResolveProviderRequest() error = %v", err)
+			}
+			selected, err := router.Resolve(context.Background(), request)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) || selected != nil || len(limits) != 0 {
+					t.Fatalf("Resolve() error/selection/acquires = %v/%t/%d", err, selected != nil, len(limits))
+				}
+				return
+			}
+			if err != nil || selected == nil || !reflect.DeepEqual(limits, []int{test.wantLimit}) {
+				t.Fatalf("Resolve() error/selection/limits = %v/%t/%v", err, selected != nil, limits)
+			}
+			if err := selected.Release(context.Background()); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+
+			digest, digestErr := infrasandbox.ExecutionRequestDigestFromBytes([]byte(strings.Repeat("a", 32)))
+			if digestErr != nil {
+				t.Fatalf("ExecutionRequestDigestFromBytes() error = %v", digestErr)
+			}
+			lookupRequest, requestErr := NewLookupProviderExecutionRequest(
+				testRouterProviderKey, domainsandbox.ScopeAppDev, testExecutionLookupNotFoundOperation, digest,
+			)
+			if requestErr != nil {
+				t.Fatalf("NewLookupProviderExecutionRequest() error = %v", requestErr)
+			}
+			lookup, lookupErr := router.LookupProviderExecution(context.Background(), lookupRequest)
+			if lookupErr != nil || lookup.Status != infrasandbox.ExecutionLookupNotFound ||
+				!reflect.DeepEqual(limits, []int{test.wantLimit, test.wantLimit}) {
+				t.Fatalf("LookupProviderExecution() error/status/limits = %v/%q/%v", lookupErr, lookup.Status, limits)
+			}
+		})
+	}
+}
+
+func TestProviderRouterQueueCheckpointKeepsRecordedAdmissionLimitOnResume(t *testing.T) {
+	now := time.Unix(2_000_000_040, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+	provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+	provider.Health.Features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+	runtime := &task9AsyncRuntime{executeResults: []task9ExecuteOutcome{{
+		result: infrasandbox.ExecuteResult{ExecutionID: "exec-admission-checkpoint", Status: infrasandbox.ExecutionStatusAccepted},
+	}}}
+	repository := &schedulerSettingsRepositoryFake{settings: schedulerSettingsWithMaxOutstanding(23)}
+	acquireCalls := 0
+	router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+		build: func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
+			return runtime, nil
+		},
+	}, &capacityLimiterFuncs{
+		acquire: func(_ context.Context, _ string, _ string, _ string, limit int, _ time.Duration) (int64, error) {
+			acquireCalls++
+			if limit != 23 {
+				t.Fatalf("Acquire() limit = %d, want 23", limit)
+			}
+			return now.Add(time.Minute).UnixMilli(), nil
+		},
+		renew: func(context.Context, string, string, string, string, time.Duration) (int64, error) {
+			return now.Add(2 * time.Minute).UnixMilli(), nil
+		},
+	})
+	router.SetSchedulerSettingsRepository(repository)
+	selected := task9ResolveAppDev(t, router)
+	if _, err := selected.Execute(context.Background(), task9AsyncRequest("idem-admission-checkpoint")); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	checkpoint, err := selected.Checkpoint()
+	if err != nil || checkpoint.admissionLimit != 23 || !checkpoint.queueStatusFeature {
+		t.Fatalf("Checkpoint() error/limit/feature = %v/%d/%t", err, checkpoint.admissionLimit, checkpoint.queueStatusFeature)
+	}
+	provider.Health.Features = nil
+	repository.settings = schedulerSettingsWithMaxOutstanding(1)
+	if _, err := router.Resume(context.Background(), checkpoint, checkpoint.executionID); err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if acquireCalls != 1 || repository.calls != 1 {
+		t.Fatalf("Resume() reinterpreted admission configuration: acquires=%d settings_reads=%d", acquireCalls, repository.calls)
+	}
+}
+
+func TestProviderRouterLegacyCheckpointPreservesLegacyAdmissionOnResume(t *testing.T) {
+	now := time.Unix(2_000_000_050, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+	provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAppDev}
+	provider.Health.Features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+	runtime := &task9AsyncRuntime{}
+	router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+		build: func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
+			return runtime, nil
+		},
+	}, &capacityLimiterFuncs{
+		renew: func(context.Context, string, string, string, string, time.Duration) (int64, error) {
+			return now.Add(2 * time.Minute).UnixMilli(), nil
+		},
+	})
+	checkpoint := ExecutionCheckpoint{
+		providerKey: testRouterProviderKey, scope: domainsandbox.ScopeAppDev,
+		leaseToken: testRouterLeaseToken, leaseFence: testRouterLeaseFence,
+		leaseExpiryMilli: now.Add(time.Minute).UnixMilli(), executionID: "exec-legacy-checkpoint",
+	}
+	resumed, err := router.Resume(context.Background(), checkpoint, checkpoint.executionID)
+	if err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if resumed.admissionLimit != provider.Policy.MaxConcurrency || resumed.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1) {
+		t.Fatalf("legacy resume admission/feature = %d/%t", resumed.admissionLimit, resumed.HasFeature(domainsandbox.ProviderFeatureQueueStatusV1))
+	}
+	if resumedCheckpoint, checkpointErr := resumed.Checkpoint(); checkpointErr != nil || resumedCheckpoint.admissionLimit != provider.Policy.MaxConcurrency || resumedCheckpoint.queueStatusFeature {
+		t.Fatalf("Checkpoint() error/limit/feature = %v/%d/%t", checkpointErr, resumedCheckpoint.admissionLimit, resumedCheckpoint.queueStatusFeature)
+	}
+}
+
+func schedulerSettingsWithMaxOutstanding(maxOutstanding int) domainsandbox.SchedulerSettings {
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.MaxOutstanding = maxOutstanding
+	return settings
+}
+
+type schedulerSettingsRepositoryFake struct {
+	settings domainsandbox.SchedulerSettings
+	err      error
+	calls    int
+}
+
+func (f *schedulerSettingsRepositoryFake) GetSchedulerSettings(context.Context) (domainsandbox.SchedulerSettings, error) {
+	f.calls++
+	if f.err != nil {
+		return domainsandbox.SchedulerSettings{}, f.err
+	}
+	return f.settings, nil
+}
+
+func (*schedulerSettingsRepositoryFake) UpdateSchedulerSettingsCAS(context.Context, domainsandbox.UpdateSchedulerSettingsInput) (domainsandbox.SchedulerSettings, error) {
+	return domainsandbox.SchedulerSettings{}, domainsandbox.ErrInvalidInput
+}
+
 type cleanupTraceKey struct{}
 
 type failingRequestEntropy struct{}
@@ -160,6 +354,58 @@ type runtimeProviderStub struct {
 	cancelCalls  int
 	closeCalls   int
 	closeErr     error
+}
+
+type queueStatusRuntimeProviderStub struct {
+	runtimeProviderStub
+	queueStatusCalls int
+	queueStatus      infrasandbox.QueueStatus
+	queueStatusErr   error
+}
+
+func (p *queueStatusRuntimeProviderStub) QueueStatus(context.Context, string) (infrasandbox.QueueStatus, error) {
+	p.queueStatusCalls++
+	return p.queueStatus, p.queueStatusErr
+}
+
+func TestSelectedProviderQueueStatusRequiresDeclaredFeatureAndRuntimeSupport(t *testing.T) {
+	runtime := &queueStatusRuntimeProviderStub{queueStatus: infrasandbox.QueueStatus{
+		Schema: infrasandbox.QueueStatusSchemaV1, Waiting: true, ApproximatePosition: 2,
+	}}
+	selected := newSelectedProvider(
+		ProviderDescriptor{ProviderKey: testRouterProviderKey, Scope: domainsandbox.ScopeAppDev},
+		runtime,
+		nil,
+		selectedProviderActive,
+		"exec-queue-status",
+	)
+	if _, err := selected.QueueStatus(context.Background()); !errors.Is(err, domainsandbox.ErrConfigurationInvalid) {
+		t.Fatalf("QueueStatus() without feature error = %v", err)
+	}
+	if runtime.queueStatusCalls != 0 {
+		t.Fatalf("QueueStatus() called runtime without declared feature: %d", runtime.queueStatusCalls)
+	}
+
+	selected.features = []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1}
+	status, err := selected.QueueStatus(context.Background())
+	if err != nil || status != runtime.queueStatus || runtime.queueStatusCalls != 1 {
+		t.Fatalf("QueueStatus() status/error/calls = %#v/%v/%d", status, err, runtime.queueStatusCalls)
+	}
+
+	unsupported := newSelectedProvider(
+		ProviderDescriptor{
+			ProviderKey: testRouterProviderKey,
+			Scope:       domainsandbox.ScopeAppDev,
+			features:    []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1},
+		},
+		&runtimeProviderStub{},
+		nil,
+		selectedProviderActive,
+		"exec-queue-status-unsupported",
+	)
+	if _, err := unsupported.QueueStatus(context.Background()); !errors.Is(err, domainsandbox.ErrConfigurationInvalid) {
+		t.Fatalf("QueueStatus() unsupported runtime error = %v", err)
+	}
 }
 
 type blockingRuntimeProvider struct {
