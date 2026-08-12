@@ -408,7 +408,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h1b delivery-first runtime and new-write retirement",
+      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2a delivery-first runtime and new-write retirement",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -4057,6 +4057,28 @@
       ]
     },
     {
+      "id": "edge.adk_resume_delegates_adaptive_bootstrap",
+      "from": "runtime.adk_executor.resume",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {"
+        }
+      ]
+    },
+    {
       "id": "edge.adaptive_bootstrap_precedes_agent_build",
       "from": "application.adaptive_mode_free_contract_boundary",
       "to": "runtime.adk_agent_factory.build",
@@ -4071,6 +4093,14 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "require.Equal(t, []string{\"bootstrap\", \"store\", \"factory\"}, order)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "require.Equal(t, []string{\"resume-bootstrap\", \"store\", \"factory\"}, order)"
         }
       ]
     },
@@ -5759,6 +5789,7 @@
         "edge.mapper_emits_sink"
       ],
       "required_side_edge_ids": [
+        "edge.adk_resume_delegates_adaptive_bootstrap",
         "edge.adk_builds_agent",
         "edge.adk_uses_eino",
         "edge.adk_adapts_mcp_go",
@@ -6104,9 +6135,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h1b delivery-first slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2a delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h1b adds no edge: Human Resume keeps existing idempotent replay first, then on replay miss `requireHumanResumeJournalRollover` rejects active or terminal enrolled Journal Attempts before checkpoint read or any write through the existing canonical 409 conflict mapping; only explicit ErrJournalNotEnrolled continues the non-Journal path, while unexpected repository/dependency errors propagate. C3h1a/C3h1b add no Attempt enrollment, do not connect these targets to ADKExecutor.Resume, and do not implement Human rollover, Resume facts, legacy decoding, typed inheritance, IDL or UI; C3h2 remains deferred. Real MySQL two-connection acceptance remains NOT_VERIFIED without the disposable DSN/DDL gate. Legacy runtime and parser, gate-on producer, adaptive finalizer gate, recovery-source consumer, runtime selector/handler, IDL and frontend/UI remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a/C3h1b are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h1b adds no edge: Human Resume keeps existing idempotent replay first, then on replay miss `requireHumanResumeJournalRollover` rejects active or terminal enrolled Journal Attempts before checkpoint read or any write through the existing canonical 409 conflict mapping; only explicit ErrJournalNotEnrolled continues the non-Journal path, while unexpected repository/dependency errors propagate. C3h2a adds only the narrow current Resume edge for an already-enrolled Journal recovery target whose immediate source has valid fresh/typed durable bootstrap; the target commits or exactly replays gate-off typed inheritance before buildRuntime. Human rollover, ordinary non-Journal enrollment, legacy fallback, C3h2b, gate-on producer, IDL and UI remain deferred. The real MySQL typed recovery race is not implemented and remains NOT_VERIFIED. Adaptive finalizer gate, runtime selector/handler and other recovery-source consumers remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a/C3h1b/C3h2a are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",

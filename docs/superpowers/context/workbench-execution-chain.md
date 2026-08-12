@@ -186,7 +186,12 @@ idempotent replay 保持第一优先；replay miss 后，`requireHumanResumeJour
 canonical `409 run_not_resumable`。只有明确 `ErrJournalNotEnrolled` 继续 non-Journal Resume；其余
 repository/dependency 错误原样传播。Human rollover、Resume facts、IDL/UI、真实 MySQL 验收及
 P1M/P1L 均 deferred。
-真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on、runtime
+P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：immediate source 必须具有有效
+fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
+`typed_inheritance` snapshot。Legacy fallback、Human rollover、ordinary non-Journal enrollment、
+IDL/UI 与 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
+明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
+真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private
 server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
@@ -280,7 +285,8 @@ reasoning；C3h1a 只让 Human resume、ordinary non-Journal lease recovery 和 
 的目标 Config 新写删除顶层七字段，保留其余 Config、nested 字段与 Context，来源历史
 Config 不改。builtin/single-agent 内存 child builder 和其余 consumer 不变。真实 MySQL 双连接验收
 仍待显式 disposable DSN/DDL gate，且
-`Resume`、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
+仅 already-enrolled Journal recovery Resume 的 typed source inheritance 已接；Human、ordinary
+non-Journal、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
 blocker 约束。
 

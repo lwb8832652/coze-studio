@@ -170,8 +170,13 @@ P1M-C3h1b 在此基础上为 Human Resume 增加临时 fail-closed 门：existin
 `409 run_not_resumable`。明确 `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，其他
 repository/dependency 错误原样传播。该切片不实现 Human attempt rollover、Resume facts、
 IDL/UI 或 MySQL 验收，P1M/P1L 状态不变。
+P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：其 immediate source 必须具有
+有效 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
+`typed_inheritance` snapshot。Legacy fallback、Human rollover、ordinary non-Journal enrollment、
+IDL/UI 和 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
+明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
 真实 MySQL 双连接验收仍待显式
-disposable DSN/DDL gate；`Resume`、legacy runtime、gate-on producer、runtime selector/handler、IDL
+disposable DSN/DDL gate；legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。
 历史 runtime controls 与 package-private server-owned subagent compatibility
 seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。

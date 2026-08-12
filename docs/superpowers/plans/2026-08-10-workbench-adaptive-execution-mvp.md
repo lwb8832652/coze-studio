@@ -395,7 +395,7 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，未知 repository/dependency 错误原样传播。
       本包不新增 migration、IDL、UI、feature flag 或 runtime edge，也不把 fail-closed 门禁冒充 C3h2
       rollover 完成；门禁只能由上条原子 rollover re-entry gate 的同一 reviewed change 删除。
-- [ ] P1M-C3h2a 按交付优先只接现有 Journal recovery 已原子 enrollment 的 queued target：
+- [x] P1M-C3h2a 按交付优先只接现有 Journal recovery 已原子 enrollment 的 queued target：
       `ADKExecutor.Resume` 在 `buildRuntime` 前先 exact replay target bootstrap；target 缺失时必须按
       target Attempt 的 source Attempt/checkpoint lineage 读取严格 durable source bootstrap，生成
       `typed_inheritance` admission 与 target revision-1 baseline decision，并用 target lease/generation

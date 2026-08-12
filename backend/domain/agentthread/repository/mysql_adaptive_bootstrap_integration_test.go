@@ -18,6 +18,6 @@ package repository
 
 import "testing"
 
-func TestAdaptiveExecutionBootstrapMySQLIntegrationSameOperationRace(t *testing.T) {
-	_, _, _ = adaptiveExecutionMySQLIntegrationRepositories(t)
+func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {
+	t.Skip("NOT_VERIFIED: typed recovery race is not implemented in this local slice")
 }

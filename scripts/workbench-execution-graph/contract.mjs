@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '994c3093141b5bfcfb66879a297d709bd7ae9f8943e41db1623468af374bb306';
+  'eb1ed7ba831248a1373749267cc1e592e4b6b724eff622bfb33bf2c08dd4d3df';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -131,6 +131,7 @@ const REQUIRED_EDGE_IDS = [
   'edge.new_run_policy_precedes_selector',
   'edge.selector_executes_adk',
   'edge.adk_execute_delegates_adaptive_bootstrap',
+  'edge.adk_resume_delegates_adaptive_bootstrap',
   'edge.adaptive_bootstrap_precedes_agent_build',
   'edge.deerflow_configures_eino',
   'edge.legacy_is_historical_only',
@@ -254,6 +255,11 @@ const REQUIRED_EDGE_SHAPES = {
   ],
   'edge.adk_execute_delegates_adaptive_bootstrap': [
     'runtime.adk_executor.execute',
+    'delegates_to',
+    'application.adaptive_mode_free_contract_boundary',
+  ],
+  'edge.adk_resume_delegates_adaptive_bootstrap': [
+    'runtime.adk_executor.resume',
     'delegates_to',
     'application.adaptive_mode_free_contract_boundary',
   ],
