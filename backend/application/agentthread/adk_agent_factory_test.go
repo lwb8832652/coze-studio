@@ -273,6 +273,85 @@ func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
 	}
 }
 
+func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{
+		"mode":"ultra",
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4
+	}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	baseSawAdaptiveDisable := false
+	definitionCalls := 0
+	childBuildCalls := 0
+	toolProvider := NewADKSubagentToolProvider(
+		ADKToolProviderFunc(func(ctx context.Context, _ *RunSummary) ([]tool.BaseTool, error) {
+			_, baseSawAdaptiveDisable = adaptiveSubagentsAllowedFromContext(ctx)
+			return nil, nil
+		}),
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return []ADKSubagentDefinition{{
+				Name:        "researcher",
+				Description: "Research public information.",
+				AgentID:     1001,
+			}}, nil
+		}),
+		ADKSubagentAgentFactoryFunc(func(
+			ctx context.Context,
+			_ *RunSummary,
+			definition ADKSubagentDefinition,
+		) (adk.Agent, error) {
+			childBuildCalls++
+			return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+				Name:        definition.Name,
+				Description: definition.Description,
+				Model: &recordingChatModel{
+					resp: schema.AssistantMessage("research complete", nil),
+				},
+			})
+		}),
+	)
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		toolProvider,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(
+		withAdaptiveBootstrapFacts(context.Background(), facts),
+		run,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, baseSawAdaptiveDisable)
+	require.Zero(t, definitionCalls)
+	require.Zero(t, childBuildCalls)
+	require.False(t, got.RuntimeConfig.SubagentCapabilityEnabled())
+	require.Zero(t, got.RuntimeConfig.MaxConcurrentSubagents)
+	require.Empty(t, got.SubagentToolNames)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("work")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.NotContains(t, chatModel.messages[0].Content, "<subagent_system>")
+}
+
 func TestADKAgentFactoryDoesNotPropagateParentAdaptiveFactsToNestedBuilds(t *testing.T) {
 	run := freshAdaptiveBootstrapRunForTest()
 	run.Config = `{"mode":"pro","is_plan_mode":false}`

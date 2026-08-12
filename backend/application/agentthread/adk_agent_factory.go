@@ -209,6 +209,7 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
+	adaptiveSubagentPolicy := false
 	if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {
 		ctx = withoutAdaptiveBootstrapFacts(ctx)
 		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
@@ -224,6 +225,12 @@ func (f *ApplicationADKAgentFactory) Build(
 		runtimeConfig.IsPlanMode = facts.Admission.Capabilities.PlanAllowed &&
 			facts.Decision.Decision == domainentity.ExecutionDecisionExecute &&
 			facts.Decision.ExecutionShape == domainentity.ExecutionShapeMultiStep
+		runtimeConfig.SubagentExplicit = true
+		runtimeConfig.SubagentEnabled = facts.Admission.Capabilities.SubagentsAllowed
+		adaptiveSubagentPolicy = true
+		if !runtimeConfig.SubagentEnabled {
+			runtimeConfig.MaxConcurrentSubagents = 0
+		}
 	}
 	overlay := ADKLeadPromptOverlay{}
 	if f.promptOverlayProvider != nil {
@@ -302,8 +309,12 @@ func (f *ApplicationADKAgentFactory) Build(
 	var dynamicTools []tool.BaseTool
 	var subagentToolNames []string
 	if f.toolProvider != nil {
+		toolCtx := ctx
+		if adaptiveSubagentPolicy {
+			toolCtx = withAdaptiveSubagentsAllowed(ctx, runtimeConfig.SubagentEnabled)
+		}
 		if toolSetProvider, ok := f.toolProvider.(ADKToolSetProvider); ok {
-			toolSet, resolveErr := toolSetProvider.ResolveToolSet(ctx, run)
+			toolSet, resolveErr := toolSetProvider.ResolveToolSet(toolCtx, run)
 			if resolveErr != nil {
 				return nil, fmt.Errorf("resolve eino adk tool set: %w", resolveErr)
 			}
@@ -314,12 +325,12 @@ func (f *ApplicationADKAgentFactory) Build(
 				toolSet.SubagentToolNames...,
 			)
 		} else {
-			tools, err = f.toolProvider.ResolveTools(ctx, run)
+			tools, err = f.toolProvider.ResolveTools(toolCtx, run)
 			if err != nil {
 				return nil, fmt.Errorf("resolve eino adk tools: %w", err)
 			}
 			if dynamicProvider, ok := f.toolProvider.(ADKDynamicToolProvider); ok {
-				dynamicTools, err = dynamicProvider.ResolveDynamicTools(ctx, run)
+				dynamicTools, err = dynamicProvider.ResolveDynamicTools(toolCtx, run)
 				if err != nil {
 					return nil, fmt.Errorf("resolve eino adk dynamic tools: %w", err)
 				}
