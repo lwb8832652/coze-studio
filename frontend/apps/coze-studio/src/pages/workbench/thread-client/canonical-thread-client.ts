@@ -341,6 +341,16 @@ const canonicalStreamMode = (
   return parsed.map(mode => (mode as string).trim());
 };
 
+const isTypedRunRequest = (
+  request: CreateWorkbenchRunRequest,
+): request is Extract<CreateWorkbenchRunRequest, { submission_v2: unknown }> =>
+  request.submission_v2 !== undefined;
+
+const isTypedResumeRequest = (
+  request: ResumeWorkbenchRunRequest,
+): request is Extract<ResumeWorkbenchRunRequest, { response_v2: unknown }> =>
+  request.response_v2 !== undefined;
+
 const canonicalRunCozeExtension = (
   request: Extract<CreateWorkbenchRunRequest, { input: string }>,
   messageMetadata: Record<string, unknown> | undefined,
@@ -1392,7 +1402,7 @@ export class CanonicalThreadCoreClient
     );
     const assistantID = requestAssistantID(request.assistant_id);
     const streamMode = canonicalStreamMode(request.stream_mode);
-    if ('submission_v2' in request && request.submission_v2) {
+    if (isTypedRunRequest(request)) {
       const result = await fetchCanonicalJSON(
         `/api/workbench/threads/${threadID}/runs`,
         {
@@ -1554,13 +1564,12 @@ export class CanonicalThreadCoreClient
         fetch: this.fetcher,
         method: 'POST',
         spaceId: spaceID,
-        json:
-          'response_v2' in request && request.response_v2
-            ? { interrupt_id: interruptID, response_v2: request.response_v2 }
-            : {
-                interrupt_id: interruptID,
-                response: canonicalResumeResponse(request.response),
-              },
+        json: isTypedResumeRequest(request)
+          ? { interrupt_id: interruptID, response_v2: request.response_v2 }
+          : {
+              interrupt_id: interruptID,
+              response: canonicalResumeResponse(request.response),
+            },
         idempotencyKey: request.idempotency_key,
         signal: request.signal,
       },
