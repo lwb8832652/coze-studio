@@ -17,6 +17,7 @@ ATLAS_ENV_FILE=${ATLAS_ENV_FILE:-${HOME:?HOME is required}/.config/coze-studio/d
 ATLAS_IMAGE='arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e'
 GIT_BIN=${GIT_BIN:-git}
 DOCKER_BIN=${DOCKER_BIN:-docker}
+MIGRATION_POLICY_SCRIPT=$REPO_ROOT/scripts/database/check-migration-policy.sh
 atlas_env_file=''
 atlas_url=''
 atlas_userinfo=''
@@ -417,6 +418,15 @@ check_origin_and_history() {
     die 'expected origin/dev is not an ancestor of target'
 }
 
+check_migration_policy() {
+  local expected_origin_sha=$1
+  local target_sha=$2
+
+  [ -x "$MIGRATION_POLICY_SCRIPT" ] || die 'migration policy checker is missing or not executable'
+  "$MIGRATION_POLICY_SCRIPT" "$expected_origin_sha" "$target_sha" || \
+    die 'migration policy check failed'
+}
+
 run_atlas_status() {
   run_atlas_step validation run --rm \
     -v "$atlas_snapshot_dir/docker/atlas/migrations:/migrations:ro" \
@@ -467,6 +477,7 @@ main() {
 
   check_local_target "$target_sha"
   check_origin_and_history "$expected_origin_sha" "$target_sha"
+  check_migration_policy "$expected_origin_sha" "$target_sha"
   validate_env_file "$ATLAS_ENV_FILE"
   validate_publish_tmp_root
   create_atlas_snapshot "$target_sha"

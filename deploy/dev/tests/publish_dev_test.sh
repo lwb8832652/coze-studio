@@ -101,6 +101,7 @@ case "$tool" in
   cat) exec /bin/cat "$@" ;;
   chmod) exec /bin/chmod "$@" ;;
   dirname) exec /usr/bin/dirname "$@" ;;
+  grep) exec /usr/bin/grep "$@" ;;
   mktemp) exec /usr/bin/mktemp "$@" ;;
   rm) exec /bin/rm "$@" ;;
   tr) exec /usr/bin/tr "$@" ;;
@@ -111,7 +112,7 @@ case "$tool" in
 esac
 FAKE_ALLOWED_TOOL
 
-for allowed_tool in bash basename cat chmod dirname mktemp rm tr; do
+for allowed_tool in bash basename cat chmod dirname grep mktemp rm tr; do
   ln -s allowed-tool "$FAKE_BIN/$allowed_tool"
 done
 
@@ -200,6 +201,46 @@ case "${1:-}" in
     if [ "$TEST_CASE" = unrelated-target ]; then
       exit 1
     fi
+    ;;
+  diff)
+    [ "$*" = "diff --name-status --no-renames $EXPECTED_ORIGIN $TARGET_SHA -- docker/atlas/migrations/*.sql" ] || {
+      printf 'unexpected fake git diff arguments: %s\n' "$*" >&2
+      exit 91
+    }
+    case "$TEST_CASE" in
+      invalid-migration-name)
+        printf 'A\tdocker/atlas/migrations/20260813_add_table.sql\n'
+        ;;
+      modified-historical-migration)
+        printf 'M\tdocker/atlas/migrations/20250101000000_legacy.sql\n'
+        ;;
+      contract-migration)
+        printf 'A\tdocker/atlas/migrations/20260814100000_contract_legacy_drop_columns.sql\n'
+        ;;
+      repair-migration)
+        printf 'A\tdocker/atlas/migrations/20260814103000_repair_legacy_restore_indexes.sql\n'
+        ;;
+      destructive-expand-migration)
+        printf 'A\tdocker/atlas/migrations/20260813110000_expand_legacy_drop_column.sql\n'
+        ;;
+    esac
+    ;;
+  show)
+    case "$TEST_CASE" in
+      contract-migration)
+        printf '%s\n' 'ALTER TABLE legacy_table DROP COLUMN obsolete_value;'
+        ;;
+      repair-migration)
+        printf '%s\n' 'CREATE INDEX idx_legacy_id ON legacy_table (id);'
+        ;;
+      destructive-expand-migration)
+        printf '%s\n' 'ALTER TABLE legacy_table DROP COLUMN obsolete_value;'
+        ;;
+      *)
+        printf 'unexpected fake git show arguments: %s\n' "$*" >&2
+        exit 91
+        ;;
+    esac
     ;;
   archive)
     [ "$*" = "archive --format=tar $TARGET_SHA -- docker/atlas/migrations .github/atlas-dev.hcl" ] || {
@@ -842,6 +883,10 @@ assert_success_command_log() {
     printf '%s\n' 'git rev-parse FETCH_HEAD'
     printf 'git cat-file -e %s^{commit}\n' "$TARGET_SHA"
     printf 'git merge-base --is-ancestor %s %s\n' "$EXPECTED_ORIGIN" "$TARGET_SHA"
+    printf 'git cat-file -e %s^{commit}\n' "$EXPECTED_ORIGIN"
+    printf 'git cat-file -e %s^{commit}\n' "$TARGET_SHA"
+    printf 'git diff --name-status --no-renames %s %s -- docker/atlas/migrations/*.sql\n' \
+      "$EXPECTED_ORIGIN" "$TARGET_SHA"
     printf 'git archive --format=tar %s -- docker/atlas/migrations .github/atlas-dev.hcl\n' \
       "$TARGET_SHA"
     printf 'docker run --rm -v %s/docker/atlas/migrations:/migrations:ro %s migrate validate --dir file:///migrations\n' \
@@ -1134,6 +1179,19 @@ test_hidden_untracked_migration_is_dirty() {
     "$EXPECTED_ORIGIN" "$TARGET_SHA"
 }
 
+test_migration_policy_gate() {
+  run_rejected_case invalid-migration-name 'invalid migration filename' 0 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  run_rejected_case modified-historical-migration 'existing migration files are immutable' 0 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  run_rejected_case contract-migration 'requires a separate special migration approval' 0 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  run_rejected_case repair-migration 'requires a separate special migration approval' 0 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  run_rejected_case destructive-expand-migration 'expand migration contains destructive SQL' 0 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+}
+
 test_env_validation() {
   setup_case missing-env
   rm "$ENV_FILE"
@@ -1255,6 +1313,7 @@ test_atlas_and_race_failures() {
 
 assert_production_forbidden_tokens_absent
 test_hidden_untracked_migration_is_dirty
+test_migration_policy_gate
 test_unrelated_cwd_uses_repo_root
 test_repository_tmp_roots_are_rejected
 test_snapshot_creation_failures
