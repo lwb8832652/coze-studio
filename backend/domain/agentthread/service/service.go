@@ -127,11 +127,22 @@ type CreateRunBundleRequest struct {
 }
 
 type JournalEnrollmentOptions struct {
-	EnrollmentVersion string
-	SnapshotsEnabled  bool
-	TraceID           string
-	Recovery          *JournalRecoveryEnrollmentOptions
-	HumanResume       *JournalHumanResumeEnrollmentOptions
+	EnrollmentVersion     string
+	SnapshotsEnabled      bool
+	ProjectionState       entity.JournalProjectionState
+	TraceID               string
+	Recovery              *JournalRecoveryEnrollmentOptions
+	HumanResume           *JournalHumanResumeEnrollmentOptions
+	OrdinaryLeaseRecovery *JournalOrdinaryLeaseRecoveryEnrollmentOptions
+}
+
+type JournalOrdinaryLeaseRecoveryEnrollmentOptions struct {
+	JournalRunID       int64
+	SourceCheckpointID int64
+	SourceCheckpoint   *entity.Checkpoint
+	SourceAttemptID    string
+	IdempotencyKey     string
+	ExpiredLease       *JournalRecoveryExpiredLeaseOptions
 }
 
 type JournalHumanResumeEnrollmentOptions struct {

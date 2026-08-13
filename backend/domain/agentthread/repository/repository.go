@@ -145,10 +145,21 @@ type CreateRunBundleRequest struct {
 	EventJournalProjectionFailed bool
 	Attempt                      *entity.RunAttempt
 	RecoverySourceLease          *ReconcileExpiredRunLeaseRequest
+	OrdinaryLeaseRecovery        *OrdinaryLeaseRecoveryRequest
 	HumanResumeRollover          *HumanResumeRolloverRequest
 	SkipTopLevelAdmission        bool
 	ValidateIdempotencyReplay    bool
 	AllocateInterruptedEventIDs  func(count int) ([]int64, error)
+}
+
+type OrdinaryLeaseRecoveryRequest struct {
+	JournalRunID       int64
+	SourceRunID        int64
+	SourceAttemptID    string
+	SourceCheckpointID int64
+	SourceCheckpoint   *entity.Checkpoint
+	IdempotencyKey     string
+	ExpiredLease       *ReconcileExpiredRunLeaseRequest
 }
 
 type HumanResumeRolloverRequest struct {

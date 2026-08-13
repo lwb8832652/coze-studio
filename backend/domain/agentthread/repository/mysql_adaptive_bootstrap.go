@@ -539,7 +539,10 @@ func lockAndValidateAdaptiveBootstrapLegacySource(
 		return bootstrapInvalidf("legacy bootstrap validation is missing")
 	}
 	req := normalized.request
-	if target.SourceAttemptID == nil || target.SourceCheckpointID == nil || target.RecoveryIdempotencyKey == nil {
+	if target.SourceAttemptID == nil {
+		return lockAndValidateAdaptiveBootstrapBareLegacySource(tx, normalized, target)
+	}
+	if target.SourceCheckpointID == nil || target.RecoveryIdempotencyKey == nil {
 		return bootstrapConflictf("legacy bootstrap lineage is incomplete")
 	}
 	discovered, err := discoverAdaptiveExecutionSourceAttempt(tx, req.JournalRunID, *target.SourceAttemptID)
@@ -592,6 +595,73 @@ func lockAndValidateAdaptiveBootstrapLegacySource(
 	return fmt.Errorf("legacy bootstrap source facts: %w", err)
 }
 
+func lockAndValidateAdaptiveBootstrapBareLegacySource(
+	tx *gorm.DB,
+	normalized *adaptiveExecutionBootstrapNormalizedRequest,
+	target *runAttemptPO,
+) error {
+	if tx == nil || normalized == nil || target == nil {
+		return bootstrapInvalidf("bare legacy bootstrap validation is missing")
+	}
+	req := normalized.request
+	if target.SourceCheckpointID == nil || target.RecoveryIdempotencyKey == nil ||
+		target.Ordinal != 1 || target.JournalRunID != req.JournalRunID ||
+		target.ProjectionState != string(entity.JournalProjectionStateDisabled) ||
+		!adaptiveBootstrapExactNonEmpty(*target.RecoveryIdempotencyKey, 191) ||
+		req.Admission.SourceRunID == nil || *req.Admission.SourceRunID != req.JournalRunID ||
+		req.Decision.PlanScopeRunID == nil || *req.Decision.PlanScopeRunID != req.JournalRunID {
+		return bootstrapConflictf("bare legacy bootstrap lineage is invalid")
+	}
+	sourceRun, err := lockAdaptiveExecutionSourceRun(tx, req.JournalRunID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("bare legacy source run", err)
+	}
+	if sourceRun.ID == req.ExecutionRunID || sourceRun.ThreadID != req.ThreadID || !isJournalRootRun(sourceRun) ||
+		req.Admission.SourceExecutionGeneration == nil ||
+		*req.Admission.SourceExecutionGeneration != sourceRun.ExecutionGeneration ||
+		adaptiveBootstrapDigestBytes(sourceRun.Config) != req.Admission.SourceConfigDigest {
+		return bootstrapConflictf("bare legacy bootstrap source identity drift")
+	}
+	var sourceAttemptCount int64
+	if err := tx.Model(&runAttemptPO{}).
+		Where("execution_run_id = ?", sourceRun.ID).
+		Count(&sourceAttemptCount).Error; err != nil {
+		return err
+	}
+	if sourceAttemptCount != 0 {
+		return bootstrapConflictf("bare legacy bootstrap source has an attempt")
+	}
+	sourceCheckpoint, err := lockAdaptiveExecutionSourceCheckpoint(tx, *target.SourceCheckpointID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("bare legacy source checkpoint", err)
+	}
+	if sourceCheckpoint.ThreadID != req.ThreadID || sourceCheckpoint.RunID != sourceRun.ID ||
+		sourceCheckpoint.CheckpointNS != "eino.adk" || sourceCheckpoint.RuntimeType != "eino_adk" ||
+		sourceCheckpoint.RuntimeDeletedAt != 0 {
+		return bootstrapConflictf("bare legacy bootstrap source checkpoint drift")
+	}
+	var sourceFactCount int64
+	if err := tx.Model(&runEventPO{}).Where(
+		"run_id = ? AND event_type IN ? AND sequence IS NULL AND visibility = ?",
+		sourceRun.ID,
+		[]string{adaptiveBootstrapAdmissionEventType, adaptiveBootstrapDecisionEventType},
+		string(entity.JournalVisibilityInternal),
+	).Count(&sourceFactCount).Error; err != nil {
+		return err
+	}
+	var sourceControlCheckpointCount int64
+	if err := tx.Model(&checkpointPO{}).Where(
+		"thread_id = ? AND run_id = ? AND runtime_type = ? AND checkpoint_ns = ?",
+		req.ThreadID, sourceRun.ID, adaptiveBootstrapRuntimeType, adaptiveBootstrapCheckpointNS,
+	).Count(&sourceControlCheckpointCount).Error; err != nil {
+		return err
+	}
+	if sourceFactCount != 0 || sourceControlCheckpointCount != 0 {
+		return bootstrapConflictf("bare legacy bootstrap source already has bootstrap authority")
+	}
+	return nil
+}
+
 func adaptiveBootstrapTypedSourceError(scope string, err error) error {
 	if err == nil {
 		return nil
@@ -616,15 +686,26 @@ func validateAdaptiveBootstrapStoredLineage(
 	sourceAttemptPresent := attempt.SourceAttemptID != nil
 	sourceCheckpointPresent := attempt.SourceCheckpointID != nil
 	recoveryKeyPresent := attempt.RecoveryIdempotencyKey != nil
-	if sourceAttemptPresent != sourceCheckpointPresent || sourceAttemptPresent != recoveryKeyPresent {
-		return bootstrapConflictf("bootstrap attempt lineage is partial")
-	}
-	if !sourceAttemptPresent {
+	if !sourceAttemptPresent && !sourceCheckpointPresent && !recoveryKeyPresent {
 		if admission.Source != entity.AdaptiveAdmissionSourceFresh || metadata.SourceAttemptID != nil ||
 			metadata.SourceCheckpointID != nil || metadata.RecoveryIdempotencyKey != nil {
 			return bootstrapConflictf("fresh bootstrap lineage drift")
 		}
 		return nil
+	}
+	if !sourceAttemptPresent && sourceCheckpointPresent && recoveryKeyPresent {
+		if admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder || attempt.Ordinal != 1 ||
+			attempt.ProjectionState != string(entity.JournalProjectionStateDisabled) ||
+			admission.SourceRunID == nil || *admission.SourceRunID != attempt.JournalRunID ||
+			metadata.SourceAttemptID != nil ||
+			!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) ||
+			!adaptiveExecutionStringPointersEqual(metadata.RecoveryIdempotencyKey, attempt.RecoveryIdempotencyKey) {
+			return bootstrapConflictf("bare legacy bootstrap lineage drift")
+		}
+		return nil
+	}
+	if sourceAttemptPresent != sourceCheckpointPresent || sourceAttemptPresent != recoveryKeyPresent {
+		return bootstrapConflictf("bootstrap attempt lineage is partial")
 	}
 	if (admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance &&
 		admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder) ||

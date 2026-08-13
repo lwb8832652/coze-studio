@@ -30,6 +30,101 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestOrdinaryLeaseRecoveryMySQLCheckpointAuthorityRace(t *testing.T) {
+	assertRejectedWithoutWrites := func(
+		t *testing.T,
+		db *gorm.DB,
+		repo *threadRepository,
+		source *entity.Run,
+		req CreateRunBundleRequest,
+	) {
+		t.Helper()
+		result, err := repo.CreateRunBundle(context.Background(), req)
+		require.Nil(t, result)
+		require.ErrorIs(t, err, ErrJournalParentMismatch)
+
+		var storedSource runPO
+		require.NoError(t, db.Where("id = ?", source.ID).First(&storedSource).Error)
+		require.Equal(t, string(entity.RunStatusRunning), storedSource.Status)
+		require.NotNil(t, storedSource.LeaseToken)
+		require.Equal(t, source.LeaseToken, *storedSource.LeaseToken)
+
+		var targetRuns, attempts, events int64
+		require.NoError(t, db.Model(&runPO{}).Where("id = ?", req.Run.ID).Count(&targetRuns).Error)
+		require.NoError(t, db.Model(&runAttemptPO{}).
+			Where("execution_run_id IN ?", []int64{source.ID, req.Run.ID}).Count(&attempts).Error)
+		require.NoError(t, db.Model(&runEventPO{}).Where("run_id = ?", source.ID).Count(&events).Error)
+		require.Zero(t, targetRuns)
+		require.Zero(t, attempts)
+		require.Zero(t, events)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		drift func(t *testing.T, db *gorm.DB, checkpointID int64)
+	}{
+		{
+			name: "payload_drift",
+			drift: func(t *testing.T, db *gorm.DB, checkpointID int64) {
+				require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", checkpointID).Update(
+					"channel_values",
+					datatypes.JSON([]byte(`{"messages":["drifted-after-authority-read"]}`)),
+				).Error)
+			},
+		},
+		{
+			name: "runtime_authority_drift",
+			drift: func(t *testing.T, db *gorm.DB, checkpointID int64) {
+				require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", checkpointID).
+					Update("runtime_key", "checkpoint-drifted-after-authority-read").Error)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, repoA, repoB := adaptiveExecutionMySQLIntegrationRepositories(t)
+			source := seedOrdinaryLeaseRecoverySource(t, db, 10)
+			checkpoint := seedOrdinaryLeaseRecoveryCheckpoint(t, db, 500, source.ID)
+			authority, err := repoA.GetCheckpoint(context.Background(), checkpoint.ID)
+			require.NoError(t, err)
+			req := ordinaryLeaseRecoveryBundleRequest(source, authority, 20, 100)
+
+			tc.drift(t, repoB.db, checkpoint.ID)
+
+			assertRejectedWithoutWrites(t, db, repoA, source, req)
+		})
+	}
+
+	t.Run("exact_committed_retry", func(t *testing.T) {
+		db, repoA, repoB := adaptiveExecutionMySQLIntegrationRepositories(t)
+		source := seedOrdinaryLeaseRecoverySource(t, db, 10)
+		checkpoint := seedOrdinaryLeaseRecoveryCheckpoint(t, db, 500, source.ID)
+		authority, err := repoA.GetCheckpoint(context.Background(), checkpoint.ID)
+		require.NoError(t, err)
+		req := ordinaryLeaseRecoveryBundleRequest(source, authority, 20, 100)
+
+		committed, err := repoA.CreateRunBundle(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, committed.Created)
+		replayed, err := repoB.CreateRunBundle(context.Background(), req)
+		require.NoError(t, err)
+		require.False(t, replayed.Created)
+		require.Equal(t, committed.Run, replayed.Run)
+		require.Equal(t, committed.Attempt, replayed.Attempt)
+
+		var targetRuns, sourceAttempts, targetAttempts, events int64
+		require.NoError(t, db.Model(&runPO{}).Where("id = ?", req.Run.ID).Count(&targetRuns).Error)
+		require.NoError(t, db.Model(&runAttemptPO{}).
+			Where("execution_run_id = ?", source.ID).Count(&sourceAttempts).Error)
+		require.NoError(t, db.Model(&runAttemptPO{}).
+			Where("execution_run_id = ?", req.Run.ID).Count(&targetAttempts).Error)
+		require.NoError(t, db.Model(&runEventPO{}).Where("run_id = ?", source.ID).Count(&events).Error)
+		require.Equal(t, int64(1), targetRuns)
+		require.Zero(t, sourceAttempts)
+		require.Equal(t, int64(1), targetAttempts)
+		require.Equal(t, int64(1), events)
+	})
+}
+
 func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {
 	db, repoA, repoB := adaptiveExecutionMySQLIntegrationRepositories(t)
 	seedAdaptiveExecutionMySQLState(t, db)

@@ -688,9 +688,10 @@ func (r *threadRepository) CreateThreadBundle(
 		if normalizedAttempt.ProjectionState == "" {
 			normalizedAttempt.ProjectionState = entity.JournalProjectionStateHealthy
 		}
-		if normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy ||
+		if (normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy &&
+			normalizedAttempt.ProjectionState != entity.JournalProjectionStateDisabled) ||
 			normalizedAttempt.ProjectionDegradedAt != nil {
-			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy")
+			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy or disabled")
 		}
 		activeSlot := uint8(1)
 		normalizedAttempt.ActiveSlot = &activeSlot
@@ -834,9 +835,14 @@ func findExistingThreadBundle(
 			ErrRunIdempotencyConflict,
 		)
 	}
+	expectedProjectionState := req.Attempt.ProjectionState
+	if expectedProjectionState == "" {
+		expectedProjectionState = entity.JournalProjectionStateHealthy
+	}
 	if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
 		attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
-		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled ||
+		attempt.ProjectionState != string(expectedProjectionState) {
 		return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
 	}
 	result.Attempt = attempt.toEntity()
@@ -1226,6 +1232,9 @@ func (r *threadRepository) CreateRunBundle(
 	if req.HumanResumeRollover != nil {
 		return r.createHumanResumeRunBundle(ctx, req)
 	}
+	if req.OrdinaryLeaseRecovery != nil {
+		return r.createOrdinaryLeaseRecoveryRunBundle(ctx, req)
+	}
 	if req.Message != nil &&
 		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle message does not belong to run")
@@ -1324,8 +1333,10 @@ func (r *threadRepository) CreateRunBundle(
 		if attempt.ProjectionState == "" {
 			attempt.ProjectionState = entity.JournalProjectionStateHealthy
 		}
-		if attempt.ProjectionState != entity.JournalProjectionStateHealthy || attempt.ProjectionDegradedAt != nil {
-			return nil, fmt.Errorf("initial journal attempt projection must be healthy")
+		if (attempt.ProjectionState != entity.JournalProjectionStateHealthy &&
+			(!isRecoveryBundle && attempt.ProjectionState != entity.JournalProjectionStateDisabled)) ||
+			attempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("initial journal attempt projection must be healthy or disabled")
 		}
 		activeSlot := uint8(1)
 		attempt.ActiveSlot = &activeSlot
@@ -2090,11 +2101,18 @@ func findExistingRunBundle(
 				!equalStringPointers(attempt.SourceAttemptID, req.Attempt.SourceAttemptID) {
 				return nil, false, fmt.Errorf("%w: journal recovery semantics changed", ErrRunIdempotencyConflict)
 			}
-		} else if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
-			attempt.RecoveryIdempotencyKey != nil ||
-			attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
-			attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
-			return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+		} else {
+			expectedProjectionState := req.Attempt.ProjectionState
+			if expectedProjectionState == "" {
+				expectedProjectionState = entity.JournalProjectionStateHealthy
+			}
+			if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+				attempt.RecoveryIdempotencyKey != nil ||
+				attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+				attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled ||
+				attempt.ProjectionState != string(expectedProjectionState) {
+				return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+			}
 		}
 		result.Attempt = attempt.toEntity()
 	}

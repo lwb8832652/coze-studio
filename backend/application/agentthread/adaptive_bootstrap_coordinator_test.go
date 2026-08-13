@@ -303,6 +303,85 @@ func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurab
 	require.Equal(t, originalConfig, source.Config)
 }
 
+func TestAdaptiveBootstrapCoordinatorResumeBareSourceSkipsDurableSourceRead(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	attempt.JournalRunID = input.SourceRunID
+	attempt.Ordinal = 1
+	attempt.SourceAttemptID = nil
+	attempt.ProjectionState = entity.JournalProjectionStateDisabled
+	source := &entity.Run{
+		ID: input.SourceRunID, ThreadID: run.ThreadID, RunKind: entity.RunKindTask,
+		ExecutionGeneration: 3, Config: `{"runtime":"eino_adk","requested_policy":"pro"}`,
+	}
+	runReader := &adaptiveBootstrapSourceRunReaderStub{run: source}
+	repo := &adaptiveBootstrapRepositoryStub{readErr: repository.ErrAdaptiveExecutionBootstrapNotFound}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:      repo,
+		SourceRunReader: runReader,
+		IDGen:           &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}},
+		Now:             func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.NotNil(t, facts)
+	require.Equal(t, []repository.ReadAdaptiveExecutionBootstrapRequest{{
+		ThreadID: run.ThreadID, ExecutionRunID: run.RunID,
+		JournalRunID: attempt.JournalRunID, AttemptID: attempt.AttemptID,
+	}}, repo.readRequests)
+	require.Equal(t, []int64{input.SourceRunID}, runReader.runIDs)
+	require.Len(t, repo.commitRequests, 1)
+	require.Equal(t, entity.AdaptiveAdmissionSourceLegacyDecoder, repo.commitRequests[0].Admission.Source)
+	require.Equal(t, input.SourceRunID, requireInt64PointerForAdaptiveBootstrapTest(t, repo.commitRequests[0].Decision.PlanScopeRunID))
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeRejectsInvalidBareSourceBeforeReads(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*entity.RunAttempt)
+	}{
+		{name: "healthy projection", mutate: func(attempt *entity.RunAttempt) {
+			attempt.ProjectionState = entity.JournalProjectionStateHealthy
+		}},
+		{name: "missing checkpoint", mutate: func(attempt *entity.RunAttempt) {
+			attempt.SourceCheckpointID = nil
+		}},
+		{name: "missing recovery key", mutate: func(attempt *entity.RunAttempt) {
+			attempt.RecoveryIdempotencyKey = nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+			attempt.JournalRunID = input.SourceRunID
+			attempt.Ordinal = 1
+			attempt.SourceAttemptID = nil
+			attempt.ProjectionState = entity.JournalProjectionStateDisabled
+			test.mutate(attempt)
+			runReader := &adaptiveBootstrapSourceRunReaderStub{run: &entity.Run{ID: input.SourceRunID}}
+			repo := &adaptiveBootstrapRepositoryStub{}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+				Repository:      repo,
+				SourceRunReader: runReader,
+				IDGen:           ids,
+				Now:             func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Empty(t, repo.readRequests)
+			require.Empty(t, runReader.runIDs)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
 func TestAdaptiveBootstrapCoordinatorResumeReplaysLegacyTargetWithoutReadingSource(t *testing.T) {
 	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
 	target := adaptiveBootstrapLegacyTargetResultForTest(t, run, input, attempt)
@@ -322,6 +401,36 @@ func TestAdaptiveBootstrapCoordinatorResumeReplaysLegacyTargetWithoutReadingSour
 	require.Equal(t, target.Admission, facts.Admission)
 	require.Equal(t, target.Decision, facts.Decision)
 	require.Empty(t, runReader.runIDs)
+	require.Empty(t, repo.commitRequests)
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeReplaysBareLegacyTargetWithoutReadingSource(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	attempt.JournalRunID = input.SourceRunID
+	attempt.Ordinal = 1
+	attempt.SourceAttemptID = nil
+	attempt.ProjectionState = entity.JournalProjectionStateDisabled
+	target := adaptiveBootstrapLegacyTargetResultForTest(t, run, input, attempt)
+	runReader := &adaptiveBootstrapSourceRunReaderStub{run: &entity.Run{ID: input.SourceRunID}}
+	repo := &adaptiveBootstrapRepositoryStub{readResult: target}
+	ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:      repo,
+		SourceRunReader: runReader,
+		IDGen:           ids,
+		Now:             func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Equal(t, target.Admission, facts.Admission)
+	require.Equal(t, target.Decision, facts.Decision)
+	require.Len(t, repo.readRequests, 1)
+	require.Equal(t, run.RunID, repo.readRequests[0].ExecutionRunID)
+	require.Empty(t, runReader.runIDs)
+	require.Empty(t, ids.counts)
 	require.Empty(t, repo.commitRequests)
 }
 

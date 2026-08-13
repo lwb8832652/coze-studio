@@ -2282,6 +2282,7 @@ func TestApplicationResumeHumanInteractionRejectsIncompleteJournalRolloverBundle
 		}},
 	}
 	domainSVC := &recordingThreadService{
+		omitJournalAttempt: true,
 		gotRun: &entity.Run{
 			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
 			RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
@@ -6082,6 +6083,8 @@ type recordingThreadService struct {
 	canceledRun                    *entity.Run
 	listed                         []*entity.Thread
 	got                            *entity.Thread
+	getThreadErr                   error
+	omitDefaultThread              bool
 	appended                       *entity.Message
 	appendedRunEvent               *entity.RunEvent
 	createdCheckpoint              *entity.Checkpoint
@@ -6144,6 +6147,7 @@ type recordingThreadService struct {
 	createRunReq                   *domainservice.CreateRunRequest
 	createRunBundleReq             *domainservice.CreateRunBundleRequest
 	createRunBundleEventPayload    string
+	omitJournalAttempt             bool
 	claimRunsReq                   *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
 	renewRunLeaseReq               *domainservice.RenewRunLeaseRequest
@@ -6750,12 +6754,26 @@ func (s *recordingThreadService) CreateThreadRunMessage(
 	req *domainservice.CreateThreadRunMessageRequest,
 ) (*domainservice.CreateThreadRunMessageResult, error) {
 	s.createThreadRunMessageReq = req
+	if req != nil && req.EnrollJournal && !s.omitJournalAttempt &&
+		s.createdThreadRunMessage != nil && s.createdThreadRunMessage.Attempt == nil {
+		s.createdThreadRunMessage.Attempt = &entity.RunAttempt{AttemptID: "test-attempt"}
+	}
 	return s.createdThreadRunMessage, nil
 }
 
 func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
 	s.getID = id
-	return s.got, nil
+	if s.getThreadErr != nil || s.got != nil || s.omitDefaultThread {
+		return s.got, s.getThreadErr
+	}
+	if s.createdRunBundle != nil && s.createdRunBundle.Run != nil {
+		spaceID := s.createdRunBundle.Run.SpaceID
+		if spaceID <= 0 {
+			spaceID = 1
+		}
+		return &entity.Thread{ID: id, SpaceID: spaceID}, nil
+	}
+	return nil, nil
 }
 
 func (s *recordingThreadService) UpdateThreadTitle(
@@ -6836,6 +6854,10 @@ func (s *recordingThreadService) CreateRunBundle(
 	req *domainservice.CreateRunBundleRequest,
 ) (*domainservice.CreateRunBundleResult, error) {
 	s.createRunBundleReq = req
+	if req != nil && req.EnrollJournal && !s.omitJournalAttempt &&
+		s.createdRunBundle != nil && s.createdRunBundle.Attempt == nil {
+		s.createdRunBundle.Attempt = &entity.RunAttempt{AttemptID: "test-attempt"}
+	}
 	if req != nil && req.Event != nil && req.Event.PayloadBuilder != nil &&
 		s.createdRunBundle != nil && s.createdRunBundle.Run != nil {
 		s.createRunBundleEventPayload = req.Event.PayloadBuilder(s.createdRunBundle.Run.ID)

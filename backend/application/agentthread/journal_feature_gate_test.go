@@ -236,6 +236,228 @@ func TestApplicationCreateTaskThreadPersistsJournalEnrollmentInAtomicBundle(t *t
 		domainSVC.createThreadRunMessageReq.JournalEnrollment.EnrollmentVersion,
 	)
 	require.True(t, domainSVC.createThreadRunMessageReq.JournalEnrollment.SnapshotsEnabled)
+	require.Equal(
+		t,
+		domainentity.JournalProjectionStateHealthy,
+		domainSVC.createThreadRunMessageReq.JournalEnrollment.ProjectionState,
+	)
+}
+
+func TestApplicationCreateTaskThreadEnrollsJournalWhenProjectionIsDisabled(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread: &domainentity.Thread{ID: 10, SpaceID: 42, CreatorID: 2},
+			Run: &domainentity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+				RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+			},
+			Message: &domainentity.Message{
+				ID: 30, ThreadID: 10, RunID: 20, Role: domainentity.MessageRoleUser,
+			},
+		},
+	}
+	app := &ApplicationService{
+		ThreadSVC: domainSVC,
+		JournalFeatureGate: NewJournalFeatureGate(
+			&journalConfigProviderStub{configuration: disabledJournalConfiguration()},
+			JournalFeatureGateOptions{},
+		),
+	}
+
+	_, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 42, UserID: 2, Message: "分析项目需求",
+		Config: `{"runtime":"eino_adk"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.True(t, domainSVC.createThreadRunMessageReq.EnrollJournal)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq.JournalEnrollment)
+	require.Equal(
+		t,
+		domainentity.JournalSchemaVersion,
+		domainSVC.createThreadRunMessageReq.JournalEnrollment.EnrollmentVersion,
+	)
+	require.False(t, domainSVC.createThreadRunMessageReq.JournalEnrollment.SnapshotsEnabled)
+	require.Equal(
+		t,
+		domainentity.JournalProjectionStateDisabled,
+		domainSVC.createThreadRunMessageReq.JournalEnrollment.ProjectionState,
+	)
+}
+
+func TestApplicationCreateRunEnrollsJournalWhenProjectionIsDisabled(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		got: &domainentity.Thread{ID: 10, SpaceID: 42, CreatorID: 2},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &domainentity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+				RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{
+		ThreadSVC: domainSVC,
+		JournalFeatureGate: NewJournalFeatureGate(
+			&journalConfigProviderStub{configuration: disabledJournalConfiguration()},
+			JournalFeatureGateOptions{},
+		),
+	}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[]}`,
+		Config:   `{"runtime":"eino_adk"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.True(t, domainSVC.createRunBundleReq.EnrollJournal)
+	require.NotNil(t, domainSVC.createRunBundleReq.JournalEnrollment)
+	require.Equal(
+		t,
+		domainentity.JournalSchemaVersion,
+		domainSVC.createRunBundleReq.JournalEnrollment.EnrollmentVersion,
+	)
+	require.False(t, domainSVC.createRunBundleReq.JournalEnrollment.SnapshotsEnabled)
+	require.Equal(
+		t,
+		domainentity.JournalProjectionStateDisabled,
+		domainSVC.createRunBundleReq.JournalEnrollment.ProjectionState,
+	)
+}
+
+func TestApplicationCreateRunFailsClosedWhenEnrollmentThreadCannotBeResolved(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		thread       *domainentity.Thread
+		getThreadErr error
+	}{
+		{name: "lookup error", getThreadErr: errors.New("thread lookup unavailable")},
+		{name: "empty result"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{
+				got:               test.thread,
+				getThreadErr:      test.getThreadErr,
+				omitDefaultThread: true,
+				createdRunBundle: &domainservice.CreateRunBundleResult{
+					Run: &domainentity.Run{
+						ID: 20, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+						RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+					},
+				},
+			}
+			app := &ApplicationService{ThreadSVC: domainSVC}
+
+			result, err := app.CreateRun(context.Background(), &CreateRunRequest{
+				ThreadID: 10,
+				Input:    `{"messages":[]}`,
+				Config:   `{"runtime":"eino_adk"}`,
+			})
+
+			require.ErrorContains(t, err, "resolve thread 10 for journal enrollment")
+			require.Nil(t, result)
+			require.Nil(t, domainSVC.createRunBundleReq)
+		})
+	}
+}
+
+func TestApplicationFreshEinoEnrollmentRejectsBundleWithoutAttempt(t *testing.T) {
+	t.Run("new task thread", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			omitJournalAttempt: true,
+			createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+				Thread: &domainentity.Thread{ID: 10, SpaceID: 42, CreatorID: 2},
+				Run: &domainentity.Run{
+					ID: 20, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+					RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+				},
+				Message: &domainentity.Message{
+					ID: 30, ThreadID: 10, RunID: 20, Role: domainentity.MessageRoleUser,
+				},
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		result, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+			SpaceID: 42, UserID: 2, Message: "分析项目需求",
+			Config: `{"runtime":"eino_adk"}`,
+		})
+
+		require.ErrorContains(t, err, "missing journal attempt")
+		require.Nil(t, result)
+		require.True(t, domainSVC.createThreadRunMessageReq.EnrollJournal)
+	})
+
+	for _, withMessage := range []bool{false, true} {
+		name := "existing thread without message"
+		if withMessage {
+			name = "existing thread with message"
+		}
+		t.Run(name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{
+				omitJournalAttempt: true,
+				got:                &domainentity.Thread{ID: 10, SpaceID: 42, CreatorID: 2},
+				createdRunBundle: &domainservice.CreateRunBundleResult{
+					Run: &domainentity.Run{
+						ID: 20, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+						RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+					},
+				},
+			}
+			req := &CreateRunRequest{
+				ThreadID: 10,
+				Input:    `{"messages":[]}`,
+				Config:   `{"runtime":"eino_adk"}`,
+			}
+			if withMessage {
+				req.MessageContent = "继续分析"
+				domainSVC.createdRunBundle.Message = &domainentity.Message{
+					ID: 30, ThreadID: 10, RunID: 20, Role: domainentity.MessageRoleUser,
+				}
+			}
+			app := &ApplicationService{ThreadSVC: domainSVC}
+
+			result, err := app.CreateRun(context.Background(), req)
+
+			require.ErrorContains(t, err, "missing journal attempt")
+			require.Nil(t, result)
+			require.True(t, domainSVC.createRunBundleReq.EnrollJournal)
+		})
+	}
+
+	t.Run("top-level retry", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			omitJournalAttempt: true,
+			got:                &domainentity.Thread{ID: 10, SpaceID: 42, CreatorID: 2},
+			gotRunsByID: map[int64]*domainentity.Run{
+				30: {
+					ID: 30, ThreadID: 10, RunKind: domainentity.RunKindTask,
+					Status: domainentity.RunStatusFailed,
+				},
+			},
+			createdRunBundle: &domainservice.CreateRunBundleResult{
+				Run: &domainentity.Run{
+					ID: 31, ThreadID: 10, SpaceID: 42, CreatorID: 2,
+					RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusPending,
+				},
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		result, err := app.CreateRun(context.Background(), &CreateRunRequest{
+			ThreadID:                 10,
+			TopLevelRetrySourceRunID: 30,
+			Input:                    `{"messages":[]}`,
+			Config:                   `{"runtime":"eino_adk"}`,
+		})
+
+		require.ErrorContains(t, err, "missing journal attempt")
+		require.Nil(t, result)
+		require.True(t, domainSVC.createRunBundleReq.EnrollJournal)
+	})
 }
 
 func TestJournalFeatureGateBlocksBootstrapBeforeRepository(t *testing.T) {

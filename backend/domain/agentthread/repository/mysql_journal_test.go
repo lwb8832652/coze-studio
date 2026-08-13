@@ -825,6 +825,111 @@ func TestRunCancellationFinalizesJournalAttemptWithSameBaseRow(t *testing.T) {
 	require.Equal(t, "run.lifecycle", journalEvents.Events[0].EventType)
 }
 
+func TestDisabledJournalAttemptTerminalPathsReleaseActiveSlotWithoutProjection(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		finalize      func(t *testing.T, repo Repository, run *entity.Run)
+		wantRunStatus entity.RunStatus
+		wantAttempt   entity.RunAttemptStatus
+		wantEventType string
+	}{
+		{
+			name: "success",
+			finalize: func(t *testing.T, repo Repository, run *entity.Run) {
+				result, err := repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+					RunID: run.ID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+					ExecutionGeneration: run.ExecutionGeneration, Now: 2_000,
+					Message: &entity.Message{
+						ID: 2_001, ThreadID: run.ThreadID, RunID: run.ID,
+						Role: entity.MessageRoleAssistant, Content: "done", CreatedAt: 2_000,
+					},
+					CompletionEvent: &entity.RunEvent{
+						ID: 2_002, ThreadID: run.ThreadID, RunID: run.ID,
+						EventType: "run.completed", Payload: `{"status":"succeeded"}`, CreatedAt: 2_000,
+					},
+					JournalEvent: &entity.JournalEvent{
+						ID: 2_002, ThreadID: run.ThreadID, RunID: run.ID,
+						IdempotencyKey: "run-10:completed", EventType: "run.lifecycle",
+						Status: string(entity.RunAttemptStatusCompleted), Visibility: entity.JournalVisibilityUser,
+						Payload: journalTerminalTestPayload, CreatedAt: 2_000,
+					},
+				})
+				require.NoError(t, err)
+				require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+			},
+			wantRunStatus: entity.RunStatusSucceeded,
+			wantAttempt:   entity.RunAttemptStatusCompleted,
+			wantEventType: "run.completed",
+		},
+		{
+			name: "failure",
+			finalize: func(t *testing.T, repo Repository, run *entity.Run) {
+				err := repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+					RunID: run.ID, From: entity.RunStatusRunning, To: entity.RunStatusFailed,
+					LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+					ExecutionGeneration: run.ExecutionGeneration, Now: 2_000,
+					ErrorCode: "failed",
+					Event: &entity.RunEvent{
+						ID: 2_002, ThreadID: run.ThreadID, RunID: run.ID,
+						EventType: "run.failed", Payload: `{"status":"failed"}`, CreatedAt: 2_000,
+					},
+					JournalEvent: &entity.JournalEvent{
+						ID: 2_002, ThreadID: run.ThreadID, RunID: run.ID,
+						IdempotencyKey: "run-10:failed", EventType: "run.lifecycle",
+						Status: string(entity.RunAttemptStatusFailed), Visibility: entity.JournalVisibilityUser,
+						Payload: journalTerminalTestPayload, CreatedAt: 2_000,
+					},
+				})
+				require.NoError(t, err)
+			},
+			wantRunStatus: entity.RunStatusFailed,
+			wantAttempt:   entity.RunAttemptStatusFailed,
+			wantEventType: "run.failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := newJournalRepositoryTestDB(t)
+			require.NoError(t, db.AutoMigrate(&messagePO{}))
+			repo := NewThreadRepository(db)
+			seedJournalRunWithStatus(t, db, 10, 1, entity.RunStatusPending)
+			claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+				WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+			})
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+			run := claimed[0]
+			seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("id = ?", 100).
+				Update("projection_state", string(entity.JournalProjectionStateDisabled)).Error)
+
+			test.finalize(t, repo, run)
+
+			storedRun, err := repo.GetRun(context.Background(), run.ID)
+			require.NoError(t, err)
+			require.Equal(t, test.wantRunStatus, storedRun.Status)
+			attempts, err := repo.ListJournalAttempts(context.Background(), run.ID)
+			require.NoError(t, err)
+			require.Len(t, attempts, 1)
+			require.Equal(t, test.wantAttempt, attempts[0].Status)
+			require.Equal(t, entity.JournalProjectionStateDisabled, attempts[0].ProjectionState)
+			require.Nil(t, attempts[0].ActiveSlot)
+			require.Equal(t, uint64(1), attempts[0].NextSequence)
+
+			baseEvents, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+				RunID: run.ID, Page: 1, PageSize: 10,
+			})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Equal(t, test.wantEventType, baseEvents[0].EventType)
+			journalEvents, err := repo.ListJournalEvents(context.Background(), ListJournalEventsRequest{
+				RunID: run.ID, Limit: 10,
+			})
+			require.NoError(t, err)
+			require.Empty(t, journalEvents.Events)
+		})
+	}
+}
+
 func TestRunCancellationKeepsBaseEventWhenTerminalProjectionIsInvalid(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	repo := NewThreadRepository(db)

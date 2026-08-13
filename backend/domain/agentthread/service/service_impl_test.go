@@ -232,7 +232,8 @@ func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T)
 			EnrollJournal: true,
 			JournalEnrollment: &JournalEnrollmentOptions{
 				EnrollmentVersion: entity.JournalSchemaVersion,
-				SnapshotsEnabled:  true,
+				SnapshotsEnabled:  false,
+				ProjectionState:   entity.JournalProjectionStateDisabled,
 			},
 		},
 	)
@@ -243,7 +244,8 @@ func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T)
 	require.Equal(t, result.Run.ID, result.Attempt.JournalRunID)
 	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
 	require.Equal(t, entity.JournalSchemaVersion, result.Attempt.EnrollmentVersion)
-	require.True(t, result.Attempt.SnapshotsEnabled)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
 	require.Len(t, repo.runAttempts[result.Run.ID], 1)
 }
 
@@ -292,7 +294,8 @@ func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
 		EnrollJournal: true,
 		JournalEnrollment: &JournalEnrollmentOptions{
 			EnrollmentVersion: "1.1",
-			SnapshotsEnabled:  true,
+			SnapshotsEnabled:  false,
+			ProjectionState:   entity.JournalProjectionStateDisabled,
 			TraceID:           "trace-enrollment",
 		},
 	})
@@ -310,10 +313,123 @@ func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
 	require.Equal(t, uint64(1), result.Attempt.NextSequence)
 	require.Zero(t, result.Attempt.LastCommittedSequence)
 	require.Equal(t, "1.1", result.Attempt.EnrollmentVersion)
-	require.True(t, result.Attempt.SnapshotsEnabled)
-	require.Equal(t, entity.JournalProjectionStateHealthy, result.Attempt.ProjectionState)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
 	require.NotNil(t, result.Attempt.TraceID)
 	require.Equal(t, "trace-enrollment", *result.Attempt.TraceID)
+}
+
+func TestFreshJournalEnrollmentRejectsDegradedProjectionBeforePersistence(t *testing.T) {
+	t.Run("new thread bundle", func(t *testing.T) {
+		repo := newMemoryRepo()
+		svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2151)})
+
+		result, err := svc.CreateThreadRunMessage(
+			context.Background(),
+			&CreateThreadRunMessageRequest{
+				Thread: CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "journal task"},
+				Run: CreateRunRequest{
+					RunKind: entity.RunKindTask,
+					Input:   `{"messages":[{"role":"user","content":"start"}]}`,
+				},
+				Message:       CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+				EnrollJournal: true,
+				JournalEnrollment: &JournalEnrollmentOptions{
+					EnrollmentVersion: entity.JournalSchemaVersion,
+					ProjectionState:   entity.JournalProjectionStateDegraded,
+				},
+			},
+		)
+
+		require.Nil(t, result)
+		require.ErrorContains(t, err, "journal projection state")
+		require.Zero(t, repo.createThreadBundleCalls)
+	})
+
+	t.Run("existing thread bundle", func(t *testing.T) {
+		repo := newMemoryRepo()
+		repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+		svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2161)})
+
+		result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+			Run: CreateRunRequest{
+				ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			},
+			EnrollJournal: true,
+			JournalEnrollment: &JournalEnrollmentOptions{
+				EnrollmentVersion: entity.JournalSchemaVersion,
+				ProjectionState:   entity.JournalProjectionStateDegraded,
+			},
+		})
+
+		require.Nil(t, result)
+		require.ErrorContains(t, err, "journal projection state")
+		require.Zero(t, repo.createRunBundleCalls)
+	})
+}
+
+func TestFreshDisabledJournalEnrollmentForcesSnapshotsOff(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2171)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			EnrollmentVersion: entity.JournalSchemaVersion,
+			SnapshotsEnabled:  true,
+			ProjectionState:   entity.JournalProjectionStateDisabled,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+}
+
+func TestCreateRunBundlePreservesOrdinaryRecoveryCheckpointAuthority(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2181)})
+	checkpoint := &entity.Checkpoint{
+		ID: 700, ThreadID: 10, RunID: 50, ParentCheckpointID: 699,
+		CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "run-50",
+		EnvelopeVersion: 3, ChannelValues: `{"runtime_state":{"checkpoint":"AQID"}}`,
+		ChannelVersions: `{"messages":4}`, PendingSends: `[]`,
+		Metadata: `{"runtime":"eino_adk"}`, CreatedAt: 1_500,
+	}
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			IdempotencyKey: "ordinary-recovery-1", MultitaskStrategy: "reject",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			OrdinaryLeaseRecovery: &JournalOrdinaryLeaseRecoveryEnrollmentOptions{
+				JournalRunID: 50, SourceCheckpointID: checkpoint.ID, SourceCheckpoint: checkpoint,
+				IdempotencyKey: "ordinary-recovery-1",
+				ExpiredLease: &JournalRecoveryExpiredLeaseOptions{
+					RunID: 50, LeaseOwner: "worker-a", LeaseToken: "lease-50",
+					ExecutionGeneration: 3, Now: 2_000,
+					ErrorCode: "run_recovered", ErrorMessage: "recovered",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.NotNil(t, repo.lastCreateRunBundleReq)
+	ordinary := repo.lastCreateRunBundleReq.OrdinaryLeaseRecovery
+	require.NotNil(t, ordinary)
+	require.NotNil(t, ordinary.SourceCheckpoint)
+	require.Equal(t, checkpoint, ordinary.SourceCheckpoint)
+	require.NotSame(t, checkpoint, ordinary.SourceCheckpoint)
 }
 
 func TestCreateRunBundleBuildsAtomicExpiredLeaseRecoveryBoundary(t *testing.T) {

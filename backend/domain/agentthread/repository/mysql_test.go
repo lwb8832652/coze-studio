@@ -4132,7 +4132,7 @@ func TestThreadRepositoryCreateThreadBundleCommitsAllRecords(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *testing.T) {
+func TestThreadRepositoryCreateThreadBundleCommitsDisabledJournalAttemptAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{}))
@@ -4155,8 +4155,8 @@ func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *te
 		ID: 140, ThreadID: thread.ID, JournalRunID: run.ID, ExecutionRunID: run.ID,
 		AttemptID: "att_140", Ordinal: 1, Status: entity.RunAttemptStatusPending,
 		ActiveSlot: &activeSlot, NextSequence: 1,
-		EnrollmentVersion: entity.JournalSchemaVersion, SnapshotsEnabled: true,
-		ProjectionState: entity.JournalProjectionStateHealthy,
+		EnrollmentVersion: entity.JournalSchemaVersion, SnapshotsEnabled: false,
+		ProjectionState: entity.JournalProjectionStateDisabled,
 		CreatedAt:       100, UpdatedAt: 100,
 	}
 
@@ -4172,7 +4172,57 @@ func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *te
 	require.Equal(t, run.ID, stored.JournalRunID)
 	require.Equal(t, run.ID, stored.ExecutionRunID)
 	require.Equal(t, entity.JournalSchemaVersion, stored.EnrollmentVersion)
-	require.True(t, stored.SnapshotsEnabled)
+	require.False(t, stored.SnapshotsEnabled)
+	require.Equal(t, string(entity.JournalProjectionStateDisabled), stored.ProjectionState)
+	require.Nil(t, stored.ProjectionDegradedAt)
+}
+
+func TestThreadRepositoryCreateThreadBundleDisabledAttemptFailureRollsBackAllRecords(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{}))
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 140, ThreadID: 999, JournalRunID: 999, ExecutionRunID: 999,
+		AttemptID: "att_existing", Ordinal: 1, Status: string(entity.RunAttemptStatusPending),
+		NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: string(entity.JournalProjectionStateHealthy), CreatedAt: 90, UpdatedAt: 90,
+	}).Error)
+
+	repo := NewThreadRepository(db)
+	thread := &entity.Thread{
+		ID: 110, SpaceID: 7, CreatorID: 8, Title: "journal rollback",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(120, thread.ID, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	message := &entity.Message{
+		ID: 130, ThreadID: thread.ID, RunID: run.ID, Role: entity.MessageRoleUser,
+		Content: "start", Metadata: `{}`, CreatedAt: 100,
+	}
+	attempt := &entity.RunAttempt{
+		ID: 140, ThreadID: thread.ID, JournalRunID: run.ID, ExecutionRunID: run.ID,
+		AttemptID: "att_140", Ordinal: 1, Status: entity.RunAttemptStatusPending,
+		NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: entity.JournalProjectionStateDisabled,
+		CreatedAt:       100, UpdatedAt: 100,
+	}
+
+	result, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: thread, Run: run, Message: message, Attempt: attempt,
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	for _, model := range []any{&threadPO{}, &runPO{}, &messagePO{}} {
+		var count int64
+		require.NoError(t, db.Model(model).Count(&count).Error)
+		require.Zero(t, count)
+	}
+	var attemptCount int64
+	require.NoError(t, db.Model(&runAttemptPO{}).Count(&attemptCount).Error)
+	require.Equal(t, int64(1), attemptCount)
 }
 
 func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.T) {

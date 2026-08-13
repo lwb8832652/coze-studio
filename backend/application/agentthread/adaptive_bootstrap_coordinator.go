@@ -277,32 +277,37 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		return nil, fmt.Errorf("read target adaptive execution bootstrap: %w", err)
 	}
 
-	source, err := c.repository.ReadAdaptiveExecutionBootstrap(ctx, domainrepo.ReadAdaptiveExecutionBootstrapRequest{
-		ThreadID:       run.ThreadID,
-		ExecutionRunID: input.SourceRunID,
-		JournalRunID:   attempt.JournalRunID,
-		AttemptID:      *attempt.SourceAttemptID,
-	})
 	var admission domainentity.AdaptiveAdmissionSnapshot
 	planScopeRunID := input.SourceRunID
-	if err == nil {
-		admission, planScopeRunID, err = typedAdaptiveAdmissionFromSource(
-			run.ThreadID,
-			attempt.JournalRunID,
-			input.SourceRunID,
-			*attempt.SourceAttemptID,
-			source,
-		)
-		if err != nil {
-			return nil, err
-		}
-	} else if errors.Is(err, domainrepo.ErrAdaptiveExecutionBootstrapNotFound) {
+	if attempt.SourceAttemptID == nil {
 		admission, err = c.legacyAdaptiveAdmissionFromSourceRun(ctx, run, input.SourceRunID)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		return nil, fmt.Errorf("read source adaptive execution bootstrap: %w", err)
+		source, readErr := c.repository.ReadAdaptiveExecutionBootstrap(ctx, domainrepo.ReadAdaptiveExecutionBootstrapRequest{
+			ThreadID:       run.ThreadID,
+			ExecutionRunID: input.SourceRunID,
+			JournalRunID:   attempt.JournalRunID,
+			AttemptID:      *attempt.SourceAttemptID,
+		})
+		switch {
+		case readErr == nil:
+			admission, planScopeRunID, err = typedAdaptiveAdmissionFromSource(
+				run.ThreadID,
+				attempt.JournalRunID,
+				input.SourceRunID,
+				*attempt.SourceAttemptID,
+				source,
+			)
+		case errors.Is(readErr, domainrepo.ErrAdaptiveExecutionBootstrapNotFound):
+			admission, err = c.legacyAdaptiveAdmissionFromSourceRun(ctx, run, input.SourceRunID)
+		default:
+			return nil, fmt.Errorf("read source adaptive execution bootstrap: %w", readErr)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
 		Admission: admission, DecisionID: adaptiveBootstrapStableKey("decision", run, attempt),
@@ -371,10 +376,17 @@ func validateAdaptiveBootstrapRecoveryResume(
 		input.SourceRunID == run.RunID || input.CheckpointID <= 0 || attempt == nil ||
 		attempt.ThreadID != run.ThreadID || attempt.ExecutionRunID != run.RunID || attempt.JournalRunID <= 0 ||
 		!adaptiveBootstrapIdentityPart(attempt.AttemptID, 64) || !attempt.Status.IsActive() ||
-		attempt.ActiveSlot == nil || *attempt.ActiveSlot != 1 || attempt.CreatedAt <= 0 || attempt.SourceAttemptID == nil ||
-		!adaptiveBootstrapIdentityPart(*attempt.SourceAttemptID, 64) || attempt.SourceCheckpointID == nil ||
+		attempt.ActiveSlot == nil || *attempt.ActiveSlot != 1 || attempt.CreatedAt <= 0 || attempt.SourceCheckpointID == nil ||
 		*attempt.SourceCheckpointID != input.CheckpointID || attempt.RecoveryIdempotencyKey == nil ||
 		!adaptiveBootstrapIdentityPart(*attempt.RecoveryIdempotencyKey, 191) {
+		return fmt.Errorf("adaptive resume bootstrap target identity or lineage is invalid")
+	}
+	bareSource := attempt.SourceAttemptID == nil &&
+		attempt.ProjectionState == domainentity.JournalProjectionStateDisabled && attempt.Ordinal == 1 &&
+		attempt.JournalRunID == input.SourceRunID
+	attemptedSource := attempt.SourceAttemptID != nil &&
+		adaptiveBootstrapIdentityPart(*attempt.SourceAttemptID, 64)
+	if !bareSource && !attemptedSource {
 		return fmt.Errorf("adaptive resume bootstrap target identity or lineage is invalid")
 	}
 	return nil

@@ -984,6 +984,160 @@ func TestAdaptiveExecutionBootstrapCommitsLegacyDecoderAndReadsBack(t *testing.T
 	require.Equal(t, committed.Authority, read.Authority)
 }
 
+func TestAdaptiveExecutionBootstrapCommitsBareSourceLegacyDecoderAndReadsBack(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	req := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+
+	committed, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), req)
+
+	require.NoError(t, err)
+	require.False(t, committed.Replayed)
+	require.Equal(t, entity.AdaptiveAdmissionSourceLegacyDecoder, committed.Admission.Source)
+	require.Equal(t, req.Admission.SourceConfigDigest, committed.Admission.SourceConfigDigest)
+	require.Equal(t, req.JournalRunID, *committed.Decision.PlanScopeRunID)
+	read, err := repo.ReadAdaptiveExecutionBootstrap(context.Background(), ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+		JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, committed.Admission, read.Admission)
+	require.Equal(t, committed.Decision, read.Decision)
+	var checkpoint checkpointPO
+	require.NoError(t, db.Where("id = ?", committed.Authority.CheckpointID).First(&checkpoint).Error)
+	metadata, err := decodeAdaptiveBootstrapMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	require.Nil(t, metadata.SourceAttemptID)
+	require.Equal(t, int64(9001), *metadata.SourceCheckpointID)
+	require.Equal(t, "run-recovery:20:3", *metadata.RecoveryIdempotencyKey)
+}
+
+func TestAdaptiveExecutionBootstrapRejectsBareSourceLegacyDriftWithoutWrites(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, *CommitAdaptiveExecutionBootstrapRequest)
+	}{
+		{name: "projection enabled", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").
+				Update("projection_state", string(entity.JournalProjectionStateHealthy)).Error)
+		}},
+		{name: "ordinal", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").Update("ordinal", 2).Error)
+		}},
+		{name: "journal source", mutate: func(t *testing.T, db *gorm.DB, req *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Create(&runPO{
+				ID: 30, ThreadID: 10, SpaceID: 10, CreatorID: 20, RunKind: string(entity.RunKindTask),
+				Status: string(entity.RunStatusInterrupted), Config: []byte(`{"runtime":"eino_adk","requested_policy":"pro"}`),
+				ExecutionGeneration: 3, CreatedAt: 700, UpdatedAt: 750, EndedAt: 750,
+			}).Error)
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").Update("journal_run_id", 30).Error)
+			req.JournalRunID = 30
+			req.Decision.JournalRunID = 30
+		}},
+		{name: "source has attempt", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Create(&runPO{
+				ID: 31, ThreadID: 10, SpaceID: 10, CreatorID: 20, RunKind: string(entity.RunKindTask),
+				Status: string(entity.RunStatusSucceeded), Config: []byte(`{}`),
+				CreatedAt: 600, UpdatedAt: 600, EndedAt: 600,
+			}).Error)
+			require.NoError(t, db.Create(&runAttemptPO{
+				ID: 103, ThreadID: 10, JournalRunID: 31, ExecutionRunID: 20,
+				AttemptID: "source-attempt", Ordinal: 1, Status: string(entity.RunAttemptStatusCompleted),
+				NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+				ProjectionState: string(entity.JournalProjectionStateDisabled), CreatedAt: 700, UpdatedAt: 750,
+			}).Error)
+		}},
+		{name: "checkpoint run", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", 9001).Update("run_id", 21).Error)
+		}},
+		{name: "checkpoint runtime", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", 9001).Update("runtime_type", "legacy").Error)
+		}},
+		{name: "source generation", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).Update("execution_generation", 5).Error)
+		}},
+		{name: "source config", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).Update("config", []byte(`{"runtime":"eino_adk","requested_policy":"ultra"}`)).Error)
+		}},
+		{name: "source bootstrap authority", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBootstrapRequest) {
+			journalRunID := int64(20)
+			attemptID := "source-bootstrap-attempt"
+			visibility := string(entity.JournalVisibilityInternal)
+			require.NoError(t, db.Create(&runEventPO{
+				ID: 7999, ThreadID: 10, RunID: 20, JournalRunID: &journalRunID,
+				AttemptID: &attemptID, Visibility: &visibility,
+				EventType: adaptiveBootstrapAdmissionEventType, Payload: []byte(`{}`), CreatedAt: 799,
+			}).Error)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			req := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+			test.mutate(t, db, &req)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(context.Background(), req)
+
+			require.Error(t, err)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func seedAdaptiveBootstrapBareSourceTargetForTest(
+	t *testing.T,
+	db *gorm.DB,
+) CommitAdaptiveExecutionBootstrapRequest {
+	t.Helper()
+	seedJournalThread(t, db, 10)
+	config := []byte(`{"runtime":"eino_adk","requested_policy":"pro"}`)
+	require.NoError(t, db.Create(&runPO{
+		ID: 20, ThreadID: 10, SpaceID: 10, CreatorID: 20,
+		RunKind: string(entity.RunKindTask), Status: string(entity.RunStatusInterrupted),
+		Config: config, ExecutionGeneration: 3, CreatedAt: 700, UpdatedAt: 750, EndedAt: 750,
+	}).Error)
+	leaseOwner, leaseToken := "worker-2", "lease-2"
+	leaseExpiresAt := int64(2_000)
+	require.NoError(t, db.Create(&runPO{
+		ID: 21, ThreadID: 10, SpaceID: 10, CreatorID: 20,
+		RunKind: string(entity.RunKindTask), Status: string(entity.RunStatusRunning),
+		ExecutionGeneration: 4, LeaseOwner: &leaseOwner, LeaseToken: &leaseToken,
+		LeaseExpiresAt: &leaseExpiresAt, CreatedAt: 800, UpdatedAt: 800,
+	}).Error)
+	recoveryKey := "run-recovery:20:3"
+	sourceCheckpointID := int64(9001)
+	active := uint8(1)
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 102, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 21,
+		AttemptID: "attempt-2", Ordinal: 1, Status: string(entity.RunAttemptStatusRunning),
+		ActiveSlot: &active, NextSequence: 1, SourceCheckpointID: &sourceCheckpointID,
+		RecoveryIdempotencyKey: &recoveryKey, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: string(entity.JournalProjectionStateDisabled), CreatedAt: 800, UpdatedAt: 800,
+	}).Error)
+	require.NoError(t, db.Create(&checkpointPO{
+		ID: sourceCheckpointID, ThreadID: 10, RunID: 20,
+		CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "coze-run-20",
+		EnvelopeVersion: 2, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+		PendingSends: []byte(`[]`), Metadata: []byte(`{"runtime":"eino_adk"}`), CreatedAt: 740,
+	}).Error)
+	req := newAdaptiveExecutionBootstrapRequestForTest()
+	req.ExecutionRunID, req.JournalRunID, req.AttemptID, req.Generation = 21, 20, "attempt-2", 4
+	req.LeaseOwner, req.LeaseToken = leaseOwner, leaseToken
+	req.OperationKey = "adaptive-operation:bare-source"
+	req.FactCreatedAt, req.Now = 800, 900
+	req.AdmissionEventID, req.DecisionEventID, req.CheckpointID = 7101, 7102, 8101
+	sourceRunID, sourceGeneration := int64(20), uint64(3)
+	req.Admission.Source = entity.AdaptiveAdmissionSourceLegacyDecoder
+	req.Admission.SourceRunID = &sourceRunID
+	req.Admission.SourceExecutionGeneration = &sourceGeneration
+	req.Admission.SourceConfigDigest = fmt.Sprintf("%x", sha256.Sum256(config))
+	req.Admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
+	req.Decision = newAdaptiveBootstrapDecisionForTest(
+		t, req.Admission, "decision-bare-source", 21, 20, "attempt-2", 4, sourceRunID, 800,
+	)
+	return req
+}
+
 func TestAdaptiveExecutionBootstrapRejectsLegacyDecoderSourceDriftWithoutWrites(t *testing.T) {
 	for _, test := range []struct {
 		name   string

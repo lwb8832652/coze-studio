@@ -3201,8 +3201,11 @@ func lockAdaptiveExecutionLineage(
 	}
 	sourceAttemptPresent := attempt.SourceAttemptID != nil
 	sourceCheckpointPresent := attempt.SourceCheckpointID != nil
-	if sourceAttemptPresent != sourceCheckpointPresent {
+	if sourceAttemptPresent && !sourceCheckpointPresent {
 		return 0, fmt.Errorf("%w: partial recovery source", ErrAdaptiveExecutionLineageConflict)
+	}
+	if !sourceAttemptPresent && sourceCheckpointPresent {
+		return lockAndValidateAdaptiveExecutionBareLineage(tx, req, attempt)
 	}
 	if !sourceAttemptPresent {
 		if req.PlanMutation.PlanScopeRunID != req.ExecutionRunID ||
@@ -3286,6 +3289,107 @@ func lockAdaptiveExecutionLineage(
 		return 0, err
 	}
 	return metadata.PlanScopeRunID, nil
+}
+
+func lockAndValidateAdaptiveExecutionBareLineage(
+	tx *gorm.DB,
+	req CommitAdaptiveExecutionBoundaryRequest,
+	attempt *runAttemptPO,
+) (int64, error) {
+	conflict := func(format string, args ...any) (int64, error) {
+		return 0, fmt.Errorf("%w: %s", ErrAdaptiveExecutionLineageConflict, fmt.Sprintf(format, args...))
+	}
+	if tx == nil || attempt == nil || attempt.SourceAttemptID != nil || attempt.SourceCheckpointID == nil ||
+		attempt.RecoveryIdempotencyKey == nil || attempt.Ordinal != 1 ||
+		attempt.ProjectionState != string(entity.JournalProjectionStateDisabled) ||
+		attempt.JournalRunID != req.JournalRunID || req.JournalRunID == req.ExecutionRunID ||
+		req.PlanMutation == nil || req.PlanMutation.PlanScopeRunID != req.JournalRunID ||
+		strings.TrimSpace(*attempt.RecoveryIdempotencyKey) == "" ||
+		len([]byte(*attempt.RecoveryIdempotencyKey)) > 191 {
+		return conflict("bare recovery target identity drift")
+	}
+
+	sourceRun, err := lockAdaptiveExecutionSourceRun(tx, req.JournalRunID)
+	if err != nil {
+		return conflict("bare source run is unavailable: %v", err)
+	}
+	if sourceRun.ID != req.JournalRunID || sourceRun.ThreadID != req.ThreadID ||
+		!isJournalRootRun(sourceRun) || entity.RunStatus(sourceRun.Status) != entity.RunStatusInterrupted {
+		return conflict("bare source run authority drift")
+	}
+	var sourceAttempts []runAttemptPO
+	sourceAttemptQuery := tx.Where("execution_run_id = ?", sourceRun.ID)
+	if tx.Dialector.Name() != "sqlite" {
+		sourceAttemptQuery = sourceAttemptQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := sourceAttemptQuery.Limit(1).Find(&sourceAttempts).Error; err != nil {
+		return 0, err
+	}
+	if len(sourceAttempts) != 0 {
+		return conflict("bare source unexpectedly has an attempt")
+	}
+
+	sourceCheckpoint, err := lockAdaptiveExecutionSourceCheckpoint(tx, *attempt.SourceCheckpointID)
+	if err != nil {
+		return conflict("bare source checkpoint is unavailable: %v", err)
+	}
+	if sourceCheckpoint.ID == req.Checkpoint.ID || sourceCheckpoint.ThreadID != req.ThreadID ||
+		sourceCheckpoint.RunID != sourceRun.ID ||
+		sourceCheckpoint.CheckpointNS != "eino.adk" || sourceCheckpoint.RuntimeType != "eino_adk" ||
+		sourceCheckpoint.RuntimeDeletedAt != 0 {
+		return conflict("bare source checkpoint authority drift")
+	}
+
+	bootstrap, err := loadAdaptiveExecutionBootstrapResult(tx, ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+		JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+	}, nil)
+	if err != nil {
+		return conflict("bare target bootstrap is unavailable: %v", err)
+	}
+	if bootstrap == nil || bootstrap.Admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder ||
+		bootstrap.Admission.FeatureGateEnabled || bootstrap.Admission.SourceRunID == nil ||
+		*bootstrap.Admission.SourceRunID != sourceRun.ID ||
+		bootstrap.Admission.SourceExecutionGeneration == nil ||
+		*bootstrap.Admission.SourceExecutionGeneration != sourceRun.ExecutionGeneration ||
+		bootstrap.Admission.SourceConfigDigest != adaptiveBootstrapDigestBytes(sourceRun.Config) ||
+		bootstrap.Decision.PlanScopeRunID == nil || *bootstrap.Decision.PlanScopeRunID != sourceRun.ID ||
+		bootstrap.Authority.ThreadID != req.ThreadID || bootstrap.Authority.ExecutionRunID != req.ExecutionRunID ||
+		bootstrap.Authority.JournalRunID != req.JournalRunID || bootstrap.Authority.AttemptID != req.AttemptID ||
+		bootstrap.Authority.ExecutionGeneration != req.Generation {
+		return conflict("bare target bootstrap authority drift")
+	}
+
+	var sourceFactCount int64
+	if err := tx.Model(&runEventPO{}).Where(
+		"run_id = ? AND event_type IN ? AND sequence IS NULL AND visibility = ?",
+		sourceRun.ID,
+		[]string{adaptiveBootstrapAdmissionEventType, adaptiveBootstrapDecisionEventType},
+		string(entity.JournalVisibilityInternal),
+	).Count(&sourceFactCount).Error; err != nil {
+		return 0, err
+	}
+	var sourceBootstrapCount int64
+	if err := tx.Model(&checkpointPO{}).Where(
+		"thread_id = ? AND run_id = ? AND runtime_type = ? AND checkpoint_ns = ?",
+		req.ThreadID, sourceRun.ID, adaptiveBootstrapRuntimeType, adaptiveBootstrapCheckpointNS,
+	).Count(&sourceBootstrapCount).Error; err != nil {
+		return 0, err
+	}
+	if sourceFactCount != 0 || sourceBootstrapCount != 0 {
+		return conflict("bare source unexpectedly has bootstrap authority")
+	}
+
+	if attempt.LastCommittedSequence == 0 {
+		if req.Checkpoint.ParentCheckpointID != sourceCheckpoint.ID {
+			return conflict("bare source checkpoint parent drift")
+		}
+		return sourceRun.ID, nil
+	}
+	if err := lockAndValidateAdaptiveExecutionRollingParent(tx, req, attempt); err != nil {
+		return 0, err
+	}
+	return sourceRun.ID, nil
 }
 
 func lockAndValidateAdaptiveExecutionLineagePlanIdentity(
@@ -3673,7 +3777,8 @@ func decodeAdaptiveExecutionCheckpointMetadata(raw []byte) (*adaptiveExecutionCh
 	if metadata.SchemaVersion != adaptiveExecutionCheckpointSchemaVersion || metadata.EventID <= 0 ||
 		metadata.EventSequence == 0 || metadata.JournalRunID <= 0 ||
 		strings.TrimSpace(metadata.AttemptID) == "" || len([]byte(metadata.AttemptID)) > 64 ||
-		sourceAttemptPresent != sourceCheckpointPresent ||
+		(sourceAttemptPresent && !sourceCheckpointPresent) ||
+		(sourceCheckpointPresent && *metadata.SourceCheckpointID <= 0) ||
 		(sourceAttemptPresent && (strings.TrimSpace(*metadata.SourceAttemptID) == "" ||
 			len([]byte(*metadata.SourceAttemptID)) > 64 || *metadata.SourceCheckpointID <= 0)) ||
 		strings.TrimSpace(metadata.EventIdempotencyKey) == "" || len([]byte(metadata.EventIdempotencyKey)) > 191 ||

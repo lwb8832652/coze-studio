@@ -4896,7 +4896,9 @@ func TestAdaptiveExecutionCheckpointMetadataV2RoundTrip(t *testing.T) {
 		{name: "long attempt", mutate: func(fields map[string]json.RawMessage) { fields["attempt_id"] = raw(strings.Repeat("a", 65)) }},
 		{name: "multibyte long attempt", mutate: func(fields map[string]json.RawMessage) { fields["attempt_id"] = raw(strings.Repeat("界", 22)) }},
 		{name: "partial source attempt", mutate: func(fields map[string]json.RawMessage) { fields["source_attempt_id"] = raw("source") }},
-		{name: "partial source checkpoint", mutate: func(fields map[string]json.RawMessage) { fields["source_checkpoint_id"] = raw(int64(1)) }},
+		{name: "nonpositive bare source checkpoint", mutate: func(fields map[string]json.RawMessage) {
+			fields["source_checkpoint_id"] = raw(int64(0))
+		}},
 		{name: "blank source attempt", mutate: func(fields map[string]json.RawMessage) {
 			fields["source_attempt_id"] = raw(" ")
 			fields["source_checkpoint_id"] = raw(int64(1))
@@ -6093,6 +6095,178 @@ func prepareAdaptiveRecoveryTestForTest(t *testing.T) (*gorm.DB, CommitAdaptiveE
 		EventID: 7002, CheckpointID: 8002, ExpectedRevision: 2, ExpectedItemVersion: 2, Now: 1100,
 	})
 	return db, req
+}
+
+func TestAdaptiveExecutionBoundaryCommitsBareOrdinaryRecoveryPlanToSourceScope(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	bootstrapRequest := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	bootstrap, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), bootstrapRequest)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapRequest.JournalRunID, *bootstrap.Decision.PlanScopeRunID)
+
+	req := adaptiveBareOrdinaryBoundaryRequestForTest(7201, 9201, 1_000)
+	result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+	require.NoError(t, err)
+	require.False(t, result.Replayed)
+	require.Equal(t, int64(20), result.Plan.RunID)
+	require.Equal(t, int64(20), result.Authority.PlanScopeRunID)
+	require.Nil(t, result.Authority.SourceAttemptID)
+	require.Equal(t, int64(9001), *result.Authority.SourceCheckpointID)
+	require.Equal(t, int64(9001), result.Checkpoint.ParentCheckpointID)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, int64(20), result.Items[0].RunID)
+}
+
+func TestAdaptiveExecutionBoundaryBareOrdinaryRecoveryReplaysAndRollsForward(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	bootstrapRequest := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	_, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), bootstrapRequest)
+	require.NoError(t, err)
+	req := adaptiveBareOrdinaryBoundaryRequestForTest(7201, 9201, 1_000)
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+	require.NoError(t, err)
+	beforeReplay := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	replayed, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Equal(t, first.Authority, replayed.Authority)
+	require.Equal(t, beforeReplay, snapshotAdaptiveExecutionDBForTest(t, db))
+
+	digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
+	read, err := repo.ReadAdaptiveExecutionBoundary(
+		context.Background(), adaptiveReadBoundaryRequestForTest(req, digest),
+	)
+	require.NoError(t, err)
+	require.True(t, read.Replayed)
+	require.Equal(t, first.Authority, read.Authority)
+	require.Equal(t, beforeReplay, snapshotAdaptiveExecutionDBForTest(t, db))
+
+	next := adaptiveNextBoundaryForSameRecoveryTest(t, req, first, 7202, 9202, 1_100)
+	next.Event.Payload = `{"ordinary_recovery":true,"step":2}`
+	second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), next)
+	require.NoError(t, err)
+	require.False(t, second.Replayed)
+	require.Equal(t, uint64(2), second.Authority.EventSequence)
+	require.Equal(t, int64(20), second.Authority.PlanScopeRunID)
+	require.Nil(t, second.Authority.SourceAttemptID)
+	require.Equal(t, int64(9001), *second.Authority.SourceCheckpointID)
+	require.Equal(t, first.Checkpoint.ID, second.Checkpoint.ParentCheckpointID)
+}
+
+func TestAdaptiveExecutionBoundaryBareOrdinaryRecoveryRejectsSourceCheckpointSelfReference(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	bootstrapRequest := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	_, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), bootstrapRequest)
+	require.NoError(t, err)
+	req := adaptiveBareOrdinaryBoundaryRequestForTest(7201, 9001, 1_000)
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionLineageConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBoundaryBareOrdinaryRecoveryRejectsAuthorityDriftWithoutWrites(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, *CommitAdaptiveExecutionBoundaryRequest)
+	}{
+		{name: "projection enabled", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").
+				Update("projection_state", string(entity.JournalProjectionStateHealthy)).Error)
+		}},
+		{name: "ordinal drift", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").Update("ordinal", 2).Error)
+		}},
+		{name: "source root drift", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).Update("parent_run_id", 999).Error)
+		}},
+		{name: "source attempt appears", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Create(&runAttemptPO{
+				ID: 103, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+				AttemptID: "unexpected-source", Ordinal: 2, Status: string(entity.RunAttemptStatusCompleted),
+				NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+				ProjectionState: string(entity.JournalProjectionStateDisabled), CreatedAt: 700, UpdatedAt: 700,
+			}).Error)
+		}},
+		{name: "source checkpoint drift", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", 9001).Update("runtime_type", "legacy").Error)
+		}},
+		{name: "source generation drift", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).Update("execution_generation", 5).Error)
+		}},
+		{name: "source config digest drift", mutate: func(t *testing.T, db *gorm.DB, _ *CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).
+				Update("config", []byte(`{"runtime":"eino_adk","requested_policy":"drift"}`)).Error)
+		}},
+		{name: "plan scope drift", mutate: func(_ *testing.T, _ *gorm.DB, req *CommitAdaptiveExecutionBoundaryRequest) {
+			req.PlanMutation.PlanScopeRunID = req.ExecutionRunID
+			req.PlanMutation.Items[0].NextItem.RunID = req.ExecutionRunID
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			bootstrapRequest := seedAdaptiveBootstrapBareSourceTargetForTest(t, db)
+			repo := NewAdaptiveExecutionRepository(db)
+			_, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), bootstrapRequest)
+			require.NoError(t, err)
+			req := adaptiveBareOrdinaryBoundaryRequestForTest(7201, 9201, 1_000)
+			test.mutate(t, db, &req)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionLineageConflict)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func adaptiveBareOrdinaryBoundaryRequestForTest(
+	eventID, checkpointID, now int64,
+) CommitAdaptiveExecutionBoundaryRequest {
+	req := newValidAdaptiveExecutionMutationRequest()
+	req.ExecutionRunID = 21
+	req.JournalRunID = 20
+	req.AttemptID = "attempt-2"
+	req.Generation = 4
+	req.LeaseOwner = "worker-2"
+	req.LeaseToken = "lease-2"
+	req.Now = now
+	req.IdempotencyKey = "boundary-bare-ordinary-1"
+	req.Event = &entity.RunEvent{
+		ID: eventID, ThreadID: 10, RunID: 21,
+		EventType: "run.boundary", Payload: `{"ordinary_recovery":true}`, CreatedAt: now,
+	}
+	req.Checkpoint = &entity.Checkpoint{
+		ID: checkpointID, ThreadID: 10, RunID: 21, ParentCheckpointID: 9001,
+		CheckpointNS: "adaptive", RuntimeType: "eino_adk", RuntimeKey: "thread:10:run:21",
+		EnvelopeVersion: 1, ChannelValues: `{}`, ChannelVersions: `{}`, PendingSends: `[]`,
+		Metadata: `{"runtime_field":"preserved"}`, CreatedAt: now,
+	}
+	req.PlanMutation = &AdaptivePlanMutation{
+		PlanScopeRunID: 20, ExpectedRevision: 0, NextRevision: 1,
+		ExpectedHighWatermark: 0, NextHighWatermark: 1,
+		Items: []AdaptivePlanItemMutation{{
+			ExpectedVersion: 0,
+			NextItem: &entity.AgentRunPlanItem{
+				ID: 61, RunID: 20, TaskID: 1, Subject: "recovered major step",
+				Description: "resume from ordinary checkpoint", Status: entity.AgentRunPlanItemStatusInProgress,
+				ActiveForm: "executing", Owner: "agent", Blocks: `[]`, BlockedBy: `[]`,
+				Metadata: `{"substeps_ref":"lazy:1"}`, Active: true, Version: 1,
+			},
+		}},
+	}
+	return req
 }
 
 func seedAdaptiveRecoveryTargetForTest(
