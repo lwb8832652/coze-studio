@@ -21,6 +21,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"net"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,6 +89,563 @@ type canonicalTypedInitialV2 struct {
 type canonicalTypedHumanV2 struct {
 	Value    threadcontract.CanonicalHumanInteractionResponseV2
 	Presence canonicalTypedV2Presence
+}
+
+const canonicalV2MaxSafeInteger int64 = 9007199254740991
+
+type canonicalTypedConfigV2Output struct {
+	ModelType       *int64                          `json:"model_type,omitempty"`
+	ModelName       *string                         `json:"model_name,omitempty"`
+	EnableSkills    *[]string                       `json:"enable_skills,omitempty"`
+	EnableMCP       []string                        `json:"enable_mcp"`
+	EnableKBs       []string                        `json:"enable_kbs"`
+	EnableDatabases []string                        `json:"enable_databases"`
+	Runtime         string                          `json:"runtime"`
+	MemoryRetrieval canonicalTypedMemoryV2Output    `json:"memory_retrieval"`
+	Skills          canonicalTypedSkillsV2Output    `json:"skills"`
+	MCPTools        canonicalTypedMCPToolsV2Output  `json:"mcp_tools"`
+	WebTools        canonicalTypedWebToolsV2Output  `json:"web_tools"`
+	ModelRetry      *canonicalTypedRetryV2Output    `json:"model_retry,omitempty"`
+	ModelFailover   *canonicalTypedFailoverV2Output `json:"model_failover,omitempty"`
+	TokenUsage      canonicalTypedTokenV2Output     `json:"token_usage"`
+}
+
+type canonicalTypedMemoryV2Output struct {
+	Limit          int32    `json:"limit"`
+	CandidateLimit int32    `json:"candidate_limit"`
+	Scopes         []string `json:"scopes"`
+	MinConfidence  float64  `json:"min_confidence"`
+}
+
+type canonicalTypedSkillsV2Output struct {
+	Enabled       bool     `json:"enabled"`
+	Visibility    string   `json:"visibility"`
+	AllowedSkills []string `json:"allowed_skills"`
+}
+
+type canonicalTypedMCPToolsV2Output struct {
+	Enabled      bool      `json:"enabled"`
+	Visibility   string    `json:"visibility"`
+	AllowedTools *[]string `json:"allowed_tools,omitempty"`
+}
+
+type canonicalTypedWebToolsV2Output struct {
+	Enabled    bool                            `json:"enabled"`
+	Visibility string                          `json:"visibility"`
+	HTTP       canonicalTypedWebHTTPV2Output   `json:"http"`
+	Search     canonicalTypedWebSearchV2Output `json:"search"`
+}
+
+type canonicalTypedWebHTTPV2Output struct {
+	Enabled          bool     `json:"enabled"`
+	AllowedHosts     []string `json:"allowed_hosts"`
+	TimeoutMS        int64    `json:"timeout_ms"`
+	MaxResponseBytes int64    `json:"max_response_bytes"`
+}
+
+type canonicalTypedWebSearchV2Output struct {
+	Enabled    bool  `json:"enabled"`
+	MaxResults int32 `json:"max_results"`
+}
+
+type canonicalTypedRetryV2Output struct {
+	MaxRetries         int32    `json:"max_retries"`
+	BackoffMS          int64    `json:"backoff_ms"`
+	RetryEmptyOutput   bool     `json:"retry_empty_output"`
+	RetryFinishReasons []string `json:"retry_finish_reasons"`
+}
+
+type canonicalTypedFailoverV2Output struct {
+	CandidateModelIDs     []int64  `json:"candidate_model_ids"`
+	MaxRetries            int32    `json:"max_retries"`
+	FailoverEmptyOutput   bool     `json:"failover_empty_output"`
+	FailoverFinishReasons []string `json:"failover_finish_reasons"`
+}
+
+type canonicalTypedTokenV2Output struct {
+	Enabled bool `json:"enabled"`
+}
+
+func validateCanonicalRunSubmissionV2(v *canonicalTypedRunV2) *canonicalError {
+	if v == nil {
+		return canonicalTypedV2Invalid("submission_v2")
+	}
+	value := &v.Value
+	if value.SchemaVersion != "coze.workbench.run_submission.v2" {
+		return canonicalTypedV2Invalid("submission_v2.schema_version")
+	}
+	if value.Kind != "turn" && value.Kind != "retry" {
+		return canonicalTypedV2Invalid("submission_v2.kind")
+	}
+	if public := validateCanonicalTypedInputV2(value.Input, "submission_v2.input"); public != nil {
+		return public
+	}
+	if public := validateCanonicalTypedConfigSemanticsV2(value.Composer, value.Config, v.Presence, "submission_v2"); public != nil {
+		return public
+	}
+	lineagePresent := canonicalV2Has(v.Presence, "submission_v2.lineage")
+	if value.Kind == "turn" {
+		if lineagePresent {
+			return canonicalTypedV2Invalid("submission_v2.lineage")
+		}
+		if value.Metadata != nil && value.Metadata.Source != "workbench_new_task" && value.Metadata.Source != "workbench_detail_followup" {
+			return canonicalTypedV2Invalid("submission_v2.metadata.source")
+		}
+	} else {
+		if !lineagePresent || value.Lineage == nil || value.Lineage.SourceRunID <= 0 {
+			return canonicalTypedV2Invalid("submission_v2.lineage")
+		}
+		if len(value.Input.UploadedFiles) != 0 {
+			return canonicalTypedV2Invalid("submission_v2.input.uploaded_files")
+		}
+		if value.Metadata != nil && value.Metadata.Source != "task_retry" {
+			return canonicalTypedV2Invalid("submission_v2.metadata.source")
+		}
+	}
+	return nil
+}
+
+func validateCanonicalInitialRunSubmissionV2(v *canonicalTypedInitialV2, deferred bool) *canonicalError {
+	root := "initial_submission_v2"
+	if deferred {
+		root = "deferred_initial_submission_v2"
+	}
+	if v == nil || v.Value.SchemaVersion != "coze.workbench.initial_run_submission.v2" {
+		return canonicalTypedV2Invalid(root + ".schema_version")
+	}
+	if public := validateCanonicalTypedInputV2(v.Value.Input, root+".input"); public != nil {
+		return public
+	}
+	if len(v.Value.Input.UploadedFiles) != 0 {
+		return canonicalTypedV2Invalid(root + ".input.uploaded_files")
+	}
+	if v.Value.Metadata != nil && v.Value.Metadata.Source != "workbench_new_task" {
+		return canonicalTypedV2Invalid(root + ".metadata.source")
+	}
+	return validateCanonicalTypedConfigSemanticsV2(v.Value.Composer, v.Value.Config, v.Presence, root)
+}
+
+func validateCanonicalHumanResponseV2(v *canonicalTypedHumanV2) (canonicalResumeResponse, *canonicalError) {
+	if v == nil {
+		return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2")
+	}
+	x := v.Value
+	if x.Schema != "coze.human_interaction_response.v1" {
+		return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.schema")
+	}
+	if !canonicalV2ValidIdentifier(x.InteractionID, 191) {
+		return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.interaction_id")
+	}
+	result := canonicalResumeResponse{Schema: x.Schema, InteractionID: x.InteractionID, Kind: x.Kind, Decision: x.Decision}
+	switch x.Kind {
+	case "clarification":
+		if x.Decision != "answered" {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.decision")
+		}
+		if x.Comment != nil {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.comment")
+		}
+		if x.Answer == nil && x.ChoiceID == nil {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.answer")
+		}
+		if x.Answer != nil {
+			result.Answer = strings.TrimSpace(*x.Answer)
+			if result.Answer == "" || len(*x.Answer) > 8192 {
+				return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.answer")
+			}
+		}
+		if x.ChoiceID != nil {
+			result.ChoiceID = strings.TrimSpace(*x.ChoiceID)
+			if result.ChoiceID != *x.ChoiceID || !canonicalV2ValidIdentifier(result.ChoiceID, 191) {
+				return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.choice_id")
+			}
+		}
+	case "confirmation":
+		if x.Decision != "approved" && x.Decision != "rejected" {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.decision")
+		}
+		if x.Answer != nil {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.answer")
+		}
+		if x.ChoiceID != nil {
+			return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.choice_id")
+		}
+		if x.Comment != nil {
+			result.Comment = strings.TrimSpace(*x.Comment)
+			if result.Comment == "" || len(*x.Comment) > 8192 {
+				return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.comment")
+			}
+		}
+	default:
+		return canonicalResumeResponse{}, canonicalTypedV2Invalid("response_v2.kind")
+	}
+	return result, nil
+}
+
+func mapCanonicalTypedRunV2(v *canonicalTypedRunV2) (*canonicalRunSubmission, *canonicalError) {
+	if public := validateCanonicalRunSubmissionV2(v); public != nil {
+		return nil, public
+	}
+	config, public := canonicalTypedConfigV2(*v.Value.Composer, *v.Value.Config, v.Presence)
+	if public != nil {
+		return nil, public
+	}
+	metadata := `{}`
+	if v.Value.Metadata != nil {
+		raw, _ := json.Marshal(struct {
+			Source string `json:"source"`
+		}{v.Value.Metadata.Source})
+		metadata = string(raw)
+	}
+	message := strings.TrimSpace(v.Value.Input.Message)
+	files := make([]int64, 0, len(v.Value.Input.UploadedFiles))
+	refs := make([]canonicalRunUploadedFileReference, 0, len(v.Value.Input.UploadedFiles))
+	for _, file := range v.Value.Input.UploadedFiles {
+		files = append(files, file.FileID)
+		refs = append(refs, canonicalRunUploadedFileReference{FileID: json.RawMessage(strconv.FormatInt(file.FileID, 10))})
+	}
+	inputRaw, _ := json.Marshal(struct {
+		Messages      []canonicalRunInputMessage          `json:"messages"`
+		UploadedFiles []canonicalRunUploadedFileReference `json:"uploaded_files"`
+	}{[]canonicalRunInputMessage{{Role: "user", Content: message}}, refs})
+	mapped := &canonicalRunSubmission{
+		AssistantID: canonicalPublicAssistantID, Input: string(inputRaw), Metadata: metadata,
+		Config: config, Context: `{}`, UploadedFileIDs: files,
+		Options: canonicalRunOptions{
+			StreamModes:       append([]string(nil), canonicalRunDefaults.StreamModes...),
+			MultitaskStrategy: canonicalRunDefaults.MultitaskStrategy,
+			OnDisconnect:      canonicalRunDefaults.OnDisconnect,
+			Durability:        canonicalRunDefaults.Durability,
+		},
+	}
+	if v.Value.Kind == "turn" {
+		mapped.MessageContent, mapped.MessageMetadata = message, config
+		mapped.IdempotencyOperation = canonicalRunIdempotencyOperationTurn
+		mapped.IdempotencyFingerprint = canonicalRunTurnRequestFingerprint(mapped)
+	} else {
+		mapped.TopLevelRetry = &canonicalTopLevelRetrySubmission{SourceRunID: v.Value.Lineage.SourceRunID}
+		mapped.IdempotencyOperation = canonicalRunIdempotencyOperationRetry
+		fingerprintInput := *mapped
+		fingerprintInput.MessageContent = message
+		mapped.IdempotencyFingerprint = canonicalRunRetryRequestFingerprint(&fingerprintInput)
+	}
+	return mapped, nil
+}
+
+func mapCanonicalTypedInitialV2(v *canonicalTypedInitialV2, deferred bool) (*canonicalValidatedInitialThreadRun, *canonicalError) {
+	if public := validateCanonicalInitialRunSubmissionV2(v, deferred); public != nil {
+		return nil, public
+	}
+	config, public := canonicalTypedConfigV2(*v.Value.Composer, *v.Value.Config, v.Presence)
+	if public != nil {
+		return nil, public
+	}
+	metadata := `{}`
+	if v.Value.Metadata != nil {
+		raw, _ := json.Marshal(struct {
+			Source string `json:"source"`
+		}{v.Value.Metadata.Source})
+		metadata = string(raw)
+	}
+	return &canonicalValidatedInitialThreadRun{
+		AssistantID: canonicalPublicAssistantID, MessageContent: strings.TrimSpace(v.Value.Input.Message),
+		Config: config, Context: `{}`, Metadata: metadata,
+	}, nil
+}
+
+func canonicalTypedConfigV2(composer threadcontract.CanonicalComposerSelectionV2, config threadcontract.CanonicalRunConfigV2, presence canonicalTypedV2Presence) (string, *canonicalError) {
+	root := canonicalV2PresenceRoot(presence)
+	if public := validateCanonicalTypedConfigSemanticsV2(&composer, &config, presence, root); public != nil {
+		return "", public
+	}
+	out := canonicalTypedConfigV2Output{ModelType: composer.ModelType, ModelName: composer.ModelName, EnableMCP: append([]string{}, composer.EnableMcp...), EnableKBs: append([]string{}, composer.EnableKbs...), EnableDatabases: append([]string{}, composer.EnableDatabases...), Runtime: config.Runtime,
+		MemoryRetrieval: canonicalTypedMemoryV2Output{config.MemoryRetrieval.Limit, config.MemoryRetrieval.CandidateLimit, append([]string{}, config.MemoryRetrieval.Scopes...), config.MemoryRetrieval.MinConfidence},
+		Skills:          canonicalTypedSkillsV2Output{config.Skills.Enabled, config.Skills.Visibility, append([]string{}, composer.AllowedSkills...)},
+		MCPTools:        canonicalTypedMCPToolsV2Output{Enabled: config.McpTools.Enabled, Visibility: config.McpTools.Visibility},
+		WebTools:        canonicalTypedWebToolsV2Output{Enabled: config.WebTools.Enabled, Visibility: config.WebTools.Visibility, HTTP: canonicalTypedWebHTTPV2Output{config.WebTools.HTTP.Enabled, append([]string{}, config.WebTools.HTTP.AllowedHosts...), config.WebTools.HTTP.TimeoutMs, config.WebTools.HTTP.MaxResponseBytes}, Search: canonicalTypedWebSearchV2Output{config.WebTools.Search.Enabled, config.WebTools.Search.MaxResults}}, TokenUsage: canonicalTypedTokenV2Output{config.TokenUsage.Enabled}}
+	if canonicalV2Has(presence, root+".composer.explicit_enable_skills") {
+		value := append([]string{}, composer.ExplicitEnableSkills...)
+		out.EnableSkills = &value
+	}
+	if !config.McpTools.Enabled || len(composer.AllowedMcpTools) > 0 {
+		value := append([]string{}, composer.AllowedMcpTools...)
+		out.MCPTools.AllowedTools = &value
+	}
+	if config.ModelRetry != nil {
+		x := config.ModelRetry
+		out.ModelRetry = &canonicalTypedRetryV2Output{x.MaxRetries, x.BackoffMs, x.RetryEmptyOutput, append([]string{}, x.RetryFinishReasons...)}
+	}
+	if config.ModelFailover != nil {
+		x := config.ModelFailover
+		out.ModelFailover = &canonicalTypedFailoverV2Output{append([]int64{}, x.CandidateModelIds...), x.MaxRetries, x.FailoverEmptyOutput, append([]string{}, x.FailoverFinishReasons...)}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return "", canonicalTypedV2Invalid(root + ".config")
+	}
+	return string(raw), nil
+}
+
+func validateCanonicalTypedInputV2(input *threadcontract.CanonicalRunInputV2, path string) *canonicalError {
+	if input == nil {
+		return canonicalTypedV2Invalid(path)
+	}
+	message := strings.TrimSpace(input.Message)
+	if message == "" || len(input.Message) > 256*1024 || !utf8.ValidString(input.Message) {
+		return canonicalTypedV2Invalid(path + ".message")
+	}
+	if len(input.UploadedFiles) > 10 {
+		return canonicalTypedV2Invalid(path + ".uploaded_files")
+	}
+	seen := make(map[int64]struct{}, len(input.UploadedFiles))
+	for index, file := range input.UploadedFiles {
+		filePath := canonicalV2IndexPath(path+".uploaded_files", index) + ".file_id"
+		if file == nil || file.FileID <= 0 {
+			return canonicalTypedV2Invalid(filePath)
+		}
+		if _, duplicate := seen[file.FileID]; duplicate {
+			return canonicalTypedV2Invalid(filePath)
+		}
+		seen[file.FileID] = struct{}{}
+	}
+	return nil
+}
+
+func validateCanonicalTypedConfigSemanticsV2(composer *threadcontract.CanonicalComposerSelectionV2, config *threadcontract.CanonicalRunConfigV2, presence canonicalTypedV2Presence, root string) *canonicalError {
+	if composer == nil {
+		return canonicalTypedV2Invalid(root + ".composer")
+	}
+	if config == nil || config.MemoryRetrieval == nil || config.Skills == nil || config.McpTools == nil || config.WebTools == nil || config.WebTools.HTTP == nil || config.WebTools.Search == nil || config.TokenUsage == nil {
+		return canonicalTypedV2Invalid(root + ".config")
+	}
+	if composer.ModelType != nil && (*composer.ModelType <= 0 || *composer.ModelType > canonicalV2MaxSafeInteger) {
+		return canonicalTypedV2Invalid(root + ".composer.model_type")
+	}
+	if composer.ModelName != nil {
+		name := *composer.ModelName
+		if name == "" || len(name) > 191 || strings.TrimSpace(name) != name || canonicalSensitiveValuePattern.MatchString(name) {
+			return canonicalTypedV2Invalid(root + ".composer.model_name")
+		}
+	}
+	listSpecs := []struct {
+		values []string
+		path   string
+		max    int
+	}{{composer.AllowedSkills, ".composer.allowed_skills", 256}, {composer.ExplicitEnableSkills, ".composer.explicit_enable_skills", 256}, {composer.EnableMcp, ".composer.enable_mcp", 256}, {composer.EnableKbs, ".composer.enable_kbs", 256}, {composer.EnableDatabases, ".composer.enable_databases", 256}, {composer.AllowedMcpTools, ".composer.allowed_mcp_tools", 256}, {config.MemoryRetrieval.Scopes, ".config.memory_retrieval.scopes", 3}}
+	for _, spec := range listSpecs {
+		if public := canonicalV2ValidateStringList(spec.values, root+spec.path, spec.max); public != nil {
+			return public
+		}
+	}
+	explicitPresent := canonicalV2Has(presence, root+".composer.explicit_enable_skills")
+	if config.Skills.Enabled {
+		if explicitPresent && len(composer.ExplicitEnableSkills) == 0 {
+			return canonicalTypedV2Invalid(root + ".composer.explicit_enable_skills")
+		}
+		allowed := canonicalV2StringSet(composer.AllowedSkills)
+		for i, item := range composer.ExplicitEnableSkills {
+			if _, ok := allowed[item]; !ok {
+				return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".composer.explicit_enable_skills", i))
+			}
+		}
+	} else if !explicitPresent || len(composer.ExplicitEnableSkills) != 0 {
+		return canonicalTypedV2Invalid(root + ".composer.explicit_enable_skills")
+	}
+	if config.McpTools.Enabled {
+		if len(composer.AllowedMcpTools) == 0 && len(composer.EnableMcp) != 0 {
+			return canonicalTypedV2Invalid(root + ".composer.enable_mcp")
+		}
+		if len(composer.AllowedMcpTools) > 0 && !canonicalV2EqualStrings(composer.EnableMcp, composer.AllowedMcpTools) {
+			return canonicalTypedV2Invalid(root + ".composer.enable_mcp")
+		}
+	} else if len(composer.EnableMcp) != 0 {
+		return canonicalTypedV2Invalid(root + ".composer.enable_mcp")
+	}
+	if config.Runtime != "eino_adk" {
+		return canonicalTypedV2Invalid(root + ".config.runtime")
+	}
+	for _, visibility := range []struct{ value, path string }{{config.Skills.Visibility, "skills"}, {config.McpTools.Visibility, "mcp_tools"}, {config.WebTools.Visibility, "web_tools"}} {
+		if visibility.value != "deferred" {
+			return canonicalTypedV2Invalid(root + ".config." + visibility.path + ".visibility")
+		}
+	}
+	memory := config.MemoryRetrieval
+	if memory.Limit < 1 || memory.Limit > 100 {
+		return canonicalTypedV2Invalid(root + ".config.memory_retrieval.limit")
+	}
+	if memory.CandidateLimit < 1 || memory.CandidateLimit > 100 || memory.CandidateLimit < memory.Limit {
+		return canonicalTypedV2Invalid(root + ".config.memory_retrieval.candidate_limit")
+	}
+	if len(memory.Scopes) < 1 {
+		return canonicalTypedV2Invalid(root + ".config.memory_retrieval.scopes")
+	}
+	for index, scope := range memory.Scopes {
+		if scope != "thread" && scope != "run" && scope != "long_term" {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".config.memory_retrieval.scopes", index))
+		}
+	}
+	if math.IsNaN(memory.MinConfidence) || math.IsInf(memory.MinConfidence, 0) || memory.MinConfidence < 0 || memory.MinConfidence > 1 {
+		return canonicalTypedV2Invalid(root + ".config.memory_retrieval.min_confidence")
+	}
+	http := config.WebTools.HTTP
+	if len(http.AllowedHosts) > 64 {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.http.allowed_hosts")
+	}
+	hosts := make(map[string]struct{}, len(http.AllowedHosts))
+	for index, host := range http.AllowedHosts {
+		if !canonicalV2ValidHost(host) {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".config.web_tools.http.allowed_hosts", index))
+		}
+		normalized := strings.ToLower(host)
+		if _, duplicate := hosts[normalized]; duplicate {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".config.web_tools.http.allowed_hosts", index))
+		}
+		hosts[normalized] = struct{}{}
+	}
+	if http.TimeoutMs < 1000 || http.TimeoutMs > 60000 {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.http.timeout_ms")
+	}
+	if http.MaxResponseBytes < 1024 || http.MaxResponseBytes > 1024*1024 {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.http.max_response_bytes")
+	}
+	if http.Enabled && len(http.AllowedHosts) == 0 {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.http.allowed_hosts")
+	}
+	search := config.WebTools.Search
+	if search.MaxResults < 1 || search.MaxResults > 10 {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.search.max_results")
+	}
+	if config.WebTools.Enabled != (http.Enabled || search.Enabled) {
+		return canonicalTypedV2Invalid(root + ".config.web_tools.enabled")
+	}
+	if retry := config.ModelRetry; retry != nil {
+		if retry.MaxRetries < 1 || retry.MaxRetries > 5 {
+			return canonicalTypedV2Invalid(root + ".config.model_retry.max_retries")
+		}
+		if retry.BackoffMs < 0 || retry.BackoffMs > 60000 {
+			return canonicalTypedV2Invalid(root + ".config.model_retry.backoff_ms")
+		}
+		if public := canonicalV2ValidateIdentifiers(retry.RetryFinishReasons, root+".config.model_retry.retry_finish_reasons", 16, 64); public != nil {
+			return public
+		}
+	}
+	if failover := config.ModelFailover; failover != nil {
+		if len(failover.CandidateModelIds) < 1 || len(failover.CandidateModelIds) > 256 {
+			return canonicalTypedV2Invalid(root + ".config.model_failover.candidate_model_ids")
+		}
+		seen := map[int64]struct{}{}
+		for i, id := range failover.CandidateModelIds {
+			if id <= 0 || id > canonicalV2MaxSafeInteger {
+				return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".config.model_failover.candidate_model_ids", i))
+			}
+			if _, ok := seen[id]; ok {
+				return canonicalTypedV2Invalid(canonicalV2IndexPath(root+".config.model_failover.candidate_model_ids", i))
+			}
+			seen[id] = struct{}{}
+		}
+		if failover.MaxRetries < 1 || int(failover.MaxRetries) > len(failover.CandidateModelIds) || failover.MaxRetries > 5 {
+			return canonicalTypedV2Invalid(root + ".config.model_failover.max_retries")
+		}
+		if public := canonicalV2ValidateIdentifiers(failover.FailoverFinishReasons, root+".config.model_failover.failover_finish_reasons", 16, 64); public != nil {
+			return public
+		}
+	}
+	return nil
+}
+
+func canonicalV2PresenceRoot(p canonicalTypedV2Presence) string {
+	for path := range p {
+		if index := strings.IndexByte(path, '.'); index > 0 {
+			return path[:index]
+		}
+	}
+	return "submission_v2"
+}
+func canonicalV2Has(p canonicalTypedV2Presence, path string) bool { _, ok := p[path]; return ok }
+func canonicalV2StringSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		result[v] = struct{}{}
+	}
+	return result
+}
+func canonicalV2EqualStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+func canonicalV2ValidIdentifier(value string, max int) bool {
+	return value != "" && len(value) <= max && strings.TrimSpace(value) == value && canonicalIdentifierPattern.MatchString(value) && !canonicalSensitiveValuePattern.MatchString(value)
+}
+func canonicalV2ValidateStringList(values []string, path string, max int) *canonicalError {
+	if len(values) > max {
+		return canonicalTypedV2Invalid(path)
+	}
+	seen := map[string]struct{}{}
+	for i, v := range values {
+		if !canonicalV2ValidIdentifier(v, 191) {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(path, i))
+		}
+		if _, ok := seen[v]; ok {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(path, i))
+		}
+		seen[v] = struct{}{}
+	}
+	return nil
+}
+func canonicalV2ValidateIdentifiers(values []string, path string, maxItems, maxLen int) *canonicalError {
+	if len(values) > maxItems {
+		return canonicalTypedV2Invalid(path)
+	}
+	seen := map[string]struct{}{}
+	for i, v := range values {
+		if !canonicalV2ValidIdentifier(v, maxLen) {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(path, i))
+		}
+		if _, ok := seen[v]; ok {
+			return canonicalTypedV2Invalid(canonicalV2IndexPath(path, i))
+		}
+		seen[v] = struct{}{}
+	}
+	return nil
+}
+func canonicalV2ValidHost(host string) bool {
+	if host == "" || len(host) > 253 || strings.TrimSpace(host) != host || host != strings.ToLower(host) || canonicalSensitiveValuePattern.MatchString(host) {
+		return false
+	}
+	if strings.ContainsAny(host, "/@?#\\") {
+		return false
+	}
+	parsed, err := url.Parse("//" + host)
+	if err != nil || parsed.Host != host || parsed.Hostname() == "" || parsed.Port() != "" {
+		return false
+	}
+	hostname := parsed.Hostname()
+	if ip := net.ParseIP(hostname); ip != nil {
+		return hostname == ip.String()
+	}
+	allNumeric := true
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for index := 0; index < len(label); index++ {
+			char := label[index]
+			if char < '0' || char > '9' {
+				allNumeric = false
+			}
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	return !allNumeric
 }
 
 func decodeCanonicalTypedRunSubmissionV2(raw []byte) (*canonicalTypedRunV2, *canonicalError) {
@@ -375,7 +935,11 @@ func canonicalV2GeneratedJSONValue(node *canonicalV2Node) (any, *canonicalError)
 		if strings.HasSuffix(node.path, ".model_type") ||
 			strings.HasSuffix(node.path, ".file_id") ||
 			strings.HasSuffix(node.path, ".source_run_id") {
-			if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+			if !canonicalV2PositiveDecimal(text) {
+				return nil, canonicalTypedV2Invalid(node.path)
+			}
+			parsed, err := strconv.ParseInt(text, 10, 64)
+			if err != nil || parsed <= 0 || (strings.HasSuffix(node.path, ".model_type") && parsed > canonicalV2MaxSafeInteger) {
 				return nil, canonicalTypedV2Invalid(node.path)
 			}
 		}
@@ -383,18 +947,66 @@ func canonicalV2GeneratedJSONValue(node *canonicalV2Node) (any, *canonicalError)
 		// element-by-element. Convert only this IDL-declared string-converted list
 		// to exact JSON integer digits before populating the generated Go value.
 		if strings.Contains(node.path, ".candidate_model_ids[") {
+			if !canonicalV2PositiveDecimal(text) {
+				return nil, canonicalTypedV2Invalid(node.path)
+			}
 			parsed, err := strconv.ParseInt(text, 10, 64)
-			if err != nil {
+			if err != nil || parsed <= 0 || parsed > canonicalV2MaxSafeInteger {
 				return nil, canonicalTypedV2Invalid(node.path)
 			}
 			return json.Number(strconv.FormatInt(parsed, 10)), nil
 		}
 		return text, nil
-	case canonicalV2NumberKind, canonicalV2BoolKind:
+	case canonicalV2NumberKind:
+		if public := canonicalV2ValidateGeneratedNumber(node); public != nil {
+			return nil, public
+		}
+		return node.value, nil
+	case canonicalV2BoolKind:
 		return node.value, nil
 	default:
 		return nil, canonicalTypedV2Invalid(node.path)
 	}
+}
+
+func canonicalV2PositiveDecimal(value string) bool {
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalV2ValidateGeneratedNumber(node *canonicalV2Node) *canonicalError {
+	number, ok := node.value.(json.Number)
+	if !ok {
+		return canonicalTypedV2Invalid(node.path)
+	}
+	path := node.path
+	if strings.HasSuffix(path, ".min_confidence") {
+		value, err := strconv.ParseFloat(number.String(), 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return canonicalTypedV2Invalid(path)
+		}
+		return nil
+	}
+	if strings.HasSuffix(path, ".limit") || strings.HasSuffix(path, ".candidate_limit") ||
+		strings.HasSuffix(path, ".max_results") || strings.HasSuffix(path, ".max_retries") {
+		value, err := strconv.ParseInt(number.String(), 10, 32)
+		if err != nil || strconv.FormatInt(value, 10) != number.String() {
+			return canonicalTypedV2Invalid(path)
+		}
+		return nil
+	}
+	value, err := strconv.ParseInt(number.String(), 10, 64)
+	if err != nil || strconv.FormatInt(value, 10) != number.String() {
+		return canonicalTypedV2Invalid(path)
+	}
+	return nil
 }
 
 func canonicalV2Presence(node *canonicalV2Node) canonicalTypedV2Presence {
