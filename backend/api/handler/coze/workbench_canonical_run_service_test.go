@@ -1055,6 +1055,16 @@ func TestResumeCanonicalRunRejectsTypedV2UnionWithoutMutation(t *testing.T) {
 			body: `{"interrupt_id":"interrupt-1","Response_V2":` + v2 + `}`,
 			code: "unsupported_sdk_field",
 		},
+		{
+			name: "typed interrupt duplicate",
+			body: `{"interrupt_id":"interrupt-1","interrupt_id":"interrupt-2","response_v2":` + v2 + `}`,
+			code: "invalid_json",
+		},
+		{
+			name: "typed interrupt case variant",
+			body: `{"Interrupt_ID":"interrupt-1","response_v2":` + v2 + `}`,
+			code: "unsupported_sdk_field",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1065,7 +1075,11 @@ func TestResumeCanonicalRunRejectsTypedV2UnionWithoutMutation(t *testing.T) {
 				fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
 				test.body,
 			)
-			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			wantStatus := http.StatusUnprocessableEntity
+			if test.code == "invalid_json" {
+				wantStatus = http.StatusBadRequest
+			}
+			require.Equal(t, wantStatus, response.Code, response.Result().Body())
 			var public canonicalError
 			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
 			require.Equal(t, test.code, public.Code)

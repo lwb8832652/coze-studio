@@ -1668,7 +1668,14 @@ func canonicalResumeV2RootResponse(raw []byte) (json.RawMessage, bool, *canonica
 	typed := false
 	legacyCount := 0
 	typedCount := 0
+	interruptCount := 0
 	for _, field := range root.fields {
+		if strings.EqualFold(field.name, "interrupt_id") {
+			if field.name != "interrupt_id" {
+				return nil, false, canonicalUnsupportedField(canonicalV2SafeKey(field.name))
+			}
+			interruptCount++
+		}
 		switch {
 		case strings.EqualFold(field.name, "response"):
 			if field.name != "response" {
@@ -1692,6 +1699,9 @@ func canonicalResumeV2RootResponse(raw []byte) (json.RawMessage, bool, *canonica
 	}
 	if typedCount > 1 {
 		return nil, false, canonicalTypedV2Invalid("response_v2")
+	}
+	if typed && interruptCount != 1 {
+		return nil, false, canonicalTypedV2Invalid("interrupt_id")
 	}
 	if !legacy && !typed {
 		return nil, false, canonicalInvalidRequest("Resume request is invalid", "invalid_resume")
