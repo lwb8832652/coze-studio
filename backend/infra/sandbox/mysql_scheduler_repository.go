@@ -174,7 +174,7 @@ func updateSchedulerSettingsCAS(db *gorm.DB, normalized domainsandbox.UpdateSche
 
 func findOrCreateSchedulerSettings(db *gorm.DB, lock bool) (*schedulerSettingsPO, error) {
 	var po schedulerSettingsPO
-	query := db.Where("id = ?", 1)
+	query := db.Select("id", "settings_json", "version", "updated_by", "created_at", "updated_at").Where("id = ?", 1)
 	if lock {
 		query = withUpdateLock(query)
 	}
@@ -199,7 +199,7 @@ func findOrCreateSchedulerSettings(db *gorm.DB, lock bool) (*schedulerSettingsPO
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := db.Create(&po).Error; err != nil {
+	if err := db.Omit("SessionSettingsJSON", "SessionSettingsVersion", "SessionSettingsUpdatedBy", "SessionSettingsUpdatedAt", "AIORuntimeGeneration").Create(&po).Error; err != nil {
 		return nil, err
 	}
 	return &po, nil

@@ -47,7 +47,7 @@ func TestMySQLSchedulerGetLocksBeforeInitializingSingleton(t *testing.T) {
 		t.Fatalf("marshal default settings: %v", err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `sandbox_scheduler_settings` WHERE id = ? ORDER BY `sandbox_scheduler_settings`.`id` LIMIT ? FOR UPDATE")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT `id`,`settings_json`,`version`,`updated_by`,`created_at`,`updated_at` FROM `sandbox_scheduler_settings` WHERE id = ? ORDER BY `sandbox_scheduler_settings`.`id` LIMIT ? FOR UPDATE")).
 		WithArgs(1, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "settings_json", "version", "updated_by", "created_at", "updated_at"}))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `sandbox_scheduler_settings` (`settings_json`,`version`,`updated_by`,`created_at`,`updated_at`,`id`) VALUES (?,?,?,?,?,?)")).

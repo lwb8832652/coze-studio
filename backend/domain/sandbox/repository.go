@@ -194,6 +194,19 @@ type SchedulerSettingsRepository interface {
 	UpdateSchedulerSettingsCAS(ctx context.Context, input UpdateSchedulerSettingsInput) (SchedulerSettings, error)
 }
 
+// SessionSettingsRepository owns the independent Session runtime snapshot.
+// It never reads or changes the legacy Scheduler settings version.
+type SessionSettingsRepository interface {
+	GetSessionSettings(ctx context.Context) (SessionRuntimeSettings, error)
+	UpdateSessionSettingsCAS(ctx context.Context, input UpdateSessionSettingsInput) (SessionRuntimeSettings, error)
+}
+
+type SessionSettingsAuditRepository interface {
+	SessionSettingsRepository
+	AppendSessionSettingsAuditEvent(ctx context.Context, input AppendSchedulerAuditEventInput) (*SchedulerAuditEvent, error)
+	UpdateSessionSettingsCASWithAudit(ctx context.Context, input UpdateSessionSettingsInput, audit AppendSchedulerAuditEventInput) (SessionRuntimeSettings, error)
+}
+
 type SchedulerAuditRepository interface {
 	AppendSchedulerAuditEvent(ctx context.Context, input AppendSchedulerAuditEventInput) (*SchedulerAuditEvent, error)
 }

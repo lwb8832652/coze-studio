@@ -65,12 +65,17 @@ func (providerDefaultPO) TableName() string {
 }
 
 type schedulerSettingsPO struct {
-	ID           uint8     `gorm:"column:id;type:tinyint unsigned;primaryKey"`
-	SettingsJSON string    `gorm:"column:settings_json;type:json;not null"`
-	Version      uint64    `gorm:"column:version;type:bigint unsigned;not null"`
-	UpdatedBy    uint64    `gorm:"column:updated_by;type:bigint unsigned;not null"`
-	CreatedAt    time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt    time.Time `gorm:"column:updated_at;not null"`
+	ID                       uint8      `gorm:"column:id;type:tinyint unsigned;primaryKey"`
+	SettingsJSON             string     `gorm:"column:settings_json;type:json;not null"`
+	Version                  uint64     `gorm:"column:version;type:bigint unsigned;not null"`
+	UpdatedBy                uint64     `gorm:"column:updated_by;type:bigint unsigned;not null"`
+	SessionSettingsJSON      *string    `gorm:"column:session_settings_json;type:json"`
+	SessionSettingsVersion   uint64     `gorm:"column:session_settings_version;type:bigint unsigned;not null;default:1"`
+	SessionSettingsUpdatedBy uint64     `gorm:"column:session_settings_updated_by;type:bigint unsigned;not null;default:0"`
+	SessionSettingsUpdatedAt *time.Time `gorm:"column:session_settings_updated_at"`
+	AIORuntimeGeneration     uint64     `gorm:"column:aio_runtime_generation;type:bigint unsigned;not null;default:0"`
+	CreatedAt                time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt                time.Time  `gorm:"column:updated_at;not null"`
 }
 
 func (schedulerSettingsPO) TableName() string {
