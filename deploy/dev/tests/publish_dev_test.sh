@@ -385,6 +385,7 @@ esac
 migrations_source=
 config_source=
 runtime_env_arg=
+status_format=
 mount_count=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -405,6 +406,11 @@ while [ "$#" -gt 0 ]; do
       shift
       [ "$#" -gt 0 ] || exit 93
       runtime_env_arg=$1
+      ;;
+    --format)
+      shift
+      [ "$#" -gt 0 ] || exit 93
+      status_format=$1
       ;;
   esac
   shift
@@ -527,6 +533,13 @@ printf 'atlas %s stderr diagnostic\n' "$stage" >&2
 if [ "$stage" = status ]; then
   if [ "$TEST_CASE" = pending-migration-success ]; then
     printf '%s\n' 'COZE_ATLAS_STATUS|PENDING|20260811000200|1'
+  elif [ "$TEST_CASE" = atlas-update-notice-success ]; then
+    if [[ "$status_format" == *'{{ "\n" }}'* ]]; then
+      printf '%s\n' 'COZE_ATLAS_STATUS|OK|20260812000100|0'
+    else
+      printf '%s' 'COZE_ATLAS_STATUS|OK|20260812000100|0'
+    fi
+    printf '%s\n' 'A new version of Atlas is available (v1.3.0)'
   else
     printf '%s\n' 'COZE_ATLAS_STATUS|OK|20260812000100|0'
   fi
@@ -988,7 +1001,7 @@ assert_success_command_log() {
       "$TARGET_SHA"
     printf 'docker run --rm -v %s/docker/atlas/migrations:/migrations:ro %s migrate validate --dir file:///migrations\n' \
       "$snapshot_root" "$ATLAS_IMAGE"
-    printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate status --config file:///atlas.hcl --env dev --format COZE_ATLAS_STATUS|{{ .Status }}|{{ .Current }}|{{ .Count }}\n' \
+    printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate status --config file:///atlas.hcl --env dev --format COZE_ATLAS_STATUS|{{ .Status }}|{{ .Current }}|{{ .Count }}{{ "\\n" }}\n' \
       "$runtime_env" "$snapshot_root" "$snapshot_root" "$ATLAS_IMAGE"
     printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate apply --config file:///atlas.hcl --env dev\n' \
       "$runtime_env" "$snapshot_root" "$snapshot_root" "$ATLAS_IMAGE"
@@ -1128,6 +1141,27 @@ test_status_only() {
   assert_no_forbidden_tool_calls
   assert_git_repo_root
   assert_sensitive_field_diagnostics
+  assert_no_secret_output
+}
+
+test_atlas_update_notice_preserves_status_marker_boundary() {
+  setup_case atlas-update-notice-success
+  run_publish --status "$EXPECTED_ORIGIN" "$TARGET_SHA" || \
+    fail 'Atlas update notice corrupted the status marker boundary'
+
+  assert_contains "$OUTPUT_LOG" 'current=20260812000100 pending=0' \
+    'status marker was not parsed when Atlas emitted an update notice'
+  assert_contains "$OUTPUT_LOG" 'A new version of Atlas is available (v1.3.0)' \
+    'Atlas update notice was not preserved as a diagnostic'
+  assert_drift_transaction_count 1
+  assert_count "$COMMAND_LOG" 'git push ' 0 \
+    'status-only update-notice flow attempted a push'
+  assert_capture_security 2
+  assert_snapshot_security 2
+  assert_snapshot_cleaned
+  assert_closed_child_path
+  assert_no_forbidden_tool_calls
+  assert_git_repo_root
   assert_no_secret_output
 }
 
@@ -1474,6 +1508,7 @@ test_repository_tmp_roots_are_rejected
 test_snapshot_creation_failures
 test_success
 test_status_only
+test_atlas_update_notice_preserves_status_marker_boundary
 test_pending_migration_uses_current_then_target_version
 test_nonempty_stdin_is_ignored
 test_xtrace_does_not_leak_credentials
