@@ -104,6 +104,7 @@ case "$tool" in
   grep) exec /usr/bin/grep "$@" ;;
   mktemp) exec /usr/bin/mktemp "$@" ;;
   rm) exec /bin/rm "$@" ;;
+  seq) exec /usr/bin/seq "$@" ;;
   tr) exec /usr/bin/tr "$@" ;;
   *)
     printf 'unexpected allowlisted tool: %s\n' "$tool" >&2
@@ -112,7 +113,7 @@ case "$tool" in
 esac
 FAKE_ALLOWED_TOOL
 
-for allowed_tool in bash basename cat chmod dirname grep mktemp rm tr; do
+for allowed_tool in bash basename cat chmod dirname grep mktemp rm seq tr; do
   ln -s allowed-tool "$FAKE_BIN/$allowed_tool"
 done
 
@@ -277,6 +278,62 @@ set -euo pipefail
 }
 printf '%s\n' "$PATH" >>"$PATH_AUDIT_LOG"
 
+is_drift_command=false
+case "${1:-}" in
+  network|inspect|rm) is_drift_command=true ;;
+  run)
+    if [ "${2:-}" = -d ] || [[ " $* " == *' schema diff '* ]]; then
+      is_drift_command=true
+    fi
+    ;;
+esac
+
+if [ "$is_drift_command" = true ]; then
+  {
+    printf 'docker'
+    printf ' %s' "$@"
+    printf '\n'
+  } >>"$DRIFT_COMMAND_LOG"
+
+  case "${1:-}" in
+    network)
+      case "${2:-}" in
+        create) printf '%s\n' fake-drift-network ;;
+        rm) printf '%s\n' "${3:-}" ;;
+        *) exit 93 ;;
+      esac
+      ;;
+    inspect)
+      printf '%s\n' healthy
+      ;;
+    rm)
+      printf '%s\n' "${3:-}"
+      ;;
+    run)
+      if [ "${2:-}" = -d ]; then
+        printf '%s\n' fake-drift-mysql
+        exit 0
+      fi
+      count=0
+      if [ -f "$DRIFT_COUNT_FILE" ]; then
+        count=$(cat "$DRIFT_COUNT_FILE")
+      fi
+      count=$((count + 1))
+      printf '%s\n' "$count" >"$DRIFT_COUNT_FILE"
+      if { [ "$TEST_CASE" = pre-drift-failure ] && [ "$count" -eq 1 ]; } || \
+        { [ "$TEST_CASE" = post-drift-failure ] && [ "$count" -eq 2 ]; }; then
+        printf '%s\n' 'COZE_SCHEMA_DIFF|1'
+      elif [ "$TEST_CASE" = drift-inspection-failure ] && [ "$count" -eq 1 ]; then
+        printf '%s\n' 'schema inspection failed' >&2
+        exit 97
+      else
+        printf '%s\n' 'COZE_SCHEMA_DIFF|0'
+      fi
+      ;;
+  esac
+  exit 0
+fi
+
 {
   printf 'docker'
   printf ' %s' "$@"
@@ -342,7 +399,7 @@ IFS= read -r snapshot_root <"$SNAPSHOT_PATH_FILE"
   printf '%s\n' 'Docker did not mount migrations from the recorded snapshot' >&2
   exit 96
 }
-[ -f "$migrations_source/fixture.sql" ] || {
+[ -f "$migrations_source/20260812000100_expand_fixture_add_value.sql" ] || {
   printf '%s\n' 'snapshot migration fixture is missing' >&2
   exit 96
 }
@@ -442,6 +499,13 @@ printf 'atlas-temp stage=%s count=%s mode=%s\n' \
 
 printf 'atlas %s stdout diagnostic\n' "$stage"
 printf 'atlas %s stderr diagnostic\n' "$stage" >&2
+if [ "$stage" = status ]; then
+  if [ "$TEST_CASE" = pending-migration-success ]; then
+    printf '%s\n' 'COZE_ATLAS_STATUS|PENDING|20260811000200|1'
+  else
+    printf '%s\n' 'COZE_ATLAS_STATUS|OK|20260812000100|0'
+  fi
+fi
 printf 'full Atlas URL: %s\n' "$ATLAS_URL_VALUE"
 printf 'alternate MySQL URI: %s\n' "$ALT_MYSQL_URI"
 printf 'URL authority: %s\n' "$AUTHORITY_URI"
@@ -586,6 +650,8 @@ setup_case() {
   ENV_FILE=$CASE_DIR/dev-atlas.env
   TEMP_DIR=$CASE_DIR/tmp
   TEMP_AUDIT_LOG=$CASE_DIR/temp-audit.log
+  DRIFT_COMMAND_LOG=$CASE_DIR/drift-commands.log
+  DRIFT_COUNT_FILE=$CASE_DIR/drift-count
   SNAPSHOT_AUDIT_LOG=$CASE_DIR/snapshot-audit.log
   SNAPSHOT_PATH_FILE=$CASE_DIR/snapshot-path
   ARCHIVE_TREE=$CASE_DIR/archive-tree
@@ -597,9 +663,14 @@ setup_case() {
   : >"$GIT_PWD_LOG"
   : >"$PATH_AUDIT_LOG"
   : >"$TEMP_AUDIT_LOG"
+  : >"$DRIFT_COMMAND_LOG"
   : >"$SNAPSHOT_AUDIT_LOG"
   : >"$SNAPSHOT_PATH_FILE"
-  printf '%s\n' '-- target migration fixture' >"$ARCHIVE_TREE/docker/atlas/migrations/fixture.sql"
+  printf '%s\n' 'h1:fixture' >"$ARCHIVE_TREE/docker/atlas/migrations/atlas.sum"
+  printf '%s\n' 'CREATE TABLE fixture (id bigint PRIMARY KEY);' \
+    >"$ARCHIVE_TREE/docker/atlas/migrations/20260811000200_expand_fixture_create_table.sql"
+  printf '%s\n' 'ALTER TABLE fixture ADD COLUMN value bigint;' \
+    >"$ARCHIVE_TREE/docker/atlas/migrations/20260812000100_expand_fixture_add_value.sql"
   printf '%s\n' 'env "dev" {}' >"$ARCHIVE_TREE/.github/atlas-dev.hcl"
   /usr/bin/tar -cf "$ARCHIVE_FIXTURE" -C "$ARCHIVE_TREE" \
     docker/atlas/migrations .github/atlas-dev.hcl
@@ -607,6 +678,7 @@ setup_case() {
 
   export COMMAND_LOG GIT_PWD_LOG FETCH_COUNT_FILE EXPECTED_ORIGIN TARGET_SHA OTHER_SHA
   export PATH_AUDIT_LOG TEMP_AUDIT_LOG SNAPSHOT_AUDIT_LOG SNAPSHOT_PATH_FILE
+  export DRIFT_COMMAND_LOG DRIFT_COUNT_FILE
   export ARCHIVE_FIXTURE ENV_FILE FAKE_BIN REPO_ROOT
   export ATLAS_URL_VALUE SECRET_MARKER ALT_MYSQL_URI AUTHORITY_URI AUTHORITY_USERINFO
   export PASSWORD_FRAGMENT
@@ -891,7 +963,7 @@ assert_success_command_log() {
       "$TARGET_SHA"
     printf 'docker run --rm -v %s/docker/atlas/migrations:/migrations:ro %s migrate validate --dir file:///migrations\n' \
       "$snapshot_root" "$ATLAS_IMAGE"
-    printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate status --config file:///atlas.hcl --env dev\n' \
+    printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate status --config file:///atlas.hcl --env dev --format COZE_ATLAS_STATUS|{{ .Status }}|{{ .Current }}|{{ .Count }}\n' \
       "$runtime_env" "$snapshot_root" "$snapshot_root" "$ATLAS_IMAGE"
     printf 'docker run --rm --env-file %s -v %s/docker/atlas/migrations:/migrations:ro -v %s/.github/atlas-dev.hcl:/atlas.hcl:ro %s migrate apply --config file:///atlas.hcl --env dev\n' \
       "$runtime_env" "$snapshot_root" "$snapshot_root" "$ATLAS_IMAGE"
@@ -930,6 +1002,21 @@ assert_no_docker() {
 
 assert_no_push() {
   assert_count "$COMMAND_LOG" 'git push ' 0 'push ran for a rejected case'
+}
+
+assert_drift_transaction_count() {
+  local expected=$1
+
+  assert_count "$DRIFT_COMMAND_LOG" ' schema diff ' "$expected" \
+    'schema drift inspection ran the wrong number of times'
+  assert_count "$DRIFT_COMMAND_LOG" 'docker network create ' "$expected" \
+    'schema drift network creation ran the wrong number of times'
+  assert_count "$DRIFT_COMMAND_LOG" 'docker run -d ' "$expected" \
+    'schema drift MySQL startup ran the wrong number of times'
+  assert_count "$DRIFT_COMMAND_LOG" 'docker rm -f ' "$expected" \
+    'schema drift MySQL cleanup ran the wrong number of times'
+  assert_count "$DRIFT_COMMAND_LOG" 'docker network rm ' "$expected" \
+    'schema drift network cleanup ran the wrong number of times'
 }
 
 run_rejected_case() {
@@ -973,6 +1060,9 @@ test_success() {
     'success message did not transfer all remaining work to GitHub and Baota'
   assert_capture_security 3
   assert_snapshot_security 3
+  assert_drift_transaction_count 2
+  assert_contains "$DRIFT_COMMAND_LOG" '-e EXPECTED_VERSION=20260812000100' \
+    'success flow did not compare the expected target migration version'
   assert_snapshot_cleaned
   assert_closed_child_path
   assert_no_forbidden_tool_calls
@@ -1000,6 +1090,7 @@ test_status_only() {
     'status-only flow did not recheck the remote baseline'
   assert_count "$COMMAND_LOG" 'git push ' 0 \
     'status-only flow attempted a push'
+  assert_drift_transaction_count 1
   assert_contains "$OUTPUT_LOG" \
     "inspected Atlas status for audited dev revision $TARGET_SHA; no migration was applied and no push was attempted" \
     'status-only success message did not state the read-only boundary'
@@ -1012,6 +1103,24 @@ test_status_only() {
   assert_no_forbidden_tool_calls
   assert_git_repo_root
   assert_sensitive_field_diagnostics
+  assert_no_secret_output
+}
+
+test_pending_migration_uses_current_then_target_version() {
+  setup_case pending-migration-success
+  run_publish "$EXPECTED_ORIGIN" "$TARGET_SHA" || \
+    fail 'pending migration publish flow failed'
+
+  assert_drift_transaction_count 2
+  assert_contains "$DRIFT_COMMAND_LOG" '-e EXPECTED_VERSION=20260811000200' \
+    'pre-apply drift did not compare the current migration version'
+  assert_contains "$DRIFT_COMMAND_LOG" '-e EXPECTED_VERSION=20260812000100' \
+    'post-apply drift did not compare the target migration version'
+  assert_contains "$OUTPUT_LOG" 'current=20260811000200 pending=1' \
+    'pending migration status was not parsed'
+  assert_count "$COMMAND_LOG" "git push origin $TARGET_SHA:refs/heads/dev" 1 \
+    'pending migration flow did not complete the exact push'
+  assert_snapshot_cleaned
   assert_no_secret_output
 }
 
@@ -1311,6 +1420,27 @@ test_atlas_and_race_failures() {
   run_rejected_case push-failure 'dev push failed' 3 1 "$EXPECTED_ORIGIN" "$TARGET_SHA"
 }
 
+test_schema_drift_gate() {
+  run_rejected_case pre-drift-failure 'schema drift detected during pre-apply' 2 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  assert_drift_transaction_count 1
+  assert_count "$COMMAND_LOG" 'migrate apply' 0 \
+    'pre-apply drift failure reached migration apply'
+
+  run_rejected_case drift-inspection-failure \
+    'schema drift inspection failed during pre-apply' 2 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  assert_drift_transaction_count 1
+  assert_count "$COMMAND_LOG" 'migrate apply' 0 \
+    'drift inspection failure reached migration apply'
+
+  run_rejected_case post-drift-failure 'schema drift detected during post-apply' 3 0 \
+    "$EXPECTED_ORIGIN" "$TARGET_SHA"
+  assert_drift_transaction_count 2
+  assert_count "$COMMAND_LOG" 'migrate apply' 1 \
+    'post-apply drift failure did not occur after exactly one migration apply'
+}
+
 assert_production_forbidden_tokens_absent
 test_hidden_untracked_migration_is_dirty
 test_migration_policy_gate
@@ -1319,6 +1449,7 @@ test_repository_tmp_roots_are_rejected
 test_snapshot_creation_failures
 test_success
 test_status_only
+test_pending_migration_uses_current_then_target_version
 test_nonempty_stdin_is_ignored
 test_xtrace_does_not_leak_credentials
 test_linux_stat_mode_detection
@@ -1327,5 +1458,6 @@ test_argument_validation
 test_git_preconditions
 test_env_validation
 test_atlas_and_race_failures
+test_schema_drift_gate
 
 printf '%s\n' 'publish dev contract: passed'

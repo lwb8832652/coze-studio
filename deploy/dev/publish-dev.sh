@@ -18,6 +18,8 @@ ATLAS_IMAGE='arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d8
 GIT_BIN=${GIT_BIN:-git}
 DOCKER_BIN=${DOCKER_BIN:-docker}
 MIGRATION_POLICY_SCRIPT=$REPO_ROOT/scripts/database/check-migration-policy.sh
+SCHEMA_DRIFT_SCRIPT=$REPO_ROOT/deploy/dev/check-schema-drift.sh
+ATLAS_STATUS_FORMAT='COZE_ATLAS_STATUS|{{ .Status }}|{{ .Current }}|{{ .Count }}'
 atlas_env_file=''
 atlas_url=''
 atlas_userinfo=''
@@ -28,6 +30,9 @@ atlas_runtime_env=''
 publish_tmp_root=''
 publish_snapshot_prefix=''
 publish_output_prefix=''
+atlas_current_version=''
+atlas_pending_count=''
+atlas_target_version=''
 
 is_revision() {
   [[ "${1:-}" =~ ^[0-9a-fA-F]{40}$ ]]
@@ -388,6 +393,27 @@ create_atlas_snapshot() {
   [ "$mode" = 600 ] || die 'Atlas runtime env file mode must be exactly 600'
 }
 
+resolve_atlas_target_version() {
+  local migration_files
+  local migration_file
+  local migration_name
+
+  shopt -s nullglob
+  migration_files=("$atlas_snapshot_dir"/docker/atlas/migrations/*.sql)
+  shopt -u nullglob
+  [ "${#migration_files[@]}" -gt 0 ] || die 'Atlas snapshot contains no migration SQL files'
+
+  atlas_target_version=''
+  for migration_file in "${migration_files[@]}"; do
+    migration_name=${migration_file##*/}
+    [[ "$migration_name" =~ ^([0-9]{14})_.*\.sql$ ]] || \
+      die "Atlas snapshot contains an invalid migration filename: $migration_name"
+    atlas_target_version=${BASH_REMATCH[1]}
+  done
+  [[ "$atlas_target_version" =~ ^[0-9]{14}$ ]] || \
+    die 'Atlas target migration version could not be resolved'
+}
+
 check_local_target() {
   local target_sha=$1
   local worktree_status
@@ -428,17 +454,56 @@ check_migration_policy() {
 }
 
 run_atlas_status() {
+  local status
+  local marker_count=0
+  local line
+  local marker
+  local parsed_status
+  local parsed_current
+  local parsed_count
+
   run_atlas_step validation run --rm \
     -v "$atlas_snapshot_dir/docker/atlas/migrations:/migrations:ro" \
     "$ATLAS_IMAGE" \
     migrate validate --dir file:///migrations
 
-  run_atlas_step status run --rm \
+  create_atlas_output_file
+  if docker_cmd run --rm \
     --env-file "$atlas_runtime_env" \
     -v "$atlas_snapshot_dir/docker/atlas/migrations:/migrations:ro" \
     -v "$atlas_snapshot_dir/.github/atlas-dev.hcl:/atlas.hcl:ro" \
     "$ATLAS_IMAGE" \
-    migrate status --config file:///atlas.hcl --env dev
+    migrate status --config file:///atlas.hcl --env dev \
+      --format "$ATLAS_STATUS_FORMAT" >"$atlas_output_file" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+
+  atlas_current_version=''
+  atlas_pending_count=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      COZE_ATLAS_STATUS\|*)
+        marker_count=$((marker_count + 1))
+        marker=$line
+        IFS='|' read -r _ parsed_status parsed_current parsed_count <<<"$marker"
+        ;;
+    esac
+  done <"$atlas_output_file"
+
+  emit_redacted_atlas_output
+  remove_atlas_output_file
+
+  [ "$status" -eq 0 ] || die 'Atlas migration status failed'
+  [ "$marker_count" -eq 1 ] || die 'Atlas migration status output was not uniquely parseable'
+  [[ "$parsed_status" =~ ^[A-Z_]+$ ]] || die 'Atlas migration status value is invalid'
+  [[ "$parsed_current" =~ ^[0-9]{14}$ ]] || \
+    die 'Atlas current migration version is missing or invalid'
+  [[ "$parsed_count" =~ ^[0-9]+$ ]] || die 'Atlas pending migration count is invalid'
+  atlas_current_version=$parsed_current
+  atlas_pending_count=$parsed_count
+  log "Atlas migration status passed (current=$atlas_current_version pending=$atlas_pending_count)"
 }
 
 run_atlas_apply() {
@@ -448,6 +513,18 @@ run_atlas_apply() {
     -v "$atlas_snapshot_dir/.github/atlas-dev.hcl:/atlas.hcl:ro" \
     "$ATLAS_IMAGE" \
     migrate apply --config file:///atlas.hcl --env dev
+}
+
+run_schema_drift_check() {
+  local stage=$1
+  local expected_version=$2
+
+  [ -x "$SCHEMA_DRIFT_SCRIPT" ] || die 'schema drift checker is missing or not executable'
+  "$SCHEMA_DRIFT_SCRIPT" \
+    --migrations-dir "$atlas_snapshot_dir/docker/atlas/migrations" \
+    --atlas-env-file "$atlas_runtime_env" \
+    --version "$expected_version" \
+    --stage "$stage" || die "schema drift check failed during $stage"
 }
 
 main() {
@@ -481,7 +558,9 @@ main() {
   validate_env_file "$ATLAS_ENV_FILE"
   validate_publish_tmp_root
   create_atlas_snapshot "$target_sha"
+  resolve_atlas_target_version
   run_atlas_status
+  run_schema_drift_check pre-apply "$atlas_current_version"
   if [ "$publish_mode" = status ]; then
     check_local_target "$target_sha"
     check_origin_and_history "$expected_origin_sha" "$target_sha"
@@ -489,6 +568,7 @@ main() {
     return 0
   fi
   run_atlas_apply
+  run_schema_drift_check post-apply "$atlas_target_version"
   check_local_target "$target_sha"
   check_origin_and_history "$expected_origin_sha" "$target_sha"
 
