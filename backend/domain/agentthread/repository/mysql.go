@@ -1223,6 +1223,9 @@ func (r *threadRepository) CreateRunBundle(
 	if req.Run == nil {
 		return nil, fmt.Errorf("run is required")
 	}
+	if req.HumanResumeRollover != nil {
+		return r.createHumanResumeRunBundle(ctx, req)
+	}
 	if req.Message != nil &&
 		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle message does not belong to run")

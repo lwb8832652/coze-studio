@@ -157,6 +157,52 @@ type HumanResumeRolloverRequest struct {
 	TerminalJournal *entity.JournalEvent
 }
 
+// HumanResumeRolloverReplayRepository is deliberately narrower than
+// ThreadRepository. Only the Human Resume application path needs the durable
+// aggregate replay capability, so ordinary repository doubles do not inherit
+// another method.
+type HumanResumeRolloverReplayRepository interface {
+	GetHumanResumeRolloverReplay(
+		ctx context.Context,
+		req HumanResumeRolloverReplayRequest,
+	) (*HumanResumeRolloverReplayResult, error)
+}
+
+type HumanResumeRolloverReplayRequest struct {
+	SpaceID                 int64
+	ThreadID                int64
+	SourceRunID             int64
+	IdempotencyKey          string
+	IdempotencyOperation    string
+	IdempotencyFingerprint  string
+	ResolvedJournalKey      string
+	InterruptID             string
+	Response                HumanResumeRolloverResponse
+	PersistMessageReference bool
+}
+
+type HumanResumeRolloverResponse struct {
+	Schema        string
+	InteractionID string
+	Kind          string
+	Decision      string
+	Answer        string
+	ChoiceID      string
+	Comment       string
+	SubmittedBy   string
+	Source        string
+}
+
+type HumanResumeRolloverReplayResult struct {
+	Run           *entity.Run
+	Message       *entity.Message
+	Event         *entity.RunEvent
+	Attempt       *entity.RunAttempt
+	SourceAttempt *entity.RunAttempt
+	TerminalEvent *entity.RunEvent
+	Replayed      bool
+}
+
 type CreateRunBundleResult struct {
 	Run               *entity.Run
 	Message           *entity.Message
