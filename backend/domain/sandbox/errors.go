@@ -33,6 +33,7 @@ const (
 	ErrCodeScopeUnsupported      = "SANDBOX_SCOPE_UNSUPPORTED"
 	ErrCodeConfigurationInvalid  = "SANDBOX_CONFIGURATION_INVALID"
 	ErrCodeLocalDebugUnavailable = "SANDBOX_LOCAL_DEBUG_UNAVAILABLE"
+	ErrCodeSessionNotFound       = "SANDBOX_SESSION_NOT_FOUND"
 	ErrCodeUnavailable           = "SANDBOX_UNAVAILABLE"
 )
 
@@ -51,6 +52,7 @@ var (
 	ErrScopeUnsupported      = newCodedError(ErrCodeScopeUnsupported, "sandbox provider does not support the requested scope")
 	ErrConfigurationInvalid  = newCodedError(ErrCodeConfigurationInvalid, "sandbox configuration is invalid")
 	ErrLocalDebugUnavailable = newCodedError(ErrCodeLocalDebugUnavailable, "local debug sandbox is unavailable")
+	ErrSessionNotFound       = newCodedError(ErrCodeSessionNotFound, "sandbox session was not found")
 	ErrUnavailable           = newCodedError(ErrCodeUnavailable, "sandbox is unavailable")
 	ErrHealthMonitorDBClock  = newCodedError(ErrCodeUnavailable, "sandbox health monitor database clock is unavailable")
 	ErrHealthMonitorOutbox   = newCodedError(ErrCodeUnavailable, "sandbox health notification projection is unavailable")
@@ -97,6 +99,7 @@ func ErrorCodeOf(err error) string {
 		ErrScopeUnsupported,
 		ErrConfigurationInvalid,
 		ErrLocalDebugUnavailable,
+		ErrSessionNotFound,
 		ErrUnavailable,
 		ErrHealthMonitorDBClock,
 		ErrHealthMonitorOutbox:

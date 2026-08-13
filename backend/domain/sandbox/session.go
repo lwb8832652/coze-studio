@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 const MaxSessionIdentifierBytes = 128
@@ -153,7 +155,6 @@ func TransitionSessionState(state SessionState, action SessionAction) (SessionSt
 
 type RuntimeSession struct {
 	Ref             SessionRef
-	IdentityID      int64
 	State           SessionState
 	UpstreamShellID string
 	RecoveryReason  string
@@ -162,6 +163,236 @@ type RuntimeSession struct {
 	ExpiresAt       time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+const (
+	MaxRecoverableRuntimeSessions = 1000
+	MaxSessionRecoveryReasonBytes = 64
+	MaxSessionLifetime            = 24 * time.Hour
+	aioGenerationSentinelPrefix   = "newx-generation-"
+)
+
+type AcquireRuntimeSessionInput struct {
+	Key                SessionKey
+	CandidateSessionID string
+	RuntimeGeneration  uint64
+	ExpiresAt          time.Time
+	Now                time.Time
+}
+
+func NormalizeAcquireRuntimeSessionInput(input AcquireRuntimeSessionInput) (AcquireRuntimeSessionInput, error) {
+	key, err := NormalizeSessionKey(input.Key)
+	if err != nil || ValidatePhase1SessionProfile(key.Profile) != nil ||
+		!validCanonicalSessionUUID(input.CandidateSessionID) || input.RuntimeGeneration == 0 ||
+		input.Now.IsZero() || input.ExpiresAt.IsZero() {
+		return AcquireRuntimeSessionInput{}, ErrInvalidInput
+	}
+	now := input.Now.UTC()
+	expiresAt := input.ExpiresAt.UTC()
+	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxSessionLifetime)) {
+		return AcquireRuntimeSessionInput{}, ErrInvalidInput
+	}
+	input.Key = key
+	input.Now = now
+	input.ExpiresAt = expiresAt
+	return input, nil
+}
+
+type BindRuntimeSessionInput struct {
+	Ref             SessionRef
+	ExpectedVersion uint64
+	UpstreamShellID string
+	ExpiresAt       time.Time
+	Now             time.Time
+}
+
+func NormalizeBindRuntimeSessionInput(input BindRuntimeSessionInput) (BindRuntimeSessionInput, error) {
+	ref, err := NormalizeSessionRef(input.Ref)
+	if err != nil || input.ExpectedVersion < InitialVersion ||
+		!validSessionIdentifier(input.UpstreamShellID) || isReservedAIOGenerationID(input.UpstreamShellID) ||
+		input.Now.IsZero() || input.ExpiresAt.IsZero() {
+		return BindRuntimeSessionInput{}, ErrInvalidInput
+	}
+	now := input.Now.UTC()
+	expiresAt := input.ExpiresAt.UTC()
+	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxSessionLifetime)) {
+		return BindRuntimeSessionInput{}, ErrInvalidInput
+	}
+	input.Ref = ref
+	input.Now = now
+	input.ExpiresAt = expiresAt
+	return input, nil
+}
+
+type TransitionRuntimeSessionInput struct {
+	Ref                   SessionRef
+	ExpectedVersion       uint64
+	Action                SessionAction
+	NextRuntimeGeneration uint64
+	UpstreamShellID       string
+	RecoveryReason        string
+	ExpiresAt             time.Time
+	Now                   time.Time
+}
+
+func NormalizeTransitionRuntimeSessionInput(input TransitionRuntimeSessionInput) (TransitionRuntimeSessionInput, error) {
+	ref, err := NormalizeSessionRef(input.Ref)
+	if err != nil || input.ExpectedVersion < InitialVersion || input.Now.IsZero() {
+		return TransitionRuntimeSessionInput{}, ErrInvalidInput
+	}
+	input.Ref = ref
+	input.Now = input.Now.UTC()
+	switch input.Action {
+	case SessionActionRelease, SessionActionDestroy:
+		if input.NextRuntimeGeneration != 0 || input.UpstreamShellID != "" ||
+			input.RecoveryReason != "" || !input.ExpiresAt.IsZero() {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+	case SessionActionMarkRecovering:
+		if input.NextRuntimeGeneration != 0 || input.UpstreamShellID != "" || !input.ExpiresAt.IsZero() ||
+			!validRecoveryReason(input.RecoveryReason) {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+	case SessionActionRecover:
+		if input.NextRuntimeGeneration == 0 || !validSessionIdentifier(input.UpstreamShellID) ||
+			isReservedAIOGenerationID(input.UpstreamShellID) || input.RecoveryReason != "" || input.ExpiresAt.IsZero() {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+		input.ExpiresAt = input.ExpiresAt.UTC()
+		if !input.ExpiresAt.After(input.Now) || input.ExpiresAt.After(input.Now.Add(MaxSessionLifetime)) {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+	default:
+		return TransitionRuntimeSessionInput{}, ErrInvalidInput
+	}
+	return input, nil
+}
+
+type ListRecoverableRuntimeSessionsInput struct {
+	DeploymentID     string
+	BeforeGeneration uint64
+	Limit            int
+}
+
+func NormalizeListRecoverableRuntimeSessionsInput(input ListRecoverableRuntimeSessionsInput) (ListRecoverableRuntimeSessionsInput, error) {
+	if !validSessionIdentifier(input.DeploymentID) || input.BeforeGeneration == 0 ||
+		input.Limit < 1 || input.Limit > MaxRecoverableRuntimeSessions {
+		return ListRecoverableRuntimeSessionsInput{}, ErrInvalidInput
+	}
+	return input, nil
+}
+
+type AIOGenerationState struct {
+	DeploymentID string
+	Generation   uint64
+	SentinelID   string
+}
+
+func NormalizeAIOGenerationState(state AIOGenerationState) (AIOGenerationState, error) {
+	if state.DeploymentID == "" && state.Generation == 0 && state.SentinelID == "" {
+		return state, nil
+	}
+	if !validSessionIdentifier(state.DeploymentID) || state.Generation == 0 || state.Generation == ^uint64(0) || !isAIOGenerationSentinel(state.SentinelID) {
+		return AIOGenerationState{}, ErrConfigurationInvalid
+	}
+	return state, nil
+}
+
+func (AIOGenerationState) String() string {
+	return "sandbox.AIOGenerationState{runtime:<redacted>}"
+}
+func (AIOGenerationState) GoString() string {
+	return "sandbox.AIOGenerationState{runtime:<redacted>}"
+}
+func (AIOGenerationState) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "sandbox.AIOGenerationState{runtime:<redacted>}")
+}
+
+type CompareAndReplaceAIOSentinelInput struct {
+	DeploymentID        string
+	ExpectedSentinelID  string
+	CandidateSentinelID string
+}
+
+func (CompareAndReplaceAIOSentinelInput) String() string {
+	return "sandbox.CompareAndReplaceAIOSentinelInput{runtime:<redacted>}"
+}
+func (CompareAndReplaceAIOSentinelInput) GoString() string {
+	return "sandbox.CompareAndReplaceAIOSentinelInput{runtime:<redacted>}"
+}
+func (CompareAndReplaceAIOSentinelInput) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "sandbox.CompareAndReplaceAIOSentinelInput{runtime:<redacted>}")
+}
+
+func (AcquireRuntimeSessionInput) String() string {
+	return "sandbox.AcquireRuntimeSessionInput{identity:<redacted>}"
+}
+func (AcquireRuntimeSessionInput) GoString() string {
+	return "sandbox.AcquireRuntimeSessionInput{identity:<redacted>}"
+}
+func (AcquireRuntimeSessionInput) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "sandbox.AcquireRuntimeSessionInput{identity:<redacted>}")
+}
+
+func (BindRuntimeSessionInput) String() string {
+	return "sandbox.BindRuntimeSessionInput{identity:<redacted>}"
+}
+func (BindRuntimeSessionInput) GoString() string {
+	return "sandbox.BindRuntimeSessionInput{identity:<redacted>}"
+}
+func (BindRuntimeSessionInput) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "sandbox.BindRuntimeSessionInput{identity:<redacted>}")
+}
+
+func (TransitionRuntimeSessionInput) String() string {
+	return "sandbox.TransitionRuntimeSessionInput{identity:<redacted>}"
+}
+func (TransitionRuntimeSessionInput) GoString() string {
+	return "sandbox.TransitionRuntimeSessionInput{identity:<redacted>}"
+}
+func (TransitionRuntimeSessionInput) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "sandbox.TransitionRuntimeSessionInput{identity:<redacted>}")
+}
+func NormalizeCompareAndReplaceAIOSentinelInput(input CompareAndReplaceAIOSentinelInput) (CompareAndReplaceAIOSentinelInput, error) {
+	if !validSessionIdentifier(input.DeploymentID) ||
+		(input.ExpectedSentinelID != "" && !isAIOGenerationSentinel(input.ExpectedSentinelID)) ||
+		!isAIOGenerationSentinel(input.CandidateSentinelID) ||
+		input.ExpectedSentinelID == input.CandidateSentinelID {
+		return CompareAndReplaceAIOSentinelInput{}, ErrInvalidInput
+	}
+	return input, nil
+}
+
+func NormalizeAIOGenerationDeploymentID(deploymentID string) (string, error) {
+	if !validSessionIdentifier(deploymentID) {
+		return "", ErrInvalidInput
+	}
+	return deploymentID, nil
+}
+
+func validCanonicalSessionUUID(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed != uuid.Nil && parsed.String() == value
+}
+
+func validRecoveryReason(value string) bool {
+	return value != "" && len(value) <= MaxSessionRecoveryReasonBytes && validSessionIdentifier(value)
+}
+
+func isAIOGenerationSentinel(value string) bool {
+	if len(value) != len(aioGenerationSentinelPrefix)+32 || !strings.HasPrefix(value, aioGenerationSentinelPrefix) {
+		return false
+	}
+	for _, character := range value[len(aioGenerationSentinelPrefix):] {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func isReservedAIOGenerationID(value string) bool {
+	return strings.HasPrefix(value, aioGenerationSentinelPrefix)
 }
 
 func (RuntimeSession) String() string   { return "sandbox.RuntimeSession{identity:<redacted>}" }

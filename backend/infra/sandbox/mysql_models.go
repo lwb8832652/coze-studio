@@ -74,6 +74,8 @@ type schedulerSettingsPO struct {
 	SessionSettingsUpdatedBy uint64     `gorm:"column:session_settings_updated_by;type:bigint unsigned;not null;default:0"`
 	SessionSettingsUpdatedAt *time.Time `gorm:"column:session_settings_updated_at"`
 	AIORuntimeGeneration     uint64     `gorm:"column:aio_runtime_generation;type:bigint unsigned;not null;default:0"`
+	AIORuntimeDeploymentID   string     `gorm:"column:aio_runtime_deployment_id;size:128;not null;default:''"`
+	AIORuntimeSentinelID     string     `gorm:"column:aio_runtime_sentinel_id;size:128;not null;default:''"`
 	CreatedAt                time.Time  `gorm:"column:created_at;not null"`
 	UpdatedAt                time.Time  `gorm:"column:updated_at;not null"`
 }
@@ -81,6 +83,27 @@ type schedulerSettingsPO struct {
 func (schedulerSettingsPO) TableName() string {
 	return "sandbox_scheduler_settings"
 }
+
+type runtimeSessionPO struct {
+	SessionID         string    `gorm:"column:session_id;size:36;primaryKey"`
+	DeploymentID      string    `gorm:"column:deployment_id;size:128;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:1;index:idx_sandbox_runtime_session_recovery,priority:1;index:idx_sandbox_runtime_session_expiry,priority:1"`
+	ProviderID        uint64    `gorm:"column:provider_id;type:bigint unsigned;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:2;index:idx_sandbox_runtime_session_provider"`
+	SpaceID           uint64    `gorm:"column:space_id;type:bigint unsigned;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:3"`
+	UserID            uint64    `gorm:"column:user_id;type:bigint unsigned;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:4"`
+	ThreadID          string    `gorm:"column:thread_id;size:128;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:5"`
+	Profile           string    `gorm:"column:profile;size:16;not null;uniqueIndex:uk_sandbox_runtime_session_business,priority:6"`
+	State             string    `gorm:"column:state;size:24;not null;index:idx_sandbox_runtime_session_recovery,priority:3;index:idx_sandbox_runtime_session_expiry,priority:2"`
+	RuntimeGeneration uint64    `gorm:"column:runtime_generation;type:bigint unsigned;not null;index:idx_sandbox_runtime_session_recovery,priority:2"`
+	UpstreamShellID   *string   `gorm:"column:upstream_shell_id;size:128"`
+	RecoveryReason    string    `gorm:"column:recovery_reason;size:64;not null;default:''"`
+	Version           uint64    `gorm:"column:version;type:bigint unsigned;not null"`
+	LastActivityAt    time.Time `gorm:"column:last_activity_at;not null"`
+	ExpiresAt         time.Time `gorm:"column:expires_at;not null;index:idx_sandbox_runtime_session_expiry,priority:3"`
+	CreatedAt         time.Time `gorm:"column:created_at;not null"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;not null"`
+}
+
+func (runtimeSessionPO) TableName() string { return "sandbox_runtime_sessions" }
 
 type schedulerAuditEventPO struct {
 	EventID      uint64    `gorm:"column:event_id;type:bigint unsigned;primaryKey;autoIncrement"`

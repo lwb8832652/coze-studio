@@ -6,8 +6,10 @@ package sandbox
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionFeaturesAreIndependentOptionalExtensions(t *testing.T) {
@@ -169,14 +171,166 @@ func TestSessionPublicFormattingRedactsStableIdentity(t *testing.T) {
 	}
 	ref := SessionRef{SessionID: "01J5D3N8A0BCDEFGHJKMNPQRST", Key: key, RuntimeGeneration: 7}
 	session := RuntimeSession{Ref: ref, State: SessionStateActive, UpstreamShellID: "upstream-secret"}
+	generation := AIOGenerationState{DeploymentID: "deployment-secret", Generation: 7, SentinelID: "newx-generation-0123456789abcdef0123456789abcdef"}
+	casInput := CompareAndReplaceAIOSentinelInput{
+		DeploymentID:        "deployment-secret",
+		ExpectedSentinelID:  "newx-generation-0123456789abcdef0123456789abcdef",
+		CandidateSentinelID: "newx-generation-fedcba9876543210fedcba9876543210",
+	}
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	acquireInput := AcquireRuntimeSessionInput{
+		Key: key, CandidateSessionID: "91df5ac2-cf99-461f-b1a4-44fdd067b942",
+		RuntimeGeneration: 7, ExpiresAt: now.Add(time.Minute), Now: now,
+	}
+	bindInput := BindRuntimeSessionInput{
+		Ref: ref, ExpectedVersion: 1, UpstreamShellID: "upstream-secret",
+		ExpiresAt: now.Add(time.Minute), Now: now,
+	}
+	transitionInput := TransitionRuntimeSessionInput{
+		Ref: ref, ExpectedVersion: 1, Action: SessionActionRecover, NextRuntimeGeneration: 8,
+		UpstreamShellID: "upstream-secret", ExpiresAt: now.Add(time.Minute), Now: now,
+	}
 
-	for name, value := range map[string]any{"key": key, "ref": ref, "session": session} {
+	for name, value := range map[string]any{
+		"key": key, "ref": ref, "session": session, "generation": generation, "cas_input": casInput,
+		"acquire_input": acquireInput, "bind_input": bindInput, "transition_input": transitionInput,
+	} {
 		for _, rendered := range []string{fmt.Sprint(value), fmt.Sprintf("%#v", value), fmt.Sprintf("%+v", value)} {
-			for _, secret := range []string{"deployment-secret", "thread-secret", "01J5D3N8A0BCDEFGHJKMNPQRST", "upstream-secret", "41", "42", "43"} {
+			for _, secret := range []string{
+				"deployment-secret", "thread-secret", "01J5D3N8A0BCDEFGHJKMNPQRST", "upstream-secret",
+				"newx-generation-0123456789abcdef0123456789abcdef",
+				"newx-generation-fedcba9876543210fedcba9876543210", "41", "42", "43",
+			} {
 				if strings.Contains(rendered, secret) {
 					t.Fatalf("%s formatting leaked %q in %q", name, secret, rendered)
 				}
 			}
 		}
+	}
+}
+
+func TestRuntimeSessionPersistenceContractHasNoIdentityAllocation(t *testing.T) {
+	if _, exists := reflect.TypeOf(RuntimeSession{}).FieldByName("IdentityID"); exists {
+		t.Fatal("RuntimeSession must derive workspace from SessionRef instead of persisting IdentityID")
+	}
+
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	key := SessionKey{DeploymentID: "runner-dev-a", ProviderID: 41, SpaceID: 42, UserID: 43, ThreadID: "thread_01HZX7Y2P0", Profile: SessionProfileCore}
+	acquire, err := NormalizeAcquireRuntimeSessionInput(AcquireRuntimeSessionInput{
+		Key: key, CandidateSessionID: "91df5ac2-cf99-461f-b1a4-44fdd067b942", RuntimeGeneration: 7,
+		ExpiresAt: now.Add(20 * time.Minute), Now: now,
+	})
+	if err != nil || acquire.Key != key || acquire.Now.Location() != time.UTC {
+		t.Fatalf("NormalizeAcquireRuntimeSessionInput() = %#v, %v", acquire, err)
+	}
+
+	transition, err := NormalizeTransitionRuntimeSessionInput(TransitionRuntimeSessionInput{
+		Ref:             SessionRef{SessionID: acquire.CandidateSessionID, Key: key, RuntimeGeneration: 7},
+		ExpectedVersion: 1, Action: SessionActionRelease, Now: now.Add(time.Minute),
+	})
+	if err != nil || transition.ExpectedVersion != 1 {
+		t.Fatalf("NormalizeTransitionRuntimeSessionInput() = %#v, %v", transition, err)
+	}
+
+	for name, input := range map[string]AcquireRuntimeSessionInput{
+		"bad UUID":           {Key: key, CandidateSessionID: "session-1", RuntimeGeneration: 7, ExpiresAt: now.Add(time.Minute), Now: now},
+		"nil UUID":           {Key: key, CandidateSessionID: "00000000-0000-0000-0000-000000000000", RuntimeGeneration: 7, ExpiresAt: now.Add(time.Minute), Now: now},
+		"zero generation":    {Key: key, CandidateSessionID: "91df5ac2-cf99-461f-b1a4-44fdd067b942", ExpiresAt: now.Add(time.Minute), Now: now},
+		"expired":            {Key: key, CandidateSessionID: "91df5ac2-cf99-461f-b1a4-44fdd067b942", RuntimeGeneration: 7, ExpiresAt: now, Now: now},
+		"interactive phase1": {Key: func() SessionKey { invalid := key; invalid.Profile = SessionProfileInteractive; return invalid }(), CandidateSessionID: "91df5ac2-cf99-461f-b1a4-44fdd067b942", RuntimeGeneration: 7, ExpiresAt: now.Add(time.Minute), Now: now},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NormalizeAcquireRuntimeSessionInput(input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("NormalizeAcquireRuntimeSessionInput() error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+	ref := SessionRef{SessionID: acquire.CandidateSessionID, Key: key, RuntimeGeneration: 7}
+	for name, shellID := range map[string]string{
+		"exact sentinel":     "newx-generation-0123456789abcdef0123456789abcdef",
+		"reserved namespace": "newx-generation-business-shell",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NormalizeBindRuntimeSessionInput(BindRuntimeSessionInput{
+				Ref: ref, ExpectedVersion: 1, UpstreamShellID: shellID,
+				ExpiresAt: now.Add(time.Minute), Now: now,
+			}); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("NormalizeBindRuntimeSessionInput() error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestAIOGenerationCASInputIsCanonicalAndOpaque(t *testing.T) {
+	valid := CompareAndReplaceAIOSentinelInput{
+		DeploymentID:        "runner-dev-a",
+		ExpectedSentinelID:  "newx-generation-0123456789abcdef0123456789abcdef",
+		CandidateSentinelID: "newx-generation-fedcba9876543210fedcba9876543210",
+	}
+	if got, err := NormalizeCompareAndReplaceAIOSentinelInput(valid); err != nil || got != valid {
+		t.Fatalf("NormalizeCompareAndReplaceAIOSentinelInput() = %#v, %v", got, err)
+	}
+	initial := valid
+	initial.ExpectedSentinelID = ""
+	if _, err := NormalizeCompareAndReplaceAIOSentinelInput(initial); err != nil {
+		t.Fatalf("initial sentinel CAS error = %v", err)
+	}
+	for name, mutate := range map[string]func(*CompareAndReplaceAIOSentinelInput){
+		"missing deployment": func(input *CompareAndReplaceAIOSentinelInput) { input.DeploymentID = "" },
+		"missing candidate":  func(input *CompareAndReplaceAIOSentinelInput) { input.CandidateSentinelID = "" },
+		"same sentinel":      func(input *CompareAndReplaceAIOSentinelInput) { input.CandidateSentinelID = input.ExpectedSentinelID },
+		"tenant fact":        func(input *CompareAndReplaceAIOSentinelInput) { input.CandidateSentinelID = "space-42/thread-9" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := valid
+			mutate(&input)
+			if _, err := NormalizeCompareAndReplaceAIOSentinelInput(input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("NormalizeCompareAndReplaceAIOSentinelInput() error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+	maxed := AIOGenerationState{
+		DeploymentID: "runner-dev-a", Generation: ^uint64(0),
+		SentinelID: "newx-generation-0123456789abcdef0123456789abcdef",
+	}
+	if _, err := NormalizeAIOGenerationState(maxed); !errors.Is(err, ErrConfigurationInvalid) {
+		t.Fatalf("NormalizeAIOGenerationState(max generation) error = %v, want ErrConfigurationInvalid", err)
+	}
+}
+
+func TestAIOGenerationStateRejectsPartialOrMalformedPersistentState(t *testing.T) {
+	valid := AIOGenerationState{
+		DeploymentID: "runner-dev-a", Generation: 7,
+		SentinelID: "newx-generation-0123456789abcdef0123456789abcdef",
+	}
+	for name, input := range map[string]AIOGenerationState{
+		"initial": {},
+		"active":  valid,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, err := NormalizeAIOGenerationState(input); err != nil || got != input {
+				t.Fatalf("NormalizeAIOGenerationState() = %#v, %v", got, err)
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*AIOGenerationState){
+		"missing deployment": func(state *AIOGenerationState) { state.DeploymentID = "" },
+		"zero generation":    func(state *AIOGenerationState) { state.Generation = 0 },
+		"missing sentinel":   func(state *AIOGenerationState) { state.SentinelID = "" },
+		"malformed sentinel": func(state *AIOGenerationState) { state.SentinelID = "newx-generation-UPPER" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := valid
+			mutate(&input)
+			if _, err := NormalizeAIOGenerationState(input); !errors.Is(err, ErrConfigurationInvalid) {
+				t.Fatalf("NormalizeAIOGenerationState() error = %v, want ErrConfigurationInvalid", err)
+			}
+		})
+	}
+}
+
+func TestSessionNotFoundErrorCodeIsStable(t *testing.T) {
+	if got := ErrorCodeOf(fmt.Errorf("wrapped: %w", ErrSessionNotFound)); got != ErrCodeSessionNotFound {
+		t.Fatalf("ErrorCodeOf(ErrSessionNotFound) = %q, want %q", got, ErrCodeSessionNotFound)
 	}
 }

@@ -199,7 +199,10 @@ func findOrCreateSchedulerSettings(db *gorm.DB, lock bool) (*schedulerSettingsPO
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := db.Omit("SessionSettingsJSON", "SessionSettingsVersion", "SessionSettingsUpdatedBy", "SessionSettingsUpdatedAt", "AIORuntimeGeneration").Create(&po).Error; err != nil {
+	if err := db.Omit(
+		"SessionSettingsJSON", "SessionSettingsVersion", "SessionSettingsUpdatedBy", "SessionSettingsUpdatedAt",
+		"AIORuntimeGeneration", "AIORuntimeDeploymentID", "AIORuntimeSentinelID",
+	).Create(&po).Error; err != nil {
 		return nil, err
 	}
 	return &po, nil

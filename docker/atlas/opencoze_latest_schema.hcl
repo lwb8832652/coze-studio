@@ -6906,6 +6906,46 @@ table "sandbox_scheduler_settings" {
     null = false
     type = json
   }
+  column "session_settings_json" {
+    null = false
+    type = json
+  }
+  column "session_settings_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 1
+  }
+  column "session_settings_updated_by" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "session_settings_updated_at" {
+    null = true
+    type = datetime(3)
+  }
+  column "aio_runtime_generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "aio_runtime_deployment_id" {
+    null    = false
+    type    = varchar(128)
+    charset = "ascii"
+    collate = "ascii_bin"
+    default = ""
+  }
+  column "aio_runtime_sentinel_id" {
+    null    = false
+    type    = varchar(128)
+    charset = "ascii"
+    collate = "ascii_bin"
+    default = ""
+  }
   column "version" {
     null     = false
     type     = bigint
@@ -6929,6 +6969,128 @@ table "sandbox_scheduler_settings" {
   }
   check "chk_sandbox_scheduler_settings_singleton" {
     expr = "`id` = 1"
+  }
+}
+table "sandbox_runtime_sessions" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "session_id" {
+    null    = false
+    type    = char(36)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "deployment_id" {
+    null    = false
+    type    = varchar(128)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "provider_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "space_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "user_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "thread_id" {
+    null    = false
+    type    = varchar(128)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "profile" {
+    null    = false
+    type    = varchar(16)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "state" {
+    null    = false
+    type    = varchar(24)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "runtime_generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "upstream_shell_id" {
+    null    = true
+    type    = varchar(128)
+    charset = "ascii"
+    collate = "ascii_bin"
+  }
+  column "recovery_reason" {
+    null    = false
+    type    = varchar(64)
+    charset = "ascii"
+    collate = "ascii_bin"
+    default = ""
+  }
+  column "version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "last_activity_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "expires_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.session_id]
+  }
+  index "uk_sandbox_runtime_session_business" {
+    unique  = true
+    columns = [column.deployment_id, column.provider_id, column.space_id, column.user_id, column.thread_id, column.profile]
+  }
+  index "idx_sandbox_runtime_session_provider" {
+    columns = [column.provider_id]
+  }
+  index "idx_sandbox_runtime_session_recovery" {
+    columns = [column.deployment_id, column.runtime_generation, column.state, column.session_id]
+  }
+  index "idx_sandbox_runtime_session_expiry" {
+    columns = [column.deployment_id, column.state, column.expires_at, column.session_id]
+  }
+  foreign_key "fk_sandbox_runtime_session_provider" {
+    columns     = [column.provider_id]
+    ref_columns = [table.sandbox_providers.column.id]
+    on_update   = NO_ACTION
+    on_delete   = NO_ACTION
+  }
+  check "chk_sandbox_runtime_session_profile" {
+    expr = "`profile` IN ('core', 'interactive')"
+  }
+  check "chk_sandbox_runtime_session_state" {
+    expr = "`state` IN ('active', 'recovering', 'released', 'destroyed')"
+  }
+  check "chk_sandbox_runtime_session_generation" {
+    expr = "`runtime_generation` > 0"
+  }
+  check "chk_sandbox_runtime_session_version" {
+    expr = "`version` > 0"
   }
 }
 table "sandbox_scheduler_audit_events" {

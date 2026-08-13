@@ -207,6 +207,24 @@ type SessionSettingsAuditRepository interface {
 	UpdateSessionSettingsCASWithAudit(ctx context.Context, input UpdateSessionSettingsInput, audit AppendSchedulerAuditEventInput) (SessionRuntimeSettings, error)
 }
 
+// RuntimeSessionRepository owns the stable Session business key and its
+// optimistic lifecycle. Returned values are detached and never contain a
+// physical workspace path.
+type RuntimeSessionRepository interface {
+	AcquireRuntimeSession(ctx context.Context, input AcquireRuntimeSessionInput) (RuntimeSession, error)
+	GetRuntimeSession(ctx context.Context, ref SessionRef) (RuntimeSession, error)
+	BindRuntimeSessionCAS(ctx context.Context, input BindRuntimeSessionInput) (RuntimeSession, error)
+	TransitionRuntimeSessionCAS(ctx context.Context, input TransitionRuntimeSessionInput) (RuntimeSession, error)
+	ListRecoverableRuntimeSessions(ctx context.Context, input ListRecoverableRuntimeSessionsInput) ([]RuntimeSession, error)
+}
+
+// AIOGenerationRepository is the single MySQL linearization point for a raw
+// AIO sentinel replacement and generation change.
+type AIOGenerationRepository interface {
+	GetAIOGeneration(ctx context.Context, deploymentID string) (AIOGenerationState, error)
+	CompareAndReplaceAIOSentinel(ctx context.Context, input CompareAndReplaceAIOSentinelInput) (AIOGenerationState, bool, error)
+}
+
 type SchedulerAuditRepository interface {
 	AppendSchedulerAuditEvent(ctx context.Context, input AppendSchedulerAuditEventInput) (*SchedulerAuditEvent, error)
 }
