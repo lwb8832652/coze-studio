@@ -10,10 +10,12 @@
 ## 开工顺序
 
 1. 阅读 `docs/superpowers/context/project-context.md`，确认当前产品和架构边界。
-2. 检查当前分支、工作区、worktree、远程跟踪关系和用户已有改动。
-3. 用 codebase-memory 查询相关模块、调用链和预期影响，再核对真实源码。
-4. 只读取与任务直接相关的 runbook、spec 或 plan，不批量加载历史资料。
-5. 明确任务范围、验收方式和是否会改变长期项目事实。
+2. 任务涉及启动、停止、环境配置、Compose、数据库、迁移、dev 合并或发布时，
+   必须先完整阅读 `docs/superpowers/runbooks/project-operations.md`。
+3. 检查当前分支、工作区、worktree、远程跟踪关系和用户已有改动。
+4. 用 codebase-memory 查询相关模块、调用链和预期影响，再核对真实源码。
+5. 只读取与任务直接相关的 runbook、spec 或 plan，不批量加载历史资料。
+6. 明确任务范围、验收方式和是否会改变长期项目事实。
 
 常用入口：
 
@@ -24,6 +26,8 @@
   `docs/superpowers/context/workbench-execution-graph.json`
 - Workbench 图谱运维：
   `docs/superpowers/runbooks/workbench-execution-graph.md`
+- 项目启动、配置、数据库与发布：
+  `docs/superpowers/runbooks/project-operations.md`
 - 本地调试与账号：`docs/superpowers/runbooks/local-debug-and-test.md`
 - `dev` 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox 运维：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
@@ -130,9 +134,10 @@ plans/specs 只能按需追溯，不能用于推断当前合同。
 
 默认发布流程保持简单：需求分支完成必要测试和一次集成检查、获得用户对合并范围的
 明确确认并 fast-forward 合入本地 `dev` 后，不再重复第二轮代码审计或测试。发布前只
-执行实际部署 revision、migration 区间、credential 文件权限和 Atlas 只读状态预检；
-这不是第二次代码审计。预检通过并获得发布确认后，只执行一次本地发布脚本。上述检查
-由执行审计的一方完成，不要求用户手动操作 ACR、GitHub 页面或宝塔接口。
+执行实际部署 revision、migration 区间、credential 文件权限、Atlas 只读状态和
+schema drift 预检；这不是第二次代码审计。预检通过并获得发布确认后，只执行一次
+本地发布脚本。上述检查由执行审计的一方完成，不要求用户手动操作 ACR、GitHub 页面
+或宝塔接口。
 
 在本地 `dev` 工作区执行：
 

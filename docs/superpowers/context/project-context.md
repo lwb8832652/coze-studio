@@ -34,6 +34,13 @@
 
 身份、空间、角色和系统管理员权限始终由服务端认证上下文及持久化事实决定。
 
+`docker/atlas/migrations` 是数据库结构的唯一事实源。普通本地启动不执行 DDL；
+隔离本地数据库只通过显式 `mysql:3306` migration profile 重放版本化 migration；
+共享 dev 只允许 `deploy/dev/publish-dev.sh` 使用仓库外专用凭据执行 forward migration。
+应用账号不得拥有 DDL 权限。发布脚本在 apply 前后把真实 schema 与目标 migration
+重放结果做只读比较，发现 drift 或无法证明一致时阻断 push，不自动 baseline、repair
+或修改 revision。操作细节以 `docs/superpowers/runbooks/project-operations.md` 为准。
+
 对象存储运行时默认由数据库中的 `object_storage_configs` 主配置驱动。首次启动且
 表为空时，后端会从兼容 env 存储配置导入一条主配置，并用
 `OBJECT_STORAGE_CREDENTIAL_KEY` 加密 AK/SK；`OBJECT_STORAGE_CONFIG_SOURCE=env`
@@ -73,12 +80,14 @@ dev 集成采用一次代码与范围审计。需求分支必须先对齐最新 
 本地 `dev` 仅以 fast-forward 合入该已审计 SHA，不重复第二轮代码审计或测试。
 
 合入本地 `dev` 后才执行发布前只读预检：固定实际部署 revision 与目标 SHA，审阅实际
-部署区间的 migration，并验证 Atlas credential 文件安全性及 Atlas status。预检报告后
-还需用户对同一 exact SHA 单独确认，才可运行 `deploy/dev/publish-dev.sh`；禁止直接
-`git push origin dev`、force push、baseline、repair、backfill 或 down migration。
+部署区间的 migration，并验证 Atlas credential 文件安全性、Atlas status 和真实 schema
+drift。预检报告后还需用户对同一 exact SHA 单独确认，才可运行
+`deploy/dev/publish-dev.sh`；禁止直接 `git push origin dev`、force push、baseline、
+repair、backfill 或 down migration。
 
-发布脚本负责再次校验分支、干净工作区、目标 SHA、远程竞态和 Atlas 状态，并按需执行
-已确认的 forward migration 与 exact-SHA 非 force push。远程推送将触发
+发布脚本负责再次校验分支、干净工作区、目标 SHA、远程竞态、migration policy、
+Atlas 状态和 apply 前后 schema drift，并按需执行已确认的 forward migration 与
+exact-SHA 非 force push。远程推送将触发
 `preflight -> build-server/build-web -> verify-images -> promote -> deploy`；GitHub Actions
 构建并验证前后端不可变镜像、晋级 `:dev` 标签并调用宝塔 webhook。完整且现行的流程、
 凭据限制和异常处理以 `docs/superpowers/runbooks/dev-integration-audit.md` 为准。
@@ -148,6 +157,8 @@ Scheduled Task 和飞书入口复用，不等同于已退役的旧 HTTP/IDL 合�
 ## 当前运行手册
 
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
+- 项目启动、配置、数据库与发布：
+  `docs/superpowers/runbooks/project-operations.md`
 - 本地调试：`docs/superpowers/runbooks/local-debug-and-test.md`
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - dev 预发布运维：`deploy/dev/README.md`

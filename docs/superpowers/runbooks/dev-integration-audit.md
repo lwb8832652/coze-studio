@@ -1,5 +1,9 @@
 # dev 单次集成检查手册
 
+项目运行模式、配置分层和数据库 migration 的统一规则见
+`docs/superpowers/runbooks/project-operations.md`。本手册只说明 `dev` 分支的审计、
+fast-forward、发布确认和异常停止条件。
+
 ## 默认路径
 
 每个需求仍在独立 `codex/` 分支完成，但只做一次代码与范围审计：
@@ -179,8 +183,9 @@ deploy/dev/publish-dev.sh --status \
   "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 ```
 
-`--status` 必须完成 pinned Atlas validate/status、credential 脱敏和远程 SHA 复核，
-不得 apply 或 push。checksum、revision、schema 基线或 migration 清单不一致时立即停止。
+`--status` 必须完成 pinned Atlas validate/status、发布前 schema drift、credential 脱敏
+和远程 SHA 复核，不得 apply 或 push。checksum、revision、真实 schema 或 migration
+清单不一致时立即停止。
 若实际部署区间存在待执行 migration，还必须确认数据库网络只允许受控来源，并使用专用
 最小权限 migration 账号，禁止 root；无法证明时不得请求数据库变更授权。
 
@@ -203,8 +208,9 @@ push，以及该 push 触发的标准镜像发布和预发布部署。确认不�
 数据库、生产、配置、回滚和服务器操作。
 
 发布脚本会再次校验当前分支、干净工作区、目标 SHA、祖先关系、远程竞态和 Atlas
-状态，再按顺序执行 validate、status、必要的 forward apply 和 exact push。任一步
-失败都停止；不得改用直接 push、force 参数或未经确认的数据库修复命令。
+状态，再按顺序执行 migration policy、validate、status、发布前 drift、必要的 forward
+apply、发布后 drift 和 exact push。任一步失败都停止；不得改用直接 push、force 参数
+或未经确认的数据库修复命令。
 
 若 migration apply 已成功但 push 失败，schema 可能领先于远程代码。保留两个 SHA
 和脚本输出并报告，不自动重试 apply、push、baseline、repair 或回滚。

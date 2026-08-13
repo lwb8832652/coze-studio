@@ -1,5 +1,9 @@
 # dev 预发布部署手册
 
+项目运行模式、配置分层、数据库 migration 与 exact-SHA 发布入口见
+`docs/superpowers/runbooks/project-operations.md`。本手册只承载 dev 服务器、ACR、
+GitHub Actions、宝塔、容器和 NSQ 的部署细节。
+
 ## 适用范围
 
 本目录用于单实例 dev/预发布环境。服务器运行 `nsqd`、`coze-server` 和

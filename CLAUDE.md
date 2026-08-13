@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Before any startup, shutdown, environment, Compose, database, migration, dev merge, or release work,
+read `docs/superpowers/runbooks/project-operations.md` completely. It is the authoritative operations
+entry point; topic-specific documents only add details.
+
 ## Project Overview
 
 Coze Studio is an all-in-one AI agent development platform with both frontend (React + TypeScript) and backend (Go) components. The project uses a sophisticated monorepo architecture managed by Rush.js with 135+ frontend packages organized in a hierarchical dependency system.
@@ -17,19 +21,14 @@ cd coze-studio
 # Install frontend dependencies
 rush update
 
-# For Docker-based development
-cd docker
-cp .env.example .env
-# Configure model settings in backend/conf/model/
-docker compose up -d
-# Access at http://localhost:8888
+# Shared-dev local development
+cp docker/.env.debug.example docker/.env.debug
+# Replace placeholders with DML-only shared-dev application credentials.
+chmod 600 docker/.env.debug
 ```
 
 ### Development Workflow
 ```bash
-# Start middleware services (MySQL, Redis, Elasticsearch, etc.)
-make middleware
-
 # Start Go backend in development mode
 make server
 
@@ -37,8 +36,8 @@ make server
 cd frontend/apps/coze-studio
 npm run dev
 
-# Full development environment
-make debug
+# Only when selected local dependencies are unavailable
+# Follow project-operations.md before starting Compose profiles.
 ```
 
 ### Build Commands
@@ -112,18 +111,17 @@ cd backend && go test ./...
 
 ### Database Management
 ```bash
-# Sync database schema
-make sync_db
+# Start and migrate an isolated Compose-local MySQL
+make db_local_up
+make db_local_migrate
 
-# Dump database schema
-make dump_db
-
-# Initialize SQL data
-make sql_init
-
-# Atlas migration management
+# Rebuild Atlas migration checksums with the pinned container image
 make atlas-hash
 ```
+
+`docker/atlas/migrations` is the only schema source. Shared dev migrations run through the exact-SHA
+release procedure in `docs/superpowers/runbooks/project-operations.md`; application configuration must
+not contain migration credentials.
 
 ## Key Development Patterns
 
@@ -165,14 +163,14 @@ Before deployment, configure AI models in `backend/conf/model/`:
 - For hot reload issues, check Rsbuild configuration in specific package
 
 ### Backend Development
-- Ensure middleware services are running (`make middleware`)
-- Check database connectivity and schema sync
+- Start only the dependencies required by the selected operations mode
+- Check database connectivity and Atlas migration status using the selected operations mode
 - Verify model configurations are properly set
 
 ### Docker Issues
 - Ensure sufficient resources (minimum 2 Core, 4GB RAM)
-- Check port conflicts (8888 for frontend, various for services)
-- Use `make clean` to reset Docker volumes if needed
+- Check port conflicts (8080 for frontend, 8888 for backend, plus selected services)
+- Treat `make clean` as destructive; use it only after verifying the local data target and obtaining approval
 
 ## IDL and Code Generation
 
