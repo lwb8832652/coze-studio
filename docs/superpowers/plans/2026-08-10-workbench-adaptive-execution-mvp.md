@@ -380,28 +380,30 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       Config 不改。本切片不新增 Attempt enrollment，不接 `ADKExecutor.Resume`，不实现
       legacy decoder、typed inheritance、IDL/UI；Human attempt rollover 与 C3h2 继续 deferred。真实
       MySQL 双连接仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE guard 不变。
-- [ ] P1M-C3h2 的重新进入门必须先关闭 Human Journal Attempt rollover：当前 Human interrupt 只把
-      source Run 置为 `interrupted`，source Attempt 仍保持 `running + active_slot=1`，而新 queued
-      resume Run 没有自己的 active Attempt；因此不得直接把 `ADKExecutor.Resume` 接到 C3a，也不得
-      复用会把正常 Human 等待误记为失败的 recovery 路径。最小安全闭环须在同一事务内验证并终结
-      source Attempt、释放 active slot、创建带 source Attempt/checkpoint lineage 的 target Attempt，
-      支持 deterministic replay 与并发单赢家；同时先明确 Attempt 的非错误 `interrupted` 终态合同，
-      包括 entity、数据库 CHECK、IDL/生成 client/API 映射。若本阶段不接受这组持久化/公共合同变化，
-      Journal-enrolled Human resume 必须保持 fail closed，本项继续 `blocking_remaining`，不能宣称 P1M
-      Resume 闭环完成；ordinary non-Journal recovery 也不得伪造 enrollment。
+- [x] P1M-C3h2b 已关闭 Human Journal Attempt rollover 阻断：兼容 reader、三项数据库 CHECK、IDL/
+      生成 client 与前端 terminal reader 先行，随后 canonical Human Resume 以不可变 authority 做
+      full aggregate replay；首次写在单个 Thread-first 事务内严格追加 source resolved 与 dedicated
+      `journal.attempt.interrupted` terminal、终结 source Attempt 并释放 active slot，最后创建带 source
+      Attempt/checkpoint lineage 的 pending target Attempt。exact replay 不依赖后来 source/target 生命周期
+      或 checkpoint 可用性，半写/漂移 fail closed，不同 key 并发只允许单赢家；target lineage 继续由
+      C3h2a 在 `ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 在公共
+      RunEvents count/cursor 与 projector 两层过滤。compatible-reader floor `38ddbaf6f` 是 activation
+      `212546bc` 后的回滚下限。真实 MySQL 双连接验收因缺 disposable DSN/DDL 仍为 `NOT_VERIFIED`；
+      ordinary non-Journal enrollment、legacy decoder 和 gate-on producer仍 deferred，因此 P1M 未 PASS。
 - [x] P1M-C3h1b 按交付优先先落临时安全门：Human Resume 保留 existing idempotent replay 优先；
       idempotency miss 后、checkpoint 或任何新写前，active 或 terminal 的已 enrolled Journal Attempt
       均返回现有 `ErrHumanInteractionResumeConflict`（canonical `409 run_not_resumable`）；只有明确
       `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，未知 repository/dependency 错误原样传播。
       本包不新增 migration、IDL、UI、feature flag 或 runtime edge，也不把 fail-closed 门禁冒充 C3h2
-      rollover 完成；门禁只能由上条原子 rollover re-entry gate 的同一 reviewed change 删除。
+      rollover 完成；该门禁已由 C3h2b 的同一 reviewed activation 删除，保留此项仅记录历史安全阶段。
 - [x] P1M-C3h2a 按交付优先只接现有 Journal recovery 已原子 enrollment 的 queued target：
       `ADKExecutor.Resume` 在 `buildRuntime` 前先 exact replay target bootstrap；target 缺失时必须按
       target Attempt 的 source Attempt/checkpoint lineage 读取严格 durable source bootstrap，生成
       `typed_inheritance` admission 与 target revision-1 baseline decision，并用 target lease/generation
       fenced commit。source 缺失、损坏、identity/lineage 漂移或 gate-on 均 fail closed，不做 legacy
-      Config fallback。本包不处理 Human/ordinary non-Journal Resume，不新增 migration、IDL/UI 或
-      producer；真实 MySQL 双连接仍 `NOT_VERIFIED`，完成本项也不得把 P1M 标为 PASS。
+      Config fallback。该 C3h2a 切片当时不处理 Human/ordinary non-Journal Resume；后续 C3h2b 已接入
+      enrolled Human rollover。ordinary enrollment与gate-on producer仍 deferred；真实 MySQL 双连接仍
+      `NOT_VERIFIED`，完成这些切片也不得把 P1M 标为 PASS。
 - [x] P1M-C3i1 按交付优先先交付 canonical Typed Submission V2 服务端接受：18 个封闭 IDL
       struct 与生成的 Go/TypeScript 合同覆盖 Create Thread 的 atomic/deferred submission、
       Create/Wait/Stream Run 的 turn/retry submission 和 Resume human response；raw strict validator
@@ -415,9 +417,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       和唯一 canonical client 分别写 `initial_submission_v2`/`deferred_initial_submission_v2`、
       `submission_v2` 或 `response_v2`；upload-before-run、附件顺序、歧义 key 复用、固定 retry key、
       Human semantic attempt 与 409 authoritative refresh 均保持。V1 server reader 和第三方兼容
-      调用仍保留；本包不宣称 Human Resume 全局闭环，也不实现 legacy decoder、Human Attempt
-      rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race。
-      后者仍 `NOT_VERIFIED`，P1M 未 PASS。
+      调用仍保留。C3i2 自身不实现 Human Attempt rollover；后续 C3h2b 已完成 enrolled Human Resume
+      原子 rollover 与 full replay。legacy decoder、ordinary non-Journal enrollment、gate-on producer
+      和真实 MySQL typed recovery/rollover race仍未完成；后者为 `NOT_VERIFIED`，P1M 未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

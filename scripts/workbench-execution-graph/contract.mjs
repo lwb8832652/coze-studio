@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '72a5a96d932fce8f998c8175913a0b539697934bea6c0e81275e851cfca686e2';
+  '664125f2a7e48dd321b01287f7d21d5728dc6a9a7c5ff50f0d0bbbd537601ff2';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -106,9 +106,13 @@ const REQUIRED_NODE_IDS = [
   'application.create_thread',
   'application.create_task_thread',
   'application.create_run',
+  'application.resume_human',
+  'domain.create_run_bundle',
+  'repository.create_run_bundle',
   'runtime.new_run_policy',
   'runtime.selector.execute',
   'runtime.adk_executor.execute',
+  'runtime.adk_executor.resume',
   'historical.legacy_runtime',
 ];
 const REQUIRED_EDGE_IDS = [
@@ -125,6 +129,9 @@ const REQUIRED_EDGE_IDS = [
   'edge.canonical_thread_submission_calls_create_task_thread',
   'edge.canonical_create_run_routes_handler',
   'edge.canonical_run_handler_calls_app_create_run',
+  'edge.canonical_run_handler_calls_resume',
+  'edge.resume_app_creates_bundle',
+  'edge.create_run_domain_persists_bundle',
   'edge.canonical_thread_validates_typed_v2',
   'edge.canonical_run_validates_typed_v2',
   'edge.canonical_run_stream_validates_typed_v2',
@@ -190,6 +197,21 @@ const REQUIRED_EDGE_SHAPES = {
     'http.workbench.canonical_run',
     'delegates_to',
     'application.create_run',
+  ],
+  'edge.canonical_run_handler_calls_resume': [
+    'http.workbench.canonical_run',
+    'resumes',
+    'application.resume_human',
+  ],
+  'edge.resume_app_creates_bundle': [
+    'application.resume_human',
+    'delegates_to',
+    'domain.create_run_bundle',
+  ],
+  'edge.create_run_domain_persists_bundle': [
+    'domain.create_run_bundle',
+    'persists_via',
+    'repository.create_run_bundle',
   ],
   'edge.repo_event_streams_canonical': [
     'repository.create_run_event',

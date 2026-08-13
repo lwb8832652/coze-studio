@@ -127,9 +127,10 @@ idempotency fingerprint；V1 继续可读。P1M-C3i2 已把五个第一方 write
 无附件 atomic create、带附件 deferred create + turn、TaskDetail follow-up、top-level retry 与
 Human Resume 分别只写 `initial_submission_v2`/`deferred_initial_submission_v2`、
 `submission_v2` 或 `response_v2`，并继续复用唯一 canonical client、upload-before-run 顺序及
-既有语义幂等 attempt。服务端 V1 reader 和第三方兼容调用仍保留；这不代表 Human Resume 已全局
-闭环，也不实现 legacy decoder、Human Attempt rollover、ordinary non-Journal enrollment、gate-on
-producer 或真实 MySQL typed recovery race。后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
+既有语义幂等 attempt。服务端 V1 reader 和第三方兼容调用仍保留。C3i2 自身不包含 Human Attempt
+rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 full replay。legacy decoder、
+ordinary non-Journal enrollment、gate-on producer 和真实 MySQL typed recovery/rollover race仍未完成；
+后者为 `NOT_VERIFIED`，P1M 未 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -175,19 +176,24 @@ consumer 退休。
 interaction resume、ordinary non-Journal lease recovery 和 Journal recovery 在写入新 Config
 前，仅删除来源 Config 顶层的七个退休字段；`runtime`、模型、资源、Token Usage、
 opaque 配置和 nested 同名业务字段全部保留。来源历史 Config 与 Context 原样保持，
-本切片不新增 Attempt enrollment，不把这些新 Run 接入 `ADKExecutor.Resume`，也不实现
-legacy decoder、typed inheritance、IDL 或 UI。Human attempt rollover 与后续 C3h2 继续 deferred。
-P1M-C3h1b 在此基础上为 Human Resume 增加临时 fail-closed 门：existing idempotent replay
-仍最先返回；仅在 replay miss 后检查来源 Run 的 Journal enrollment，并在读取 checkpoint 或
-任何新写前拒绝 active/terminal enrolled Attempt，沿现有冲突映射返回 canonical
-`409 run_not_resumable`。明确 `ErrJournalNotEnrolled` 才继续既有 non-Journal Resume，其他
-repository/dependency 错误原样传播。该切片不实现 Human attempt rollover、Resume facts、
-IDL/UI 或 MySQL 验收，P1M/P1L 状态不变。
+该 C3h1a 切片本身不新增 Attempt enrollment，不把这些新 Run 接入 `ADKExecutor.Resume`，也不实现
+legacy decoder、typed inheritance、IDL 或 UI；这些历史范围说明已由后续 C3h2a/C3h2b 的 enrolled
+Resume typed inheritance 与原子 Attempt rollover 取代。
 P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：其 immediate source 必须具有
 有效 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
-`typed_inheritance` snapshot。Legacy fallback、Human rollover、ordinary non-Journal enrollment、
-IDL/UI 和 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
+`typed_inheritance` snapshot。该 C3h2a 切片当时不包含 Human rollover；后续 C3h2b 已补齐 enrolled
+Human Resume。Legacy fallback、ordinary non-Journal enrollment、gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
 明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
+P1M-C3h2b 已用原子 Journal rollover 替换 C3h1b 临时门。canonical Human Resume 先以不可变
+authority 做 full aggregate replay；exact replay 即使 source 生命周期已变化仍返回同一 target，
+损坏或漂移 aggregate fail closed。首次写在同一 Thread-first 事务内追加 source resolved 与 physical
+`journal.attempt.interrupted` terminal、终结 source Attempt 并释放 active slot，再创建带 source
+Attempt/checkpoint lineage 的 pending target Attempt；该 lineage 继续由 C3h2a 在
+`ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 不进入公共
+RunEvents、total/cursor 或 TaskDetail replay/live。phase-1 compatible-reader build `38ddbaf6f` 是首次
+写入 `interrupted` 后的回滚下限，producer activation 为 `212546bc`。ordinary non-Journal
+enrollment、gate-on producer 与 legacy decoder 仍 deferred；真实 MySQL C3h2b 验收为
+`NOT_VERIFIED`，因此 P1M 仍未 PASS。
 真实 MySQL 双连接验收仍待显式
 disposable DSN/DDL gate；legacy runtime、gate-on producer、runtime selector/handler、IDL
 和 frontend/UI 未接；真正的 server inference policy 仍未实现。

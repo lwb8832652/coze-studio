@@ -52,8 +52,17 @@ Thread
   Typed Submission V2：raw JSON 先严格校验，再确定性映射到既有 application command 和
   idempotency fingerprint，V1 继续可读。C3i2 的五个第一方 writer 已全部发送 V2：无附件新任务、
   带附件新任务、追问、top-level retry 与 Human Resume；附件流仍先上传，歧义重试仍复用同一
-  idempotency key。服务端 V1 reader 与第三方兼容调用仍存在，Human Resume 并非全局闭环；P1M
-  未 PASS，真实 MySQL typed recovery race 仍为 `NOT_VERIFIED`。
+  idempotency key。服务端 V1 reader 与第三方兼容调用仍存在；C3i2 自身不含 Attempt rollover，
+  后续 C3h2b 已补齐 enrolled Human Resume。P1M 未 PASS，真实 MySQL typed recovery/rollover race仍为
+  `NOT_VERIFIED`。
+- C3h2b 已让 enrolled Human Resume 先做不可变 authority 的 full aggregate replay，并在首次写入时
+  以单个 Thread-first 事务完成 source resolved、source Attempt `interrupted`/active-slot 释放和
+  pending target Attempt 创建。target 继承 source Attempt/checkpoint lineage，继续复用 C3h2a 在
+  `ADKExecutor.Resume` 构建 runtime 前的 typed bootstrap。physical
+  `journal.attempt.interrupted` helper 不进入公共 RunEvents、total/cursor 或 TaskDetail replay/live。
+  compatible-reader floor `38ddbaf6f` 是 activation `212546bc` 后的回滚下限；ordinary
+  non-Journal enrollment、gate-on producer 和 legacy decoder 仍 deferred，真实 MySQL 验收为
+  `NOT_VERIFIED`，P1M 未 PASS。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

@@ -492,7 +492,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2a delivery-first runtime and new-write retirement",
+      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2b delivery-first runtime and new-write retirement",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -589,9 +589,9 @@
           "locator": "resumeConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
         },
         {
-          "path": "backend/application/agentthread/human_interaction_resume.go",
-          "symbol": "(*ApplicationService).requireHumanResumeJournalRollover",
-          "locator": "func (s *ApplicationService) requireHumanResumeJournalRollover(ctx context.Context, sourceRunID int64) error {"
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).GetHumanResumeRolloverReplay",
+          "locator": "func (r *threadRepository) GetHumanResumeRolloverReplay("
         },
         {
           "path": "backend/application/agentthread/journal_recovery.go",
@@ -687,7 +687,11 @@
         },
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationResumeHumanInteractionRejectsJournalEnrolledSourceRun(t *testing.T) {"
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDeletion(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/service_test.go",
@@ -811,7 +815,11 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionReturnsFullRolloverReplayBeforeMutableState"
         }
       ]
     },
@@ -1086,12 +1094,26 @@
           "path": "backend/domain/agentthread/repository/mysql.go",
           "symbol": "(*threadRepository).CreateRunBundle",
           "locator": "func (r *threadRepository) CreateRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).createHumanResumeRunBundle",
+          "locator": "func (r *threadRepository) createHumanResumeRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).GetHumanResumeRolloverReplay",
+          "locator": "func (r *threadRepository) GetHumanResumeRolloverReplay("
         }
       ],
       "evidence": [
         {
-          "path": "backend/domain/agentthread/repository/mysql_test.go",
-          "locator": "func TestThreadRepositoryCreateAndGetRun"
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverCommitsExactAggregateAndAdjacentSequences"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDeletion"
         }
       ]
     },
@@ -3289,11 +3311,11 @@
       "evidence": [
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
-          "locator": "if ('submission_v2' in request && request.submission_v2) {"
+          "locator": "if (isTypedRunRequest(request)) {"
         },
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
-          "locator": "? { interrupt_id: interruptID, response_v2: request.response_v2 }"
+          "locator": "json: isTypedResumeRequest(request)"
         }
       ]
     },
@@ -3543,7 +3565,8 @@
       "chain_ids": [
         "run.atomic_create",
         "entry.workbench_canonical_run_http",
-        "entry.workbench_canonical_run_stream"
+        "entry.workbench_canonical_run_stream",
+        "control.human_resume"
       ],
       "confidence": "extracted",
       "evidence": [
@@ -3561,7 +3584,8 @@
       "chain_ids": [
         "run.atomic_create",
         "entry.workbench_canonical_run_http",
-        "entry.workbench_canonical_run_stream"
+        "entry.workbench_canonical_run_stream",
+        "control.human_resume"
       ],
       "confidence": "extracted",
       "evidence": [
@@ -4320,7 +4344,7 @@
       "from": "runtime.adk_executor.resume",
       "to": "application.adaptive_mode_free_contract_boundary",
       "relation": "delegates_to",
-      "chain_ids": ["framework.eino_sdk"],
+      "chain_ids": ["framework.eino_sdk", "control.human_resume"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -5869,22 +5893,32 @@
       "id": "control.human_resume",
       "name": "Human interaction resume bundle",
       "entry": "http.workbench.canonical_run",
-      "terminal": "domain.create_run_bundle",
+      "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
         "http.workbench.canonical_run",
         "application.resume_human",
-        "domain.create_run_bundle"
+        "domain.create_run_bundle",
+        "repository.create_run_bundle"
       ],
       "ordered_edge_ids": [
         "edge.canonical_run_handler_calls_resume",
-        "edge.resume_app_creates_bundle"
+        "edge.resume_app_creates_bundle",
+        "edge.create_run_domain_persists_bundle"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverCommitsExactAggregateAndAdjacentSequences"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapHumanResumeConsumesTypedLineageBeforeADKBuild"
         },
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
@@ -5894,7 +5928,8 @@
       "required_side_edge_ids": [
         "edge.human_resume_serializes_typed_response",
         "edge.human_resume_routes_canonical_client",
-        "edge.typed_v2_serializer_uses_thread_client"
+        "edge.typed_v2_serializer_uses_thread_client",
+        "edge.adk_resume_delegates_adaptive_bootstrap"
       ]
     },
     {
@@ -6537,9 +6572,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2a delivery-first slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2b delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h1b adds no edge: Human Resume keeps existing idempotent replay first, then on replay miss `requireHumanResumeJournalRollover` rejects active or terminal enrolled Journal Attempts before checkpoint read or any write through the existing canonical 409 conflict mapping; only explicit ErrJournalNotEnrolled continues the non-Journal path, while unexpected repository/dependency errors propagate. C3h2a adds only the narrow current Resume edge for an already-enrolled Journal recovery target whose immediate source has valid fresh/typed durable bootstrap; the target commits or exactly replays gate-off typed inheritance before buildRuntime. Human rollover, ordinary non-Journal enrollment, legacy fallback, C3h2b, gate-on producer, IDL and UI remain deferred. The real MySQL typed recovery race is not implemented and remains NOT_VERIFIED. Adaptive finalizer gate, runtime selector/handler and other recovery-source consumers remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a/C3h1b/C3h2a are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h2a adds the narrow Resume bootstrap edge for an already-enrolled target whose immediate source has valid fresh/typed durable bootstrap. C3h2b replaces the C3h1b fail-closed gate with full immutable aggregate replay plus a Thread-first atomic Journal rollover: source resolved and dedicated interrupted terminal facts commit before the source active slot is released and the lineage-bearing target Attempt is inserted, then ADK Resume consumes typed inheritance before buildRuntime. The physical `journal.attempt.interrupted` helper is filtered before public RunEvent counts/cursors and again at projection. Ordinary non-Journal enrollment, legacy fallback and gate-on producer remain deferred. The real MySQL typed recovery race is not implemented and remains NOT_VERIFIED. Adaptive finalizer gate, runtime selector/handler and other recovery-source consumers remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a/C3h1b/C3h2a/C3h2b are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",

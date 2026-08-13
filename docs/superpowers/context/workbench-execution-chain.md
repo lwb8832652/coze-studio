@@ -1,6 +1,6 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-08-12
+更新时间：2026-08-13
 状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
@@ -177,20 +177,24 @@ identity 在本地关闭 Plan、Subagent、thinking 与 reasoning，并在 adapt
 non-Journal lease recovery 和 Journal recovery 仍使用各自现有的 Run bundle/create 链，
 但目标 Run Config 新写前仅删除来源 Config 顶层的七个退休字段。`runtime`、模型、
 资源、Token Usage、opaque 配置和 nested 同名字段保留；Context 与来源历史 Config
-均不改写。本切片不新增 Attempt enrollment，不把恢复目标接入
-`ADKExecutor.Resume`，不实现 legacy decoder、typed inheritance、IDL/UI；Human attempt rollover 和
-C3h2 继续 deferred。
-P1M-C3h1b 不增加执行边，只在既有 Human Resume 应用链加入临时 fail-closed gate：existing
-idempotent replay 保持第一优先；replay miss 后，`requireHumanResumeJournalRollover` 在 checkpoint
-读取及任何新写之前检查来源 Run，active 或 terminal enrolled Journal Attempt 均沿现有冲突语义返回
-canonical `409 run_not_resumable`。只有明确 `ErrJournalNotEnrolled` 继续 non-Journal Resume；其余
-repository/dependency 错误原样传播。Human rollover、Resume facts、IDL/UI、真实 MySQL 验收及
-P1M/P1L 均 deferred。
+均不改写。该 C3h1a 切片本身不新增 Attempt enrollment，不把恢复目标接入
+`ADKExecutor.Resume`，不实现 legacy decoder、typed inheritance、IDL/UI；这些历史范围说明已由
+后续 C3h2a/C3h2b 的 enrolled Resume typed inheritance 与原子 Attempt rollover 取代。
 P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：immediate source 必须具有有效
 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
-`typed_inheritance` snapshot。Legacy fallback、Human rollover、ordinary non-Journal enrollment、
-IDL/UI 与 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
+`typed_inheritance` snapshot。该 C3h2a 切片当时不包含 Human rollover；后续 C3h2b 已补齐 enrolled
+Human Resume。Legacy fallback、ordinary non-Journal enrollment 与 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
 明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
+P1M-C3h2b 把 enrolled Human Resume 接入 full replay 与原子 Attempt rollover。Application 在任何
+source status/Attempt/checkpoint 可变读取前查询完整 Run/Message/resolved/source+target
+Attempt/terminal aggregate；exact aggregate 直接回放，漂移或半写 fail closed。首次写复用
+`CreateRunBundle` 的 Human 专用分支，repository 在同一 Thread-first 事务中追加 source resolved 与
+physical terminal、CAS source Attempt 为 `interrupted` 并释放 active slot，最后创建带 source
+Attempt/checkpoint lineage 的 pending target Attempt；随后继续走 C3h2a typed
+bootstrap-before-buildRuntime。physical helper 不改变公共 RunEvent total/cursor 或 TaskDetail
+replay/live。compatible-reader floor 是 `38ddbaf6f`，activation 是 `212546bc`；ordinary
+non-Journal enrollment、gate-on producer、legacy decoder 仍 deferred，真实 MySQL C3h2b 验收为
+`NOT_VERIFIED`，P1M 未 PASS。
 真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；legacy runtime、gate-on、runtime
 selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
 policy 仍未切换。historical runtime controls 与 package-private
@@ -326,9 +330,9 @@ presence/`null`、union、V1/V2 混用和退休执行控制，映射阶段保持
 TaskDetail follow-up、top-level retry 与 Human Resume 都经共享 typed serializer 和唯一 canonical
 client 发送版本互斥的 V2 字段；deferred/follow-up 保持 upload-before-run，歧义 follow-up、固定 retry
 key 与 Human semantic attempt 均不自动旋转或重复写。V1 server reader 与第三方兼容调用继续可用。
-该链没有增加 repository/runtime 状态机，也没有完成全局 Human Resume、legacy decoder、Human
-rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race；后者
-仍为 `NOT_VERIFIED`，P1M 未 PASS。
+C3i2 自身没有增加 repository/runtime 状态机；后续 C3h2b 已补齐 enrolled Human Resume 的原子
+rollover 与 full replay。legacy decoder、ordinary non-Journal enrollment、gate-on producer 和真实
+MySQL typed recovery/rollover race仍未完成；后者为 `NOT_VERIFIED`，P1M 未 PASS。
 
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error
@@ -524,8 +528,10 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 - Cancel：Hertz `CancelCanonicalRun` -> `ApplicationService.CancelRun` ->
   `threadService.RequestRunCancellation`，先持久化取消事实，再通过
   `ADKCancelRegistry.Cancel` 通知活跃 Eino 执行。
-- Human resume：`ResumeCanonicalRun` -> `ResumeHumanInteraction`，验证来源 Run、
-  interrupt 和 checkpoint 后原子创建 queued resume bundle。
+- Human resume：`ResumeCanonicalRun` -> `ResumeHumanInteraction` 先执行 full aggregate replay；
+  replay miss 才验证 source Attempt/checkpoint，再由 Human `CreateRunBundle` 分支原子完成 source
+  Attempt `interrupted` 与 pending target Attempt rollover。target lineage 随后由
+  `ADKExecutor.Resume` 在 `buildRuntime` 前消费为 typed bootstrap。
 - Subagent retry：`RetryCanonicalSubagentRun` -> `RetrySubagentRun`，根据失败或取消
   的子 Run 创建幂等顶层 retry command bundle。
 - Checkpoint resume：`ADKCheckpointStore` 保存 Eino bytes 的内部封装；
