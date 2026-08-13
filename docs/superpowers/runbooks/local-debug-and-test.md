@@ -215,8 +215,9 @@ export no_proxy="localhost,127.0.0.1,::1"
 
 ## Debug MySQL
 
-- 默认本地开发使用 `docker/.env.debug` 中的共享 dev 地址和受限应用账号，不启动
-  本地 MySQL。应用账号不保存 `ATLAS_URL`，也不拥有 DDL 权限。
+- 默认本地开发使用 `docker/.env.debug` 中的共享 dev 地址和独立非 root 应用账号，
+  不启动本地 MySQL。应用账号不保存 `ATLAS_URL` 或 migration 凭据；资源库
+  `table_<id>` 的创建、编辑和删除仍需要目标业务库内的受控 DDL。
 - migration 开发使用统一手册中的隔离本地数据库模式，先运行
   `make db_local_up`，再运行 `make db_local_migrate`。
 - `bin/.env.debug` 是启动脚本生成的运行副本，不手工维护。

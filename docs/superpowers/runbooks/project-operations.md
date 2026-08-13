@@ -15,9 +15,9 @@
 
 ## 运行模式选择
 
-| 模式 | 数据库 | 需要启动的容器 | DDL 入口 | 适用场景 |
+| 模式 | 数据库 | 需要启动的容器 | 系统结构 DDL 入口 | 适用场景 |
 | --- | --- | --- | --- | --- |
-| 默认本地开发 | 共享 dev MySQL | 只启动本机缺少的非数据库依赖 | 无 | 日常缺陷修复和页面回归 |
+| 默认本地开发 | 共享 dev MySQL | 只启动本机缺少的非数据库依赖 | 无（资源库动态表除外） | 日常缺陷修复和页面回归 |
 | 隔离本地数据库 | Compose 内 `mysql:3306` | `mysql`，按需启动其他依赖 | `make db_local_migrate` | migration 开发、空库重放、破坏性本地实验 |
 | 远程 dev 发布 | 共享 dev MySQL | 本机不启动数据库服务 | `deploy/dev/publish-dev.sh` | 已审计代码合入和标准 dev 发布 |
 
@@ -25,7 +25,8 @@
 
 - 页面和业务缺陷回归使用默认本地开发。
 - 修改 `docker/atlas/migrations` 或验证数据库结构时使用隔离本地数据库。
-- 共享 dev 的结构变更只走远程 dev 发布。普通本地启动不执行 DDL。
+- 共享 dev 的 migration 和系统结构变更只走远程 dev 发布。普通本地
+  启动不自动执行 migration DDL；用户显式操作资源库动态表不在此限制内。
 - 任务需要切换模式时，先停止当前模式，核对 `MYSQL_HOST`、`MYSQL_PORT` 和账号，
   再启动下一种模式。
 
@@ -35,8 +36,10 @@
 
 1. 从 `docker/.env.debug.example` 创建 ignored 的 `docker/.env.debug`。
 2. 配置共享 dev 的 MySQL、Redis、Elasticsearch 和对象存储地址。
-3. MySQL 使用受限应用账号。应用账号不得拥有 DDL 权限，包括 `CREATE`、`ALTER`、
-   `DROP` 和索引管理权限。
+3. MySQL 使用独立非 root 应用账号，不与 migration 账号混用。当前资源库创建、
+   编辑和删除会对资源库动态表 `table_<id>` 执行受控 DDL，因此应用账号仍需
+   目标业务库内的 `CREATE`、`ALTER`、`DROP` 等应用所需权限，但不得拥有全局
+   管理、授权或 migration 专用权限。
 4. `docker/.env.debug` 不得包含 `ATLAS_URL`、迁移账号或 root 凭据。
 5. 用 `git check-ignore docker/.env.debug` 确认文件不会被提交，并执行
    `chmod 600 docker/.env.debug`。
@@ -128,9 +131,14 @@ make down
 | `/opt/coze-dev/app.env` | 服务器本地 | 应用依赖和运行密钥 | 部署账号所有，`600`；不得含迁移 DSN |
 | 数据库配置中心 | 数据库 | 模型、对象存储、站点和运行开关 | 按页面合同更新；需要时重启后端 |
 
-应用账号和 migration 账号必须分离。应用账号不得拥有 DDL 权限；migration 账号只由
-发布脚本读取，不写入应用 env、GitHub Secrets、日志或测试夹具。用数据库的
-`SHOW GRANTS` 结果核对权限，但报告中不要输出账号、主机或 DSN。
+应用账号与 migration 账号必须分离。应用账号使用独立非 root 身份；由于资源库
+动态表 `table_<id>` 是运行时业务对象，它需要目标业务库内的受控 DDL。现阶段应按
+应用实际需求授权，不授全局权限、`GRANT OPTION`、账号管理或仓库发布所需的
+migration 凭据。若要进一步取消应用连接的系统表 DDL 风险，需先把动态表拆到独立
+schema 和独立连接，不属于本次运维门禁的无损改动。
+
+migration 账号只由发布脚本读取，不写入应用 env、GitHub Secrets、日志或测试夹具。
+用数据库的 `SHOW GRANTS` 结果核对权限，但报告中不要输出账号、主机或 DSN。
 
 对象存储和 Sandbox 加密 key 必须跨重启稳定。更换 key 属于密钥轮换任务，需要先验证
 旧数据可解密和回滚路径。不要用随机临时 key 启动共享环境。
@@ -206,9 +214,9 @@ migration policy -> validate -> status -> pre-apply drift
 -> forward migrate -> post-apply drift -> exact-SHA push
 ```
 
-漂移检查在一次性 MySQL 中重放期望版本，再只读比较共享 dev 的真实结构。缺表、缺列、
-多余结构、无法解析输出、临时库失败或清理失败都会阻断发布。脚本不会自动 repair、
-baseline 或修改 revision。
+漂移检查在一次性 MySQL 中重放期望版本，再只读比较共享 dev 的真实结构。漂移检查排除 `atlas_schema_revisions` 和 `table_*`：前者是 migration 账本，后者是资源库运行时
+动态表。除这两类外的缺表、缺列、多余结构、无法解析输出、临时库失败或清理失败都会
+阻断发布。脚本不会自动 repair、baseline 或修改 revision。
 
 如果 migration apply 成功而后续检查或 push 失败，数据库可能领先于代码。记录当前
 revision、目标 SHA 和安全摘要后停止。重新 apply、repair、回滚或 push 都需要基于
@@ -278,7 +286,8 @@ docker compose --env-file deploy.env -f docker-compose.yml logs --tail=200 \
 
 ## 禁止事项
 
-- 禁止普通启动、容器 entrypoint 或服务依赖隐式执行 DDL、初始化 SQL 或 migration。
+- 禁止普通启动、容器 entrypoint 或服务依赖隐式执行 migration/schema DDL、
+  初始化 SQL 或 migration。资源库动态表只能由用户显式业务操作触发。
 - 禁止让本地 Debug 应用连接共享 dev 的 root 或 migration 账号。
 - 禁止从共享数据库反向生成可执行 schema 快照。
 - 禁止对共享 dev 使用 Atlas 声明式结构同步、自动批准、baseline 或 revision 手工修改。

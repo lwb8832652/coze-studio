@@ -34,12 +34,16 @@
 
 身份、空间、角色和系统管理员权限始终由服务端认证上下文及持久化事实决定。
 
-`docker/atlas/migrations` 是数据库结构的唯一事实源。普通本地启动不执行 DDL；
+`docker/atlas/migrations` 是数据库系统结构的唯一事实源。普通本地启动不自动执行
+migration/schema DDL；
 隔离本地数据库只通过显式 `mysql:3306` migration profile 重放版本化 migration；
 共享 dev 只允许 `deploy/dev/publish-dev.sh` 使用仓库外专用凭据执行 forward migration。
-应用账号不得拥有 DDL 权限。发布脚本在 apply 前后把真实 schema 与目标 migration
-重放结果做只读比较，发现 drift 或无法证明一致时阻断 push，不自动 baseline、repair
-或修改 revision。操作细节以 `docs/superpowers/runbooks/project-operations.md` 为准。
+应用使用与 migration 分离的非 root 账号；当前资源库动态表 `table_<id>` 会在业务
+运行时执行受控 `CREATE`、`ALTER` 和 `DROP`，因此不能把应用账号简化为纯 DML。
+发布脚本在 apply 前后把真实 schema 与目标 migration 重放结果做只读比较，排除
+`atlas_schema_revisions` 和运行时 `table_*`；发现其他 drift 或无法证明一致时阻断
+push，不自动 baseline、repair 或修改 revision。操作细节以
+`docs/superpowers/runbooks/project-operations.md` 为准。
 
 对象存储运行时默认由数据库中的 `object_storage_configs` 主配置驱动。首次启动且
 表为空时，后端会从兼容 env 存储配置导入一条主配置，并用

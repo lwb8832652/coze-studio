@@ -64,8 +64,12 @@ require_literal "$RUNBOOK" 'deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" 
   'runbook must document the exact-SHA dev release command'
 require_literal "$RUNBOOK" '全量只用于新基线或经批准的 checkpoint' \
   'runbook must constrain full schema snapshots'
-require_literal "$RUNBOOK" '应用账号不得拥有 DDL 权限' \
+require_literal "$RUNBOOK" '应用账号与 migration 账号必须分离' \
   'runbook must separate application and migration credentials'
+require_literal "$RUNBOOK" '资源库动态表 `table_<id>`' \
+  'runbook must document the runtime-owned resource table exception'
+require_literal "$RUNBOOK" '漂移检查排除 `atlas_schema_revisions` 和 `table_*`' \
+  'runbook must exclude migration metadata and runtime-owned tables from drift checks'
 require_literal "$RUNBOOK" '数据恢复' \
   'runbook must distinguish schema repair from data recovery'
 
@@ -96,6 +100,18 @@ for active_doc in \
   "$REPO_ROOT/CLAUDE.md"; do
   forbid_pattern "$active_doc" 'atlas[[:space:]]+schema[[:space:]]+apply|schema[[:space:]]+apply[[:space:]].*--auto-approve' \
     "${active_doc#$REPO_ROOT/} must not instruct operators to run declarative schema apply"
+done
+
+for credential_doc in \
+  "$RUNBOOK" \
+  "$REPO_ROOT/docs/superpowers/context/project-context.md" \
+  "$REPO_ROOT/docs/superpowers/runbooks/local-debug-and-test.md" \
+  "$REPO_ROOT/docs/superpowers/specs/2026-08-13-dev-database-schema-safety-design.md" \
+  "$REPO_ROOT/docs/superpowers/plans/2026-08-13-dev-database-schema-safety.md" \
+  "$REPO_ROOT/docker/.env.debug.example" \
+  "$REPO_ROOT/CLAUDE.md"; do
+  forbid_pattern "$credential_doc" 'DML-only|应用账号.*不得拥有.*DDL|应用账号.*不拥有.*DDL' \
+    "${credential_doc#$REPO_ROOT/} must not remove DDL required by runtime-owned resource tables"
 done
 
 printf '%s\n' 'project operations documentation tests passed'

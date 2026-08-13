@@ -31,13 +31,14 @@ schema drift，因此只作为辅助保护。
 
 ### 方案 C：职责隔离与多层 fail-closed（采用）
 
-普通应用启动不执行 DDL；本地数据库初始化只允许连接 Compose 内的固定 MySQL 服务；
+普通应用启动不自动执行 migration DDL；本地数据库初始化只允许连接 Compose 内的
+固定 MySQL 服务；
 远程 dev 只允许发布脚本执行增量 migrations；发布在推送前验证真实结构与 migrations
 重放结果一致。再配合最小权限数据库账号，即使某一层配置错误，其他层仍能阻止破坏。
 
 ## 架构边界
 
-### 1. 普通本地启动零 DDL
+### 1. 普通本地启动零 migration DDL
 
 - 从 `middleware` 和 `run-server` profile 移除 `mysql-setup-schema`。
 - 普通 `make debug`、服务端启动和 middleware 启动不得隐式执行 `schema apply`、
@@ -60,8 +61,10 @@ schema drift，因此只作为辅助保护。
 - 远程 dev DDL 入口保持为 `deploy/dev/publish-dev.sh`。
 - 发布脚本继续从 exact target SHA 创建 migrations 快照，并执行 Atlas validate、status
   和 forward apply。
-- 应用运行凭据与 Atlas 迁移凭据分离。应用账号不得拥有 `CREATE`、`ALTER`、`DROP`、
-  `INDEX` 等 DDL 权限；迁移凭据仅保存在仓库外的 `dev-atlas.env` 中。
+- 应用运行凭据与 Atlas 迁移凭据分离。应用使用独立非 root 账号，不获得全局管理、
+  授权或 migration 专用权限；迁移凭据仅保存在仓库外的 `dev-atlas.env` 中。
+- 资源库动态表 `table_<id>` 是业务运行时对象，创建、编辑和删除会由后端执行
+  `CREATE`、`ALTER` 和 `DROP`。应用账号必须保留目标业务库内的相应受控权限。
 - Debug 配置不得使用远程 root/管理员账号。缺少受限应用账号时应阻断共享 dev 启动，
   不能自动退回高权限账号。
 
@@ -69,6 +72,8 @@ schema drift，因此只作为辅助保护。
 
 - 在一次性临时 MySQL 中从空库重放目标 SHA 的全部 migrations，得到期望结构。
 - 对远程 dev 执行只读 schema inspect/diff，不对远程执行声明式 apply。
+- 比较时排除 migration 账本 `atlas_schema_revisions` 和资源库运行时动态表
+  `table_*`，其他结构仍必须与 migrations 一致。
 - 增量迁移前若只读 diff 发现未由待执行 migration 解释的删除性差异，立即阻断。
 - 增量迁移后再次比较；只有真实结构与期望结构零差异时才允许 push。
 - Atlas revision 已到最新但真实结构存在缺表、缺字段或多余结构时，发布必须失败，并

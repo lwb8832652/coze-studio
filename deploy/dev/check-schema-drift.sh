@@ -248,7 +248,7 @@ run_schema_diff() {
     -v "$migrations_dir:/migrations:ro" \
     --entrypoint /bin/sh \
     "$ATLAS_IMAGE" \
-    -c 'atlas schema diff --from "$ATLAS_URL" --to "file:///migrations?format=atlas&version=${EXPECTED_VERSION}" --dev-url "$ATLAS_DEV_URL" --exclude atlas_schema_revisions --format "COZE_SCHEMA_DIFF|{{ len .Changes }}"' \
+    -c 'atlas schema diff --from "$ATLAS_URL" --to "file:///migrations?format=atlas&version=${EXPECTED_VERSION}" --dev-url "$ATLAS_DEV_URL" --exclude "atlas_schema_revisions,table_*" --format "COZE_SCHEMA_DIFF|{{ len .Changes }}"' \
     >"$diff_output" 2>"$diff_error"; then
     status=0
   else

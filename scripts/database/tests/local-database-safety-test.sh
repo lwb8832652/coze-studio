@@ -32,6 +32,14 @@ forbid_text() {
   fi
 }
 
+require_file_text() {
+  local file=$1
+  local pattern=$2
+  local message=$3
+
+  grep -Eq -- "$pattern" "$file" || fail "$message"
+}
+
 service_block() {
   local file=$1
   local service=$2
@@ -156,7 +164,24 @@ done
 debug_env=$(<"$REPO_ROOT/docker/.env.debug.example")
 forbid_text "$debug_env" '^export[[:space:]]+MYSQL_USER=root([[:space:]]|$)' \
   'debug example must not use a remote DDL-capable root account'
+forbid_text "$debug_env" 'DML-only' \
+  'debug example must preserve DDL required by runtime-owned resource tables'
+require_text "$debug_env" 'dedicated non-root application account' \
+  'debug example must require a dedicated non-root application account'
+require_text "$debug_env" 'table_<id>' \
+  'debug example must explain why the application account still needs scoped DDL'
 forbid_text "$debug_env" 'sql\.tencentcdb\.com|gz-cynosdbmysql' \
   'debug example must not embed a specific shared database endpoint'
+
+physical_table_file=$REPO_ROOT/backend/domain/memory/database/internal/physicaltable/physical.go
+database_service_file=$REPO_ROOT/backend/domain/memory/database/service/database_impl.go
+require_file_text "$physical_table_file" 'db\.CreateTable' \
+  'resource database creation must remain covered by the credential contract'
+require_file_text "$physical_table_file" 'db\.AlterTable' \
+  'resource database editing must remain covered by the credential contract'
+require_file_text "$physical_table_file" 'table_%d' \
+  'runtime-owned resource table naming must remain explicit'
+require_file_text "$database_service_file" '\.DropTable' \
+  'resource database deletion must remain covered by the credential contract'
 
 printf '%s\n' 'local database safety tests passed'

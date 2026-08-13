@@ -23,7 +23,8 @@ rush update
 
 # Shared-dev local development
 cp docker/.env.debug.example docker/.env.debug
-# Replace placeholders with DML-only shared-dev application credentials.
+# Use dedicated non-root shared-dev application credentials, separate from migrations.
+# Resource-library table_<id> operations currently require scoped DDL on the app database.
 chmod 600 docker/.env.debug
 ```
 

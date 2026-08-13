@@ -195,6 +195,8 @@ assert_contains "$COMMAND_LOG" '--from "$ATLAS_URL"' \
   'schema diff did not read the remote URL from the protected env file inside the container'
 assert_contains "$COMMAND_LOG" '--dev-url "$ATLAS_DEV_URL"' \
   'schema diff did not use the isolated temporary MySQL as the dev database'
+assert_contains "$COMMAND_LOG" '--exclude "atlas_schema_revisions,table_*"' \
+  'schema diff must exclude migration metadata and runtime-owned resource tables'
 assert_contains "$COMMAND_LOG" '--format "COZE_SCHEMA_DIFF|{{ len .Changes }}"' \
   'schema diff did not request a uniquely parseable change count'
 assert_contains "$COMMAND_LOG" \

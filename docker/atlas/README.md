@@ -46,7 +46,8 @@ make db_local_up
 make db_local_migrate
 ```
 
-迁移服务只连接 Compose 内的 `mysql:3306`。普通本地启动不执行 DDL，共享 `dev`
-只允许 `deploy/dev/publish-dev.sh` 使用仓库外 migration credential 执行 forward
-migration。修改历史 migration、baseline、repair 和破坏性变更都需要按统一手册停止并
-单独审批。
+迁移服务只连接 Compose 内的 `mysql:3306`。普通本地启动不自动执行 migration/schema
+DDL，共享 `dev` 只允许 `deploy/dev/publish-dev.sh` 使用仓库外 migration
+credential 执行 forward migration。资源库运行时动态表 `table_<id>` 是业务合同，
+不是 migration 入口。修改历史 migration、baseline、repair 和破坏性变更都需要按统一手册
+停止并单独审批。

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让普通本地启动永不执行数据库 DDL，并用可读的迁移命名、发布策略检查和结构漂移门禁阻止共享 dev 数据库再次被旧快照破坏。
+**Goal:** 让普通本地启动永不自动执行 migration/schema DDL，并用可读的迁移命名、发布策略检查和结构漂移门禁阻止共享 dev 数据库再次被旧快照破坏。
 
 **Architecture:** `docker/atlas/migrations` 是唯一结构事实源；本地迁移只能通过固定连接 `mysql:3306` 的显式 Compose profile 执行，远程 dev 迁移只能通过 `deploy/dev/publish-dev.sh` 执行。新增迁移使用“时间版本 + 类型 + 模块 + 动作”命名，发布脚本只检查新增文件并拒绝篡改历史迁移、普通发布中的破坏性迁移以及结构漂移。
 
@@ -97,7 +97,7 @@ git add scripts/database/check-migration-policy.sh \
 git commit -m "feat: enforce safe migration policy"
 ```
 
-### Task 2: 普通启动零 DDL 与显式本地迁移
+### Task 2: 普通启动零 migration/schema DDL 与显式本地迁移
 
 **Files:**
 - Create: `scripts/database/tests/local-database-safety-test.sh`
@@ -281,7 +281,8 @@ Expected: FAIL，原因是漂移脚本不存在。
 远程真实 schema --只读 schema diff--> 临时重放得到的期望 schema
 ```
 
-排除 `atlas_schema_revisions`，不执行远程 `schema apply`、baseline 或 repair。diff
+排除 `atlas_schema_revisions` 和资源库运行时动态表 `table_*`，不执行远程
+`schema apply`、baseline 或 repair。diff
 非空、命令失败、输出无法识别都必须失败；输出必须复用发布脚本的 DSN 脱敏逻辑。
 
 - [ ] **Step 4: 在 publish 前后调用**
