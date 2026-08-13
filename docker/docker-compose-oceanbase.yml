@@ -15,7 +15,6 @@ services:
     #   - '3306'
     volumes:
       - ./data/mysql:/var/lib/mysql
-      - ./volumes/mysql/schema.sql:/docker-entrypoint-initdb.d/init.sql
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -36,6 +35,25 @@ services:
       start_period: 30s
     networks:
       - coze-network
+
+  mysql-migrate-local:
+    image: arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e
+    profiles: ['local-db-migrate']
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./atlas/migrations:/migrations:ro
+    command:
+      - migrate
+      - apply
+      - --url
+      - mysql://${MYSQL_USER:-coze}:${MYSQL_PASSWORD:-coze123}@mysql:3306/opencoze?charset=utf8mb4&parseTime=True
+      - --dir
+      - file:///migrations
+    networks:
+      - coze-network
+    restart: 'no'
 
   redis:
     image: bitnamilegacy/redis:8.0

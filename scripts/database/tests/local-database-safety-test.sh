@@ -54,6 +54,7 @@ service_block() {
 
 compose_files=(
   "$REPO_ROOT/docker/docker-compose-debug.yml"
+  "$REPO_ROOT/docker/docker-compose-oceanbase.yml"
   "$REPO_ROOT/docker/docker-compose-oceanbase_debug.yml"
   "$REPO_ROOT/docker/docker-compose.yml"
 )
@@ -117,5 +118,13 @@ require_text "$legacy_apply" 'db_local_migrate' \
   'legacy db_migrate_apply.sh must point users to the safe local command'
 require_text "$legacy_apply" 'publish-dev\.sh' \
   'legacy db_migrate_apply.sh must point remote dev changes to the publish workflow'
+
+legacy_dump=$(<"$REPO_ROOT/scripts/setup/db_migrate_dump.sh")
+forbid_text "$legacy_dump" 'ATLAS_URL|schema[[:space:]]+inspect|migrate[[:space:]]+diff|opencoze_latest_schema\.hcl' \
+  'legacy db_migrate_dump.sh must not inspect arbitrary databases or generate executable snapshots'
+require_text "$legacy_dump" '已停用' \
+  'legacy db_migrate_dump.sh must fail closed with explicit guidance'
+require_text "$legacy_dump" 'docker/atlas/migrations' \
+  'legacy db_migrate_dump.sh must point users to versioned migrations'
 
 printf '%s\n' 'local database safety tests passed'
