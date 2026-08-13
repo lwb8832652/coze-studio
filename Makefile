@@ -1,18 +1,14 @@
-.PHONY: debug fe server sync_db dump_db middleware web down clean python help
+.PHONY: debug fe server db_local_up db_local_migrate sync_db dump_db sql_init middleware web down clean python help
 
 # 定义脚本路径
 SCRIPTS_DIR := ./scripts
 BUILD_FE_SCRIPT := $(SCRIPTS_DIR)/build_fe.sh
 BUILD_SERVER_SCRIPT := $(SCRIPTS_DIR)/setup/server.sh
-SYNC_DB_SCRIPT := $(SCRIPTS_DIR)/setup/db_migrate_apply.sh
-DUMP_DB_SCRIPT := $(SCRIPTS_DIR)/setup/db_migrate_dump.sh
 SETUP_DOCKER_SCRIPT := $(SCRIPTS_DIR)/setup/docker.sh
 SETUP_PYTHON_SCRIPT := $(SCRIPTS_DIR)/setup/python.sh
 COMPOSE_FILE := docker/docker-compose-debug.yml
 OCEANBASE_COMPOSE_FILE := docker/docker-compose-oceanbase.yml
 OCEANBASE_DEBUG_COMPOSE_FILE := docker/docker-compose-oceanbase_debug.yml
-MYSQL_SCHEMA := ./docker/volumes/mysql/schema.sql
-MYSQL_INIT_SQL := ./docker/volumes/mysql/sql_init.sql
 ENV_FILE := ./docker/.env.debug
 WEB_ENV_FILE := ./docker/.env
 OCEANBASE_ENV_FILE := ./docker/.env.debug
@@ -60,28 +56,25 @@ build_server:
 	@echo "Building server..."
 	@bash $(BUILD_SERVER_SCRIPT)
 
-sync_db: env
-	@echo "Syncing database..."
-	@docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) --profile mysql-setup up -d
+db_local_up: env
+	@echo "Start isolated local MySQL without applying schema changes"
+	@docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) --profile local-mysql up -d mysql --wait
 
-dump_db: env dump_sql_schema
-	@echo "Dumping database..."
-	@. $(ENV_FILE); \
-	bash $(DUMP_DB_SCRIPT)
+db_local_migrate: db_local_up
+	@echo "Apply versioned migrations only to the Compose-local mysql:3306 database"
+	@docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) --profile local-db-migrate run --rm mysql-migrate-local
 
-sql_init: env
-	@echo "Init sql data with local MySQL client..."
-	@. $(ENV_FILE); \
-	if command -v mysql >/dev/null 2>&1; then \
-		MYSQL_CLIENT=mysql; \
-	elif command -v mariadb >/dev/null 2>&1; then \
-		MYSQL_CLIENT=mariadb; \
-	else \
-		echo "mysql/mariadb client not found. Install a local client before running make sql_init."; \
-		exit 1; \
-	fi; \
-	MYSQL_PWD="$$MYSQL_PASSWORD" $$MYSQL_CLIENT -h "$$MYSQL_HOST" -P "$$MYSQL_PORT" -u "$$MYSQL_USER" "$$MYSQL_DATABASE" < $(MYSQL_SCHEMA); \
-	MYSQL_PWD="$$MYSQL_PASSWORD" $$MYSQL_CLIENT -h "$$MYSQL_HOST" -P "$$MYSQL_PORT" -u "$$MYSQL_USER" "$$MYSQL_DATABASE" < $(MYSQL_INIT_SQL)
+sync_db:
+	@echo "sync_db 已停用；本地数据库请运行 make db_local_migrate，远程 dev 请运行 deploy/dev/publish-dev.sh。"
+	@exit 1
+
+dump_db:
+	@echo "dump_db 已停用；docker/atlas/migrations 是结构事实源，请新增版本化 migration。"
+	@exit 1
+
+sql_init:
+	@echo "sql_init 已停用；共享 dev 数据更新必须提交 data migration 并走发布流程。"
+	@exit 1
 
 middleware:
 	@echo "Start middleware docker environment for opencoze app"
@@ -119,18 +112,15 @@ python:
 	@bash $(SETUP_PYTHON_SCRIPT)
 
 dump_sql_schema:
-	@echo "Dumping mysql schema to $(MYSQL_SCHEMA)..."
-	@. $(ENV_FILE); \
-	{ echo "SET NAMES utf8mb4;\nCREATE DATABASE IF NOT EXISTS opencoze COLLATE utf8mb4_unicode_ci;"; atlas schema inspect -u $$ATLAS_URL --format "{{ sql . }}" --exclude "atlas_schema_revisions,table_*" | sed 's/CREATE TABLE/CREATE TABLE IF NOT EXISTS/g'; } > $(MYSQL_SCHEMA)
-		@sed -i.bak -E 's/(\))[[:space:]]+CHARSET utf8mb4/\1 ENGINE=InnoDB CHARSET utf8mb4/' $(MYSQL_SCHEMA) && rm -f $(MYSQL_SCHEMA).bak
-		@sed -i.bak "s/\"/'/g" $(MYSQL_SCHEMA) && rm -f $(MYSQL_SCHEMA).bak
-	@cat $(MYSQL_INIT_SQL) >> $(MYSQL_SCHEMA)
-	@echo "Dumping mysql schema to helm/charts/opencoze/files/mysql ..."
-	@cp $(MYSQL_SCHEMA) ./helm/charts/opencoze/files/mysql/
+	@echo "dump_sql_schema 已停用；禁止从共享数据库反向生成可执行 schema 快照。"
+	@exit 1
 
 atlas-hash:
 	@echo "Rehash atlas migration files..."
-	@(cd ./docker/atlas && atlas migrate hash)
+	@docker run --rm \
+		-v "$(CURDIR)/docker/atlas/migrations:/migrations" \
+		arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
+		migrate hash --dir file:///migrations
 
 setup_es_index:
 	@echo "Setting up Elasticsearch index..."
@@ -163,10 +153,12 @@ help:
 	@echo "  fe               - Build the frontend."
 	@echo "  server           - Build and run the server binary."
 	@echo "  build_server     - Build the server binary."
-	@echo "  sync_db          - Sync opencoze_latest_schema.hcl to the database."
-	@echo "  dump_db          - Dump the database to opencoze_latest_schema.hcl and migrations files."
-	@echo "  sql_init         - Init sql data..."
-	@echo "  dump_sql_schema  - Dump the database schema to sql file."
+	@echo "  db_local_up      - Start the isolated Compose-local MySQL without DDL."
+	@echo "  db_local_migrate - Explicitly apply versioned migrations to local mysql:3306."
+	@echo "  sync_db          - Disabled unsafe legacy schema synchronization target."
+	@echo "  dump_db          - Disabled legacy schema snapshot target."
+	@echo "  sql_init         - Disabled direct SQL initialization target."
+	@echo "  dump_sql_schema  - Disabled reverse schema snapshot target."
 	@echo "  middleware       - Setup middlewares docker environment, but exclude the server app."
 	@echo "  web              - Setup web docker environment, include middlewares docker."
 	@echo "  down             - Stop the docker containers."
