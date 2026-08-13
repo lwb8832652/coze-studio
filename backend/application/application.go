@@ -332,6 +332,7 @@ func Init(ctx context.Context) (err error) {
 	adkPlanStore := agentthread.NewApplicationADKPlanStore(
 		primaryServices.agentThreadSVC,
 	)
+	adaptiveExecutionRepository := threadrepository.NewAdaptiveExecutionRepository(infra.DB)
 	adkAgentRunExecutor := agentthread.NewADKExecutor(
 		agentthread.NewApplicationADKAgentFactory(
 			nil,
@@ -372,13 +373,16 @@ func Init(ctx context.Context) (err error) {
 				JournalContentProducer: primaryServices.agentThreadSVC,
 				PlanBackendFactory: agentthread.ADKPlanBackendFactoryFunc(
 					func(
-						_ context.Context,
+						ctx context.Context,
 						run *agentthread.RunSummary,
 					) (plantask.Backend, error) {
 						return agentthread.NewADKPlanBackend(
 							run,
 							adkPlanStore,
 							adkEventSink,
+							agentthread.WithADKAdaptivePlanBoundaryCoordinator(
+								agentthread.ADKAdaptivePlanBoundaryCoordinatorFromContext(ctx),
+							),
 						)
 					},
 				),
@@ -402,6 +406,11 @@ func Init(ctx context.Context) (err error) {
 					primaryServices.agentThreadSVC.JournalSideEffectRepository,
 					infra.IDGenSVC,
 				),
+				agentthread.WithADKAdaptivePlanBoundary(
+					adaptiveExecutionRepository,
+					infra.IDGenSVC,
+					adkPlanStore,
+				),
 			)
 		},
 		agentthread.NewThreadUsageCollectorWithOptions(
@@ -418,7 +427,7 @@ func Init(ctx context.Context) (err error) {
 			agentthread.NewAdaptiveBootstrapCoordinator(
 				agentthread.AdaptiveBootstrapCoordinatorOptions{
 					AttemptReader:   primaryServices.agentThreadSVC.JournalRecoveryRepository,
-					Repository:      threadrepository.NewAdaptiveExecutionRepository(infra.DB),
+					Repository:      adaptiveExecutionRepository,
 					SourceRunReader: primaryServices.agentThreadSVC.ThreadSVC,
 					IDGen:           infra.IDGenSVC,
 					Now:             func() int64 { return time.Now().UnixMilli() },

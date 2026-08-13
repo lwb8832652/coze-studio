@@ -225,12 +225,39 @@ func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {
 			require.Equal(t, attempt.AttemptID, req.Decision.AttemptID)
 			require.Equal(t, run.ExecutionGeneration, req.Decision.ExecutionGeneration)
 			require.Equal(t, uint64(1), req.Decision.DecisionRevision)
-			require.Equal(t, run.RunID, *req.Decision.PlanScopeRunID)
+			require.Equal(t, *source.Decision.PlanScopeRunID, *req.Decision.PlanScopeRunID)
 			require.Equal(t, attempt.CreatedAt, req.Decision.CreatedAt)
 			require.Equal(t, req.Admission, facts.Admission)
 			require.Equal(t, req.Decision, facts.Decision)
 		})
 	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeCarriesTypedMultiHopPlanScope(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceTypedInheritance)
+	inheritedScope := int64(19)
+	source.Decision.PlanScopeRunID = &inheritedScope
+	target := adaptiveBootstrapTypedResultForTest(t, run, input, attempt, source.Authority.ExecutionGeneration)
+	target.Decision.PlanScopeRunID = &inheritedScope
+	repo := &adaptiveBootstrapRepositoryStub{
+		readResults:  []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+		readErrs:     []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+		commitResult: target,
+	}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:    repo,
+		IDGen:         &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}},
+		Now:           func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Len(t, repo.commitRequests, 1)
+	require.Equal(t, inheritedScope, *repo.commitRequests[0].Decision.PlanScopeRunID)
+	require.Equal(t, inheritedScope, *facts.Decision.PlanScopeRunID)
 }
 
 func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {
@@ -524,7 +551,7 @@ func TestAdaptiveBootstrapCoordinatorResumeRejectsSourcePairDrift(t *testing.T) 
 		{name: "revision", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
 			source.Decision.DecisionRevision = 2
 		}},
-		{name: "plan scope", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
+		{name: "fresh plan scope drift", mutate: func(source *repository.CommitAdaptiveExecutionBootstrapResult) {
 			value := int64(999)
 			source.Decision.PlanScopeRunID = &value
 		}},
@@ -623,7 +650,7 @@ func adaptiveBootstrapTypedResultForTest(
 		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
 		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
 		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
-		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+		PlanScopeRunID: input.SourceRunID, CreatedAt: attempt.CreatedAt,
 	})
 	require.NoError(t, err)
 	return &repository.CommitAdaptiveExecutionBootstrapResult{
@@ -652,7 +679,7 @@ func adaptiveBootstrapLegacyTargetResultForTest(
 		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
 		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
 		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
-		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+		PlanScopeRunID: input.SourceRunID, CreatedAt: attempt.CreatedAt,
 	})
 	require.NoError(t, err)
 	return &repository.CommitAdaptiveExecutionBootstrapResult{

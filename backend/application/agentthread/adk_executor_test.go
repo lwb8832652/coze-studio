@@ -28,6 +28,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,498 @@ type recordingAdaptiveBootstrapCoordinator struct {
 	resumeErr   error
 	resumeCalls int
 	order       *[]string
+}
+
+type testADKInternalCheckpointBarrier struct {
+	mu        sync.Mutex
+	pending   uint64
+	committed uint64
+}
+
+func (b *testADKInternalCheckpointBarrier) requestPending() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pending++
+	return b.pending
+}
+
+func (b *testADKInternalCheckpointBarrier) commitPending() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.committed = b.pending
+}
+
+func (b *testADKInternalCheckpointBarrier) PendingGeneration() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending
+}
+
+func (b *testADKInternalCheckpointBarrier) CommittedGeneration() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.committed
+}
+
+type barrierMemoryADKCheckpointStore struct {
+	*memoryADKCheckpointStore
+	barrier     *testADKInternalCheckpointBarrier
+	commitOnSet bool
+	setCalls    int
+	checkpoints [][]byte
+}
+
+func (s *barrierMemoryADKCheckpointStore) ADKInternalCheckpointBarrier() adkInternalCheckpointBarrier {
+	return s.barrier
+}
+
+func (s *barrierMemoryADKCheckpointStore) Set(
+	ctx context.Context,
+	checkpointID string,
+	checkpoint []byte,
+) error {
+	s.setCalls++
+	s.checkpoints = append(s.checkpoints, append([]byte(nil), checkpoint...))
+	if err := s.memoryADKCheckpointStore.Set(ctx, checkpointID, checkpoint); err != nil {
+		return err
+	}
+	if s.commitOnSet {
+		s.barrier.commitPending()
+	}
+	return nil
+}
+
+type internalCheckpointBarrierChatModel struct {
+	mu    sync.Mutex
+	calls int
+}
+
+type resumeInternalCheckpointBarrierChatModel struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (m *resumeInternalCheckpointBarrierChatModel) Generate(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	switch m.calls {
+	case 1:
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID:       "approval-call-1",
+			Function: schema.FunctionCall{Name: "approval", Arguments: `{}`},
+		}}), nil
+	case 2:
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID:       "plan-call-1",
+			Function: schema.FunctionCall{Name: "plan_like", Arguments: `{}`},
+		}}), nil
+	default:
+		return schema.AssistantMessage("finished after resume checkpoint", nil), nil
+	}
+}
+
+func (m *resumeInternalCheckpointBarrierChatModel) Stream(
+	ctx context.Context,
+	messages []*schema.Message,
+	options ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, messages, options...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func (m *resumeInternalCheckpointBarrierChatModel) WithTools(
+	_ []*schema.ToolInfo,
+) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+func (m *resumeInternalCheckpointBarrierChatModel) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+func (m *internalCheckpointBarrierChatModel) Generate(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	if m.calls == 1 {
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "plan-call-1",
+			Function: schema.FunctionCall{
+				Name:      "plan_like",
+				Arguments: `{}`,
+			},
+		}}), nil
+	}
+	return schema.AssistantMessage("finished after checkpoint", nil), nil
+}
+
+func (m *internalCheckpointBarrierChatModel) Stream(
+	ctx context.Context,
+	messages []*schema.Message,
+	options ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, messages, options...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func (m *internalCheckpointBarrierChatModel) WithTools(
+	_ []*schema.ToolInfo,
+) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+func (m *internalCheckpointBarrierChatModel) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+type internalCheckpointBarrierTool struct {
+	barrier *testADKInternalCheckpointBarrier
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (t *internalCheckpointBarrierTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "plan_like", Desc: "Stage a plan-like mutation."}, nil
+}
+
+func (t *internalCheckpointBarrierTool) InvokableRun(
+	ctx context.Context,
+	_ string,
+	_ ...tool.Option,
+) (string, error) {
+	t.mu.Lock()
+	t.calls++
+	t.mu.Unlock()
+	t.barrier.requestPending()
+	if t.entered != nil {
+		close(t.entered)
+	}
+	if t.release != nil {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-t.release:
+		}
+	}
+	return `{"ok":true}`, nil
+}
+
+func (t *internalCheckpointBarrierTool) callCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.calls
+}
+
+func newInternalCheckpointBarrierAgent(
+	t *testing.T,
+	chatModel model.ToolCallingChatModel,
+	tools ...tool.BaseTool,
+) adk.ResumableAgent {
+	t.Helper()
+	agent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name:        "lead",
+		Description: "internal checkpoint barrier integration agent",
+		Model:       chatModel,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{
+			Tools: tools,
+		}},
+	})
+	require.NoError(t, err)
+	return agent
+}
+
+func TestADKExecutorSharesInternalCheckpointBarrierWithFactory(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	store := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+	}
+	factoryErr := errors.New("stop after barrier inspection")
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(ctx context.Context, _ *RunSummary) (adk.ResumableAgent, error) {
+			got, ok := adkInternalCheckpointBarrierFromContext(ctx)
+			require.True(t, ok)
+			require.Same(t, barrier, got)
+			return nil, factoryErr
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) { return store, nil },
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"checkpoint"}]}`,
+	})
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, factoryErr)
+}
+
+func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	store := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+		commitOnSet:              true,
+	}
+	chatModel := &internalCheckpointBarrierChatModel{}
+	planTool := &internalCheckpointBarrierTool{barrier: barrier}
+	agent := newInternalCheckpointBarrierAgent(t, chatModel, planTool)
+	sink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		sink,
+		func(*RunSummary) (adk.CheckPointStore, error) { return store, nil },
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"update plan then finish"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "finished after checkpoint", result.Message)
+	require.Equal(t, 1, planTool.callCount())
+	require.Equal(t, 2, chatModel.callCount())
+	require.Equal(t, 1, store.setCalls)
+	require.Len(t, store.checkpoints, 1)
+	require.NotEmpty(t, store.checkpoints[0])
+	require.Equal(t, uint64(1), barrier.CommittedGeneration())
+	require.Equal(t, 1, countString(sink.eventTypes(), "tool.completed"))
+	require.NotContains(t, sink.eventTypes(), "run.canceling")
+}
+
+func TestADKExecutorResumeAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	sourceStore := newMemoryADKCheckpointStore()
+	targetStore := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+		commitOnSet:              true,
+	}
+	chatModel := &resumeInternalCheckpointBarrierChatModel{}
+	planTool := &internalCheckpointBarrierTool{barrier: barrier}
+	agent := newInternalCheckpointBarrierAgent(
+		t,
+		chatModel,
+		&summarizationApprovalTool{},
+		planTool,
+	)
+	sourceExecutor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) { return sourceStore, nil },
+		nil,
+	)
+	sourceRun := &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"approve then update plan"}]}`,
+	}
+
+	result, err := sourceExecutor.Execute(context.Background(), sourceRun)
+
+	require.Nil(t, result)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, err, &interrupted)
+	require.Len(t, interrupted.Interrupts, 1)
+	sink := &recordingRunEventSink{}
+	targetExecutor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		sink,
+		func(run *RunSummary) (adk.CheckPointStore, error) {
+			if run.RunID == sourceRun.RunID {
+				return sourceStore, nil
+			}
+			return targetStore, nil
+		},
+		nil,
+	)
+	targetRun := *sourceRun
+	targetRun.RunID = 21
+	targetID := interrupted.Interrupts[0].ID
+
+	result, err = targetExecutor.Resume(context.Background(), &targetRun, &HarnessResumeInput{
+		Runtime:          RuntimeModeEinoADK,
+		RuntimeKey:       interrupted.CheckpointKey,
+		SourceRunID:      sourceRun.RunID,
+		ADKResumeTargets: map[string]any{targetID: "approved"},
+		ADKCheckpoint: &ADKCheckpointEnvelope{
+			RuntimeKey: interrupted.CheckpointKey,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "finished after resume checkpoint", result.Message)
+	require.Equal(t, 1, planTool.callCount())
+	require.Equal(t, 3, chatModel.callCount())
+	require.Equal(t, 1, targetStore.setCalls)
+	require.Len(t, targetStore.checkpoints, 1)
+	require.NotEmpty(t, targetStore.checkpoints[0])
+	require.Equal(t, uint64(1), barrier.CommittedGeneration())
+	require.Equal(t, 2, countString(sink.eventTypes(), "tool.completed"))
+	require.NotContains(t, sink.eventTypes(), "run.canceling")
+}
+
+func TestADKExecutorDoesNotAutoResumeExternalCancellation(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	store := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+		commitOnSet:              true,
+	}
+	chatModel := &internalCheckpointBarrierChatModel{}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	planTool := &internalCheckpointBarrierTool{
+		barrier: barrier,
+		entered: entered,
+		release: release,
+	}
+	agent := newInternalCheckpointBarrierAgent(t, chatModel, planTool)
+	registry := NewADKCancelRegistry()
+	sink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		sink,
+		func(*RunSummary) (adk.CheckPointStore, error) { return store, nil },
+		nil,
+		WithADKCancelRegistry(registry),
+	)
+	type executionOutcome struct {
+		result *RunExecutionResult
+		err    error
+	}
+	outcome := make(chan executionOutcome, 1)
+	go func() {
+		result, err := executor.Execute(context.Background(), &RunSummary{
+			ThreadID: 10,
+			RunID:    20,
+			Input:    `{"messages":[{"role":"user","content":"cancel after plan"}]}`,
+		})
+		outcome <- executionOutcome{result: result, err: err}
+	}()
+	<-entered
+
+	require.NoError(t, registry.Cancel(context.Background(), 20, adk.CancelImmediate, false))
+	got := <-outcome
+	require.Nil(t, got.result)
+	var canceled *RunCanceledError
+	require.ErrorAs(t, got.err, &canceled)
+	require.Equal(t, 1, planTool.callCount())
+	require.Equal(t, 1, chatModel.callCount())
+	require.Contains(t, sink.eventTypes(), "run.canceling")
+}
+
+func TestADKExecutorFailsClosedWhenInternalCheckpointBarrierIsNotCommitted(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	store := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+	}
+	chatModel := &internalCheckpointBarrierChatModel{}
+	planTool := &internalCheckpointBarrierTool{barrier: barrier}
+	agent := newInternalCheckpointBarrierAgent(t, chatModel, planTool)
+	sink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		sink,
+		func(*RunSummary) (adk.CheckPointStore, error) { return store, nil },
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"checkpoint must commit"}]}`,
+	})
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "internal checkpoint barrier generation 1 was not committed")
+	require.Equal(t, 1, planTool.callCount())
+	require.Equal(t, 1, chatModel.callCount())
+	require.Equal(t, 1, store.setCalls)
+	require.NotContains(t, sink.eventTypes(), "run.canceling")
+}
+
+func TestADKExecutorFailsClosedWhenPendingBarrierSegmentEndsWithoutCancellation(t *testing.T) {
+	barrier := &testADKInternalCheckpointBarrier{}
+	barrier.requestPending()
+	store := &barrierMemoryADKCheckpointStore{
+		memoryADKCheckpointStore: newMemoryADKCheckpointStore(),
+		barrier:                  barrier,
+	}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return &scriptedADKAgent{run: func(context.Context) []*adk.AgentEvent {
+				return []*adk.AgentEvent{{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("must not succeed", nil),
+						Role:    schema.Assistant,
+					}},
+				}}
+			}}, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) { return store, nil },
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"pending before terminal"}]}`,
+	})
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "internal checkpoint barrier generation 1 was not committed")
+	require.Zero(t, store.setCalls)
+}
+
+func countString(values []string, target string) int {
+	count := 0
+	for _, value := range values {
+		if value == target {
+			count++
+		}
+	}
+	return count
 }
 
 func (c *recordingAdaptiveBootstrapCoordinator) Bootstrap(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error) {
@@ -93,6 +586,40 @@ func TestADKExecutorResumeBootstrapsBeforeBuildingRuntime(t *testing.T) {
 	require.Equal(t, 1, coordinator.resumeCalls)
 	require.True(t, gotFacts)
 	require.Equal(t, []string{"resume-bootstrap", "store", "factory"}, order)
+}
+
+func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.RunID = 22
+	run.ExecutionGeneration = 5
+	inheritedScope := int64(19)
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Decision.PlanScopeRunID = &inheritedScope
+	coordinator := &recordingAdaptiveBootstrapCoordinator{resumeFacts: facts}
+	factoryErr := errors.New("stop after resume runtime scope inspection")
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(_ context.Context, got *RunSummary) (adk.ResumableAgent, error) {
+			require.Equal(t, inheritedScope, got.PlanScopeRunID)
+			return nil, factoryErr
+		}),
+		&recordingRunEventSink{},
+		func(got *RunSummary) (adk.CheckPointStore, error) {
+			require.Equal(t, run.RunID, got.RunID)
+			require.Equal(t, inheritedScope, got.PlanScopeRunID)
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(coordinator),
+	)
+	input := &HarnessResumeInput{
+		Runtime: RuntimeModeEinoADK, RuntimeKey: "coze-run-21", SourceRunID: 21,
+		ADKCheckpoint: &ADKCheckpointEnvelope{RuntimeKey: "coze-run-21"},
+	}
+
+	result, err := executor.Resume(context.Background(), run, input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, factoryErr)
 }
 
 func TestADKExecutorResumeStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testing.T) {

@@ -213,6 +213,12 @@ func normalizeAdaptiveExecutionBootstrapRequest(
 	default:
 		return nil, bootstrapInvalidf("bootstrap admission source is unsupported")
 	}
+	if req.Admission.Source == entity.AdaptiveAdmissionSourceFresh &&
+		req.Decision.Decision == entity.ExecutionDecisionExecute &&
+		req.Decision.ExecutionShape == entity.ExecutionShapeMultiStep &&
+		(req.Decision.PlanScopeRunID == nil || *req.Decision.PlanScopeRunID != req.ExecutionRunID) {
+		return nil, bootstrapInvalidf("fresh bootstrap plan scope drift")
+	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
 		req.Admission,
 		req.Decision,
@@ -221,6 +227,12 @@ func normalizeAdaptiveExecutionBootstrapRequest(
 			JournalRunID:        req.JournalRunID,
 			AttemptID:           req.AttemptID,
 			ExecutionGeneration: req.Generation,
+			ExpectedPlanScopeRunID: func() int64 {
+				if req.Decision.PlanScopeRunID == nil {
+					return 0
+				}
+				return *req.Decision.PlanScopeRunID
+			}(),
 		},
 	); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAdaptiveExecutionBootstrapInvalid, err)
@@ -502,6 +514,8 @@ func lockAndValidateAdaptiveBootstrapTypedSource(
 		return adaptiveBootstrapTypedSourceError("source facts", err)
 	}
 	if source == nil || source.Authority.ExecutionGeneration != sourceRun.ExecutionGeneration ||
+		source.Decision.PlanScopeRunID == nil || req.Decision.PlanScopeRunID == nil ||
+		*req.Decision.PlanScopeRunID != *source.Decision.PlanScopeRunID ||
 		source.Admission.FeatureGateEnabled ||
 		(source.Admission.Source != entity.AdaptiveAdmissionSourceFresh &&
 			source.Admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance &&
@@ -551,6 +565,9 @@ func lockAndValidateAdaptiveBootstrapLegacySource(
 		*req.Admission.SourceExecutionGeneration != sourceRun.ExecutionGeneration ||
 		adaptiveBootstrapDigestBytes(sourceRun.Config) != req.Admission.SourceConfigDigest {
 		return bootstrapConflictf("legacy bootstrap source identity drift")
+	}
+	if req.Decision.PlanScopeRunID == nil || *req.Decision.PlanScopeRunID != sourceRun.ID {
+		return bootstrapConflictf("legacy bootstrap plan scope drift")
 	}
 	sourceCheckpoint, err := lockAdaptiveExecutionSourceCheckpoint(tx, *target.SourceCheckpointID)
 	if err != nil {
@@ -832,9 +849,19 @@ func loadAdaptiveExecutionBootstrapResult(
 		!adaptiveBootstrapStoredPayloadMatches(dialect, decisionCanonical, decisionEvent.Payload) {
 		return nil, bootstrapConflictf("decision payload drift")
 	}
+	if admission.Source == entity.AdaptiveAdmissionSourceFresh && decision.PlanScopeRunID != nil &&
+		*decision.PlanScopeRunID != req.ExecutionRunID {
+		return nil, bootstrapConflictf("fresh bootstrap plan scope drift")
+	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(admission, decision, adaptivecontract.BootstrapIdentity{
 		ExecutionRunID: req.ExecutionRunID, JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
 		ExecutionGeneration: metadata.ExecutionGeneration,
+		ExpectedPlanScopeRunID: func() int64 {
+			if decision.PlanScopeRunID == nil {
+				return 0
+			}
+			return *decision.PlanScopeRunID
+		}(),
 	}); err != nil {
 		return nil, fmt.Errorf("%w: bootstrap pair drift", ErrAdaptiveExecutionBootstrapConflict)
 	}

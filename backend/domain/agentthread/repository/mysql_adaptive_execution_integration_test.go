@@ -98,6 +98,284 @@ func TestAdaptiveExecutionBoundaryMySQL(t *testing.T) {
 	})
 }
 
+func TestAdaptiveExecutionBootstrapMySQLIntegrationRollingPlanBoundary(t *testing.T) {
+	db, repoA, repoB := adaptiveExecutionMySQLIntegrationRepositories(t)
+	seedAdaptiveExecutionRollingPlanMySQLState(t, db)
+	require.Zero(t, adaptiveExecutionMySQLRowCount(t, db, &agentRunPlanPO{}, "run_id = ?", 20))
+	require.Zero(t, adaptiveExecutionMySQLRowCount(t, db, &agentRunPlanItemPO{}, "run_id = ?", 20))
+
+	b1Request := adaptiveExecutionRollingPlanMySQLRequest(
+		"b1", 7101, 8101, 0, 0, 1_000,
+		AdaptivePlanItemMutation{ExpectedVersion: 0, NextItem: &entity.AgentRunPlanItem{
+			ID: 60, RunID: 20, TaskID: 1,
+			Subject: "first task", Description: "created by B1",
+			Status: entity.AgentRunPlanItemStatusPending, ActiveForm: "planning", Owner: "agent",
+			Blocks: `[]`, BlockedBy: `[]`, Metadata: `{"boundary":"b1"}`,
+			Active: true, Version: 1,
+		}},
+	)
+	b1, err := repoA.CommitAdaptiveExecutionBoundary(context.Background(), b1Request)
+	require.NoError(t, err)
+	assertAdaptiveExecutionRollingPlanMySQLBoundary(t, b1, 1, 0, 1, 1, 1, []int64{1})
+	require.False(t, b1.Replayed)
+
+	b2Request := adaptiveExecutionRollingPlanMySQLRequest(
+		"b2", 7102, 8102, b1.Checkpoint.ID, 1, 1_100,
+		AdaptivePlanItemMutation{ExpectedVersion: 0, NextItem: &entity.AgentRunPlanItem{
+			ID: 61, RunID: 20, TaskID: 2,
+			Subject: "second task", Description: "created by B2",
+			Status: entity.AgentRunPlanItemStatusPending, ActiveForm: "queued", Owner: "agent",
+			Blocks: `[]`, BlockedBy: `[1]`, Metadata: `{"boundary":"b2"}`,
+			Active: true, Version: 1,
+		}},
+	)
+	b2, err := repoA.CommitAdaptiveExecutionBoundary(context.Background(), b2Request)
+	require.NoError(t, err)
+	assertAdaptiveExecutionRollingPlanMySQLBoundary(t, b2, 2, b1.Checkpoint.ID, 2, 2, 1, []int64{2})
+	require.False(t, b2.Replayed)
+
+	b3Request := adaptiveExecutionRollingPlanMySQLRequest(
+		"b3", 7103, 8103, b2.Checkpoint.ID, 2, 1_200,
+		AdaptivePlanItemMutation{ExpectedVersion: 1, NextItem: &entity.AgentRunPlanItem{
+			ID: 60, RunID: 20, TaskID: 1,
+			Subject: "first task", Description: "updated by B3",
+			Status: entity.AgentRunPlanItemStatusInProgress, ActiveForm: "executing", Owner: "agent",
+			Blocks: `[2]`, BlockedBy: `[]`, Metadata: `{"boundary":"b3"}`,
+			Active: true, Version: 2,
+		}},
+	)
+	b3, err := repoA.CommitAdaptiveExecutionBoundary(context.Background(), b3Request)
+	require.NoError(t, err)
+	assertAdaptiveExecutionRollingPlanMySQLBoundary(t, b3, 3, b2.Checkpoint.ID, 3, 2, 2, []int64{1})
+	require.False(t, b3.Replayed)
+	require.Equal(t, "updated by B3", b3.Items[0].Description)
+
+	stateBeforeReplay := readAdaptiveExecutionRollingPlanMySQLState(t, db)
+	require.Equal(t, uint64(4), stateBeforeReplay.attempt.NextSequence)
+	require.Equal(t, uint64(3), stateBeforeReplay.attempt.LastCommittedSequence)
+	require.Equal(t, int64(3), stateBeforeReplay.plan.Revision)
+	require.Equal(t, int64(2), stateBeforeReplay.plan.HighWatermark)
+	require.Len(t, stateBeforeReplay.items, 2)
+	require.Equal(t, int64(1), stateBeforeReplay.items[0].TaskID)
+	require.Equal(t, int64(2), stateBeforeReplay.items[0].Version)
+	require.Equal(t, "updated by B3", stateBeforeReplay.items[0].Description)
+	require.Equal(t, int64(2), stateBeforeReplay.items[1].TaskID)
+	require.Equal(t, int64(1), stateBeforeReplay.items[1].Version)
+	require.Len(t, stateBeforeReplay.events, 3)
+	require.Len(t, stateBeforeReplay.checkpoints, 3)
+	replayedB1, err := repoB.CommitAdaptiveExecutionBoundary(context.Background(), b1Request)
+	require.NoError(t, err)
+	require.True(t, replayedB1.Replayed)
+	assertAdaptiveExecutionRollingPlanMySQLBoundary(t, replayedB1, 1, 0, 1, 1, 1, []int64{1})
+	require.Equal(t, stateBeforeReplay, readAdaptiveExecutionRollingPlanMySQLState(t, db))
+
+	staleRequests := map[string]CommitAdaptiveExecutionBoundaryRequest{
+		"writer-a": adaptiveExecutionRollingPlanMySQLRequest(
+			"stale-a", 7104, 8104, b3.Checkpoint.ID, 3, 1_300,
+			AdaptivePlanItemMutation{ExpectedVersion: 2, NextItem: &entity.AgentRunPlanItem{
+				ID: 60, RunID: 20, TaskID: 1,
+				Subject: "first task", Description: "writer A",
+				Status: entity.AgentRunPlanItemStatusCompleted, ActiveForm: "done", Owner: "agent",
+				Blocks: `[2]`, BlockedBy: `[]`, Metadata: `{"writer":"a"}`,
+				Active: true, Version: 3,
+			}},
+		),
+		"writer-b": adaptiveExecutionRollingPlanMySQLRequest(
+			"stale-b", 7105, 8105, b3.Checkpoint.ID, 3, 1_300,
+			AdaptivePlanItemMutation{ExpectedVersion: 2, NextItem: &entity.AgentRunPlanItem{
+				ID: 60, RunID: 20, TaskID: 1,
+				Subject: "first task", Description: "writer B",
+				Status: entity.AgentRunPlanItemStatusDeleted, ActiveForm: "failed", Owner: "agent",
+				Blocks: `[2]`, BlockedBy: `[]`, Metadata: `{"writer":"b"}`,
+				Active: true, Version: 3,
+			}},
+		),
+	}
+	raceResults := runAdaptiveExecutionMySQLRace(t, []adaptiveExecutionMySQLRaceCall{
+		{name: "writer-a", call: func(ctx context.Context) (any, error) {
+			return repoA.CommitAdaptiveExecutionBoundary(ctx, staleRequests["writer-a"])
+		}},
+		{name: "writer-b", call: func(ctx context.Context) (any, error) {
+			return repoB.CommitAdaptiveExecutionBoundary(ctx, staleRequests["writer-b"])
+		}},
+	})
+	winners := 0
+	losers := 0
+	for _, raceResult := range raceResults {
+		requireAdaptiveExecutionMySQLRaceError(t, raceResult.err)
+		if raceResult.err == nil {
+			winners++
+			boundary, ok := raceResult.value.(*CommitAdaptiveExecutionBoundaryResult)
+			require.True(t, ok)
+			assertAdaptiveExecutionRollingPlanMySQLBoundary(t, boundary, 4, b3.Checkpoint.ID, 4, 2, 3, []int64{1})
+			continue
+		}
+		losers++
+		require.True(t,
+			errors.Is(raceResult.err, ErrAdaptiveExecutionPlanRevisionConflict) ||
+				errors.Is(raceResult.err, ErrAdaptiveExecutionLineageConflict) ||
+				errors.Is(raceResult.err, ErrAdaptiveExecutionSequenceConflict),
+			"expected a typed stale-writer conflict, got %v", raceResult.err,
+		)
+		require.Nil(t, raceResult.value)
+		require.Zero(t, adaptiveExecutionMySQLRowCount(
+			t, db, &runEventPO{}, "id = ?", staleRequests[raceResult.name].Event.ID,
+		))
+		require.Zero(t, adaptiveExecutionMySQLRowCount(
+			t, db, &checkpointPO{}, "id = ?", staleRequests[raceResult.name].Checkpoint.ID,
+		))
+	}
+	require.Equal(t, 1, winners)
+	require.Equal(t, 1, losers)
+	finalState := readAdaptiveExecutionRollingPlanMySQLState(t, db)
+	require.Equal(t, uint64(5), finalState.attempt.NextSequence)
+	require.Equal(t, uint64(4), finalState.attempt.LastCommittedSequence)
+	require.Equal(t, int64(4), finalState.plan.Revision)
+	require.Equal(t, int64(2), finalState.plan.HighWatermark)
+	require.Len(t, finalState.items, 2)
+	require.Equal(t, int64(3), finalState.items[0].Version)
+	require.Equal(t, int64(1), finalState.items[1].Version)
+	require.Len(t, finalState.events, 4)
+	require.Len(t, finalState.checkpoints, 4)
+}
+
+type adaptiveExecutionRollingPlanMySQLState struct {
+	attempt     runAttemptPO
+	plan        agentRunPlanPO
+	items       []agentRunPlanItemPO
+	events      []runEventPO
+	checkpoints []checkpointPO
+}
+
+func seedAdaptiveExecutionRollingPlanMySQLState(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Create(&threadPO{
+		ID: 10, SpaceID: 10, CreatorID: 20, Title: "rolling plan",
+		Status: string(entity.ThreadStatusRunning), Source: string(entity.ThreadSourceWeb),
+		Metadata: datatypes.JSON([]byte(`{}`)), CreatedAt: 600, UpdatedAt: 600,
+	}).Error)
+	require.NoError(t, db.Create(&runPO{
+		ID: 30, ThreadID: 10, SpaceID: 10, CreatorID: 20,
+		AssistantID: "agent", RunKind: string(entity.RunKindTask), Status: string(entity.RunStatusSucceeded),
+		Command: datatypes.JSON([]byte(`{}`)), Input: datatypes.JSON([]byte(`{}`)),
+		Config: datatypes.JSON([]byte(`{}`)), Context: datatypes.JSON([]byte(`{}`)),
+		Metadata: datatypes.JSON([]byte(`{}`)), StreamMode: datatypes.JSON([]byte(`[]`)),
+		StartedAt: 600, EndedAt: 600, CreatedAt: 600, UpdatedAt: 600,
+	}).Error)
+	leaseOwner := "worker-1"
+	leaseToken := "lease-1"
+	leaseExpiresAt := int64(5_000)
+	require.NoError(t, db.Create(&runPO{
+		ID: 20, ThreadID: 10, SpaceID: 10, CreatorID: 20,
+		AssistantID: "agent", RunKind: string(entity.RunKindTask), Status: string(entity.RunStatusRunning),
+		Command: datatypes.JSON([]byte(`{}`)), Input: datatypes.JSON([]byte(`{}`)),
+		Config: datatypes.JSON([]byte(`{}`)), Context: datatypes.JSON([]byte(`{}`)),
+		Metadata: datatypes.JSON([]byte(`{}`)), StreamMode: datatypes.JSON([]byte(`[]`)),
+		LeaseOwner: &leaseOwner, LeaseToken: &leaseToken, LeaseExpiresAt: &leaseExpiresAt,
+		ExecutionGeneration: 3, StartedAt: 700, CreatedAt: 700, UpdatedAt: 700,
+	}).Error)
+	activeSlot := uint8(1)
+	startedAt := int64(700)
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 100, ThreadID: 10, JournalRunID: 30, ExecutionRunID: 20,
+		AttemptID: "attempt-1", Ordinal: 1, Status: string(entity.RunAttemptStatusRunning),
+		ActiveSlot: &activeSlot, NextSequence: 1, LastCommittedSequence: 0,
+		EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState:   string(entity.JournalProjectionStateHealthy),
+		StartedAt:         &startedAt, CreatedAt: 700, UpdatedAt: 700,
+	}).Error)
+}
+
+func adaptiveExecutionRollingPlanMySQLRequest(
+	name string,
+	eventID int64,
+	checkpointID int64,
+	parentCheckpointID int64,
+	expectedRevision int64,
+	now int64,
+	itemMutation AdaptivePlanItemMutation,
+) CommitAdaptiveExecutionBoundaryRequest {
+	nextHighWatermark := int64(1)
+	if expectedRevision > 0 {
+		nextHighWatermark = 2
+	}
+	return CommitAdaptiveExecutionBoundaryRequest{
+		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30,
+		AttemptID: "attempt-1", Generation: 3,
+		LeaseOwner: "worker-1", LeaseToken: "lease-1", Now: now,
+		IdempotencyKey: "rolling-plan-" + name,
+		Event: &entity.RunEvent{
+			ID: eventID, ThreadID: 10, RunID: 20,
+			EventType: "plan.updated", Payload: `{"boundary":"` + name + `"}`, CreatedAt: now,
+		},
+		Checkpoint: &entity.Checkpoint{
+			ID: checkpointID, ThreadID: 10, RunID: 20,
+			ParentCheckpointID: parentCheckpointID,
+			CheckpointNS:       "adaptive", RuntimeType: "eino_adk",
+			RuntimeKey: "thread:10:run:20:" + name, EnvelopeVersion: 1,
+			ChannelValues: `{}`, ChannelVersions: `{}`, PendingSends: `[]`,
+			Metadata: `{"boundary":"` + name + `"}`, CreatedAt: now,
+		},
+		PlanMutation: &AdaptivePlanMutation{
+			PlanScopeRunID:   20,
+			ExpectedRevision: expectedRevision, NextRevision: expectedRevision + 1,
+			ExpectedHighWatermark: min(expectedRevision, int64(2)),
+			NextHighWatermark:     nextHighWatermark,
+			Items:                 []AdaptivePlanItemMutation{itemMutation},
+		},
+	}
+}
+
+func assertAdaptiveExecutionRollingPlanMySQLBoundary(
+	t *testing.T,
+	boundary *CommitAdaptiveExecutionBoundaryResult,
+	sequence uint64,
+	parentCheckpointID int64,
+	planRevision int64,
+	highWatermark int64,
+	itemVersion int64,
+	taskIDs []int64,
+) {
+	t.Helper()
+	require.NotNil(t, boundary)
+	require.Equal(t, sequence, boundary.Authority.EventSequence)
+	require.Equal(t, sequence, boundary.LastCommittedSequence)
+	require.Equal(t, parentCheckpointID, boundary.Checkpoint.ParentCheckpointID)
+	require.Equal(t, planRevision, boundary.Plan.Revision)
+	require.Equal(t, highWatermark, boundary.Plan.HighWatermark)
+	require.Equal(t, int64(20), boundary.Authority.PlanScopeRunID)
+	require.Equal(t, int64(10), boundary.Authority.ThreadID)
+	require.Equal(t, int64(30), boundary.Authority.JournalRunID)
+	require.Equal(t, int64(20), boundary.Authority.ExecutionRunID)
+	require.Equal(t, "attempt-1", boundary.Authority.AttemptID)
+	require.Equal(t, int64(3), boundary.Authority.ExecutionGeneration)
+	require.Equal(t, planRevision, boundary.Authority.PlanRevision)
+	require.Equal(t, highWatermark, boundary.Authority.PlanHighWatermark)
+	require.Nil(t, boundary.Authority.SourceAttemptID)
+	require.Nil(t, boundary.Authority.SourceCheckpointID)
+	require.Len(t, boundary.Items, len(taskIDs))
+	for index, taskID := range taskIDs {
+		require.Equal(t, taskID, boundary.Items[index].TaskID)
+		require.Equal(t, itemVersion, boundary.Items[index].Version)
+	}
+	require.True(t, validAdaptiveExecutionFingerprint(boundary.Authority.PlanItemFingerprint))
+}
+
+func readAdaptiveExecutionRollingPlanMySQLState(
+	t *testing.T,
+	db *gorm.DB,
+) adaptiveExecutionRollingPlanMySQLState {
+	t.Helper()
+	var state adaptiveExecutionRollingPlanMySQLState
+	require.NoError(t, db.Where("journal_run_id = ? AND attempt_id = ?", 30, "attempt-1").
+		First(&state.attempt).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).First(&state.plan).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Order("task_id ASC").Find(&state.items).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Order("id ASC").Find(&state.events).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Order("id ASC").Find(&state.checkpoints).Error)
+	return state
+}
+
 func TestAdaptiveExecutionP0DMySQLFixtureClosure(t *testing.T) {
 	t.Run("VerifiedSuccessSmoke", func(t *testing.T) {
 		fixture := newAdaptiveExecutionP0DMySQLFixture(t)

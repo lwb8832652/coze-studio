@@ -602,7 +602,12 @@ type adaptiveBootstrapRecoveryFixture struct {
 func seedAdaptiveBootstrapRecoveryTargetForTest(t *testing.T, db *gorm.DB) adaptiveBootstrapRecoveryFixture {
 	t.Helper()
 	repo := NewAdaptiveExecutionRepository(db)
-	source, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), newAdaptiveExecutionBootstrapRequestForTest())
+	sourceRequest := newAdaptiveExecutionBootstrapRequestForTest()
+	sourcePlanScope := sourceRequest.ExecutionRunID
+	sourceRequest.Decision.Decision = entity.ExecutionDecisionExecute
+	sourceRequest.Decision.ExecutionShape = entity.ExecutionShapeMultiStep
+	sourceRequest.Decision.PlanScopeRunID = &sourcePlanScope
+	source, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), sourceRequest)
 	require.NoError(t, err)
 
 	require.NoError(t, db.Model(&runAttemptPO{}).
@@ -650,7 +655,7 @@ func seedAdaptiveBootstrapRecoveryTargetForTest(t *testing.T, db *gorm.DB) adapt
 	target.Admission.SourceRunID = &sourceRunID
 	target.Admission.SourceExecutionGeneration = &sourceGeneration
 	target.Admission.SourceConfigDigest, target.Admission.DecoderVersion = "", ""
-	planScope := int64(21)
+	planScope := *source.Decision.PlanScopeRunID
 	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-target", 21, 30, "attempt-2", 4, planScope, 800)
 	return adaptiveBootstrapRecoveryFixture{source, target, sourceAttemptID, sourceCheckpointID, recoveryKey}
 }
@@ -677,7 +682,7 @@ func newAdaptiveBootstrapDecisionForTest(
 	decision.CreatedAt = createdAt
 	require.NoError(t, adaptivecontract.ValidateAdaptiveBootstrapPair(admission, decision, adaptivecontract.BootstrapIdentity{
 		ExecutionRunID: executionRunID, JournalRunID: journalRunID,
-		AttemptID: attemptID, ExecutionGeneration: generation,
+		AttemptID: attemptID, ExecutionGeneration: generation, ExpectedPlanScopeRunID: planScopeRunID,
 	}))
 	return decision
 }
@@ -709,6 +714,40 @@ func TestAdaptiveExecutionBootstrapCommitsTypedInheritanceAndReadsBack(t *testin
 	require.NoError(t, err)
 	require.Equal(t, result.Admission, read.Admission)
 	require.Equal(t, result.Decision, read.Decision)
+}
+
+func TestAdaptiveExecutionBootstrapRejectsTypedRecoveryPlanScopeDriftWithoutWrites(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	fixture := seedAdaptiveBootstrapRecoveryTargetForTest(t, db)
+	drift := int64(21)
+	fixture.TargetRequest.Decision.PlanScopeRunID = &drift
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(
+		context.Background(), fixture.TargetRequest,
+	)
+
+	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBootstrapRejectsFreshPlanScopeDriftWithoutWrites(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	req := newAdaptiveExecutionBootstrapRequestForTest()
+	drift := req.ExecutionRunID + 1
+	req.Decision.Decision = entity.ExecutionDecisionExecute
+	req.Decision.ExecutionShape = entity.ExecutionShapeMultiStep
+	req.Decision.PlanScopeRunID = &drift
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(
+		context.Background(), req,
+	)
+
+	require.Error(t, err)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
 }
 
 func TestAdaptiveExecutionBootstrapCommitsSecondTypedRecoveryHop(t *testing.T) {
@@ -759,7 +798,7 @@ func TestAdaptiveExecutionBootstrapCommitsSecondTypedRecoveryHop(t *testing.T) {
 	target.Admission = firstTarget.Admission
 	target.Admission.SourceRunID = &sourceRunID
 	target.Admission.SourceExecutionGeneration = &sourceGeneration
-	planScope := int64(22)
+	planScope := *firstTarget.Decision.PlanScopeRunID
 	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-target-2", 22, 30, "attempt-3", 5, planScope, 1000)
 
 	secondTarget, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), target)
@@ -1060,7 +1099,7 @@ func seedAdaptiveBootstrapLegacyTargetForTest(t *testing.T, db *gorm.DB) adaptiv
 	target.Admission.SourceExecutionGeneration = &sourceGeneration
 	target.Admission.SourceConfigDigest = fmt.Sprintf("%x", sha256.Sum256(config))
 	target.Admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
-	planScope := int64(21)
+	planScope := sourceRunID
 	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-legacy", 21, 30, "attempt-2", 4, planScope, 800)
 	return adaptiveBootstrapRecoveryFixture{TargetRequest: target, SourceAttemptID: sourceAttemptID, SourceCheckpoint: sourceCheckpointID, RecoveryKey: recoveryKey}
 }
@@ -1114,7 +1153,7 @@ func seedAdaptiveBootstrapThirdHopForTest(
 	target.Admission.SourceRunID = &sourceRunID
 	target.Admission.SourceExecutionGeneration = &sourceGeneration
 	target.Admission.SourceConfigDigest, target.Admission.DecoderVersion = "", ""
-	planScope := int64(22)
+	planScope := *source.Decision.PlanScopeRunID
 	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-typed-after-legacy", 22, 30, "attempt-3", 5, planScope, 1000)
 	return target
 }

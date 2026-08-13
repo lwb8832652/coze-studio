@@ -43,10 +43,11 @@ var (
 // BootstrapIdentity is the repository-owned physical identity that a durable
 // decision must exactly echo.
 type BootstrapIdentity struct {
-	ExecutionRunID      int64
-	JournalRunID        int64
-	AttemptID           string
-	ExecutionGeneration uint64
+	ExecutionRunID         int64
+	JournalRunID           int64
+	AttemptID              string
+	ExecutionGeneration    uint64
+	ExpectedPlanScopeRunID int64
 }
 
 func ValidateAdaptiveAdmissionSnapshot(snapshot entity.AdaptiveAdmissionSnapshot) error {
@@ -123,7 +124,10 @@ func ValidateAdaptiveBootstrapPair(
 		!safeIdentifier(identity.AttemptID, 64) || identity.ExecutionGeneration == 0 ||
 		decision.ExecutionRunID != identity.ExecutionRunID || decision.JournalRunID != identity.JournalRunID ||
 		decision.AttemptID != identity.AttemptID || decision.ExecutionGeneration != identity.ExecutionGeneration ||
-		(decision.PlanScopeRunID != nil && *decision.PlanScopeRunID != identity.ExecutionRunID) {
+		(identity.ExpectedPlanScopeRunID != 0 && (decision.PlanScopeRunID == nil ||
+			*decision.PlanScopeRunID != identity.ExpectedPlanScopeRunID)) ||
+		(identity.ExpectedPlanScopeRunID == 0 && decision.PlanScopeRunID != nil &&
+			*decision.PlanScopeRunID != identity.ExecutionRunID) {
 		return ErrExecutionDecisionInvalid
 	}
 	return nil

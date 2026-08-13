@@ -215,19 +215,26 @@ func TestValidateAdaptiveBootstrapPairRequiresC2BootstrapConstraints(t *testing.
 	matchingScope := multiStep.ExecutionRunID
 	multiStep.PlanScopeRunID = &matchingScope
 	multiStepIdentity := BootstrapIdentity{
-		ExecutionRunID:      multiStep.ExecutionRunID,
-		JournalRunID:        multiStep.JournalRunID,
-		AttemptID:           multiStep.AttemptID,
-		ExecutionGeneration: multiStep.ExecutionGeneration,
+		ExecutionRunID:         multiStep.ExecutionRunID,
+		JournalRunID:           multiStep.JournalRunID,
+		AttemptID:              multiStep.AttemptID,
+		ExecutionGeneration:    multiStep.ExecutionGeneration,
+		ExpectedPlanScopeRunID: matchingScope,
 	}
 	if err := ValidateAdaptiveBootstrapPair(admission, multiStep, multiStepIdentity); err != nil {
 		t.Fatalf("valid multi-step bootstrap pair: %v", err)
 	}
 
 	differentScope := int64(99)
+	multiStepIdentity.ExpectedPlanScopeRunID = differentScope
 	multiStep.PlanScopeRunID = &differentScope
+	if err := ValidateAdaptiveBootstrapPair(admission, multiStep, multiStepIdentity); err != nil {
+		t.Fatalf("valid recovery bootstrap pair with inherited plan scope: %v", err)
+	}
+
+	multiStepIdentity.ExpectedPlanScopeRunID = matchingScope
 	if !errors.Is(ValidateAdaptiveBootstrapPair(admission, multiStep, multiStepIdentity), ErrExecutionDecisionInvalid) {
-		t.Fatal("bootstrap pair accepted a plan scope from a different execution run")
+		t.Fatal("bootstrap pair accepted plan scope drift from its expected authority")
 	}
 
 	longAttempt := contractDecision(entity.ExecutionDecisionDirect, entity.ExecutionShapeEmpty)

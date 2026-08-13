@@ -284,8 +284,9 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		AttemptID:      *attempt.SourceAttemptID,
 	})
 	var admission domainentity.AdaptiveAdmissionSnapshot
+	planScopeRunID := input.SourceRunID
 	if err == nil {
-		admission, err = typedAdaptiveAdmissionFromSource(
+		admission, planScopeRunID, err = typedAdaptiveAdmissionFromSource(
 			run.ThreadID,
 			attempt.JournalRunID,
 			input.SourceRunID,
@@ -307,7 +308,7 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		Admission: admission, DecisionID: adaptiveBootstrapStableKey("decision", run, attempt),
 		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
 		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
-		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+		PlanScopeRunID: planScopeRunID, CreatedAt: attempt.CreatedAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("produce recovery adaptive decision: %w", err)
@@ -385,7 +386,7 @@ func typedAdaptiveAdmissionFromSource(
 	sourceRunID int64,
 	expectedSourceAttemptID string,
 	source *domainrepo.CommitAdaptiveExecutionBootstrapResult,
-) (domainentity.AdaptiveAdmissionSnapshot, error) {
+) (domainentity.AdaptiveAdmissionSnapshot, int64, error) {
 	if source == nil || expectedThreadID <= 0 || expectedJournalRunID <= 0 || sourceRunID <= 0 ||
 		!adaptiveBootstrapIdentityPart(expectedSourceAttemptID, 64) ||
 		source.Authority.ThreadID != expectedThreadID ||
@@ -396,19 +397,28 @@ func typedAdaptiveAdmissionFromSource(
 		(source.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) {
-		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("adaptive recovery source facts are invalid")
+		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source facts are invalid")
+	}
+	if source.Decision.PlanScopeRunID == nil || *source.Decision.PlanScopeRunID <= 0 {
+		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source plan scope is invalid")
+	}
+	planScopeRunID := *source.Decision.PlanScopeRunID
+	if source.Admission.Source == domainentity.AdaptiveAdmissionSourceFresh &&
+		planScopeRunID != source.Authority.ExecutionRunID {
+		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source plan scope is invalid")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
 		source.Admission,
 		source.Decision,
 		adaptivecontract.BootstrapIdentity{
-			ExecutionRunID:      source.Authority.ExecutionRunID,
-			JournalRunID:        source.Authority.JournalRunID,
-			AttemptID:           source.Authority.AttemptID,
-			ExecutionGeneration: source.Authority.ExecutionGeneration,
+			ExecutionRunID:         source.Authority.ExecutionRunID,
+			JournalRunID:           source.Authority.JournalRunID,
+			AttemptID:              source.Authority.AttemptID,
+			ExecutionGeneration:    source.Authority.ExecutionGeneration,
+			ExpectedPlanScopeRunID: planScopeRunID,
 		},
 	); err != nil {
-		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("validate adaptive recovery source facts: %w", err)
+		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("validate adaptive recovery source facts: %w", err)
 	}
 	sourceGeneration := source.Authority.ExecutionGeneration
 	return domainentity.AdaptiveAdmissionSnapshot{
@@ -419,7 +429,7 @@ func typedAdaptiveAdmissionFromSource(
 		SourceExecutionGeneration: &sourceGeneration,
 		Capabilities:              source.Admission.Capabilities,
 		Limits:                    source.Admission.Limits,
-	}, nil
+	}, planScopeRunID, nil
 }
 
 func adaptiveBootstrapRecoveryFactsFromDurableResult(
@@ -439,7 +449,7 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 		result.Decision.ExecutionRunID != run.RunID || result.Decision.JournalRunID != attempt.JournalRunID ||
 		result.Decision.AttemptID != attempt.AttemptID ||
 		result.Decision.ExecutionGeneration != run.ExecutionGeneration || result.Decision.DecisionRevision != 1 ||
-		result.Decision.PlanScopeRunID == nil || *result.Decision.PlanScopeRunID != run.RunID ||
+		result.Decision.PlanScopeRunID == nil || *result.Decision.PlanScopeRunID <= 0 ||
 		result.Decision.CreatedAt != attempt.CreatedAt {
 		return nil, fmt.Errorf("adaptive recovery bootstrap facts do not match the current target")
 	}
@@ -447,10 +457,11 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 		result.Admission,
 		result.Decision,
 		adaptivecontract.BootstrapIdentity{
-			ExecutionRunID:      result.Authority.ExecutionRunID,
-			JournalRunID:        result.Authority.JournalRunID,
-			AttemptID:           result.Authority.AttemptID,
-			ExecutionGeneration: result.Authority.ExecutionGeneration,
+			ExecutionRunID:         result.Authority.ExecutionRunID,
+			JournalRunID:           result.Authority.JournalRunID,
+			AttemptID:              result.Authority.AttemptID,
+			ExecutionGeneration:    result.Authority.ExecutionGeneration,
+			ExpectedPlanScopeRunID: *result.Decision.PlanScopeRunID,
 		},
 	); err != nil {
 		return nil, fmt.Errorf("validate adaptive recovery bootstrap facts: %w", err)

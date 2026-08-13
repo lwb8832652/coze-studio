@@ -882,6 +882,7 @@ type adaptiveVerifiedSuccessAuthorityOracleForTest struct {
 	CheckpointID        int64   `json:"checkpoint_id"`
 	PlanScopeRunID      int64   `json:"plan_scope_run_id"`
 	PlanRevision        int64   `json:"plan_revision"`
+	PlanHighWatermark   int64   `json:"plan_high_watermark"`
 	PlanItemFingerprint string  `json:"plan_item_fingerprint"`
 }
 
@@ -1028,7 +1029,8 @@ func buildAdaptiveVerifiedSuccessAuthorityOracleForTest(
 		SourceCheckpointID: authority.SourceCheckpointID, EventID: authority.EventID,
 		EventSequence: authority.EventSequence, IdempotencyKey: authority.IdempotencyKey,
 		CheckpointID: authority.CheckpointID, PlanScopeRunID: authority.PlanScopeRunID,
-		PlanRevision: authority.PlanRevision, PlanItemFingerprint: authority.PlanItemFingerprint,
+		PlanRevision: authority.PlanRevision, PlanHighWatermark: authority.PlanHighWatermark,
+		PlanItemFingerprint: authority.PlanItemFingerprint,
 	}
 }
 
@@ -1251,9 +1253,11 @@ func prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(
 		decision2Req.Event.Payload = `{"schema":"workbench-adaptive-decision.v1","decision_id":"decision-2","decision_revision":2}`
 		decision2Req.Event.CreatedAt = decision2Req.Now
 		decision2Req.Checkpoint.ID = 8010
+		decision2Req.Checkpoint.ParentCheckpointID = decision.Checkpoint.ID
 		decision2Req.Checkpoint.CreatedAt = decision2Req.Now
 		decision2Req.PlanMutation = &AdaptivePlanMutation{
 			PlanScopeRunID: 20, ExpectedRevision: 2, NextRevision: 3,
+			ExpectedHighWatermark: 2, NextHighWatermark: 2,
 			Items: make([]AdaptivePlanItemMutation, 0, len(currentItems)),
 		}
 		for index := range currentItems {
@@ -1275,17 +1279,6 @@ func prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(
 		evidenceEventSequence = 3
 	}
 
-	require.NoError(t, db.Model(&agentRunPlanPO{}).Where("run_id = ?", 20).
-		Update("high_watermark", 4).Error)
-	sentinel, err := agentRunPlanItemToPO(&entity.AgentRunPlanItem{
-		ID: 62, RunID: 20, TaskID: 3, Subject: "completed sentinel",
-		Description: "not referenced by evidence", Status: entity.AgentRunPlanItemStatusCompleted,
-		ActiveForm: "completed", Owner: "agent", Blocks: `[]`, BlockedBy: `[]`,
-		Metadata: `{}`, Active: true, Version: 1, CreatedAt: 1_050, UpdatedAt: 1_050,
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.Create(sentinel).Error)
-
 	evidenceReq := cloneAdaptiveExecutionBoundaryRequestForReplayTest(decisionReq)
 	evidenceReq.Now = 1_100
 	evidenceReq.IdempotencyKey = "evidence-boundary-1"
@@ -1294,12 +1287,17 @@ func prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(
 	evidenceReq.Event.Payload = `{"schema":"workbench-adaptive-evidence.v1"}`
 	evidenceReq.Event.CreatedAt = evidenceReq.Now
 	evidenceReq.Checkpoint.ID = 8002
+	evidenceReq.Checkpoint.ParentCheckpointID = decision.Checkpoint.ID
+	if withNewerDecision {
+		evidenceReq.Checkpoint.ParentCheckpointID = 8010
+	}
 	evidenceReq.Checkpoint.ChannelValues = `{"verified":true}`
 	evidenceReq.Checkpoint.ChannelVersions = `{"state":2}`
 	evidenceReq.Checkpoint.Metadata = `{"runtime_field":"evidence"}`
 	evidenceReq.Checkpoint.CreatedAt = evidenceReq.Now
 	evidenceReq.PlanMutation = &AdaptivePlanMutation{
 		PlanScopeRunID: 20, ExpectedRevision: evidenceExpectedRevision, NextRevision: evidenceNextRevision,
+		ExpectedHighWatermark: 2, NextHighWatermark: 2,
 		Items: []AdaptivePlanItemMutation{{
 			ExpectedVersion: evidenceExpectedItemVersion,
 			NextItem: &entity.AgentRunPlanItem{
@@ -1316,6 +1314,16 @@ func prepareAdaptiveVerifiedSuccessFixtureWithOptionsForTest(
 	require.NotNil(t, evidence)
 	require.NotEqual(t, decisionReq.IdempotencyKey, evidenceReq.IdempotencyKey)
 	require.Equal(t, evidenceEventSequence, evidence.Authority.EventSequence)
+	require.NoError(t, db.Model(&agentRunPlanPO{}).Where("run_id = ?", 20).
+		UpdateColumn("high_watermark", 4).Error)
+	sentinel, err := agentRunPlanItemToPO(&entity.AgentRunPlanItem{
+		ID: 62, RunID: 20, TaskID: 3, Subject: "completed sentinel",
+		Description: "not referenced by evidence", Status: entity.AgentRunPlanItemStatusCompleted,
+		ActiveForm: "completed", Owner: "agent", Blocks: `[]`, BlockedBy: `[]`,
+		Metadata: `{}`, Active: true, Version: 1, CreatedAt: 1_050, UpdatedAt: 1_050,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(sentinel).Error)
 
 	var itemRows []agentRunPlanItemPO
 	require.NoError(t, db.Where("run_id = ?", 20).Order("task_id ASC").Find(&itemRows).Error)
@@ -1991,6 +1999,26 @@ func TestThreadRepositoryFinalizeRunSuccessRejectsAdaptiveAuthorityDriftWithoutW
 		{
 			name: "Decision", prepare: prepareAdaptiveVerifiedSuccessFixtureWithNewerDecisionForTest,
 			mutate: func(*testing.T, adaptiveVerifiedSuccessFixtureForTest) {},
+		},
+		{
+			name: "RollingParentCannotBeGuessedFromLatestCheckpoint", prepare: defaultFixture,
+			expectedCause: ErrAdaptiveExecutionCheckpointConflict,
+			mutate: func(t *testing.T, fixture adaptiveVerifiedSuccessFixtureForTest) {
+				decoy, err := checkpointToPO(&entity.Checkpoint{
+					ID: 7999, ThreadID: fixture.Evidence.Authority.ThreadID,
+					RunID:              fixture.Evidence.Authority.ExecutionRunID,
+					ParentCheckpointID: 0,
+					CheckpointNS:       "ambient", RuntimeType: "eino_adk", RuntimeKey: "ambient",
+					EnvelopeVersion: 1, ChannelValues: `{}`, ChannelVersions: `{}`,
+					PendingSends: `[]`, Metadata: `{"ambient":true}`, CreatedAt: 1_099,
+				})
+				require.NoError(t, err)
+				require.NoError(t, fixture.DB.Create(decoy).Error)
+				resignAdaptiveVerifiedSuccessAuthorityForTest(
+					t, fixture, fixture.Evidence.Authority, nil,
+					func(checkpoint *checkpointPO) { checkpoint.ParentCheckpointID = decoy.ID }, nil,
+				)
+			},
 		},
 		{
 			name: "Verification", prepare: defaultFixture, commitFirst: true,
@@ -3554,7 +3582,9 @@ func TestAdaptiveExecutionCheckpointFingerprintBindsPhysicalRowCanonically(t *te
 		EventID:       7001, EventSequence: 1, JournalRunID: 30, AttemptID: "attempt-1",
 		EventIdempotencyKey: "boundary-1",
 		EventFingerprint:    strings.Repeat("a", 64), CheckpointFingerprint: strings.Repeat("b", 64),
-		PlanScopeRunID: 20, PlanRevision: 2, ItemFingerprint: strings.Repeat("c", 64),
+		PlanScopeRunID: 20, PlanRevision: 2, PlanHighWatermark: 2,
+		MutationDigest:  strings.Repeat("d", 64),
+		ItemFingerprint: strings.Repeat("c", 64),
 		ItemRefs: []adaptiveExecutionCheckpointItemRef{
 			{ID: 60, TaskID: 1, Version: 2}, {ID: 61, TaskID: 2, Version: 1},
 		},
@@ -3684,7 +3714,7 @@ func TestAdaptiveExecutionBoundaryCommitsInitialMutationAtomically(t *testing.T)
 	require.NoError(t, db.Where("id = ?", 8001).First(&checkpoint).Error)
 	require.Equal(t, result.Checkpoint, checkpoint.toEntity())
 	metadata := decodeAdaptiveExecutionMetadataForTest(t, checkpoint.Metadata)
-	require.Equal(t, "workbench-adaptive-boundary.v2", metadata.SchemaVersion)
+	require.Equal(t, "workbench-adaptive-boundary.v4", metadata.SchemaVersion)
 	require.Equal(t, int64(7001), metadata.EventID)
 	require.Equal(t, uint64(1), metadata.EventSequence)
 	require.Equal(t, int64(30), metadata.JournalRunID)
@@ -3709,6 +3739,524 @@ func TestAdaptiveExecutionBoundaryCommitsInitialMutationAtomically(t *testing.T)
 	require.Equal(t, uint64(2), attempt.NextSequence)
 	require.Equal(t, uint64(1), attempt.LastCommittedSequence)
 	require.Equal(t, int64(1000), attempt.UpdatedAt)
+}
+
+func TestAdaptiveExecutionBoundaryAdvancesHighWatermarkWithCreatedItemAtomically(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	req.PlanMutation.ExpectedHighWatermark = 2
+	req.PlanMutation.NextHighWatermark = 3
+	req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(62, 20, 3, 1, req.Now),
+	}}
+
+	result, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, int64(3), result.Plan.HighWatermark)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, int64(3), result.Items[0].TaskID)
+	var plan agentRunPlanPO
+	require.NoError(t, db.Where("run_id = ?", 20).First(&plan).Error)
+	require.Equal(t, int64(3), plan.HighWatermark)
+	var item agentRunPlanItemPO
+	require.NoError(t, db.Where("run_id = ? AND task_id = ?", 20, 3).First(&item).Error)
+	require.Equal(t, int64(1), item.Version)
+}
+
+func TestAdaptiveExecutionBoundaryCreatesInitialPlanWithBoundaryAtomically(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanPO{}).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanItemPO{}).Error)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	req.PlanMutation.ExpectedRevision = 0
+	req.PlanMutation.NextRevision = 1
+	req.PlanMutation.ExpectedHighWatermark = 0
+	req.PlanMutation.NextHighWatermark = 1
+	req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(61, 20, 1, 1, req.Now),
+	}}
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	result, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+	require.NoError(t, err)
+	require.Equal(t, &entity.AgentRunPlan{
+		RunID: 20, ThreadID: 10, SpaceID: 10, UserID: 20,
+		HighWatermark: 1, Revision: 1, CreatedAt: req.Now, UpdatedAt: req.Now,
+	}, result.Plan)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, int64(1), result.Items[0].TaskID)
+	require.NotEqual(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBoundaryRollsBackInitialPlanCreateOnLaterCASConflict(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanPO{}).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanItemPO{}).Error)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	req.PlanMutation.ExpectedRevision = 0
+	req.PlanMutation.NextRevision = 1
+	req.PlanMutation.ExpectedHighWatermark = 0
+	req.PlanMutation.NextHighWatermark = 1
+	req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(61, 20, 1, 1, req.Now),
+	}}
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		state := buildAdaptiveExecutionLockedStateForTest(t, tx, req)
+		require.NoError(t, tx.Model(&runAttemptPO{}).Where("id = ?", state.attempt.ID).
+			Update("next_sequence", state.attempt.NextSequence+1).Error)
+		return commitAdaptiveExecutionMutationLocked(tx, req, state)
+	})
+
+	require.ErrorIs(t, err, ErrAdaptiveExecutionSequenceConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBoundaryRejectsInvalidHighWatermarkMutationWithoutWrites(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*CommitAdaptiveExecutionBoundaryRequest)
+	}{
+		{
+			name: "stale expected high watermark",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+				req.PlanMutation.ExpectedHighWatermark = 1
+				req.PlanMutation.NextHighWatermark = 1
+			},
+		},
+		{
+			name: "skipped high watermark",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+				req.PlanMutation.ExpectedHighWatermark = 2
+				req.PlanMutation.NextHighWatermark = 4
+				req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+					ExpectedVersion: 0,
+					NextItem:        newAdaptivePlanItem(62, 20, 4, 1, req.Now),
+				}}
+			},
+		},
+		{
+			name: "created task does not match next high watermark",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+				req.PlanMutation.ExpectedHighWatermark = 2
+				req.PlanMutation.NextHighWatermark = 3
+				req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+					ExpectedVersion: 0,
+					NextItem:        newAdaptivePlanItem(62, 20, 2, 1, req.Now),
+				}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			seedAdaptiveExecutionInitialState(t, db)
+			req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+			tt.mutate(&req)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(context.Background(), req)
+
+			require.Nil(t, result)
+			require.Error(t, err)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestAdaptiveExecutionBoundaryReplaysHistoricalCreatedItemAfterHighWatermarkAdvances(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	create := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	create.PlanMutation.ExpectedHighWatermark = 2
+	create.PlanMutation.NextHighWatermark = 3
+	create.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(62, 20, 3, 1, create.Now),
+	}}
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), create)
+	require.NoError(t, err)
+
+	advance := cloneAdaptiveExecutionBoundaryRequestForReplayTest(create)
+	advance.Now = 1100
+	advance.IdempotencyKey = "boundary-2"
+	advance.Event.ID = 7002
+	advance.Event.Payload = `{"step":2}`
+	advance.Event.CreatedAt = advance.Now
+	advance.Checkpoint.ID = 8002
+	advance.Checkpoint.ParentCheckpointID = first.Checkpoint.ID
+	advance.Checkpoint.CreatedAt = advance.Now
+	advance.PlanMutation.ExpectedRevision = first.Plan.Revision
+	advance.PlanMutation.NextRevision = first.Plan.Revision + 1
+	advance.PlanMutation.ExpectedHighWatermark = 3
+	advance.PlanMutation.NextHighWatermark = 4
+	advance.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(63, 20, 4, 1, advance.Now),
+	}}
+	second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), advance)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), second.Plan.HighWatermark)
+	beforeReplay := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	replayed, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), create)
+
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Equal(t, int64(3), replayed.Plan.HighWatermark)
+	require.Equal(t, first.Authority, replayed.Authority)
+	require.Equal(t, beforeReplay, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestReadAdaptiveExecutionBoundaryReturnsCommittedInitialPlanWithoutCandidateWrites(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanPO{}).Error)
+	require.NoError(t, db.Where("run_id = ?", 20).Delete(&agentRunPlanItemPO{}).Error)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	req.PlanMutation.ExpectedRevision = 0
+	req.PlanMutation.NextRevision = 1
+	req.PlanMutation.ExpectedHighWatermark = 0
+	req.PlanMutation.NextHighWatermark = 1
+	req.PlanMutation.Items = []AdaptivePlanItemMutation{{
+		ExpectedVersion: 0,
+		NextItem:        newAdaptivePlanItem(61, 20, 1, 1, req.Now),
+	}}
+	digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
+	committed, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(
+		context.Background(), req,
+	)
+	require.NoError(t, err)
+	beforeRead := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	read, err := NewAdaptiveExecutionRepository(db).ReadAdaptiveExecutionBoundary(
+		context.Background(),
+		ReadAdaptiveExecutionBoundaryRequest{
+			ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+			JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+			Generation: req.Generation, RuntimeKey: req.Checkpoint.RuntimeKey,
+			IdempotencyKey: req.IdempotencyKey, ExpectedMutationDigest: digest,
+		},
+	)
+
+	require.NoError(t, err)
+	expected := *committed
+	expected.Replayed = true
+	require.Equal(t, &expected, read)
+	require.Equal(t, beforeRead, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestReadAdaptiveExecutionBoundaryReturnsAdvancedCurrentHead(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	firstReq := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstReq)
+	require.NoError(t, err)
+	secondReq := cloneAdaptiveExecutionBoundaryRequestForReplayTest(firstReq)
+	secondReq.Now = 1100
+	secondReq.IdempotencyKey = "boundary-2"
+	secondReq.Event.ID = 7002
+	secondReq.Event.Payload = `{"step":2}`
+	secondReq.Event.CreatedAt = secondReq.Now
+	secondReq.Checkpoint.ID = 8002
+	secondReq.Checkpoint.ParentCheckpointID = first.Checkpoint.ID
+	secondReq.Checkpoint.CreatedAt = secondReq.Now
+	secondReq.PlanMutation.ExpectedRevision = first.Plan.Revision
+	secondReq.PlanMutation.NextRevision = first.Plan.Revision + 1
+	secondReq.PlanMutation.ExpectedHighWatermark = first.Plan.HighWatermark
+	secondReq.PlanMutation.NextHighWatermark = first.Plan.HighWatermark
+	secondReq.PlanMutation.Items[0].ExpectedVersion = first.Items[0].Version
+	secondItem := *first.Items[0]
+	secondItem.Subject = "advanced head"
+	secondItem.Version++
+	secondItem.UpdatedAt = secondReq.Now
+	secondReq.PlanMutation.Items[0].NextItem = &secondItem
+	secondReq.PlanMutation.Items = secondReq.PlanMutation.Items[:1]
+	second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), secondReq)
+	require.NoError(t, err)
+	digest, err := AdaptiveExecutionPlanMutationDigest(secondReq.PlanMutation)
+	require.NoError(t, err)
+	beforeRead := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	read, err := repo.ReadAdaptiveExecutionBoundary(
+		context.Background(), adaptiveReadBoundaryRequestForTest(secondReq, digest),
+	)
+
+	require.NoError(t, err)
+	expected := *second
+	expected.Replayed = true
+	require.Equal(t, &expected, read)
+	require.Equal(t, beforeRead, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestReadAdaptiveExecutionBoundaryReturnsTypedNotFoundWithoutWrites(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
+	readReq := adaptiveReadBoundaryRequestForTest(req, digest)
+	readReq.IdempotencyKey = "missing-boundary"
+	beforeRead := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	result, err := NewAdaptiveExecutionRepository(db).ReadAdaptiveExecutionBoundary(
+		context.Background(), readReq,
+	)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionBoundaryNotFound)
+	require.Equal(t, beforeRead, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestReadAdaptiveExecutionBoundaryRejectsAuthorityRuntimeAndDigestDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ReadAdaptiveExecutionBoundaryRequest)
+	}{
+		{name: "thread", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.ThreadID++ }},
+		{name: "execution run", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.ExecutionRunID++ }},
+		{name: "generation", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.Generation++ }},
+		{name: "runtime key", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.RuntimeKey += ":drift" }},
+		{name: "mutation digest", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) {
+			req.ExpectedMutationDigest = strings.Repeat("f", 64)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			seedAdaptiveExecutionInitialState(t, db)
+			req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(
+				context.Background(), req,
+			)
+			require.NoError(t, err)
+			digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+			require.NoError(t, err)
+			readReq := adaptiveReadBoundaryRequestForTest(req, digest)
+			tt.mutate(&readReq)
+			beforeRead := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, readErr := NewAdaptiveExecutionRepository(db).ReadAdaptiveExecutionBoundary(
+				context.Background(), readReq,
+			)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, readErr, ErrAdaptiveExecutionReplayConflict)
+			require.Equal(t, beforeRead, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestReadAdaptiveExecutionBoundaryRejectsInvalidRequest(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	valid := ReadAdaptiveExecutionBoundaryRequest{
+		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30,
+		AttemptID: "attempt-1", Generation: 3, RuntimeKey: "thread:10:run:20",
+		IdempotencyKey: "boundary-1", ExpectedMutationDigest: digest,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*ReadAdaptiveExecutionBoundaryRequest)
+	}{
+		{name: "thread", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.ThreadID = 0 }},
+		{name: "execution run", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.ExecutionRunID = 0 }},
+		{name: "journal run", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.JournalRunID = 0 }},
+		{name: "attempt", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.AttemptID = "" }},
+		{name: "generation", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.Generation = 0 }},
+		{name: "runtime key", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.RuntimeKey = "" }},
+		{name: "idempotency key", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.IdempotencyKey = "" }},
+		{name: "digest", mutate: func(req *ReadAdaptiveExecutionBoundaryRequest) { req.ExpectedMutationDigest = "bad" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := valid
+			tt.mutate(&req)
+
+			result, err := NewAdaptiveExecutionRepository(nil).ReadAdaptiveExecutionBoundary(
+				context.Background(), req,
+			)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionBoundaryInvalid)
+		})
+	}
+}
+
+func TestReadAdaptiveExecutionBoundaryRejectsTamperedStoredAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		tamper func(*testing.T, *gorm.DB, CommitAdaptiveExecutionBoundaryRequest)
+	}{
+		{name: "event payload", tamper: func(t *testing.T, db *gorm.DB, req CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&runEventPO{}).Where("id = ?", req.Event.ID).
+				UpdateColumn("payload", []byte(`{"tampered":true}`)).Error)
+		}},
+		{name: "checkpoint bytes", tamper: func(t *testing.T, db *gorm.DB, req CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", req.Checkpoint.ID).
+				UpdateColumn("channel_values", []byte(`{"tampered":true}`)).Error)
+		}},
+		{name: "plan head", tamper: func(t *testing.T, db *gorm.DB, req CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&agentRunPlanPO{}).Where("run_id = ?", req.PlanMutation.PlanScopeRunID).
+				UpdateColumn("revision", req.PlanMutation.NextRevision+1).Error)
+		}},
+		{name: "plan item", tamper: func(t *testing.T, db *gorm.DB, req CommitAdaptiveExecutionBoundaryRequest) {
+			require.NoError(t, db.Model(&agentRunPlanItemPO{}).Where("id = ?", req.PlanMutation.Items[0].NextItem.ID).
+				UpdateColumn("subject", "tampered").Error)
+		}},
+		{name: "attempt source", tamper: func(t *testing.T, db *gorm.DB, req CommitAdaptiveExecutionBoundaryRequest) {
+			sourceAttempt := "tampered-attempt"
+			sourceCheckpoint := int64(9999)
+			require.NoError(t, db.Model(&runAttemptPO{}).Where(
+				"journal_run_id = ? AND attempt_id = ?", req.JournalRunID, req.AttemptID,
+			).Updates(map[string]any{
+				"source_attempt_id": sourceAttempt, "source_checkpoint_id": sourceCheckpoint,
+			}).Error)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			seedAdaptiveExecutionInitialState(t, db)
+			req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(
+				context.Background(), req,
+			)
+			require.NoError(t, err)
+			digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+			require.NoError(t, err)
+			tt.tamper(t, db, req)
+			beforeRead := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, readErr := NewAdaptiveExecutionRepository(db).ReadAdaptiveExecutionBoundary(
+				context.Background(), adaptiveReadBoundaryRequestForTest(req, digest),
+			)
+
+			require.Nil(t, result)
+			require.ErrorIs(t, readErr, ErrAdaptiveExecutionReplayConflict)
+			require.Equal(t, beforeRead, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestReadAdaptiveExecutionBoundaryRejectsNonHeadBoundary(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	firstReq := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstReq)
+	require.NoError(t, err)
+	secondReq := cloneAdaptiveExecutionBoundaryRequestForReplayTest(firstReq)
+	secondReq.Now = 1100
+	secondReq.IdempotencyKey = "boundary-2"
+	secondReq.Event.ID = 7002
+	secondReq.Event.CreatedAt = secondReq.Now
+	secondReq.Checkpoint.ID = 8002
+	secondReq.Checkpoint.ParentCheckpointID = first.Checkpoint.ID
+	secondReq.Checkpoint.CreatedAt = secondReq.Now
+	secondReq.PlanMutation.ExpectedRevision = first.Plan.Revision
+	secondReq.PlanMutation.NextRevision = first.Plan.Revision + 1
+	secondReq.PlanMutation.ExpectedHighWatermark = first.Plan.HighWatermark
+	secondReq.PlanMutation.NextHighWatermark = first.Plan.HighWatermark
+	secondReq.PlanMutation.Items[0].ExpectedVersion = first.Items[0].Version
+	secondItem := *first.Items[0]
+	secondItem.Version++
+	secondItem.UpdatedAt = secondReq.Now
+	secondReq.PlanMutation.Items[0].NextItem = &secondItem
+	secondReq.PlanMutation.Items = secondReq.PlanMutation.Items[:1]
+	_, err = repo.CommitAdaptiveExecutionBoundary(context.Background(), secondReq)
+	require.NoError(t, err)
+	digest, err := AdaptiveExecutionPlanMutationDigest(firstReq.PlanMutation)
+	require.NoError(t, err)
+	beforeRead := snapshotAdaptiveExecutionBoundaryRowsForTest(t, db)
+
+	result, err := repo.ReadAdaptiveExecutionBoundary(
+		context.Background(), adaptiveReadBoundaryRequestForTest(firstReq, digest),
+	)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionReplayConflict)
+	require.Equal(t, beforeRead, snapshotAdaptiveExecutionBoundaryRowsForTest(t, db))
+}
+
+func TestAdaptiveExecutionPlanMutationDigestIsStableAcrossAllocatedIdentityAndTime(t *testing.T) {
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	first, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
+	clone := cloneAdaptiveExecutionBoundaryRequestForReplayTest(req)
+	for _, item := range clone.PlanMutation.Items {
+		item.NextItem.ID += 10_000
+		item.NextItem.CreatedAt += 10_000
+		item.NextItem.UpdatedAt += 10_000
+	}
+
+	second, err := AdaptiveExecutionPlanMutationDigest(clone.PlanMutation)
+
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+}
+
+func TestAdaptiveExecutionPlanMutationDigestBindsLogicalMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*AdaptivePlanMutation)
+	}{
+		{name: "scope", mutate: func(m *AdaptivePlanMutation) { m.PlanScopeRunID++ }},
+		{name: "expected revision", mutate: func(m *AdaptivePlanMutation) { m.ExpectedRevision++ }},
+		{name: "next revision", mutate: func(m *AdaptivePlanMutation) { m.NextRevision++ }},
+		{name: "expected high watermark", mutate: func(m *AdaptivePlanMutation) { m.ExpectedHighWatermark++ }},
+		{name: "next high watermark", mutate: func(m *AdaptivePlanMutation) { m.NextHighWatermark++ }},
+		{name: "expected item version", mutate: func(m *AdaptivePlanMutation) { m.Items[0].ExpectedVersion++ }},
+		{name: "task", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.TaskID++ }},
+		{name: "item version", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Version++ }},
+		{name: "subject", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Subject += " changed" }},
+		{name: "description", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Description += " changed" }},
+		{name: "status", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Status = entity.AgentRunPlanItemStatusCompleted }},
+		{name: "active form", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.ActiveForm += " changed" }},
+		{name: "owner", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Owner += " changed" }},
+		{name: "blocks", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Blocks = `[2]` }},
+		{name: "blocked by", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.BlockedBy = `[2]` }},
+		{name: "metadata", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Metadata = `{"changed":true}` }},
+		{name: "active", mutate: func(m *AdaptivePlanMutation) { m.Items[0].NextItem.Active = !m.Items[0].NextItem.Active }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+			baseline, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+			require.NoError(t, err)
+			clone := cloneAdaptiveExecutionBoundaryRequestForReplayTest(req)
+			tt.mutate(clone.PlanMutation)
+
+			changed, err := AdaptiveExecutionPlanMutationDigest(clone.PlanMutation)
+
+			require.NoError(t, err)
+			require.NotEqual(t, baseline, changed)
+		})
+	}
+}
+
+func adaptiveReadBoundaryRequestForTest(
+	req CommitAdaptiveExecutionBoundaryRequest,
+	digest string,
+) ReadAdaptiveExecutionBoundaryRequest {
+	return ReadAdaptiveExecutionBoundaryRequest{
+		ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+		JournalRunID: req.JournalRunID, AttemptID: req.AttemptID,
+		Generation: req.Generation, RuntimeKey: req.Checkpoint.RuntimeKey,
+		IdempotencyKey: req.IdempotencyKey, ExpectedMutationDigest: digest,
+	}
 }
 
 func TestAdaptiveExecutionBoundaryReplaysLostResponseWithoutWrites(t *testing.T) {
@@ -3777,8 +4325,15 @@ func TestAdaptiveExecutionBoundaryRejectsReplayPayloadAndMutationDrift(t *testin
 			req.PlanMutation.ExpectedRevision = 2
 			req.PlanMutation.NextRevision = 3
 		}},
+		{name: "plan next high watermark", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+			req.PlanMutation.ExpectedHighWatermark = 3
+			req.PlanMutation.NextHighWatermark = 3
+		}},
 		{name: "item id", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.Items[0].NextItem.ID++ }},
-		{name: "item task id", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.Items[0].NextItem.TaskID++ }},
+		{name: "item task id", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+			req.PlanMutation.Items[0].NextItem.TaskID++
+			req.PlanMutation.NextHighWatermark++
+		}},
 		{name: "item subject", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
 			req.PlanMutation.Items[1].NextItem.Subject += " changed"
 		}},
@@ -4128,7 +4683,7 @@ func TestAdaptiveExecutionCheckpointMetadataV2RoundTrip(t *testing.T) {
 	require.JSONEq(t, `1.25`, extractJSONFieldForTest(t, result.Checkpoint.Metadata, "runtime_number"))
 	metadata, err := decodeAdaptiveExecutionCheckpointMetadata([]byte(result.Checkpoint.Metadata))
 	require.NoError(t, err)
-	require.Equal(t, "workbench-adaptive-boundary.v2", metadata.SchemaVersion)
+	require.Equal(t, "workbench-adaptive-boundary.v4", metadata.SchemaVersion)
 	require.Equal(t, int64(7001), metadata.EventID)
 	require.Equal(t, uint64(1), metadata.EventSequence)
 	require.Equal(t, int64(30), metadata.JournalRunID)
@@ -4146,6 +4701,9 @@ func TestAdaptiveExecutionCheckpointMetadataV2RoundTrip(t *testing.T) {
 	require.Equal(t, metadata.CheckpointFingerprint, requireStringPointerForTest(t, storedEvent.SnapshotID))
 	require.Equal(t, int64(20), metadata.PlanScopeRunID)
 	require.Equal(t, int64(2), metadata.PlanRevision)
+	digest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
+	require.Equal(t, digest, metadata.MutationDigest)
 	require.Equal(t, []adaptiveExecutionCheckpointItemRef{
 		{ID: 60, TaskID: 1, Version: 2},
 		{ID: 61, TaskID: 2, Version: 1},
@@ -4157,6 +4715,7 @@ func TestAdaptiveExecutionCheckpointMetadataV2RoundTrip(t *testing.T) {
 		JournalRunID: 30, AttemptID: "attempt-1",
 		EventID: 7001, EventSequence: 1, IdempotencyKey: "boundary-1",
 		CheckpointID: 8001, PlanScopeRunID: 20, PlanRevision: 2,
+		PlanHighWatermark:   2,
 		PlanItemFingerprint: metadata.ItemFingerprint,
 	}, result.Authority)
 
@@ -5350,7 +5909,11 @@ func TestAdaptiveExecutionBoundaryRejectsStalePlanItemVersion(t *testing.T) {
 			tt.mutate(t, db, &req)
 			before := snapshotAdaptiveExecutionDBForTest(t, db)
 			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBoundary(context.Background(), req)
-			require.ErrorIs(t, err, ErrAdaptiveExecutionPlanItemVersionConflict)
+			if tt.name == "task beyond high watermark" {
+				require.ErrorIs(t, err, ErrAdaptiveExecutionBoundaryInvalid)
+			} else {
+				require.ErrorIs(t, err, ErrAdaptiveExecutionPlanItemVersionConflict)
+			}
 			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
 		})
 	}
@@ -5399,6 +5962,23 @@ func TestAdaptiveExecutionBoundaryRollsBackAttemptSequenceCASConflict(t *testing
 	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
 }
 
+func TestAdaptiveExecutionBoundaryRollsBackPlanHighWatermarkCASConflict(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	req := adaptiveInitialBoundaryRequest(7001, 8001, 1000)
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		state := buildAdaptiveExecutionLockedStateForTest(t, tx, req)
+		require.NoError(t, tx.Model(&agentRunPlanPO{}).Where("run_id = ?", state.plan.RunID).
+			UpdateColumn("high_watermark", state.plan.HighWatermark+1).Error)
+		return commitAdaptiveExecutionMutationLocked(tx, req, state)
+	})
+
+	require.ErrorIs(t, err, ErrAdaptiveExecutionPlanRevisionConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
 func prepareAdaptiveSecondHopRecoveryTestForTest(t *testing.T) (*gorm.DB, CommitAdaptiveExecutionBoundaryRequest) {
 	t.Helper()
 	db, bRequest := prepareAdaptiveRecoveryTestForTest(t)
@@ -5428,6 +6008,11 @@ func buildAdaptiveExecutionLockedStateForTest(
 	scopeRun, err := lockAdaptiveExecutionScopeRun(tx, req.PlanMutation.PlanScopeRunID)
 	require.NoError(t, err)
 	plan, err := lockAdaptiveExecutionPlan(tx, req.PlanMutation.PlanScopeRunID)
+	if errors.Is(err, ErrAdaptiveExecutionPlanScopeConflict) {
+		scopeRun, scopeErr := lockAdaptiveExecutionScopeRun(tx, req.PlanMutation.PlanScopeRunID)
+		require.NoError(t, scopeErr)
+		plan, err = lockAdaptiveExecutionPlanForMutation(tx, scopeRun, req.PlanMutation, req.Now)
+	}
 	require.NoError(t, err)
 	require.NoError(t, validateAdaptiveExecutionPlanScope(run, scopeRun, plan, req.PlanMutation))
 	items, err := lockAdaptiveExecutionPlanItems(tx, plan, req.PlanMutation, req.Now)
@@ -5456,9 +6041,12 @@ func buildAdaptiveExecutionLockedStateForTest(
 		SourceAttemptID: attempt.SourceAttemptID, SourceCheckpointID: attempt.SourceCheckpointID,
 		EventIdempotencyKey: req.IdempotencyKey,
 		PlanScopeRunID:      req.PlanMutation.PlanScopeRunID, PlanRevision: req.PlanMutation.NextRevision,
-		ItemFingerprint: fingerprint, ItemRefs: itemRefs,
+		PlanHighWatermark: req.PlanMutation.NextHighWatermark,
+		ItemFingerprint:   fingerprint, ItemRefs: itemRefs,
 		ExecutionRunID: run.ID, ExecutionGeneration: run.ExecutionGeneration,
 	}
+	metadata.MutationDigest, err = AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+	require.NoError(t, err)
 	checkpointFingerprint, err := adaptiveExecutionCheckpointFingerprint(checkpointBase, &metadata)
 	require.NoError(t, err)
 	event.SnapshotID = adaptiveExecutionStringPointer(checkpointFingerprint)
@@ -5558,6 +6146,7 @@ func seedAdaptiveRecoveryTargetForTest(
 	}
 	req.PlanMutation = &AdaptivePlanMutation{
 		PlanScopeRunID: 20, ExpectedRevision: target.ExpectedRevision, NextRevision: target.ExpectedRevision + 1,
+		ExpectedHighWatermark: 2, NextHighWatermark: 2,
 		Items: []AdaptivePlanItemMutation{{
 			ExpectedVersion: target.ExpectedItemVersion,
 			NextItem: &entity.AgentRunPlanItem{
@@ -5595,6 +6184,8 @@ func adaptiveNextBoundaryForSameRecoveryTest(
 	next.Checkpoint.CreatedAt = now
 	next.PlanMutation.ExpectedRevision = previous.Plan.Revision
 	next.PlanMutation.NextRevision = previous.Plan.Revision + 1
+	next.PlanMutation.ExpectedHighWatermark = previous.Plan.HighWatermark
+	next.PlanMutation.NextHighWatermark = previous.Plan.HighWatermark
 	item := *previous.Items[0]
 	next.PlanMutation.Items[0].ExpectedVersion = item.Version
 	item.Subject = fmt.Sprintf("recovered step %d", item.Version+1)
@@ -5751,6 +6342,26 @@ type adaptiveExecutionDBSnapshotForTest struct {
 	Items       []agentRunPlanItemPO
 }
 
+type adaptiveExecutionBoundaryRowsForTest struct {
+	Events      []runEventPO
+	Checkpoints []checkpointPO
+	Plans       []agentRunPlanPO
+	Items       []agentRunPlanItemPO
+}
+
+func snapshotAdaptiveExecutionBoundaryRowsForTest(
+	t *testing.T,
+	db *gorm.DB,
+) adaptiveExecutionBoundaryRowsForTest {
+	t.Helper()
+	var result adaptiveExecutionBoundaryRowsForTest
+	require.NoError(t, db.Order("id ASC").Find(&result.Events).Error)
+	require.NoError(t, db.Order("id ASC").Find(&result.Checkpoints).Error)
+	require.NoError(t, db.Order("run_id ASC").Find(&result.Plans).Error)
+	require.NoError(t, db.Order("run_id ASC, task_id ASC").Find(&result.Items).Error)
+	return result
+}
+
 func snapshotAdaptiveExecutionDBForTest(t *testing.T, db *gorm.DB) adaptiveExecutionDBSnapshotForTest {
 	t.Helper()
 	var result adaptiveExecutionDBSnapshotForTest
@@ -5776,6 +6387,8 @@ type adaptiveExecutionMetadataForTest struct {
 	CheckpointFingerprint string                               `json:"checkpoint_fingerprint"`
 	PlanScopeRunID        int64                                `json:"plan_scope_run_id"`
 	PlanRevision          int64                                `json:"plan_revision"`
+	PlanHighWatermark     int64                                `json:"plan_high_watermark"`
+	MutationDigest        string                               `json:"mutation_digest"`
 	ItemFingerprint       string                               `json:"item_fingerprint"`
 	ItemRefs              []adaptiveExecutionCheckpointItemRef `json:"item_refs"`
 	ExecutionRunID        int64                                `json:"execution_run_id"`
@@ -5836,6 +6449,8 @@ func adaptiveInitialBoundaryRequest(eventID, checkpointID, now int64) CommitAdap
 	req.Checkpoint.ID = checkpointID
 	req.Checkpoint.CreatedAt = now
 	req.Now = now
+	req.PlanMutation.ExpectedHighWatermark = 2
+	req.PlanMutation.NextHighWatermark = 2
 	req.PlanMutation.Items = []AdaptivePlanItemMutation{
 		{
 			ExpectedVersion: 0,
@@ -5921,8 +6536,11 @@ func TestValidateAdaptiveExecutionMutationRequest(t *testing.T) {
 	}{
 		{name: "nil mutation", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation = nil }},
 		{name: "plan scope", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.PlanScopeRunID = 0 }},
-		{name: "expected revision", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.ExpectedRevision = 0 }},
+		{name: "negative expected revision", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.ExpectedRevision = -1 }},
 		{name: "revision continuity", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.NextRevision++ }},
+		{name: "negative expected high watermark", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.ExpectedHighWatermark = -1 }},
+		{name: "high watermark regression", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.NextHighWatermark-- }},
+		{name: "high watermark skip", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.NextHighWatermark += 2 }},
 		{name: "zero items", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.PlanMutation.Items = nil }},
 		{name: "too many items", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
 			item := req.PlanMutation.Items[0]
@@ -5991,9 +6609,11 @@ func newValidAdaptiveExecutionMutationRequest() CommitAdaptiveExecutionBoundaryR
 	req.Checkpoint.Metadata = `{"runtime_field":"preserved"}`
 	req.Checkpoint.CreatedAt = req.Now
 	req.PlanMutation = &AdaptivePlanMutation{
-		PlanScopeRunID:   20,
-		ExpectedRevision: 1,
-		NextRevision:     2,
+		PlanScopeRunID:        20,
+		ExpectedRevision:      1,
+		NextRevision:          2,
+		ExpectedHighWatermark: 2,
+		NextHighWatermark:     2,
 		Items: []AdaptivePlanItemMutation{{
 			ExpectedVersion: 1,
 			NextItem: &entity.AgentRunPlanItem{

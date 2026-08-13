@@ -35,7 +35,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const adaptiveExecutionCheckpointSchemaVersion = "workbench-adaptive-boundary.v2"
+const adaptiveExecutionCheckpointSchemaVersion = "workbench-adaptive-boundary.v4"
 
 var errAdaptiveExecutionBoundaryTupleMissing = errors.New("adaptive execution boundary tuple is missing")
 
@@ -63,6 +63,8 @@ type adaptiveExecutionCheckpointMetadata struct {
 	CheckpointFingerprint string                               `json:"checkpoint_fingerprint"`
 	PlanScopeRunID        int64                                `json:"plan_scope_run_id"`
 	PlanRevision          int64                                `json:"plan_revision"`
+	PlanHighWatermark     int64                                `json:"plan_high_watermark"`
+	MutationDigest        string                               `json:"mutation_digest"`
 	ItemFingerprint       string                               `json:"item_fingerprint"`
 	ItemRefs              []adaptiveExecutionCheckpointItemRef `json:"item_refs"`
 	ExecutionRunID        int64                                `json:"execution_run_id"`
@@ -89,6 +91,31 @@ type adaptiveExecutionLockedState struct {
 	checkpoint *checkpointPO
 	items      []adaptiveExecutionLockedItem
 	sequence   uint64
+}
+
+type adaptiveExecutionMutationDigestItem struct {
+	ExpectedVersion int64           `json:"expected_version"`
+	RunID           int64           `json:"run_id"`
+	TaskID          int64           `json:"task_id"`
+	Subject         string          `json:"subject"`
+	Description     string          `json:"description"`
+	Status          string          `json:"status"`
+	ActiveForm      string          `json:"active_form"`
+	Owner           string          `json:"owner"`
+	Blocks          json.RawMessage `json:"blocks"`
+	BlockedBy       json.RawMessage `json:"blocked_by"`
+	Metadata        json.RawMessage `json:"metadata"`
+	Active          bool            `json:"active"`
+	Version         int64           `json:"version"`
+}
+
+type adaptiveExecutionMutationDigest struct {
+	PlanScopeRunID        int64                                 `json:"plan_scope_run_id"`
+	ExpectedRevision      int64                                 `json:"expected_revision"`
+	NextRevision          int64                                 `json:"next_revision"`
+	ExpectedHighWatermark int64                                 `json:"expected_high_watermark"`
+	NextHighWatermark     int64                                 `json:"next_high_watermark"`
+	Items                 []adaptiveExecutionMutationDigestItem `json:"items"`
 }
 
 type adaptiveVerifiedSuccessNormalizedFinalize struct {
@@ -288,6 +315,7 @@ type adaptiveVerifiedSuccessFingerprintAuthority struct {
 	CheckpointID        int64   `json:"checkpoint_id"`
 	PlanScopeRunID      int64   `json:"plan_scope_run_id"`
 	PlanRevision        int64   `json:"plan_revision"`
+	PlanHighWatermark   int64   `json:"plan_high_watermark"`
 	PlanItemFingerprint string  `json:"plan_item_fingerprint"`
 }
 
@@ -394,6 +422,54 @@ func adaptiveExecutionPlanItemFingerprint(items []*entity.AgentRunPlanItem) (str
 		})
 	}
 	encoded, err := json.Marshal(fingerprintItems)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+// AdaptiveExecutionPlanMutationDigest returns the stable logical identity of a
+// plan mutation. Repository-allocated row IDs and wall-clock timestamps are
+// deliberately excluded so a restarted caller can read before allocating a
+// second set of candidates.
+func AdaptiveExecutionPlanMutationDigest(mutation *AdaptivePlanMutation) (string, error) {
+	if mutation == nil || len(mutation.Items) < 1 || len(mutation.Items) > 32 {
+		return "", fmt.Errorf("%w: plan mutation digest input is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	items := make([]adaptiveExecutionMutationDigestItem, 0, len(mutation.Items))
+	for _, itemMutation := range mutation.Items {
+		item := itemMutation.NextItem
+		if item == nil {
+			return "", fmt.Errorf("%w: plan mutation digest item is required", ErrAdaptiveExecutionBoundaryInvalid)
+		}
+		blocks, err := canonicalAdaptiveExecutionJSON(item.Blocks)
+		if err != nil {
+			return "", fmt.Errorf("%w: canonicalize mutation blocks: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
+		}
+		blockedBy, err := canonicalAdaptiveExecutionJSON(item.BlockedBy)
+		if err != nil {
+			return "", fmt.Errorf("%w: canonicalize mutation blocked_by: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
+		}
+		metadata, err := canonicalAdaptiveExecutionJSON(item.Metadata)
+		if err != nil {
+			return "", fmt.Errorf("%w: canonicalize mutation metadata: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
+		}
+		items = append(items, adaptiveExecutionMutationDigestItem{
+			ExpectedVersion: itemMutation.ExpectedVersion,
+			RunID:           item.RunID, TaskID: item.TaskID, Subject: item.Subject,
+			Description: item.Description, Status: string(item.Status), ActiveForm: item.ActiveForm,
+			Owner: item.Owner, Blocks: blocks, BlockedBy: blockedBy, Metadata: metadata,
+			Active: item.Active, Version: item.Version,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].TaskID < items[j].TaskID })
+	encoded, err := json.Marshal(adaptiveExecutionMutationDigest{
+		PlanScopeRunID:   mutation.PlanScopeRunID,
+		ExpectedRevision: mutation.ExpectedRevision, NextRevision: mutation.NextRevision,
+		ExpectedHighWatermark: mutation.ExpectedHighWatermark,
+		NextHighWatermark:     mutation.NextHighWatermark, Items: items,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -648,7 +724,7 @@ func lockAdaptiveVerifiedSuccessAuthorities(
 		candidate.event = event
 	}
 	for _, candidate := range locked {
-		metadata, err := validateAdaptiveVerifiedSuccessAuthorityRows(candidate)
+		metadata, err := validateAdaptiveVerifiedSuccessAuthorityRows(tx, candidate)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -658,9 +734,10 @@ func lockAdaptiveVerifiedSuccessAuthorities(
 }
 
 func validateAdaptiveVerifiedSuccessAuthorityRows(
+	tx *gorm.DB,
 	locked *adaptiveVerifiedSuccessLockedAuthority,
 ) (*adaptiveExecutionCheckpointMetadata, error) {
-	if locked == nil || locked.event == nil || locked.checkpoint == nil {
+	if tx == nil || locked == nil || locked.event == nil || locked.checkpoint == nil {
 		return nil, adaptiveVerifiedSuccessConflictf("authority rows are missing")
 	}
 	authority := locked.authority
@@ -681,11 +758,9 @@ func validateAdaptiveVerifiedSuccessAuthorityRows(
 			"authority checkpoint identity drift",
 		)
 	}
-	expectedParentCheckpointID := int64(0)
-	if authority.SourceCheckpointID != nil {
-		expectedParentCheckpointID = *authority.SourceCheckpointID
-	}
-	if checkpoint.ParentCheckpointID != expectedParentCheckpointID {
+	if authority.EventSequence == 1 &&
+		((authority.SourceCheckpointID == nil && checkpoint.ParentCheckpointID != 0) ||
+			(authority.SourceCheckpointID != nil && checkpoint.ParentCheckpointID != *authority.SourceCheckpointID)) {
 		return nil, adaptiveVerifiedSuccessConflictCausef(
 			ErrAdaptiveExecutionCheckpointConflict,
 			"authority checkpoint parent drift",
@@ -733,11 +808,34 @@ func validateAdaptiveVerifiedSuccessAuthorityRows(
 			"authority checkpoint plan revision drift",
 		)
 	}
+	if metadata.PlanHighWatermark != authority.PlanHighWatermark {
+		return nil, adaptiveVerifiedSuccessConflictCausef(
+			ErrAdaptiveExecutionPlanRevisionConflict,
+			"authority checkpoint plan high watermark drift",
+		)
+	}
 	if metadata.ItemFingerprint != authority.PlanItemFingerprint {
 		return nil, adaptiveVerifiedSuccessConflictCausef(
 			ErrAdaptiveExecutionPlanItemVersionConflict,
 			"authority checkpoint item fingerprint drift",
 		)
+	}
+	if authority.EventSequence > 1 {
+		if checkpoint.ParentCheckpointID <= 0 ||
+			(authority.SourceCheckpointID != nil && checkpoint.ParentCheckpointID == *authority.SourceCheckpointID) {
+			return nil, adaptiveVerifiedSuccessConflictCausef(
+				ErrAdaptiveExecutionCheckpointConflict,
+				"authority rolling checkpoint parent drift",
+			)
+		}
+		if err := validateAdaptiveExecutionBoundaryReadParent(
+			tx, checkpoint, metadata, authority.ThreadID,
+		); err != nil {
+			return nil, adaptiveVerifiedSuccessConflictCausef(
+				ErrAdaptiveExecutionCheckpointConflict,
+				"authority rolling checkpoint parent is invalid",
+			)
+		}
 	}
 	checkpointFingerprint, err := adaptiveExecutionCheckpointFingerprint(checkpoint, metadata)
 	if err != nil || checkpointFingerprint != metadata.CheckpointFingerprint ||
@@ -986,7 +1084,8 @@ func adaptiveVerifiedSuccessFingerprintAuthorityValue(
 		SourceCheckpointID: authority.SourceCheckpointID, EventID: authority.EventID,
 		EventSequence: authority.EventSequence, IdempotencyKey: authority.IdempotencyKey,
 		CheckpointID: authority.CheckpointID, PlanScopeRunID: authority.PlanScopeRunID,
-		PlanRevision: authority.PlanRevision, PlanItemFingerprint: authority.PlanItemFingerprint,
+		PlanRevision: authority.PlanRevision, PlanHighWatermark: authority.PlanHighWatermark,
+		PlanItemFingerprint: authority.PlanItemFingerprint,
 	}
 }
 
@@ -2237,7 +2336,12 @@ func (r *threadRepository) CommitAdaptiveExecutionBoundary(
 		if err != nil {
 			return err
 		}
-		plan, err := lockAdaptiveExecutionPlan(tx, req.PlanMutation.PlanScopeRunID)
+		plan, err := lockAdaptiveExecutionPlanForMutation(
+			tx,
+			scopeRun,
+			req.PlanMutation,
+			req.Now,
+		)
 		if err != nil {
 			return err
 		}
@@ -2259,6 +2363,10 @@ func (r *threadRepository) CommitAdaptiveExecutionBoundary(
 		itemRefs, err := adaptiveExecutionItemRefs(nextItems)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
+		}
+		mutationDigest, err := AdaptiveExecutionPlanMutationDigest(req.PlanMutation)
+		if err != nil {
+			return err
 		}
 
 		event, err := runEventToPO(req.Event)
@@ -2284,6 +2392,8 @@ func (r *threadRepository) CommitAdaptiveExecutionBoundary(
 			EventIdempotencyKey: req.IdempotencyKey,
 			PlanScopeRunID:      req.PlanMutation.PlanScopeRunID,
 			PlanRevision:        req.PlanMutation.NextRevision,
+			PlanHighWatermark:   req.PlanMutation.NextHighWatermark,
+			MutationDigest:      mutationDigest,
 			ItemFingerprint:     fingerprint, ItemRefs: itemRefs,
 			ExecutionRunID: run.ID, ExecutionGeneration: run.ExecutionGeneration,
 		}
@@ -2324,6 +2434,257 @@ func (r *threadRepository) CommitAdaptiveExecutionBoundary(
 		return nil, err
 	}
 	return committed, nil
+}
+
+func (r *threadRepository) ReadAdaptiveExecutionBoundary(
+	ctx context.Context,
+	req ReadAdaptiveExecutionBoundaryRequest,
+) (*CommitAdaptiveExecutionBoundaryResult, error) {
+	if err := validateAdaptiveExecutionBoundaryReadRequest(req); err != nil {
+		return nil, err
+	}
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("%w: repository database is missing", ErrAdaptiveExecutionReplayConflict)
+	}
+	var result *CommitAdaptiveExecutionBoundaryResult
+	read := func(tx *gorm.DB) error {
+		var event runEventPO
+		err := tx.Where(
+			"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
+			req.JournalRunID, req.AttemptID, req.IdempotencyKey,
+		).First(&event).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrAdaptiveExecutionBoundaryNotFound
+		}
+		if err != nil {
+			return err
+		}
+		result, err = readAdaptiveExecutionBoundaryResult(tx, req, &event)
+		return err
+	}
+	db := r.db.WithContext(ctx)
+	options := adaptiveExecutionRecoveryTransactionOptions(r.db)
+	var err error
+	if options == nil {
+		err = db.Transaction(read)
+	} else {
+		err = db.Transaction(read, options)
+	}
+	if err != nil {
+		if errors.Is(err, ErrAdaptiveExecutionBoundaryNotFound) ||
+			errors.Is(err, ErrAdaptiveExecutionReplayConflict) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: boundary read failed: %w", ErrAdaptiveExecutionReplayConflict, err)
+	}
+	return result, nil
+}
+
+func readAdaptiveExecutionBoundaryResult(
+	tx *gorm.DB,
+	req ReadAdaptiveExecutionBoundaryRequest,
+	event *runEventPO,
+) (*CommitAdaptiveExecutionBoundaryResult, error) {
+	conflict := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrAdaptiveExecutionReplayConflict, fmt.Sprintf(format, args...))
+	}
+	if tx == nil || event == nil || event.SnapshotID == nil ||
+		event.ThreadID != req.ThreadID || event.RunID != req.ExecutionRunID ||
+		event.JournalRunID == nil || *event.JournalRunID != req.JournalRunID ||
+		event.AttemptID == nil || *event.AttemptID != req.AttemptID ||
+		event.IdempotencyKey == nil || *event.IdempotencyKey != req.IdempotencyKey ||
+		event.Sequence == nil || *event.Sequence == 0 {
+		return nil, conflict("event authority drift")
+	}
+	var journalRun runPO
+	if err := tx.Where("id = ?", req.JournalRunID).First(&journalRun).Error; err != nil {
+		return nil, conflict("journal run is unavailable")
+	}
+	if journalRun.ID != req.JournalRunID || journalRun.ThreadID != req.ThreadID ||
+		!isJournalRootRun(&journalRun) {
+		return nil, conflict("journal run authority drift")
+	}
+	var attempt runAttemptPO
+	if err := tx.Where(
+		"journal_run_id = ? AND attempt_id = ?", req.JournalRunID, req.AttemptID,
+	).First(&attempt).Error; err != nil {
+		return nil, conflict("attempt authority is unavailable")
+	}
+	if attempt.ThreadID != req.ThreadID || attempt.ExecutionRunID != req.ExecutionRunID ||
+		attempt.LastCommittedSequence != *event.Sequence {
+		return nil, conflict("boundary is not current attempt head")
+	}
+	var run runPO
+	if err := tx.Where("id = ?", req.ExecutionRunID).First(&run).Error; err != nil {
+		return nil, conflict("execution run is unavailable")
+	}
+	if run.ThreadID != req.ThreadID || run.ExecutionGeneration != req.Generation {
+		return nil, conflict("execution run authority drift")
+	}
+	var checkpoint checkpointPO
+	if err := tx.Where(
+		"thread_id = ? AND run_id = ? AND runtime_key = ? AND runtime_deleted_at = ?",
+		req.ThreadID, req.ExecutionRunID, req.RuntimeKey, 0,
+	).Order("created_at DESC, id DESC").First(&checkpoint).Error; err != nil {
+		return nil, conflict("checkpoint is unavailable")
+	}
+	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(checkpoint.Metadata)
+	if err != nil || metadata.CheckpointFingerprint != *event.SnapshotID ||
+		metadata.EventID != event.ID || metadata.EventSequence != *event.Sequence ||
+		metadata.JournalRunID != req.JournalRunID || metadata.AttemptID != req.AttemptID ||
+		metadata.EventIdempotencyKey != req.IdempotencyKey ||
+		metadata.ExecutionRunID != req.ExecutionRunID || metadata.ExecutionGeneration != req.Generation ||
+		metadata.MutationDigest != req.ExpectedMutationDigest || checkpoint.RuntimeKey != req.RuntimeKey {
+		return nil, conflict("checkpoint authority drift")
+	}
+	if !adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
+		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) {
+		return nil, conflict("attempt source lineage drift")
+	}
+	checkpointFingerprint, err := adaptiveExecutionCheckpointFingerprint(&checkpoint, metadata)
+	if err != nil || checkpointFingerprint != metadata.CheckpointFingerprint ||
+		!adaptiveExecutionEventAnchorsCheckpoint(event, checkpointFingerprint) {
+		return nil, conflict("checkpoint fingerprint drift")
+	}
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(event)
+	if err != nil || eventFingerprint != metadata.EventFingerprint {
+		return nil, conflict("event fingerprint drift")
+	}
+	if metadata.SourceCheckpointID == nil {
+		if metadata.EventSequence == 1 && checkpoint.ParentCheckpointID != 0 {
+			return nil, conflict("initial checkpoint lineage drift")
+		}
+		if metadata.EventSequence > 1 {
+			if checkpoint.ParentCheckpointID <= 0 {
+				return nil, conflict("rolling checkpoint lineage drift")
+			}
+			if err := validateAdaptiveExecutionBoundaryReadParent(
+				tx, &checkpoint, metadata, req.ThreadID,
+			); err != nil {
+				return nil, err
+			}
+		}
+	} else if metadata.EventSequence == 1 && checkpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
+		return nil, conflict("recovery checkpoint lineage drift")
+	} else if metadata.EventSequence > 1 {
+		if checkpoint.ParentCheckpointID <= 0 || checkpoint.ParentCheckpointID == *metadata.SourceCheckpointID {
+			return nil, conflict("rolling recovery checkpoint lineage drift")
+		}
+		if err := validateAdaptiveExecutionBoundaryReadParent(
+			tx, &checkpoint, metadata, req.ThreadID,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	var scopeRun runPO
+	if err := tx.Where("id = ?", metadata.PlanScopeRunID).First(&scopeRun).Error; err != nil {
+		return nil, conflict("plan scope is unavailable")
+	}
+	var plan agentRunPlanPO
+	if err := tx.Where("run_id = ?", metadata.PlanScopeRunID).First(&plan).Error; err != nil {
+		return nil, conflict("plan is unavailable")
+	}
+	if scopeRun.ThreadID != req.ThreadID || scopeRun.SpaceID != run.SpaceID || scopeRun.CreatorID != run.CreatorID ||
+		plan.RunID != scopeRun.ID || plan.ThreadID != scopeRun.ThreadID ||
+		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
+		plan.Revision != metadata.PlanRevision || plan.HighWatermark != metadata.PlanHighWatermark ||
+		plan.UpdatedAt != event.CreatedAt {
+		return nil, conflict("plan authority drift")
+	}
+	itemIDs := make([]int64, 0, len(metadata.ItemRefs))
+	for _, ref := range metadata.ItemRefs {
+		itemIDs = append(itemIDs, ref.ID)
+	}
+	var itemRows []agentRunPlanItemPO
+	if err := tx.Where("id IN ?", itemIDs).Order("task_id ASC").Find(&itemRows).Error; err != nil {
+		return nil, err
+	}
+	if len(itemRows) != len(metadata.ItemRefs) {
+		return nil, conflict("plan item readback is incomplete")
+	}
+	items := make([]*entity.AgentRunPlanItem, 0, len(itemRows))
+	for index := range itemRows {
+		row, ref := &itemRows[index], metadata.ItemRefs[index]
+		if row.ID != ref.ID || row.RunID != metadata.PlanScopeRunID ||
+			row.TaskID != ref.TaskID || row.Version != ref.Version {
+			return nil, conflict("plan item ref drift")
+		}
+		items = append(items, row.toEntity())
+	}
+	itemFingerprint, err := adaptiveExecutionPlanItemFingerprint(items)
+	if err != nil || itemFingerprint != metadata.ItemFingerprint {
+		return nil, conflict("plan item fingerprint drift")
+	}
+	return &CommitAdaptiveExecutionBoundaryResult{
+		Event: event.toEntity(), Checkpoint: checkpoint.toEntity(), Plan: plan.toEntity(), Items: items,
+		LastCommittedSequence: metadata.EventSequence, Replayed: true,
+		Authority: AdaptiveExecutionBoundaryAuthority{
+			ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID,
+			ExecutionGeneration: metadata.ExecutionGeneration, JournalRunID: metadata.JournalRunID,
+			AttemptID:          metadata.AttemptID,
+			SourceAttemptID:    adaptiveExecutionCloneStringPointer(metadata.SourceAttemptID),
+			SourceCheckpointID: adaptiveExecutionCloneInt64Pointer(metadata.SourceCheckpointID),
+			EventID:            metadata.EventID, EventSequence: metadata.EventSequence,
+			IdempotencyKey: metadata.EventIdempotencyKey, CheckpointID: checkpoint.ID,
+			PlanScopeRunID: metadata.PlanScopeRunID, PlanRevision: metadata.PlanRevision,
+			PlanHighWatermark:   metadata.PlanHighWatermark,
+			PlanItemFingerprint: metadata.ItemFingerprint,
+		},
+	}, nil
+}
+
+func validateAdaptiveExecutionBoundaryReadParent(
+	tx *gorm.DB,
+	checkpoint *checkpointPO,
+	metadata *adaptiveExecutionCheckpointMetadata,
+	threadID int64,
+) error {
+	conflict := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrAdaptiveExecutionReplayConflict, fmt.Sprintf(format, args...))
+	}
+	if tx == nil || checkpoint == nil || metadata == nil || checkpoint.ParentCheckpointID <= 0 {
+		return conflict("rolling parent authority is missing")
+	}
+	var parent checkpointPO
+	if err := tx.Where("id = ?", checkpoint.ParentCheckpointID).First(&parent).Error; err != nil {
+		return conflict("rolling parent checkpoint is unavailable")
+	}
+	parentMetadata, err := decodeAdaptiveExecutionCheckpointMetadata(parent.Metadata)
+	if err != nil || parent.ThreadID != threadID || parent.RunID != checkpoint.RunID ||
+		parent.RuntimeDeletedAt != 0 || parentMetadata.JournalRunID != metadata.JournalRunID ||
+		parentMetadata.AttemptID != metadata.AttemptID ||
+		parentMetadata.ExecutionRunID != metadata.ExecutionRunID ||
+		parentMetadata.ExecutionGeneration != metadata.ExecutionGeneration ||
+		parentMetadata.EventSequence+1 != metadata.EventSequence ||
+		parentMetadata.PlanScopeRunID != metadata.PlanScopeRunID ||
+		parentMetadata.PlanRevision+1 != metadata.PlanRevision ||
+		parentMetadata.PlanHighWatermark > metadata.PlanHighWatermark ||
+		metadata.PlanHighWatermark > parentMetadata.PlanHighWatermark+1 ||
+		!adaptiveExecutionStringPointersEqual(parentMetadata.SourceAttemptID, metadata.SourceAttemptID) ||
+		!adaptiveExecutionInt64PointersEqual(parentMetadata.SourceCheckpointID, metadata.SourceCheckpointID) {
+		return conflict("rolling parent authority drift")
+	}
+	parentFingerprint, err := adaptiveExecutionCheckpointFingerprint(&parent, parentMetadata)
+	if err != nil || parentFingerprint != parentMetadata.CheckpointFingerprint {
+		return conflict("rolling parent checkpoint fingerprint drift")
+	}
+	var parentEvent runEventPO
+	if err := tx.Where(
+		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
+		parentMetadata.JournalRunID, parentMetadata.AttemptID, parentMetadata.EventIdempotencyKey,
+	).First(&parentEvent).Error; err != nil {
+		return conflict("rolling parent event is unavailable")
+	}
+	if !adaptiveExecutionSourceBoundaryEventMatches(&parentEvent, parentMetadata, threadID) ||
+		!adaptiveExecutionEventAnchorsCheckpoint(&parentEvent, parentFingerprint) {
+		return conflict("rolling parent event authority drift")
+	}
+	parentEventFingerprint, err := adaptiveExecutionEventFingerprint(&parentEvent)
+	if err != nil || parentEventFingerprint != parentMetadata.EventFingerprint {
+		return conflict("rolling parent event fingerprint drift")
+	}
+	return nil
 }
 
 func (r *threadRepository) ReadAdaptiveExecutionRecoverySource(
@@ -2466,7 +2827,8 @@ func readAdaptiveExecutionRecoverySource(
 	}
 	if plan.RunID != metadata.PlanScopeRunID || plan.ThreadID != scopeRun.ThreadID ||
 		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
-		plan.Revision != metadata.PlanRevision || plan.UpdatedAt != sourceEvent.CreatedAt {
+		plan.Revision != metadata.PlanRevision || plan.HighWatermark != metadata.PlanHighWatermark ||
+		plan.UpdatedAt != sourceEvent.CreatedAt {
 		return nil, conflict("plan authority drift")
 	}
 
@@ -2509,6 +2871,7 @@ func readAdaptiveExecutionRecoverySource(
 			EventID:            metadata.EventID, EventSequence: metadata.EventSequence,
 			IdempotencyKey: metadata.EventIdempotencyKey, CheckpointID: sourceCheckpoint.ID,
 			PlanScopeRunID: metadata.PlanScopeRunID, PlanRevision: metadata.PlanRevision,
+			PlanHighWatermark:   metadata.PlanHighWatermark,
 			PlanItemFingerprint: metadata.ItemFingerprint,
 		},
 	}, nil
@@ -2617,13 +2980,16 @@ func loadAdaptiveExecutionBoundaryResult(
 		run.ExecutionGeneration != metadata.ExecutionGeneration ||
 		metadata.PlanScopeRunID != req.PlanMutation.PlanScopeRunID ||
 		metadata.PlanRevision != req.PlanMutation.NextRevision ||
+		metadata.PlanHighWatermark != req.PlanMutation.NextHighWatermark ||
 		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
 		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) {
 		return nil, conflict("checkpoint authority drift")
 	}
 	if metadata.SourceCheckpointID == nil {
-		if checkpoint.ParentCheckpointID != 0 {
+		if metadata.EventSequence == 1 && checkpoint.ParentCheckpointID != 0 {
 			return nil, conflict("initial checkpoint parent drift")
+		} else if metadata.EventSequence > 1 && checkpoint.ParentCheckpointID <= 0 {
+			return nil, conflict("rolling initial-attempt checkpoint parent drift")
 		}
 	} else if metadata.EventSequence == 1 && checkpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
 		return nil, conflict("first recovery checkpoint parent drift")
@@ -2675,8 +3041,10 @@ func loadAdaptiveExecutionBoundaryResult(
 		scopeRun.CreatorID != run.CreatorID {
 		return nil, conflict("plan authority drift")
 	}
-	if (!historicalReplay && (plan.Revision != metadata.PlanRevision || plan.UpdatedAt != req.Now)) ||
-		(historicalReplay && plan.Revision < metadata.PlanRevision) {
+	if (!historicalReplay && (plan.Revision != metadata.PlanRevision ||
+		plan.HighWatermark != metadata.PlanHighWatermark || plan.UpdatedAt != req.Now)) ||
+		(historicalReplay && (plan.Revision < metadata.PlanRevision ||
+			plan.HighWatermark < metadata.PlanHighWatermark)) {
 		return nil, conflict("plan authority drift")
 	}
 
@@ -2714,6 +3082,7 @@ func loadAdaptiveExecutionBoundaryResult(
 	if historicalReplay {
 		items = normalizedRequestItems
 		plan.Revision = metadata.PlanRevision
+		plan.HighWatermark = metadata.PlanHighWatermark
 		plan.UpdatedAt = event.CreatedAt
 	} else {
 		storedFingerprint, fingerprintErr := adaptiveExecutionPlanItemFingerprint(items)
@@ -2734,6 +3103,7 @@ func loadAdaptiveExecutionBoundaryResult(
 			EventID:            metadata.EventID, EventSequence: metadata.EventSequence,
 			IdempotencyKey: metadata.EventIdempotencyKey, CheckpointID: checkpoint.ID,
 			PlanScopeRunID: metadata.PlanScopeRunID, PlanRevision: metadata.PlanRevision,
+			PlanHighWatermark:   metadata.PlanHighWatermark,
 			PlanItemFingerprint: metadata.ItemFingerprint,
 		},
 	}, nil
@@ -2835,8 +3205,14 @@ func lockAdaptiveExecutionLineage(
 		return 0, fmt.Errorf("%w: partial recovery source", ErrAdaptiveExecutionLineageConflict)
 	}
 	if !sourceAttemptPresent {
-		if req.PlanMutation.PlanScopeRunID != req.ExecutionRunID || req.Checkpoint.ParentCheckpointID != 0 {
+		if req.PlanMutation.PlanScopeRunID != req.ExecutionRunID ||
+			(attempt.LastCommittedSequence == 0 && req.Checkpoint.ParentCheckpointID != 0) {
 			return 0, fmt.Errorf("%w: initial lineage drift", ErrAdaptiveExecutionLineageConflict)
+		}
+		if attempt.LastCommittedSequence > 0 {
+			if err := lockAndValidateAdaptiveExecutionRollingParent(tx, req, attempt); err != nil {
+				return 0, err
+			}
 		}
 		return req.ExecutionRunID, nil
 	}
@@ -2897,7 +3273,8 @@ func lockAdaptiveExecutionLineage(
 			return 0, err
 		}
 		if req.Checkpoint.ParentCheckpointID != *attempt.SourceCheckpointID ||
-			metadata.PlanRevision != req.PlanMutation.ExpectedRevision {
+			metadata.PlanRevision != req.PlanMutation.ExpectedRevision ||
+			metadata.PlanHighWatermark != req.PlanMutation.ExpectedHighWatermark {
 			return 0, fmt.Errorf("%w: recovery source parent or revision drift", ErrAdaptiveExecutionLineageConflict)
 		}
 		return metadata.PlanScopeRunID, nil
@@ -2933,7 +3310,7 @@ func lockAndValidateAdaptiveExecutionLineagePlanIdentity(
 	}
 	if plan.RunID != metadata.PlanScopeRunID || plan.ThreadID != scopeRun.ThreadID ||
 		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
-		plan.Revision < metadata.PlanRevision {
+		plan.Revision < metadata.PlanRevision || plan.HighWatermark < metadata.PlanHighWatermark {
 		return fmt.Errorf("%w: source plan authority drift", ErrAdaptiveExecutionPlanScopeConflict)
 	}
 	return nil
@@ -3007,6 +3384,8 @@ func validateAdaptiveExecutionSourceBoundaryChain(
 			parentMetadata.EventSequence+1 != metadata.EventSequence ||
 			parentMetadata.PlanScopeRunID != metadata.PlanScopeRunID ||
 			parentMetadata.PlanRevision+1 != metadata.PlanRevision ||
+			parentMetadata.PlanHighWatermark > metadata.PlanHighWatermark ||
+			metadata.PlanHighWatermark > parentMetadata.PlanHighWatermark+1 ||
 			!adaptiveExecutionStringPointersEqual(parentMetadata.SourceAttemptID, metadata.SourceAttemptID) ||
 			!adaptiveExecutionInt64PointersEqual(parentMetadata.SourceCheckpointID, metadata.SourceCheckpointID) {
 			return nil, conflict("rolling parent authority drift")
@@ -3091,7 +3470,8 @@ func lockAndValidateAdaptiveExecutionRollingParent(
 	attempt *runAttemptPO,
 ) error {
 	if req.Checkpoint.ParentCheckpointID <= 0 ||
-		req.Checkpoint.ParentCheckpointID == *attempt.SourceCheckpointID {
+		(attempt.SourceCheckpointID != nil &&
+			req.Checkpoint.ParentCheckpointID == *attempt.SourceCheckpointID) {
 		return fmt.Errorf("%w: rolling parent is invalid", ErrAdaptiveExecutionLineageConflict)
 	}
 	parent, err := lockAdaptiveExecutionSourceCheckpoint(tx, req.Checkpoint.ParentCheckpointID)
@@ -3116,6 +3496,14 @@ func lockAndValidateAdaptiveExecutionRollingParent(
 		return fmt.Errorf(
 			"%w: rolling parent revision %d does not match expected %d",
 			ErrAdaptiveExecutionPlanRevisionConflict, metadata.PlanRevision, req.PlanMutation.ExpectedRevision,
+		)
+	}
+	if metadata.PlanHighWatermark != req.PlanMutation.ExpectedHighWatermark {
+		return fmt.Errorf(
+			"%w: rolling parent high watermark %d does not match expected %d",
+			ErrAdaptiveExecutionPlanRevisionConflict,
+			metadata.PlanHighWatermark,
+			req.PlanMutation.ExpectedHighWatermark,
 		)
 	}
 	fingerprint, err := adaptiveExecutionCheckpointFingerprint(parent, metadata)
@@ -3172,7 +3560,8 @@ func lockAndValidateAdaptiveExecutionLineagePlan(
 	}
 	if plan.RunID != metadata.PlanScopeRunID || plan.ThreadID != scopeRun.ThreadID ||
 		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
-		plan.Revision != metadata.PlanRevision || plan.UpdatedAt != sourceEvent.CreatedAt {
+		plan.Revision != metadata.PlanRevision || plan.HighWatermark != metadata.PlanHighWatermark ||
+		plan.UpdatedAt != sourceEvent.CreatedAt {
 		return fmt.Errorf("%w: source plan authority drift", ErrAdaptiveExecutionPlanScopeConflict)
 	}
 	items := make([]*entity.AgentRunPlanItem, 0, len(metadata.ItemRefs))
@@ -3261,7 +3650,7 @@ func decodeAdaptiveExecutionCheckpointMetadata(raw []byte) (*adaptiveExecutionCh
 		"schema_version", "event_id", "event_sequence", "journal_run_id", "attempt_id",
 		"source_attempt_id", "source_checkpoint_id", "event_idempotency_key", "event_fingerprint",
 		"checkpoint_fingerprint",
-		"plan_scope_run_id", "plan_revision", "item_fingerprint", "item_refs",
+		"plan_scope_run_id", "plan_revision", "plan_high_watermark", "mutation_digest", "item_fingerprint", "item_refs",
 		"execution_run_id", "execution_generation",
 	} {
 		if _, present := fields[required]; !present {
@@ -3290,7 +3679,8 @@ func decodeAdaptiveExecutionCheckpointMetadata(raw []byte) (*adaptiveExecutionCh
 		strings.TrimSpace(metadata.EventIdempotencyKey) == "" || len([]byte(metadata.EventIdempotencyKey)) > 191 ||
 		!validAdaptiveExecutionFingerprint(metadata.EventFingerprint) ||
 		!validAdaptiveExecutionFingerprint(metadata.CheckpointFingerprint) ||
-		metadata.PlanScopeRunID <= 0 || metadata.PlanRevision <= 0 ||
+		metadata.PlanScopeRunID <= 0 || metadata.PlanRevision <= 0 || metadata.PlanHighWatermark < 0 ||
+		!validAdaptiveExecutionFingerprint(metadata.MutationDigest) ||
 		!validAdaptiveExecutionFingerprint(metadata.ItemFingerprint) ||
 		metadata.ExecutionRunID <= 0 || metadata.ExecutionGeneration == 0 {
 		return nil, fmt.Errorf("adaptive execution checkpoint metadata fields are invalid")
@@ -3354,6 +3744,38 @@ func lockAdaptiveExecutionPlan(tx *gorm.DB, runID int64) (*agentRunPlanPO, error
 	return plan, nil
 }
 
+func lockAdaptiveExecutionPlanForMutation(
+	tx *gorm.DB,
+	scopeRun *runPO,
+	mutation *AdaptivePlanMutation,
+	now int64,
+) (*agentRunPlanPO, error) {
+	if tx == nil || scopeRun == nil || mutation == nil || now <= 0 {
+		return nil, fmt.Errorf("%w: plan mutation scope is invalid", ErrAdaptiveExecutionPlanScopeConflict)
+	}
+	plan, err := lockAdaptiveExecutionPlan(tx, mutation.PlanScopeRunID)
+	if err == nil {
+		return plan, nil
+	}
+	if !errors.Is(err, ErrAdaptiveExecutionPlanScopeConflict) ||
+		mutation.ExpectedRevision != 0 || mutation.NextRevision != 1 ||
+		mutation.ExpectedHighWatermark != 0 || mutation.NextHighWatermark != 1 {
+		return nil, err
+	}
+	plan = &agentRunPlanPO{
+		RunID: mutation.PlanScopeRunID, ThreadID: scopeRun.ThreadID,
+		SpaceID: scopeRun.SpaceID, UserID: scopeRun.CreatorID,
+		HighWatermark: 0, Revision: 0, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := tx.Create(plan).Error; err != nil {
+		if isAdaptiveExecutionDuplicateError(err) {
+			return nil, fmt.Errorf("%w: initial plan already exists", ErrAdaptiveExecutionPlanRevisionConflict)
+		}
+		return nil, err
+	}
+	return plan, nil
+}
+
 func validateAdaptiveExecutionPlanScope(
 	targetRun *runPO,
 	scopeRun *runPO,
@@ -3369,6 +3791,12 @@ func validateAdaptiveExecutionPlanScope(
 	}
 	if plan.Revision != mutation.ExpectedRevision {
 		return fmt.Errorf("%w: expected revision %d, got %d", ErrAdaptiveExecutionPlanRevisionConflict, mutation.ExpectedRevision, plan.Revision)
+	}
+	if plan.HighWatermark != mutation.ExpectedHighWatermark {
+		return fmt.Errorf(
+			"%w: expected high watermark %d, got %d",
+			ErrAdaptiveExecutionPlanRevisionConflict, mutation.ExpectedHighWatermark, plan.HighWatermark,
+		)
 	}
 	return nil
 }
@@ -3386,7 +3814,7 @@ func lockAdaptiveExecutionPlanItems(
 	locked := make([]adaptiveExecutionLockedItem, 0, len(mutations))
 	for _, itemMutation := range mutations {
 		candidate := itemMutation.NextItem
-		if candidate.TaskID > plan.HighWatermark {
+		if candidate.TaskID > mutation.NextHighWatermark {
 			return nil, fmt.Errorf("%w: task %d exceeds high watermark", ErrAdaptiveExecutionPlanItemVersionConflict, candidate.TaskID)
 		}
 		if itemMutation.ExpectedVersion == 0 {
@@ -3540,13 +3968,22 @@ func commitAdaptiveExecutionMutationLocked(
 	}
 
 	planUpdate := tx.Model(&agentRunPlanPO{}).
-		Where("run_id = ? AND revision = ?", state.plan.RunID, req.PlanMutation.ExpectedRevision).
-		Updates(map[string]any{"revision": req.PlanMutation.NextRevision, "updated_at": req.Now})
+		Where(
+			"run_id = ? AND revision = ? AND high_watermark = ?",
+			state.plan.RunID,
+			req.PlanMutation.ExpectedRevision,
+			req.PlanMutation.ExpectedHighWatermark,
+		).
+		Updates(map[string]any{
+			"revision":       req.PlanMutation.NextRevision,
+			"high_watermark": req.PlanMutation.NextHighWatermark,
+			"updated_at":     req.Now,
+		})
 	if planUpdate.Error != nil {
 		return planUpdate.Error
 	}
 	if planUpdate.RowsAffected != 1 {
-		return fmt.Errorf("%w: plan revision CAS failed", ErrAdaptiveExecutionPlanRevisionConflict)
+		return fmt.Errorf("%w: plan revision or high watermark CAS failed", ErrAdaptiveExecutionPlanRevisionConflict)
 	}
 
 	attemptUpdate := tx.Model(&runAttemptPO{}).

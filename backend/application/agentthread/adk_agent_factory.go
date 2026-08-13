@@ -215,10 +215,14 @@ func (f *ApplicationADKAgentFactory) Build(
 		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
 			return nil, fmt.Errorf("validate adaptive bootstrap plan capability: %w", err)
 		}
+		expectedPlanScopeRunID := run.PlanScopeRunID
+		if expectedPlanScopeRunID == 0 {
+			expectedPlanScopeRunID = run.RunID
+		}
 		if run.ExecutionGeneration == 0 || facts.Decision.DecisionRevision != 1 ||
 			facts.Decision.ExecutionRunID != run.RunID ||
 			facts.Decision.ExecutionGeneration != run.ExecutionGeneration ||
-			(facts.Decision.PlanScopeRunID != nil && *facts.Decision.PlanScopeRunID != run.RunID) {
+			(facts.Decision.PlanScopeRunID != nil && *facts.Decision.PlanScopeRunID != expectedPlanScopeRunID) {
 			return nil, fmt.Errorf("adaptive bootstrap plan capability does not match the current run")
 		}
 		runtimeConfig.PlanModeExplicit = true

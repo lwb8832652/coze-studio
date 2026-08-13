@@ -41,6 +41,7 @@ var (
 	ErrAdaptiveExecutionPlanItemVersionConflict = errors.New("adaptive execution plan item version conflict")
 	ErrAdaptiveExecutionSequenceConflict        = errors.New("adaptive execution sequence conflict")
 	ErrAdaptiveExecutionReplayConflict          = errors.New("adaptive execution replay conflict")
+	ErrAdaptiveExecutionBoundaryNotFound        = errors.New("adaptive execution boundary is not found")
 	ErrAdaptiveExecutionRecoveryConflict        = errors.New("adaptive execution recovery conflict")
 	ErrAdaptiveExecutionBootstrapInvalid        = errors.New("adaptive execution bootstrap is invalid")
 	ErrAdaptiveExecutionBootstrapNotFound       = errors.New("adaptive execution bootstrap is not found")
@@ -56,10 +57,12 @@ type AdaptivePlanItemMutation struct {
 }
 
 type AdaptivePlanMutation struct {
-	PlanScopeRunID   int64
-	ExpectedRevision int64
-	NextRevision     int64
-	Items            []AdaptivePlanItemMutation
+	PlanScopeRunID        int64
+	ExpectedRevision      int64
+	NextRevision          int64
+	ExpectedHighWatermark int64
+	NextHighWatermark     int64
+	Items                 []AdaptivePlanItemMutation
 }
 
 type CommitAdaptiveExecutionBoundaryResult struct {
@@ -86,6 +89,7 @@ type AdaptiveExecutionBoundaryAuthority struct {
 	CheckpointID        int64
 	PlanScopeRunID      int64
 	PlanRevision        int64
+	PlanHighWatermark   int64
 	PlanItemFingerprint string
 }
 
@@ -336,6 +340,7 @@ func validateAdaptiveVerifiedSuccessAuthority(authority AdaptiveExecutionBoundar
 		len([]byte(authority.AttemptID)) > 64 || authority.EventID <= 0 || authority.EventSequence == 0 ||
 		strings.TrimSpace(authority.IdempotencyKey) == "" || len([]byte(authority.IdempotencyKey)) > 191 ||
 		authority.CheckpointID <= 0 || authority.PlanScopeRunID <= 0 || authority.PlanRevision <= 0 ||
+		authority.PlanHighWatermark < 0 ||
 		!validAdaptiveExecutionFingerprint(authority.PlanItemFingerprint) ||
 		sourceAttemptPresent != sourceCheckpointPresent ||
 		(sourceAttemptPresent && (strings.TrimSpace(*authority.SourceAttemptID) == "" ||
@@ -397,6 +402,10 @@ type AdaptiveExecutionRepository interface {
 	CommitAdaptiveExecutionBoundary(
 		ctx context.Context,
 		req CommitAdaptiveExecutionBoundaryRequest,
+	) (*CommitAdaptiveExecutionBoundaryResult, error)
+	ReadAdaptiveExecutionBoundary(
+		ctx context.Context,
+		req ReadAdaptiveExecutionBoundaryRequest,
 	) (*CommitAdaptiveExecutionBoundaryResult, error)
 	ReadAdaptiveExecutionRecoverySource(
 		ctx context.Context,
@@ -490,6 +499,17 @@ type CommitAdaptiveExecutionBoundaryRequest struct {
 	PlanMutation   *AdaptivePlanMutation
 }
 
+type ReadAdaptiveExecutionBoundaryRequest struct {
+	ThreadID               int64
+	ExecutionRunID         int64
+	JournalRunID           int64
+	AttemptID              string
+	Generation             uint64
+	RuntimeKey             string
+	IdempotencyKey         string
+	ExpectedMutationDigest string
+}
+
 type ReadAdaptiveExecutionRecoverySourceRequest struct {
 	ThreadID        int64
 	JournalRunID    int64
@@ -521,14 +541,28 @@ func validateAdaptiveExecutionRecoverySourceRequest(req ReadAdaptiveExecutionRec
 	return nil
 }
 
+func validateAdaptiveExecutionBoundaryReadRequest(req ReadAdaptiveExecutionBoundaryRequest) error {
+	if req.ThreadID <= 0 || req.ExecutionRunID <= 0 || req.JournalRunID <= 0 ||
+		strings.TrimSpace(req.AttemptID) == "" || len([]byte(req.AttemptID)) > 64 || req.Generation == 0 ||
+		strings.TrimSpace(req.RuntimeKey) == "" || len([]byte(req.RuntimeKey)) > 191 ||
+		strings.TrimSpace(req.IdempotencyKey) == "" || len([]byte(req.IdempotencyKey)) > 191 ||
+		!validAdaptiveExecutionFingerprint(req.ExpectedMutationDigest) {
+		return fmt.Errorf("%w: required boundary read identity is missing", ErrAdaptiveExecutionBoundaryInvalid)
+	}
+	return nil
+}
+
 func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundaryRequest) error {
 	if err := validateAdaptiveExecutionBoundaryRequest(req); err != nil {
 		return err
 	}
 	mutation := req.PlanMutation
-	if mutation == nil || mutation.PlanScopeRunID <= 0 || mutation.ExpectedRevision <= 0 ||
+	if mutation == nil || mutation.PlanScopeRunID <= 0 || mutation.ExpectedRevision < 0 ||
 		mutation.ExpectedRevision == math.MaxInt64 ||
 		mutation.NextRevision != mutation.ExpectedRevision+1 ||
+		mutation.ExpectedHighWatermark < 0 || mutation.ExpectedHighWatermark == math.MaxInt64 ||
+		mutation.NextHighWatermark < mutation.ExpectedHighWatermark ||
+		mutation.NextHighWatermark > mutation.ExpectedHighWatermark+1 ||
 		len(mutation.Items) < 1 || len(mutation.Items) > 32 {
 		return fmt.Errorf("%w: plan mutation is invalid", ErrAdaptiveExecutionBoundaryInvalid)
 	}
@@ -563,12 +597,17 @@ func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundar
 
 	itemIDs := make(map[int64]struct{}, len(mutation.Items))
 	taskIDs := make(map[int64]struct{}, len(mutation.Items))
+	createdItems := 0
 	for _, itemMutation := range mutation.Items {
 		item := itemMutation.NextItem
 		if itemMutation.ExpectedVersion < 0 || itemMutation.ExpectedVersion == math.MaxInt64 || item == nil ||
 			item.ID <= 0 || item.RunID <= 0 || item.TaskID <= 0 ||
-			item.RunID != mutation.PlanScopeRunID || item.Version != itemMutation.ExpectedVersion+1 {
+			item.RunID != mutation.PlanScopeRunID || item.Version != itemMutation.ExpectedVersion+1 ||
+			item.TaskID > mutation.NextHighWatermark {
 			return fmt.Errorf("%w: plan item mutation is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+		}
+		if itemMutation.ExpectedVersion == 0 {
+			createdItems++
 		}
 		if _, exists := itemIDs[item.ID]; exists {
 			return fmt.Errorf("%w: duplicate plan item id", ErrAdaptiveExecutionBoundaryInvalid)
@@ -582,7 +621,32 @@ func validateAdaptiveExecutionMutationRequest(req CommitAdaptiveExecutionBoundar
 			return fmt.Errorf("%w: %v", ErrAdaptiveExecutionBoundaryInvalid, err)
 		}
 	}
+	if createdItems > 1 ||
+		(mutation.NextHighWatermark == mutation.ExpectedHighWatermark+1 &&
+			(createdItems != 1 || !adaptivePlanMutationCreatesTask(mutation, mutation.NextHighWatermark))) ||
+		(mutation.NextHighWatermark == mutation.ExpectedHighWatermark &&
+			adaptivePlanMutationCreatesTaskAbove(mutation, mutation.ExpectedHighWatermark)) {
+		return fmt.Errorf("%w: plan high watermark mutation is invalid", ErrAdaptiveExecutionBoundaryInvalid)
+	}
 	return nil
+}
+
+func adaptivePlanMutationCreatesTask(mutation *AdaptivePlanMutation, taskID int64) bool {
+	for _, item := range mutation.Items {
+		if item.ExpectedVersion == 0 && item.NextItem != nil && item.NextItem.TaskID == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+func adaptivePlanMutationCreatesTaskAbove(mutation *AdaptivePlanMutation, highWatermark int64) bool {
+	for _, item := range mutation.Items {
+		if item.ExpectedVersion == 0 && item.NextItem != nil && item.NextItem.TaskID > highWatermark {
+			return true
+		}
+	}
+	return false
 }
 
 func rejectAdaptiveVerifiedSuccessOutsideFinalizer(event *entity.RunEvent) error {

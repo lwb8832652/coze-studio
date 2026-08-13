@@ -339,6 +339,26 @@ func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
 	}
 }
 
+func TestADKAgentFactoryAcceptsInheritedAdaptivePlanScope(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.PlanScopeRunID = 19
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Decision.PlanScopeRunID = int64Pointer(run.PlanScopeRunID)
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+}
+
 func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {
 	run := freshAdaptiveBootstrapRunForTest()
 	run.Config = `{
