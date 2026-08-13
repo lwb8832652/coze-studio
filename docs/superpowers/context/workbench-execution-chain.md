@@ -1,6 +1,6 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-08-13
+更新时间：2026-08-14
 状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
@@ -209,12 +209,20 @@ provider 与 builtin definition 统一通过 `parseADKRuntimeConfig` 忽略顶�
 `requested_policy`/`mode`，builtin/single-agent child writer 也不再写入这两个键；显式 server-owned
 Plan/Subagent/reasoning/model 配置仍保留。`b8d1c21b0` 还让 repository 支持同一 recovery Attempt 的
 B1→B2→B3 rolling Plan、历史 exact replay 以及 rolling checkpoint 作为下一 Attempt 恢复来源，全部
-继续核验 lineage、revision/version、checkpoint/event fingerprint 与 anchor。它尚未把
-`ApplicationADKPlanStore`/`ADKCheckpointStore` 接到同一个受 fence production transaction；不得把
-repository primitive 表述为生产 rolling writer。ordinary non-Journal enrollment、gate-on producer、
-该 Application writer 与真正 server inference policy 仍未闭合；historical runtime compatibility 与
-package-private server-owned subagent seam 继续存在，P1M 未 PASS。P1L 仍 deferred，whole-Thread
-DELETE guard 继续 hard-disabled。
+继续核验 lineage、revision/version、checkpoint/event fingerprint 与 anchor。后续 production writer
+已将 `ApplicationADKPlanStore` 的工具写切为 run-scoped overlay；`AfterToolCalls` 内部 cancel 触发真实
+Eino v3 checkpoint，`ADKCheckpointStore` 再经 `CommitAdaptiveExecutionBoundary` 一次提交 Plan
+high-watermark、PlanItem、追加 Event、checkpoint 与 Attempt cursor。首次 Plan 0→1 初始化，后续
+B1/B2/B3 rolling 与当前 head read-first crash replay 共用同一 authority；历史 exact replay 不推进
+当前状态。提交成功后 `ADKExecutor` 自动 Resume，外部 cancel 仍沿原取消语义；Plan 与 side-effect
+同一 checkpoint boundary 在任何 durable write 前 fail closed。enrolled typed Resume 从 durable
+decision 继承 source `PlanScopeRunID`，target checkpoint store/coordinator 使用该 scope，恢复后的
+Plan 写仍进入同一 atomic boundary，不回落 legacy writer。repository/application Go 测试已通过；
+本轮 dev disposable MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。
+ordinary non-Journal enrollment/typed bootstrap 是下一硬阻断；gate-on producer 与真正 server
+inference policy 仍未闭合；historical
+runtime compatibility 与 package-private server-owned subagent seam 继续存在，P1M 未 PASS。P1L 仍
+deferred，whole-Thread DELETE guard 继续 hard-disabled。
 
 ## 持久化与异步执行
 
@@ -238,22 +246,37 @@ admission 状态。
 
 ### P0A/P0B/P0C/P0D 自适应执行事务边界
 
-`P0A/P0B/P0C/P0D 当前仍只覆盖 repository primitive 与 named-path evidence`：P0A
+`P0A/P0B/P0C/P0D 的事务基础仍是 repository primitive 与 named-path evidence；本节随后明确列出
+已经接入 production 的 Plan boundary`。P0A
 implementation HEAD 是
 `a1df1789b0b60c0916505711bcc1e5a1fa1410cd`。P0B 已在同一个 private repository
 interface 中实现 `CommitAdaptiveExecutionBoundary` 的 exact-tuple 幂等回放，以及
 `ReadAdaptiveExecutionRecoverySource` 的 recovery source 只读恢复；checkpoint 的
-server-owned metadata 已升级为 `workbench-adaptive-boundary.v2`，并固定 event 与
-checkpoint fingerprint 及 bounded PlanItem refs。Checkpoint fingerprint 覆盖完整物理
-checkpoint、canonical user metadata，以及除 event/checkpoint 两个循环摘要外的全部 typed
+server-owned metadata 已升级为 `workbench-adaptive-boundary.v4`，除 event 与 checkpoint
+fingerprint 及 bounded PlanItem refs 外，还固定 Plan high-watermark 与逻辑 mutation digest。
+Checkpoint fingerprint 覆盖完整物理 checkpoint、canonical user metadata，以及除 event/checkpoint
+两个循环摘要外的全部 typed
 adaptive authority；它同时写入追加式 boundary Event 的 `snapshot_id` 作为跨行锚点。
 Event fingerprint 覆盖完整 event 物理行，回放、恢复和 lineage 都会重算并核对两级摘要，
 因此不能通过改写同一 checkpoint 的 refs、source 或 Plan authority 后重算内层摘要来绕过。
 写事务统一按 logical Journal root、Execution Run、Attempt、exact event tuple、source lineage、
 Plan、PlanItem 的顺序加锁，避免 Attempt 创建与 recovery boundary 形成反向 Run 锁环。两条
-读取路径都直接读取私有 PO 中的持久化 event、checkpoint、Attempt lineage、Plan revision
+读取路径都直接读取私有 PO 中的持久化 event、checkpoint、Attempt lineage、Plan revision/high-watermark
 和 PlanItem refs 来重建 authority，不经 public `ListRunEvents`、`ListCheckpoints` 或 latest
 checkpoint selector。
+
+Production Plan boundary 复用这一个 repository transaction，而不是另建 writer。Plan middleware
+对 eligible `execute/multi_step` 只写 run-scoped overlay，并同步 parity todos；Eino 在每次 Plan 工具
+调用后的 `AfterToolCalls` 安全点以内部 `CancelAfterToolCalls` 保存真实 v3 runtime checkpoint。
+`ADKCheckpointStore.Set` 先按稳定 tool-call/address identity、runtime key 与 mutation digest 做当前
+Attempt head read-first；精确命中直接采用 durable result，只有 typed NotFound 才分配 ID 并提交。
+提交同时推进 Plan revision/high-watermark、PlanItem version、Event sequence、checkpoint parent 和
+Attempt cursor；首次 Plan 是 0→1，后续 B1/B2/B3 rolling 复用上一 checkpoint。成功后执行器在同一
+Runner 上自动 Resume，最多 64 个内部 boundary；未提交 boundary、repository 冲突或 mixed
+Plan/side-effect 均 fail closed。enrolled typed Resume 还把 durable source `PlanScopeRunID` 投影到
+target store/coordinator，使 recovery Plan mutation 沿用 source Plan identity 与同一 transaction。
+repository/application 测试已通过；独立 dev MySQL rolling gate 当前 `NOT_VERIFIED`，不得从既有
+Human/typed/legacy recovery MySQL PASS 推导它已通过。
 
 P0C 没有新增第二个 finalizer，只在唯一现有 repository `FinalizeRunSuccess` request 上增加
 optional `AdaptiveGate`。nil gate 继续执行原有成功终态路径，返回的
@@ -277,13 +300,13 @@ root → distinct Execution Run → Attempt；gate-off 是从 durable Run identi
 exact replay，并验证每组竞态只有一个合法 durable outcome。该证据不扩张为 repository-wide
 deadlock-free 结论。
 
-仍有两个跨 packet 的 P1 wiring blocker。第一，recovery 后同一 Attempt 的第二个 Plan-bearing
-boundary 会因 source checkpoint 冻结的 `PlanRevision` 与已经推进的 Plan authority 冲突；这阻塞
-P1D 与 P2。第二，`DeleteThread` 和 `DeleteThreadIfIdle` 真正进入 idle cascade 时，与 historical
+原先 recovery 后同一 Attempt 的第二个 Plan-bearing boundary blocker 已由 rolling high-watermark、
+checkpoint parent 与 Application atomic writer 闭合。仍存在的另一跨 packet 问题是：`DeleteThread`
+和 `DeleteThreadIfIdle` 真正进入 idle cascade 时，与 historical
 Journal、generic boundary 和 exact replay 的完整锁序尚未闭合；P0D 的 active-run 删除竞态不能
 证明该分支。P1L 已延期，P1M-A 仅以 canonical HTTP guard 隔离 whole-Thread 删除，因此底层
 idle cascade 仍未解锁；该 blocker 至少阻塞删除重新启用，而 P1M-A 也不等于完整 P1M PASS。
-P1M-B/C 可在 guard 保持时继续，P1D 仍需完整 P1M 与 rolling-authority 闭环。P0A3 只把直接
+P1M-B/C 可在 guard 保持时继续，P1D 仍需完整 P1M。P0A3 只把直接
 Plan mutation 与 primitive 的锁顺序统一为先锁 `AgentRunPlan`、再锁 `PlanItem`，现有直接 Plan
 mutation 仍然可达。
 
@@ -305,11 +328,10 @@ reasoning；C3h1a 只让 Human resume、ordinary non-Journal lease recovery 和 
 Config 不改。C3h2b/C3h2c 已让 enrolled Human/Journal Resume 使用原子 Attempt rollover、typed
 inheritance 或 source durable exact-miss 时的严格 legacy decoder fallback；dev disposable MySQL 已完成
 Human rollover、typed recovery race 与 legacy recovery 门禁。builtin/single-agent 内存 child writer 与
-production ADK mode/policy consumer 已由 C3h2d 退休；ordinary non-Journal enrollment、historical
-legacy runtime、gate-on producer、Application rolling Plan/Checkpoint writer 与 frontend/UI 的剩余
-范围不变。P2 仍负责完整
-VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
-blocker 约束。
+production ADK mode/policy consumer 已由 C3h2d 退休；Application rolling Plan/Checkpoint writer
+现已接入上述 atomic boundary。ordinary non-Journal enrollment、historical legacy runtime、gate-on
+producer 与 frontend/UI 的剩余范围不变。P2 仍负责完整 VerificationResult codec、registry、producer、
+nullable-Plan authority 分支和其余接线；P1D 仍以前述 P1M hard blocker 闭合为前置。
 
 ### Canonical Thread HTTP 契约
 
@@ -351,7 +373,8 @@ C3i2 自身没有增加 repository/runtime 状态机；后续 C3h2b 已补齐 en
 rollover 与 full replay，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss fallback；dev disposable
 MySQL 已完成 Human rollover、typed recovery race 与 legacy recovery 门禁。ordinary non-Journal
 enrollment 与 gate-on producer 仍未闭合；production mode/policy consumer 已由 C3h2d 退休，但
-Application rolling Plan/Checkpoint writer 尚未接入，P1M 未 PASS。
+Application rolling Plan/Checkpoint writer 后续已接入，独立 dev MySQL rolling gate 保持
+`NOT_VERIFIED`。P1M 未 PASS。
 
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error

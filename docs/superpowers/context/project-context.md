@@ -132,8 +132,8 @@ Human Resume 分别只写 `initial_submission_v2`/`deferred_initial_submission_v
 rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 full replay，C3h2c 又补齐
 enrolled Resume 的 legacy exact-miss fallback。dev disposable MySQL 已完成 Human rollover、typed
 recovery race 与 legacy recovery 门禁；production ADK 的旧 mode/policy consumer 也已退休。
-ordinary non-Journal enrollment、gate-on producer 与 Application rolling Plan writer 仍未闭合，P1M 未
-PASS。
+Application rolling Plan writer 后续也已接入 atomic checkpoint boundary；其独立 dev MySQL rolling
+gate 仍 `NOT_VERIFIED`。ordinary non-Journal enrollment 与 gate-on producer 仍未闭合，P1M 未 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -216,11 +216,18 @@ Subagent tool provider 与 builtin definition 都经 production-only `parseADKRu
 `b8d1c21b0` 同时交付 same-recovery rolling Plan repository foundation：单一 recovery Attempt 可按
 B1→B2→B3 连续提交 Plan revision、item version、event sequence 与 checkpoint parent，历史 boundary
 exact replay 不改写当前状态，rolling checkpoint 可成为下一 Attempt 的严格恢复来源，漂移均 fail
-closed。该能力目前只有 repository primitive 与测试；`ApplicationADKPlanStore`/`ADKCheckpointStore`
-尚未提供把真实 Plan 变更、Eino checkpoint 与事件一次受 fence 提交的 production writer，这是下一
-硬主线。ordinary non-Journal enrollment、gate-on producer、真正的 server inference policy 与该
-Application writer 仍未完成，P1M 仍未 PASS；historical runtime compatibility 与 package-private
-server-owned subagent seam 仍存在。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
+closed。后续 Application writer 已把 Eino Plan 工具写入 run-scoped overlay；工具调用完成后的
+`AfterToolCalls` 内部 cancel 形成真实 Eino v3 runtime checkpoint，`ADKCheckpointStore` 再通过同一个
+受 lease/generation/Attempt fence 的 transaction 原子提交 Plan high-watermark、PlanItem、追加 Event、
+checkpoint 与 Attempt cursor。首次 Plan 使用 0→1 初始化，后续支持 B1/B2/B3 rolling；当前 Attempt
+head 在分配新 ID 前 read-first replay，历史 exact replay 不改写当前状态。Plan 与 side-effect 同一
+checkpoint boundary 混用会在任何 durable write 前 fail closed。enrolled typed Resume 继承 durable
+source `PlanScopeRunID`，target checkpoint store/coordinator 沿用该 scope，恢复后的 Plan 写仍进入同一
+atomic boundary，不回落 legacy Plan writer。repository/application Go 测试已通过；本轮 dev disposable
+MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。ordinary non-Journal
+enrollment/typed bootstrap 是下一硬阻断；gate-on producer 与真正的 server inference policy 仍未
+完成，P1M 仍未 PASS。historical runtime compatibility 与 package-private server-owned subagent seam 仍存在。P1L
+继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
 统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用

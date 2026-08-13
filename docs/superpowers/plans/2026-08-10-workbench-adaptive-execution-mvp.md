@@ -424,7 +424,8 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       原子 rollover 与 full replay，C3h2c 已完成 enrolled Resume 的 legacy exact-miss fallback；dev
       disposable MySQL 已完成 Human rollover、typed recovery race 与 legacy recovery 门禁。ordinary
       non-Journal enrollment 与 gate-on producer 仍未完成；production mode/policy consumer 后续已由
-      C3h2d 退休，Application rolling Plan/Checkpoint writer 仍未接入，P1M 未 PASS。
+      C3h2d 退休，Application rolling Plan/Checkpoint writer 后续已接入；其独立 dev MySQL rolling
+      gate 仍 `NOT_VERIFIED`，P1M 未 PASS。
 - [x] P1M-C3h2c 只扩展 already-enrolled Resume bootstrap：target exact replay 与 source typed
       bootstrap 均优先；只有 source durable exact NotFound 才读取 source Run，并用隔离的
       `LegacyAdaptiveAdmissionDecoder` 严格解析已知 root `requested_policy`/`mode`。unknown、冲突、
@@ -435,7 +436,7 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       dev disposable MySQL 已通过 typed recovery concurrent single-write/replay/drift/readback 与 legacy
       recovery commit/replay/drift/readback。ordinary non-Journal enrollment 与 gate-on producer 仍
       deferred；production mode/policy consumer 与 repository rolling foundation 后续由 C3h2d 完成，
-      但 Application production writer 尚未接入，P1M 未 PASS。
+      Application production writer 后续也已接入，但 P1M 未 PASS。
 - [x] P1M-C3h2d 退休 production ADK 的旧 mode/policy consumer，并交付 rolling repository
       foundation：Factory、Middleware、标准 Subagent provider 与 builtin definition 统一经
       production-only `parseADKRuntimeConfig` 忽略顶层 `requested_policy`/`mode`；builtin/single-agent
@@ -446,6 +447,18 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       `ADKCheckpointStore` 尚未接入携带完整 Plan mutation、Eino checkpoint 与 event 的单个受 fence
       production transaction。ordinary non-Journal enrollment、gate-on producer 和该 Application writer
       仍 deferred，P1M 未 PASS。
+- [x] P1M-C3h2e 按 MVP 交付优先闭合 Application rolling Plan/Checkpoint writer：eligible Eino Plan
+      工具只写 run-scoped overlay，并同步 parity todos；`AfterToolCalls` 内部 cancel 生成真实 Eino v3
+      runtime checkpoint，`ADKCheckpointStore` 将 Plan high-watermark、PlanItem、追加 Event、checkpoint
+      与 Attempt cursor 经 `CommitAdaptiveExecutionBoundary` 一次受 lease/generation/Attempt fence 提交。
+      首次 Plan 0→1 初始化，后续支持 B1/B2/B3 rolling；当前 head 在分配 ID 前按稳定 identity、runtime
+      key 与 mutation digest read-first crash replay，历史 exact replay 不改写当前状态。提交后执行器
+      自动 Resume，外部 cancel 不被吞掉；未提交 boundary、repository conflict 与 mixed Plan/side-effect
+      均 fail closed。enrolled typed Resume 继承 durable source `PlanScopeRunID`，target checkpoint
+      store/coordinator 使用同一 scope，恢复后的 Plan 写不回落 legacy writer。repository/application Go
+      测试已通过；本轮 dev disposable MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持
+      `NOT_VERIFIED`。ordinary non-Journal enrollment/typed bootstrap 是下一 hard blocker；gate-on
+      producer 仍未闭合，P1M 仍未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

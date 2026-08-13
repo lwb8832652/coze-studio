@@ -492,7 +492,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2d mode-free runtime, recovery and rolling repository foundation",
+      "label": "P1M mode-free runtime, recovery and atomic rolling Plan boundary",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -592,6 +592,26 @@
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
           "symbol": "validateAdaptiveExecutionSourceBoundaryChain",
           "locator": "func validateAdaptiveExecutionSourceBoundaryChain("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "(*threadRepository).ReadAdaptiveExecutionBoundary",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "symbol": "(*ADKAdaptivePlanBoundaryCoordinator).commitCheckpoint",
+          "locator": "func (c *ADKAdaptivePlanBoundaryCoordinator) commitCheckpoint("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).runWithInternalCheckpointBarriers",
+          "locator": "func (e *ADKExecutor) runWithInternalCheckpointBarriers("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Resume",
+          "locator": "storeRun.PlanScopeRunID = agentRun.PlanScopeRunID"
         },
         {
           "path": "backend/application/agentthread/journal_feature_gate.go",
@@ -732,6 +752,34 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
           "locator": "func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryCreatesInitialPlanWithBoundaryAtomically(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestReadAdaptiveExecutionBoundaryReturnsAdvancedCurrentHead(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryReadsCommittedHeadBeforeAllocatingIDs(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryRejectsMixedSideEffectBeforeEitherCommit(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/journal_feature_gate_test.go",
@@ -1645,7 +1693,7 @@
     },
     {
       "id": "runtime.checkpoint_store",
-      "label": "Workbench ADK Checkpoint Store",
+      "label": "Workbench ADK Checkpoint Store and adaptive Plan commit point",
       "layer": "runtime_state",
       "kind": "capability",
       "production_status": "current",
@@ -1654,12 +1702,21 @@
           "path": "backend/application/agentthread/adk_checkpoint.go",
           "symbol": "(*ADKCheckpointStore).Set",
           "locator": "func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, checkpoint []byte)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_checkpoint.go",
+          "symbol": "WithADKAdaptivePlanBoundary",
+          "locator": "func WithADKAdaptivePlanBoundary("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_checkpoint_test.go",
           "locator": "func TestADKCheckpoint"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
         }
       ]
     },
@@ -2565,7 +2622,7 @@
     },
     {
       "id": "middleware.plan_task",
-      "label": "plantask",
+      "label": "plantask run-scoped adaptive overlay",
       "layer": "eino_middleware",
       "kind": "middleware",
       "production_status": "current",
@@ -2577,6 +2634,11 @@
         {
           "path": "backend/application/agentthread/adk_middleware.go",
           "locator": "if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_plan_backend.go",
+          "symbol": "(*ADKPlanBackend).adaptiveBoundary",
+          "locator": "func (b *ADKPlanBackend) adaptiveBoundary("
         }
       ],
       "evidence": [
@@ -2587,6 +2649,10 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBackendStagesTaskCreateWritesInOneGeneration(t *testing.T) {"
         }
       ]
     },
@@ -4444,6 +4510,10 @@
           "locator": "func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {"
         },
         {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
+        },
+        {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
           "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
         },
@@ -4480,6 +4550,68 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "require.Equal(t, []string{\"resume-bootstrap\", \"store\", \"factory\"}, order)"
+        }
+      ]
+    },
+    {
+      "id": "edge.plan_tool_stages_adaptive_overlay",
+      "from": "middleware.plan_task",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_plan_backend.go",
+          "locator": "if err := coordinator.stageTaskWithParity("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBackendStagesTaskCreateWritesInOneGeneration(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adaptive_plan_commits_checkpoint_boundary",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "runtime.checkpoint_store",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_checkpoint.go",
+          "locator": "_, committed, err := s.adaptivePlanBoundary.commitCheckpoint(ctx, boundaryInput, attempt)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "locator": "result, err := c.repository.CommitAdaptiveExecutionBoundary(ctx, *c.pending.frozen)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.checkpoint_barrier_auto_resumes_runner",
+      "from": "runtime.checkpoint_store",
+      "to": "runtime.eino.runner",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "return runner.Resume(executionCtx, checkpointKey, options...)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
         }
       ]
     },
@@ -4521,7 +4653,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_executor.go",
-          "locator": "result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter"
+          "locator": "result, err := e.consumeEvents("
         }
       ]
     },
@@ -6099,6 +6231,35 @@
       ]
     },
     {
+      "id": "control.adaptive_plan_checkpoint",
+      "name": "Adaptive Plan overlay atomic checkpoint and internal resume",
+      "entry": "middleware.plan_task",
+      "terminal": "runtime.eino.runner",
+      "ordered_node_ids": [
+        "middleware.plan_task",
+        "application.adaptive_mode_free_contract_boundary",
+        "runtime.checkpoint_store",
+        "runtime.eino.runner"
+      ],
+      "ordered_edge_ids": [
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        }
+      ]
+    },
+    {
       "id": "control.lease_recovery",
       "name": "Expired lease recovery from durable checkpoint",
       "entry": "runtime.lease_recovery",
@@ -6336,6 +6497,9 @@
       "required_side_edge_ids": [
         "edge.adk_resume_delegates_adaptive_bootstrap",
         "edge.adk_builds_agent",
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner",
         "edge.adk_uses_eino",
         "edge.adk_adapts_mcp_go",
         "edge.factory_configures_ark",
@@ -6692,13 +6856,13 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2d delivery-first slice",
+      "term": "Adaptive capabilities outside the C3a-C3h2e delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add the fenced fresh Execute bootstrap and make its durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d makes production ADK Factory, Middleware, standard Subagent provider and builtin definition ignore top-level requested_policy/mode, and removes those keys from builtin/single-agent child writers while keeping explicit server-owned Plan/Subagent/reasoning/model configuration. C3h2d also extends the repository primitive for B1/B2/B3 same-recovery rolling Plan, immutable historical replay and a rolling checkpoint as the next Attempt recovery source with strict lineage, revision/version, fingerprint and event-anchor validation. It does not connect ApplicationADKPlanStore or ADKCheckpointStore to CommitAdaptiveExecutionBoundary; no production path yet submits the complete Plan mutation, Eino checkpoint and event in that single fenced transaction. Ordinary non-Journal enrollment, gate-on producer, the Application rolling writer, Adaptive finalizer gate and a true server inference policy remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add fenced Execute bootstrap and make durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d retires production ADK requested_policy/mode consumers and adds B1/B2/B3 rolling repository authority. C3h2e connects Plan middleware, ApplicationADKPlanStore and ADKCheckpointStore to the same fenced CommitAdaptiveExecutionBoundary transaction: run-scoped overlay, real Eino v3 checkpoint, initial 0-to-1 Plan, rolling high-watermark, read-first head replay, internal auto-Resume and pre-write mixed side-effect rejection. Enrolled typed Resume inherits the durable source PlanScopeRunID so target Plan writes retain the same atomic boundary. Repository/application Go tests pass, while the independent dev disposable MySQL rolling gate remains NOT_VERIFIED because no safely named isolated DSN was available. Ordinary non-Journal enrollment and typed bootstrap are the next hard blocker; gate-on producer, Adaptive finalizer gate and a true server inference policy also remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
-          "locator": "P0A/P0B/P0C/P0D 当前仍只覆盖 repository primitive 与 named-path evidence"
+          "locator": "P0A/P0B/P0C/P0D 的事务基础仍是 repository primitive 与 named-path evidence"
         },
         {
           "path": "backend/domain/agentthread/repository/mysql.go",
@@ -6715,6 +6879,18 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
           "locator": "func (r *threadRepository) ReadAdaptiveExecutionRecoverySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "locator": "func (c *ADKAdaptivePlanBoundaryCoordinator) commitCheckpoint("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "func (e *ADKExecutor) runWithInternalCheckpointBarriers("
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
@@ -6973,7 +7149,9 @@
         "MCP",
         "AgentEvent",
         "EventSink",
-        "gate-off bootstrap"
+        "gate-off bootstrap",
+        "atomic rolling Plan checkpoint",
+        "read-first crash replay"
       ],
       "smoke_node_ids": ["runtime.adk_executor.execute"],
       "required_node_ids": [
@@ -6988,6 +7166,9 @@
       "required_edge_ids": [
         "edge.adk_execute_delegates_adaptive_bootstrap",
         "edge.adaptive_bootstrap_precedes_agent_build",
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner",
         "edge.factory_builds_chat_agent",
         "edge.chat_agent_precedes_runner",
         "edge.runner_emits_adk_events",

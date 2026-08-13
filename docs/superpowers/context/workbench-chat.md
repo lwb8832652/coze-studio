@@ -71,10 +71,16 @@ Thread
 - C3h2d 已让 production ADK parser 忽略顶层 `requested_policy`/`mode`，Factory、Middleware、标准
   Subagent provider 与 builtin definition 不再以这两个旧键分支；builtin/single-agent child writer
   也不再写入它们。显式 server-owned Plan/Subagent/reasoning/model 配置继续保留。
-- 同一提交的 repository foundation 已支持单个 recovery Attempt 内 B1→B2→B3 rolling Plan、历史
-  exact replay 和 rolling checkpoint 跨 Attempt 恢复；但 Application ADK Plan/Checkpoint 的单事务
-  production writer 尚未接入。ordinary non-Journal enrollment、gate-on producer 与该 writer 是下一
-  硬主线，P1M 未 PASS。
+- repository 与 Application 已闭合 Plan atomic boundary：Eino Plan 工具只写 run-scoped overlay，
+  `AfterToolCalls` 内部 cancel 让 Eino 产生真实 v3 runtime checkpoint，`ADKCheckpointStore` 再把
+  Plan high-watermark、PlanItem、追加 Event、checkpoint 与 Attempt cursor 放进同一个受 fence
+  transaction。首次 Plan 以 0→1 创建，随后同一 Attempt 可做 B1→B2→B3 rolling；当前 head 先做
+  read-first crash replay，历史 exact replay 不改写当前状态。提交成功后执行器自动从该 checkpoint
+  Resume，外部 cancel 不会被误判为内部续跑；Plan 与 side-effect 同 boundary 则在写入前 fail closed。
+  enrolled typed Resume 继承 durable source `PlanScopeRunID`，target coordinator 继续写同一 Plan
+  scope，不回落 legacy writer。repository/application Go 测试已通过；本轮 dev disposable MySQL
+  rolling gate 因没有满足安全命名约束的隔离 DSN，保持 `NOT_VERIFIED`。ordinary non-Journal
+  enrollment/typed bootstrap 是下一硬阻断；gate-on producer 仍未闭合，P1M 未 PASS。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

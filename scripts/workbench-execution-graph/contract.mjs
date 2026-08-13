@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '67fc68a2c732cacdaa4ab943101d3041759c079b224f90fd9b8c287bbae4b3bc';
+  '5102e9b63b96c27044bcf2324bff31fbbc631754c7dea3549481ed75115da37d';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -43,6 +43,7 @@ const REQUIRED_CHAIN_IDS = [
   'control.human_resume',
   'control.subagent_retry',
   'control.checkpoint_resume',
+  'control.adaptive_plan_checkpoint',
   'control.lease_recovery',
   'control.multitask_rollback',
   'data.memory',
@@ -158,6 +159,9 @@ const REQUIRED_EDGE_IDS = [
   'edge.adk_execute_delegates_adaptive_bootstrap',
   'edge.adk_resume_delegates_adaptive_bootstrap',
   'edge.adaptive_bootstrap_precedes_agent_build',
+  'edge.plan_tool_stages_adaptive_overlay',
+  'edge.adaptive_plan_commits_checkpoint_boundary',
+  'edge.checkpoint_barrier_auto_resumes_runner',
   'edge.deerflow_configures_eino',
   'edge.legacy_is_historical_only',
   'edge.legacy_excluded_from_new_runs',
@@ -307,6 +311,21 @@ const REQUIRED_EDGE_SHAPES = {
     'application.adaptive_mode_free_contract_boundary',
     'precedes',
     'runtime.adk_agent_factory.build',
+  ],
+  'edge.plan_tool_stages_adaptive_overlay': [
+    'middleware.plan_task',
+    'delegates_to',
+    'application.adaptive_mode_free_contract_boundary',
+  ],
+  'edge.adaptive_plan_commits_checkpoint_boundary': [
+    'application.adaptive_mode_free_contract_boundary',
+    'precedes',
+    'runtime.checkpoint_store',
+  ],
+  'edge.checkpoint_barrier_auto_resumes_runner': [
+    'runtime.checkpoint_store',
+    'precedes',
+    'runtime.eino.runner',
   ],
   'edge.deerflow_configures_eino': [
     'compat.deerflow_config',
