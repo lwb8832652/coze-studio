@@ -6,6 +6,7 @@ package sandboxrunner
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 )
 
 const (
@@ -40,7 +41,9 @@ type runtimeStatusSource struct {
 	lifecycle             *Lifecycle
 	configuration         ConfigurationSource
 	sessionBackendEnabled bool
+	coreSettings          CoreSettingsGate
 	core                  CoreRuntimeStatusSource
+	recoveryReady         *atomic.Bool
 }
 
 func (source runtimeStatusSource) RuntimeStatus(ctx context.Context) (RuntimeStatusProjection, error) {
@@ -74,6 +77,15 @@ func (source runtimeStatusSource) RuntimeStatus(ctx context.Context) (RuntimeSta
 func (source runtimeStatusSource) coreStatus(ctx context.Context) CoreRuntimeStatusSnapshot {
 	if !source.sessionBackendEnabled {
 		return CoreRuntimeStatusSnapshot{State: coreRuntimeDisabled}
+	}
+	if source.coreSettings == nil {
+		return CoreRuntimeStatusSnapshot{State: coreRuntimeUnknown}
+	}
+	if !source.coreSettings.CoreEnabled() {
+		return CoreRuntimeStatusSnapshot{State: coreRuntimeDisabled}
+	}
+	if source.recoveryReady != nil && !source.recoveryReady.Load() {
+		return CoreRuntimeStatusSnapshot{State: coreRuntimeUnknown}
 	}
 	if source.core == nil {
 		return CoreRuntimeStatusSnapshot{State: coreRuntimeUnknown}

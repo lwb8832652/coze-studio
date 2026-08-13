@@ -6,8 +6,13 @@ package sandboxrunner
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,15 +80,20 @@ func TestNewRuntimeRequiresCoreLifecycleOnlyWhenSessionBackendEnabled(t *testing
 	enabled := validRuntimeConfig()
 	enabled.SessionBackendEnabled = true
 	runtime, err = NewRuntime(enabled, dependencies)
-	require.NoError(t, err)
-	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+	require.ErrorIs(t, err, ErrConfiguration)
 
 	core := &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
 		Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 3,
 	}}
 	dependencies.CoreLifecycle = core
+	_, err = NewRuntime(enabled, dependencies)
+	require.ErrorIs(t, err, ErrConfiguration)
+	dependencies.Session = http.NotFoundHandler()
+	dependencies.CoreSettings = &mutableCoreSettingsGate{enabled: true}
+	dependencies.CoreRecovery = &recordingCoreOperationRecovery{}
 	runtime, err = NewRuntime(enabled, dependencies)
 	require.NoError(t, err)
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
 	require.NoError(t, runtime.CoreReady(context.Background()))
 }
 
@@ -126,11 +136,28 @@ func TestCoreReadyFailsClosedWhenRedisBecomesUnavailable(t *testing.T) {
 		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true}, Resources: fixedMemorySampler(4096),
 		InitialSettings: settings, ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: redisReadiness,
 		CoreLifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 1}},
+		Session:       http.NotFoundHandler(), CoreSettings: &mutableCoreSettingsGate{enabled: true}, CoreRecovery: &recordingCoreOperationRecovery{},
 	})
 	require.NoError(t, err)
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
 	require.NoError(t, runtime.CoreReady(context.Background()))
 	redisReadiness.err = errors.New("redis down")
 	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+}
+
+func TestCoreReadyRequiresDatabaseCoreSettingToBeEnabled(t *testing.T) {
+	gate := &mutableCoreSettingsGate{}
+	readiness := runtimeCoreReadiness{
+		sessionBackendEnabled: true,
+		lifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
+			Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 1,
+		}},
+		redisReadiness: alwaysReadyCache{},
+		settings:       gate,
+	}
+	require.ErrorIs(t, readiness.CoreReady(context.Background()), ErrUnavailable)
+	gate.enabled = true
+	require.NoError(t, readiness.CoreReady(context.Background()))
 }
 
 func TestProcessRuntimeFactoriesInitializeSessionDependenciesOnlyWhenEnabled(t *testing.T) {
@@ -173,6 +200,30 @@ func TestProcessRuntimeFactoriesInitializeSessionDependenciesOnlyWhenEnabled(t *
 	require.Equal(t, 1, upstreamCalls)
 	require.NoError(t, runtime.Close())
 	require.Equal(t, 1, closer.Count())
+}
+
+func TestNewProcessRuntimeWiresOneSessionHandlerFromSharedCoreDependencies(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	runtime, err := newProcessRuntime(context.Background(), config, processRuntimeFactories{
+		newStore: func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			return newRuntimeStore(clock.now), alwaysReadyCache{}, nil
+		},
+		newDriver: func(Config) (sandboxruntime.Driver, error) { return &lifecycleDriverFake{stopped: true}, nil },
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, runtime.Close()) })
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions:acquire", nil)
+	response := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+
+	status, err := runtime.configStore.Configuration(context.Background())
+	require.NoError(t, err)
+	require.NotZero(t, status.Version)
+	require.Equal(t, coreRuntimeUnknown, runtime.server.runtimeStatus.(runtimeStatusSource).coreStatus(context.Background()).State)
 }
 
 func TestProcessRuntimeKeepsOneShotAvailableWhenCoreDependenciesFail(t *testing.T) {
@@ -272,8 +323,10 @@ func TestCoreReadyReadsCachedLifecycleWithoutBlockingOnObservation(t *testing.T)
 	runtime, err := NewRuntime(config, RuntimeDependencies{
 		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true}, Resources: fixedMemorySampler(4096),
 		InitialSettings: settings, ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: alwaysReadyCache{}, CoreLifecycle: core,
+		Session: http.NotFoundHandler(), CoreSettings: &mutableCoreSettingsGate{enabled: true}, CoreRecovery: &recordingCoreOperationRecovery{},
 	})
 	require.NoError(t, err)
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
 	require.NoError(t, runtime.CoreReady(context.Background()))
 	require.Equal(t, 0, core.observeCalls)
 	core.snapshot = aio.LifecycleSnapshot{Enabled: true, State: aio.LifecycleStateUnknown, Generation: 4}
@@ -333,6 +386,94 @@ func TestCoreObservationIsBoundedAndNeverOverlaps(t *testing.T) {
 	require.Eventually(t, func() bool { return !runtime.coreObservationActive.Load() }, time.Second, time.Millisecond)
 }
 
+func TestRuntimeCoreRecoveryFailsClosedWithoutStoppingOneShot(t *testing.T) {
+	recovery := &recordingCoreOperationRecovery{err: errors.New("redis recovery unavailable")}
+	runtime := &Runtime{sessionBackendEnabled: true, coreRecovery: recovery}
+
+	if err := runtime.recoverCoreOperations(context.Background()); err != nil {
+		t.Fatalf("recoverCoreOperations() = %v; Core failure must not stop one-shot startup", err)
+	}
+	require.Equal(t, 1, recovery.calls)
+	require.False(t, runtime.coreRecoveryReady.Load())
+
+	recovery.err = nil
+	if err := runtime.recoverCoreOperations(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, 2, recovery.calls)
+	require.True(t, runtime.coreRecoveryReady.Load())
+}
+
+func TestRuntimeCoreRecoveryIsNoopWhileSessionBackendDisabled(t *testing.T) {
+	recovery := &recordingCoreOperationRecovery{}
+	runtime := &Runtime{coreRecovery: recovery}
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
+	require.Zero(t, recovery.calls)
+	require.True(t, runtime.coreRecoveryReady.Load())
+}
+
+func TestRuntimeCoreReadyRemainsClosedUntilStartupRecoverySucceeds(t *testing.T) {
+	runtime := &Runtime{
+		sessionBackendEnabled: true,
+		coreLifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
+			Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 3,
+		}},
+		coreRedisReadiness: alwaysReadyCache{},
+		coreSettings:       &mutableCoreSettingsGate{enabled: true},
+		coreRecovery:       &recordingCoreOperationRecovery{},
+	}
+	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
+	require.NoError(t, runtime.CoreReady(context.Background()))
+}
+
+func TestRuntimeSessionRoutesFeaturesAndStatusShareStartupRecoveryGate(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	handler := &recordingSessionHandler{status: http.StatusNoContent}
+	runtime, err := NewRuntime(config, RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true}, Resources: fixedMemorySampler(4096),
+		InitialSettings: settings, ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: alwaysReadyCache{},
+		CoreLifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 4}},
+		Session:       handler, CoreSettings: &mutableCoreSettingsGate{enabled: true}, CoreRecovery: &recordingCoreOperationRecovery{},
+	})
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions:acquire", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+config.AuthToken)
+	response := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.Zero(t, handler.calls)
+	assertRuntimeHealthSessionFeatures(t, runtime.Handler(), false)
+	require.Equal(t, coreRuntimeUnknown, runtime.server.runtimeStatus.(runtimeStatusSource).coreStatus(context.Background()).State)
+
+	require.NoError(t, runtime.recoverCoreOperations(context.Background()))
+	response = httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request.Clone(context.Background()))
+	require.Equal(t, http.StatusNoContent, response.Code)
+	require.Equal(t, 1, handler.calls)
+	assertRuntimeHealthSessionFeatures(t, runtime.Handler(), true)
+	require.Equal(t, coreRuntimeReady, runtime.server.runtimeStatus.(runtimeStatusSource).coreStatus(context.Background()).State)
+}
+
+func assertRuntimeHealthSessionFeatures(t *testing.T, handler http.Handler, wantSession bool) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Features []domainsandbox.ProviderFeature `json:"features"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, wantSession, slices.Contains(body.Features, domainsandbox.ProviderFeatureSandboxSessionV1))
+}
+
 func TestRuntimeLifecycleManagerCancelsRunningContainerBeforeReleasingSchedulerCapacity(t *testing.T) {
 	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
 	store := newRuntimeStore(clock.now)
@@ -369,6 +510,16 @@ func validRuntimeConfig() Config {
 }
 
 type runtimeStore struct{ *schedulerStore }
+
+type recordingCoreOperationRecovery struct {
+	err   error
+	calls int
+}
+
+func (recovery *recordingCoreOperationRecovery) Recover(context.Context) ([]SessionOperationRecord, error) {
+	recovery.calls++
+	return nil, recovery.err
+}
 
 func newRuntimeStore(now func() time.Time) *runtimeStore {
 	return &runtimeStore{schedulerStore: newSchedulerStore(now)}
@@ -496,3 +647,7 @@ func (alwaysReadyCache) CheckReadiness(context.Context) error { return nil }
 type mutableCacheReadiness struct{ err error }
 
 func (readiness *mutableCacheReadiness) CheckReadiness(context.Context) error { return readiness.err }
+
+type mutableCoreSettingsGate struct{ enabled bool }
+
+func (gate *mutableCoreSettingsGate) CoreEnabled() bool { return gate.enabled }

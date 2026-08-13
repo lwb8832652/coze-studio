@@ -112,7 +112,7 @@ manifest；Go SDK 仍固定为 `v0.0.5` 以稳定客户端字段和路由合同�
 
 ### 未选：用 AIO/DeerFlow Provisioner 替换 Native Runner
 
-该方案会丢失现有签名身份、持久公平队列、硬容量限制、配置审计和 fail-closed 边界，
+该方案会丢失现有签名身份、公平队列元数据、硬容量限制、配置审计和 fail-closed 边界，
 并且 DeerFlow 的 soft replica 限制不能保证 `2C4G` 安全，因此不采用。
 
 ## 总体架构
@@ -381,14 +381,19 @@ Session。递归 Subagent 是否允许由 Agent Runtime 策略决定，与 Sandb
 
 ### 公平与排队
 
-复用现有 Redis 持久公平队列、权重槽位、Lease、取消和恢复机制。调度至少保证：
+复用现有 Redis 公平队列元数据、权重槽位、Lease 和取消机制。请求正文只保留在当前
+live HTTP waiter 内存中；operation 只有在该 waiter 存活时等待容量并执行，断连必须原子
+cancel。Runner 启动时把遗留 accepted、queued 和 running operation 全部标为 unknown，
+不恢复执行或自动重放。调度至少保证：
 
 - 按空间和用户轮转；
 - 同一用户默认一个 active task；
 - Heavy 不被持续 Core 流量永久饿死；
 - 超出并发进入队列，不返回通用 500；
 - 排队支持取消和截止时间；
-- Redis 不保存长期业务事实或明文凭据。
+- Redis 不保存 command/argv、File body 或其他请求正文，也不保存长期业务事实或明文凭据；
+- 成功的 bounded result 与有界 operation metadata 加密并按 TTL 持久，GET 和同 digest
+  replay 只读取该安全投影/结果，不重新执行。
 
 ### 进程和资源清理
 
@@ -465,9 +470,12 @@ Sandbox 表，也不得在应用启动时用自动建表代替迁移。
 
 ### Redis
 
-Redis 保存短期队列、并发令牌、Lease、分布式锁、取消信号和有 TTL 的运行投影。
-Redis 丢失时通过 MySQL、Runner generation 和原幂等键 reconcile，不能创建第二个逻辑
-Run 或盲目重放命令。
+Redis 保存短期队列元数据、并发令牌、Lease、分布式锁、取消信号和有 TTL 的运行投影，
+但不持久化 command/argv、File body 或其他请求正文。成功的 bounded result 加密、限长并
+按 TTL 保存，供 GET 和同 digest replay 返回；accepted/queued/running 没有可安全恢复的
+请求正文。Redis 丢失或 Runner 重启时，通过 MySQL、Runner generation 和原幂等键
+reconcile，遗留 accepted/queued/running 一律变为 unknown，不能创建第二个逻辑 Run 或
+盲目重放命令。
 
 ### 持久卷和对象存储
 
@@ -574,8 +582,11 @@ reserved sentinel 不是业务 Session，不进入 acquire、idle cleanup、用�
 API 或统计。旧 Shell Session、Browser Context、Jupyter Kernel 和端口租约在 generation
 变化后全部失效；线程工作区继续保留。下一次显式 Recover 创建新资源并更新映射。
 
-正在执行的命令标记为基础设施中断，默认不自动重放。命令可能已经产生文件、数据库或
-外部 API 副作用，只有业务层明确证明幂等时才允许重试。
+Runner 进程启动时把遗留 accepted、queued 和 running operation 全部标记为 unknown，
+默认不自动重放。排队只由原 live HTTP waiter 持有请求正文并等待容量；连接断开会原子
+cancel，因此重启后没有可安全继续执行的 command/File body。命令可能已经产生文件、
+数据库或外部 API 副作用，只有新的显式业务请求按合同重新提交时才允许再次执行。已成功
+完成的 bounded result 独立加密持久，可由 GET 或同 digest replay 返回而不重新执行。
 
 ### Session 异常
 

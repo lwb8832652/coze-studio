@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"hash/fnv"
 	"io"
 	"sort"
 	"strings"
@@ -23,6 +22,8 @@ import (
 const (
 	ReasonAdapterContractInvalid = "AIO_ADAPTER_CONTRACT_INVALID"
 	ReasonAdapterResultTooLarge  = "AIO_ADAPTER_RESULT_TOO_LARGE"
+	adapterExecPollSeconds       = 1
+	adapterKillTimeout           = 5 * time.Second
 )
 
 type SessionUpstreamClient interface {
@@ -84,7 +85,10 @@ type SessionAdapter struct {
 	controlShellMu  *sync.Mutex
 }
 
-var processShellLocks [64]sync.Mutex
+var processShellLocks = struct {
+	sync.Mutex
+	locks map[string]*sync.Mutex
+}{locks: make(map[string]*sync.Mutex)}
 
 func NewSessionAdapter(ref domainsandbox.SessionRef, upstreamShellID string, upstream SessionUpstreamClient, options ...SessionAdapterOption) (*SessionAdapter, error) {
 	normalizedRef, err := domainsandbox.NormalizeSessionRef(ref)
@@ -122,11 +126,15 @@ func NewSessionAdapter(ref domainsandbox.SessionRef, upstreamShellID string, ups
 }
 
 func sharedShellMutex(upstreamIdentity, shellID string) *sync.Mutex {
-	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(upstreamIdentity))
-	_, _ = hasher.Write([]byte{0})
-	_, _ = hasher.Write([]byte(shellID))
-	return &processShellLocks[hasher.Sum64()%uint64(len(processShellLocks))]
+	key := upstreamIdentity + "\x00" + shellID
+	processShellLocks.Lock()
+	defer processShellLocks.Unlock()
+	lock := processShellLocks.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		processShellLocks.locks[key] = lock
+	}
+	return lock
 }
 
 func validShellLockIdentity(value string) bool {
@@ -252,7 +260,7 @@ func stringPointerAdapter(value string) *string { return &value }
 func boolPointerAdapter(value bool) *bool       { return &value }
 
 func (adapter *SessionAdapter) Exec(ctx context.Context, input infrasandbox.ExecRequest) (infrasandbox.ExecutionStream, error) {
-	if adapter == nil {
+	if adapter == nil || ctx == nil {
 		return nil, domainsandbox.ErrInvalidInput
 	}
 	request, err := infrasandbox.NormalizeExecRequest(input, adapter.options.clock(), adapter.options.allowedEnvNames)
@@ -298,35 +306,143 @@ func (adapter *SessionAdapter) Exec(ctx context.Context, input infrasandbox.Exec
 	if hardTimeout <= 0 || hardTimeout > infrasandbox.MaxSessionDeadlineAhead.Seconds() {
 		return nil, domainsandbox.ErrInvalidInput
 	}
-	strict, preserveSymlinks, asyncMode := true, false, false
+	strict, preserveSymlinks, asyncMode := true, false, true
+	execCtx, cancel := context.WithDeadline(ctx, request.Deadline)
+	defer cancel()
 	adapter.businessShellMu.Lock()
-	response, execErr := adapter.upstream.Exec(ctx, &sandboxapi.ShellExecRequest{
+	defer adapter.businessShellMu.Unlock()
+	response, execErr := adapter.upstream.Exec(execCtx, &sandboxapi.ShellExecRequest{
 		Id: &adapter.upstreamShellID, ExecDir: &execDir, Command: command, AsyncMode: &asyncMode,
 		Strict: &strict, HardTimeout: &hardTimeout, PreserveSymlinks: &preserveSymlinks,
 	})
-	if errors.Is(ctx.Err(), context.Canceled) {
-		_, _ = adapter.upstream.Kill(context.WithoutCancel(ctx), &sandboxapi.ShellKillProcessRequest{Id: adapter.upstreamShellID})
-		execErr = context.Canceled
+	if execCtx.Err() != nil {
+		return nil, adapter.stopInterruptedExec(ctx, execCtx.Err())
 	}
-	adapter.businessShellMu.Unlock()
 	if execErr != nil {
-		return nil, sanitizeUpstreamError(ctx, execErr)
+		_ = adapter.killRunningExec(ctx)
+		return nil, sanitizeUpstreamError(execCtx, execErr)
 	}
 	if response == nil || response.Success == nil || !*response.Success || response.Data == nil ||
-		response.Data.SessionId != adapter.upstreamShellID || response.Data.Status != sandboxapi.BashCommandStatusCompleted || response.Data.ExitCode == nil {
+		response.Data.SessionId != adapter.upstreamShellID {
 		return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
 	}
-	output := ""
-	if response.Data.Output != nil {
-		output = *response.Data.Output
+	if response.Data.Status == sandboxapi.BashCommandStatusCompleted {
+		return adapter.executionStream(response.Data.Output, response.Data.ExitCode, request.MaxOutputBytes)
 	}
-	if int64(len(output)) > request.MaxOutputBytes {
-		output = output[:request.MaxOutputBytes]
+	if response.Data.Status != sandboxapi.BashCommandStatusRunning {
+		_ = adapter.killRunningExec(ctx)
+		return nil, adapter.statusError(response.Data.Status)
 	}
+
+	var expectedTerminal sandboxapi.BashCommandStatus
+	for {
+		view, viewErr := adapter.upstream.View(execCtx, &sandboxapi.ShellViewRequest{Id: adapter.upstreamShellID})
+		if execCtx.Err() != nil {
+			return nil, adapter.stopInterruptedExec(ctx, execCtx.Err())
+		}
+		if viewErr != nil {
+			_ = adapter.killRunningExec(ctx)
+			return nil, sanitizeUpstreamError(execCtx, viewErr)
+		}
+		if view == nil || view.Success == nil || !*view.Success || view.Data == nil ||
+			view.Data.SessionId != adapter.upstreamShellID {
+			_ = adapter.killRunningExec(ctx)
+			return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+		}
+		if expectedTerminal != "" && view.Data.Status != expectedTerminal {
+			_ = adapter.killRunningExec(ctx)
+			return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+		}
+		switch view.Data.Status {
+		case sandboxapi.BashCommandStatusCompleted:
+			return adapter.executionStream(stringPointerAdapter(view.Data.Output), view.Data.ExitCode, request.MaxOutputBytes)
+		case sandboxapi.BashCommandStatusHardTimeout, sandboxapi.BashCommandStatusNoChangeTimeout, sandboxapi.BashCommandStatusTerminated:
+			return nil, adapter.statusError(view.Data.Status)
+		case sandboxapi.BashCommandStatusRunning:
+		default:
+			_ = adapter.killRunningExec(ctx)
+			return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+		}
+
+		seconds := adapterExecPollSeconds
+		wait, waitErr := adapter.upstream.Wait(execCtx, &sandboxapi.ShellWaitRequest{
+			Id: adapter.upstreamShellID, Seconds: &seconds, MaxWaitSeconds: &seconds,
+		})
+		if execCtx.Err() != nil {
+			return nil, adapter.stopInterruptedExec(ctx, execCtx.Err())
+		}
+		if waitErr != nil {
+			_ = adapter.killRunningExec(ctx)
+			return nil, sanitizeUpstreamError(execCtx, waitErr)
+		}
+		if wait == nil || wait.Success == nil || !*wait.Success || wait.Data == nil {
+			_ = adapter.killRunningExec(ctx)
+			return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+		}
+		switch wait.Data.Status {
+		case sandboxapi.BashCommandStatusRunning:
+			expectedTerminal = ""
+		case sandboxapi.BashCommandStatusCompleted, sandboxapi.BashCommandStatusHardTimeout,
+			sandboxapi.BashCommandStatusNoChangeTimeout, sandboxapi.BashCommandStatusTerminated:
+			expectedTerminal = wait.Data.Status
+		default:
+			_ = adapter.killRunningExec(ctx)
+			return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+		}
+	}
+}
+
+func (adapter *SessionAdapter) executionStream(output *string, exitCode *int, maximum int64) (infrasandbox.ExecutionStream, error) {
+	if exitCode == nil {
+		return nil, &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+	}
+	value := ""
+	if output != nil {
+		value = *output
+	}
+	if int64(len(value)) > maximum {
+		value = value[:maximum]
+	}
+	code := *exitCode
 	return &adapterExecutionStream{events: []infrasandbox.ExecutionEvent{
-		{Kind: infrasandbox.ExecutionEventStdout, Data: []byte(output)},
-		{Kind: infrasandbox.ExecutionEventTerminal, ExitCode: response.Data.ExitCode},
+		{Kind: infrasandbox.ExecutionEventStdout, Data: []byte(value)},
+		{Kind: infrasandbox.ExecutionEventTerminal, ExitCode: &code},
 	}}, nil
+}
+
+func (adapter *SessionAdapter) statusError(status sandboxapi.BashCommandStatus) error {
+	switch status {
+	case sandboxapi.BashCommandStatusHardTimeout, sandboxapi.BashCommandStatusNoChangeTimeout:
+		return &UpstreamError{reasonCode: ReasonUpstreamTimeout}
+	case sandboxapi.BashCommandStatusTerminated:
+		return &UpstreamError{reasonCode: ReasonUpstreamCancelled}
+	default:
+		return &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+	}
+}
+
+func (adapter *SessionAdapter) stopInterruptedExec(parent context.Context, interruption error) error {
+	if killErr := adapter.killRunningExec(parent); killErr != nil {
+		return killErr
+	}
+	if errors.Is(interruption, context.DeadlineExceeded) {
+		return &UpstreamError{reasonCode: ReasonUpstreamTimeout}
+	}
+	return &UpstreamError{reasonCode: ReasonUpstreamCancelled}
+}
+
+func (adapter *SessionAdapter) killRunningExec(parent context.Context) error {
+	killCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), adapterKillTimeout)
+	defer cancel()
+	response, err := adapter.upstream.Kill(killCtx, &sandboxapi.ShellKillProcessRequest{Id: adapter.upstreamShellID})
+	if err != nil {
+		return sanitizeUpstreamError(killCtx, err)
+	}
+	if response == nil || response.Success == nil || !*response.Success || response.Data == nil ||
+		response.Data.Status != sandboxapi.BashCommandStatusTerminated {
+		return &UpstreamError{reasonCode: ReasonAdapterContractInvalid}
+	}
+	return nil
 }
 
 type adapterExecutionStream struct {

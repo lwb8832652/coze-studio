@@ -10,7 +10,7 @@
 `2C4G` 主机上以全局权重 `2` 安全运行。
 
 **Architecture:** NewX 控制面继续选择 Provider、签发身份和保存业务状态；Native
-Runner 复用现有 Redis 持久公平队列和全局权重槽位，新增独立 Session 队列命名空间、
+Runner 复用现有 Redis 公平队列元数据和全局权重槽位，新增独立 Session 队列命名空间、
 MySQL Session 元数据以及 AIO generation fencing。Runner 通过上游 Go SDK 直连官方
 AIO `8080`，将逻辑路径映射到
 `/mnt/user-data/<space_id>/<user_id>/<thread_id>/{workspace,uploads,outputs}`；该层只保证
@@ -974,7 +974,7 @@ opaque upstream Shell ID 与 generation；workspace 物理根始终由服务端
 `space_id/user_id/thread_id` 派生。本 Task 不引入中间代理、service token、UID/GID、
 `thread_key`、派生镜像或 Docker 生命周期管理。
 
-- [ ] **Step 1: 写 Session store、队列恢复与公平调度 RED tests**
+- [ ] **Step 1: 写 Session store、重启 fencing 与公平调度 RED tests**
 
 覆盖：
 
@@ -982,10 +982,13 @@ opaque upstream Shell ID 与 generation；workspace 物理根始终由服务端
   提供或覆盖物理路径；
 - 相同 canonical identity 幂等 acquire，并发 acquire 最多绑定一个 active upstream Shell；
 - row generation 必须等于 Task 6 当前值，旧 generation 只进入 `recovering`；
-- Core 使用独立 Redis namespace，不污染 one-shot key；accepted/queued 可恢复，running 不重放；
+- Core 使用独立 Redis namespace，不污染 one-shot key；operation 只在原 live HTTP waiter
+  存活时等待容量并执行，断连原子 cancel；进程启动把遗留 accepted/queued/running 全部标为
+  unknown，绝不自动重放；
 - 两个 Core 占满总权重后第三个排队；per-user active limit 生效；
-- queued cancel 原子移除；payload 加密、TTL/长度有界，key/value/log 不保存命令正文、File
-  body、物理路径或 upstream Shell ID。
+- queued cancel 原子移除；Redis 不持久化 command/argv、File body 或其他请求正文；operation
+  metadata 和成功 bounded result 加密、TTL/长度有界，key/value/log 不保存命令正文、File
+  body、物理路径或 upstream Shell ID；GET 与同 digest replay 只返回已持久的安全投影/结果。
 
 - [ ] **Step 2: 写同 upstream Shell 串行与 fencing RED tests**
 
@@ -1042,7 +1045,8 @@ generation，不恢复旧 operation。
 所有请求校验 Session v2 issuer/audience/expiry/nonce 及完整身份；
 method、content-type、body/event/response 大小、deadline 有界；错误不回显 credential、
 签名、Shell ID、物理 workspace、Redis metadata、DSN 或 upstream body。event resume
-只恢复持久的 bounded accepted/terminal events，不重放 running operation。Core 未 ready
+只恢复持久的 bounded accepted/terminal events；这些事件不携带请求正文，Runner 启动时
+仍把遗留 accepted/queued/running operation 全部标为 unknown 且不重放。Core 未 ready
 时 fail closed，既有 `/v1/executions` 行为不变。
 
 - [ ] **Step 5: 运行 RED tests**
@@ -1065,7 +1069,8 @@ authenticate -> load Session -> verify identity/state/generation
 ```
 
 MySQL 只使用 Task 4 additive schema 与乐观 state/version；不 AutoMigrate，不创建第二张
-workspace/identity 表。Redis 只保存有界加密 operation metadata 与随机 lease owner。
+workspace/identity 表。Redis 只保存不含请求正文的有界加密 operation metadata、成功
+bounded result 与随机 lease owner；command/argv 和 File body 只由 live HTTP waiter 持有。
 acquire 竞争 loser 清理自己创建的 Shell，不能清理 winner。非幂等 Exec/Write/Replace
 遇到不确定 transport 结果不自动 retry。进程内锁只能作第二层保护，不能代替 Redis fencing。
 
@@ -1073,9 +1078,11 @@ acquire 竞争 loser 清理自己创建的 Shell，不能清理 winner。非幂�
 
 Core readiness 只依赖：显式开关、合法配置、MySQL、Redis、Task 6 raw health 和已确认的
 sentinel/generation。E2E 覆盖 acquire -> 同 Shell 串行 exec/file -> cancel -> release；
-Runner 重启 queued 恢复/running 不重放；sentinel replacement 后 explicit recover 复用
-workspace；File `sudo=false` 和路径正反映射；Core down 时 one-shot 仍可用；多 Runner
-竞争只有一个 owner/terminal write。
+live HTTP waiter 在容量释放后继续原请求，断连则原子 cancel；Runner 重启把遗留
+accepted/queued/running 全部标为 unknown 且不重放；sentinel replacement 后 explicit
+recover 复用 workspace；File `sudo=false` 和路径正反映射；Core down 时 one-shot 仍可用；
+多 Runner 竞争只有一个 owner/terminal write。成功 bounded result 加密持久，GET 与同
+digest replay 返回该结果而不重新执行。
 
 - [ ] **Step 8: 运行 GREEN、race 与真实 AIO 链路**
 
@@ -1517,7 +1524,9 @@ deploy helper recreate AIO 并保留 volume：
 - confirmed missing 后 CAS 使 generation 恰好 old+1，并发 Runner 只成功一次；
 - reserved sentinel 不进入业务 API/统计/idle cleanup；
 - 旧 Session recovering；explicit Recover 新 Shell + 当前 generation，workspace marker 保留；
-- restart 前 running operation unknown/failed 且不重放；accepted/queued 可恢复；
+- live HTTP waiter 等待容量时断连会原子 cancel；restart 前遗留 accepted/queued/running
+  operation 在 Runner 启动后全部变为 unknown 且不重放；成功 bounded result 可由 GET/同 digest replay
+  读取，不重新执行；
 - Redis/MySQL 故障用 test-scoped fake/proxy，不停止共享 dev dependency。
 
 - [ ] **Step 4: 验证 shared failure domain 的有限资源合同**
@@ -1704,7 +1713,8 @@ HEAD、official latest 当次 image ID 与同构 2C4G；相关代码/Compose/ima
 - lifecycle 仅 deploy；Runner 只做 health/sentinel/MySQL CAS generation；
 - Session v2 绑定服务端完整身份，客户端不能提交 physical root/Shell ID；
 - workspace 层级、Shell cwd、File mapping/`sudo=false` 真实通过；
-- 同 Shell 跨 Runner 串行/fencing，cancel 不杀错，running 不重放；
+- 同 Shell 跨 Runner 串行/fencing，cancel 不杀错；启动时 accepted/queued/running 全部
+  unknown 且不重放；
 - transient unknown 与 confirmed missing 分开，CAS 每次只 bump 一代，sentinel 不参与业务；
 - 文档/UI 明确逻辑路由与 shared failure domain，不虚称 UID/chroot/cgroup 隔离；
 - one-shot wire/Redis/Plugin 不变，Core 默认关闭，Interactive false，Host Shell debug-only；
@@ -1739,7 +1749,7 @@ status，批准后才运行 `publish-dev.sh`，不手工 push 或重复部署。
 | Session | acquire/get/release/destroy/recover + opaque Shell | 重复 Shell、资源泄漏或 stale generation 执行 |
 | 调度 | 两 Core/第三排队、per-user、同 Shell 跨副本串行 | 超权重、双 owner、lease loss 后写终态 |
 | 取消 | queued cancel、running Exec same-Shell Kill、File context cancel | 杀错 Shell、late success、自动重放 |
-| 恢复 | sentinel + MySQL CAS generation、workspace 保留 | transient bump、重复/不 bump、running 重放 |
+| 恢复 | sentinel + MySQL CAS generation、workspace 保留、启动时所有非终态 unknown | transient bump、重复/不 bump、accepted/queued/running 重放 |
 | 路径 | space/user/thread、logical cwd、File map/reverse、sudo=false | 接受客户端 physical root、cwd 越界或 sudo=true |
 | 隔离声明 | 逻辑路由 + shared failure domain | 文档/UI/测试虚称对抗性 tenant 隔离 |
 | 资源 | normal two-Core 2C4G smoke/30m，queue/PID/fd/session bounded | OOM、持续增长或正常 workload 不稳定 |

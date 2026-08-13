@@ -132,6 +132,31 @@ func (r *MySQLRepository) GetRuntimeSession(ctx context.Context, ref domainsandb
 	return runtimeSessionDomain(po)
 }
 
+func (r *MySQLRepository) GetRuntimeSessionByKey(ctx context.Context, sessionID string, key domainsandbox.SessionKey) (domainsandbox.RuntimeSession, error) {
+	normalized, err := domainsandbox.NormalizeSessionRef(domainsandbox.SessionRef{
+		SessionID:         sessionID,
+		Key:               key,
+		RuntimeGeneration: 1,
+	})
+	if err != nil {
+		return domainsandbox.RuntimeSession{}, err
+	}
+	release, err := r.acquireOperation()
+	if err != nil {
+		return domainsandbox.RuntimeSession{}, err
+	}
+	defer release()
+	db, err := r.dbFor(ctx)
+	if err != nil {
+		return domainsandbox.RuntimeSession{}, err
+	}
+	po, err := findRuntimeSessionByRef(db, normalized, false, true)
+	if err != nil {
+		return domainsandbox.RuntimeSession{}, err
+	}
+	return runtimeSessionDomain(po)
+}
+
 func (r *MySQLRepository) BindRuntimeSessionCAS(ctx context.Context, input domainsandbox.BindRuntimeSessionInput) (domainsandbox.RuntimeSession, error) {
 	normalized, err := domainsandbox.NormalizeBindRuntimeSessionInput(input)
 	if err != nil {
@@ -158,6 +183,8 @@ func (r *MySQLRepository) TransitionRuntimeSessionCAS(ctx context.Context, input
 	requiredGeneration := uint64(0)
 	if normalized.Action == domainsandbox.SessionActionRecover {
 		requiredGeneration = normalized.NextRuntimeGeneration
+	} else if normalized.Action == domainsandbox.SessionActionBeginOperation || normalized.Action == domainsandbox.SessionActionCompleteOperation {
+		requiredGeneration = normalized.Ref.RuntimeGeneration
 	}
 	return r.updateRuntimeSessionCAS(ctx, normalized.Ref, normalized.ExpectedVersion, requiredGeneration, func(_ *gorm.DB, po *runtimeSessionPO, generation *schedulerSettingsPO) (map[string]any, error) {
 		nextState, changed, err := domainsandbox.TransitionSessionState(domainsandbox.SessionState(po.State), normalized.Action)
@@ -174,6 +201,16 @@ func (r *MySQLRepository) TransitionRuntimeSessionCAS(ctx context.Context, input
 				return nil, domainsandbox.ErrVersionConflict
 			}
 			return map[string]any{}, nil
+		}
+		if normalized.Action == domainsandbox.SessionActionBeginOperation {
+			if po.UpstreamShellID == nil || *po.UpstreamShellID != normalized.UpstreamShellID || po.RecoveryReason != "" {
+				return nil, domainsandbox.ErrVersionConflict
+			}
+		}
+		if normalized.Action == domainsandbox.SessionActionCompleteOperation {
+			if po.UpstreamShellID == nil || *po.UpstreamShellID != normalized.UpstreamShellID || po.RecoveryReason != normalized.RecoveryReason {
+				return nil, domainsandbox.ErrVersionConflict
+			}
 		}
 		updates := map[string]any{
 			"state":            string(nextState),
@@ -198,6 +235,11 @@ func (r *MySQLRepository) TransitionRuntimeSessionCAS(ctx context.Context, input
 			}
 			updates["runtime_generation"] = normalized.NextRuntimeGeneration
 			updates["upstream_shell_id"] = normalized.UpstreamShellID
+			updates["recovery_reason"] = ""
+			updates["expires_at"] = normalized.ExpiresAt
+		case domainsandbox.SessionActionBeginOperation:
+			updates["recovery_reason"] = normalized.RecoveryReason
+		case domainsandbox.SessionActionCompleteOperation:
 			updates["recovery_reason"] = ""
 			updates["expires_at"] = normalized.ExpiresAt
 		}
@@ -511,7 +553,10 @@ func runtimeSessionDomain(po *runtimeSessionPO) (domainsandbox.RuntimeSession, e
 			return domainsandbox.RuntimeSession{}, domainsandbox.ErrConfigurationInvalid
 		}
 	case domainsandbox.SessionStateRecovering:
-		if upstreamShellID != "" || len(po.RecoveryReason) > domainsandbox.MaxSessionRecoveryReasonBytes || !validPersistedRuntimeIdentifier(po.RecoveryReason) {
+		operationFence := po.RecoveryReason == domainsandbox.SessionOperationFenceReason
+		if len(po.RecoveryReason) > domainsandbox.MaxSessionRecoveryReasonBytes || !validPersistedRuntimeIdentifier(po.RecoveryReason) ||
+			operationFence != (upstreamShellID != "") ||
+			(upstreamShellID != "" && (!validPersistedRuntimeIdentifier(upstreamShellID) || strings.HasPrefix(upstreamShellID, "newx-generation-"))) {
 			return domainsandbox.RuntimeSession{}, domainsandbox.ErrConfigurationInvalid
 		}
 	case domainsandbox.SessionStateReleased, domainsandbox.SessionStateDestroyed:

@@ -529,3 +529,124 @@ func (scheduler *RunnerScheduler) recordDurationLocked(item scheduledItem, durat
 }
 
 var _ Scheduler = (*RunnerScheduler)(nil)
+
+const coreSessionTotalWeight = 2
+
+// CoreSessionScheduler is intentionally independent from RunnerScheduler's
+// one-shot queue and recovery model. Cross-replica capacity accounting and
+// queued cancellation are linearized by SessionOperationStore in Redis; this
+// type only applies the current Core policy snapshot.
+type CoreSessionSchedulerConfig struct {
+	Store    SessionOperationStore
+	Settings domainsandbox.SessionRuntimeSettings
+}
+
+type CoreSessionScheduler struct {
+	store SessionOperationStore
+
+	mu       sync.RWMutex
+	settings domainsandbox.SessionRuntimeSettings
+}
+
+func NewCoreSessionScheduler(config CoreSessionSchedulerConfig) (*CoreSessionScheduler, error) {
+	settings, err := domainsandbox.NormalizeSessionRuntimeSettings(config.Settings)
+	if err != nil || config.Store == nil {
+		return nil, ErrConfiguration
+	}
+	return &CoreSessionScheduler{store: config.Store, settings: settings}, nil
+}
+
+func (scheduler *CoreSessionScheduler) ApplySessionSettings(settings domainsandbox.SessionRuntimeSettings) error {
+	if scheduler == nil {
+		return ErrConfiguration
+	}
+	normalized, err := domainsandbox.NormalizeSessionRuntimeSettings(settings)
+	if err != nil {
+		return ErrConfiguration
+	}
+	scheduler.mu.Lock()
+	scheduler.settings = normalized
+	scheduler.mu.Unlock()
+	return nil
+}
+
+// CoreEnabled reports the currently applied database-backed Core admission
+// setting. The environment-level Session backend switch is a separate gate;
+// callers must require both before advertising or accepting Core Sessions.
+func (scheduler *CoreSessionScheduler) CoreEnabled() bool {
+	if scheduler == nil {
+		return false
+	}
+	return scheduler.sessionSettings().CoreEnabled
+}
+
+func (scheduler *CoreSessionScheduler) Accept(ctx context.Context, input SessionOperationInput) (SessionOperationRecord, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, ErrProtocol
+	}
+	settings := scheduler.sessionSettings()
+	if !settings.CoreEnabled {
+		return SessionOperationRecord{}, ErrUnavailable
+	}
+	input.Weight = settings.CoreWeight
+	record, _, err := scheduler.store.Accept(ctx, input)
+	if err != nil {
+		return SessionOperationRecord{}, err
+	}
+	if record.State != SessionOperationAccepted {
+		return record, nil
+	}
+	return scheduler.store.MarkQueued(ctx, input.SessionID, input.OperationID)
+}
+
+func (scheduler *CoreSessionScheduler) TryStart(ctx context.Context, sessionID, operationID string) (SessionOperationRecord, bool, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, false, ErrProtocol
+	}
+	settings := scheduler.sessionSettings()
+	if !settings.CoreEnabled {
+		return SessionOperationRecord{}, false, ErrUnavailable
+	}
+	return scheduler.store.ClaimQueued(ctx, sessionID, operationID, coreSessionTotalWeight, settings.PerUserActiveLimit)
+}
+
+func (scheduler *CoreSessionScheduler) Finish(ctx context.Context, sessionID, operationID string, completion SessionOperationCompletion) (SessionOperationRecord, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, ErrProtocol
+	}
+	return scheduler.store.Complete(ctx, sessionID, operationID, completion)
+}
+
+func (scheduler *CoreSessionScheduler) Get(ctx context.Context, sessionID, operationID string) (SessionOperationRecord, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, ErrProtocol
+	}
+	return scheduler.store.Get(ctx, sessionID, operationID)
+}
+
+func (scheduler *CoreSessionScheduler) RequestCancel(ctx context.Context, sessionID, operationID string) (SessionOperationRecord, bool, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, false, ErrProtocol
+	}
+	return scheduler.store.RequestCancel(ctx, sessionID, operationID)
+}
+
+func (scheduler *CoreSessionScheduler) CancelQueued(ctx context.Context, sessionID, operationID string) (SessionOperationRecord, bool, error) {
+	if scheduler == nil || ctx == nil {
+		return SessionOperationRecord{}, false, ErrProtocol
+	}
+	return scheduler.store.CancelQueued(ctx, sessionID, operationID)
+}
+
+func (scheduler *CoreSessionScheduler) Recover(ctx context.Context) ([]SessionOperationRecord, error) {
+	if scheduler == nil || ctx == nil {
+		return nil, ErrProtocol
+	}
+	return scheduler.store.RecoverOperations(ctx)
+}
+
+func (scheduler *CoreSessionScheduler) sessionSettings() domainsandbox.SessionRuntimeSettings {
+	scheduler.mu.RLock()
+	defer scheduler.mu.RUnlock()
+	return scheduler.settings
+}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +58,111 @@ func TestServerHealthFailsClosedWhenRootlessRuntimeIsUnavailable(t *testing.T) {
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
 	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "rootless") {
 		t.Fatalf("health status/body = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestServerMountsSessionRoutesOnlyWhenSessionBackendEnabled(t *testing.T) {
+	config := validRuntimeConfig()
+	base := Dependencies{Scheduler: acceptSchedulerFunc(func(context.Context, ExecuteCommand) (ExecutionProjection, error) {
+		return ExecutionProjection{ExecutionID: "exec-runner-test", Status: infrasandbox.ExecutionStatusAccepted}, nil
+	})}
+	session := &recordingSessionHandler{status: 299}
+	core := &recordingSessionCoreReadiness{}
+
+	disabled, err := NewServer(config, Dependencies{Scheduler: base.Scheduler, Session: session, CoreReadiness: core})
+	if err != nil {
+		t.Fatalf("NewServer(disabled) error = %v", err)
+	}
+	response := httptest.NewRecorder()
+	disabled.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/sessions:acquire", nil))
+	if response.Code != http.StatusNotFound || session.calls != 0 || core.calls != 0 {
+		t.Fatalf("disabled status/session/core calls = %d/%d/%d", response.Code, session.calls, core.calls)
+	}
+
+	config.SessionBackendEnabled = true
+	enabled, err := NewServer(config, Dependencies{Scheduler: base.Scheduler, Session: session, CoreReadiness: core})
+	if err != nil {
+		t.Fatalf("NewServer(enabled) error = %v", err)
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/v1/sessions:acquire", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1:release", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1:destroy", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1:recover", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1/operations", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/operations/op-1", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/operations/op-1/events", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1/operations/op-1:cancel", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/session-configuration", nil),
+		httptest.NewRequest(http.MethodPut, "/v1/session-configuration", nil),
+	} {
+		response = httptest.NewRecorder()
+		enabled.Handler().ServeHTTP(response, request)
+		if response.Code != session.status {
+			t.Fatalf("%s %s status = %d", request.Method, request.URL.Path, response.Code)
+		}
+	}
+	if session.calls != 11 {
+		t.Fatalf("Session handler calls = %d, want 11", session.calls)
+	}
+}
+
+func TestServerRequiresSessionHandlerAndCoreReadinessWhenEnabled(t *testing.T) {
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	scheduler := acceptSchedulerFunc(func(context.Context, ExecuteCommand) (ExecutionProjection, error) {
+		return ExecutionProjection{ExecutionID: "exec-runner-test", Status: infrasandbox.ExecutionStatusAccepted}, nil
+	})
+	for name, dependencies := range map[string]Dependencies{
+		"missing Session handler": {Scheduler: scheduler, CoreReadiness: &recordingSessionCoreReadiness{}},
+		"missing Core readiness":  {Scheduler: scheduler, Session: &recordingSessionHandler{status: http.StatusNoContent}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewServer(config, dependencies); !errors.Is(err, ErrConfiguration) {
+				t.Fatalf("NewServer() error = %v, want ErrConfiguration", err)
+			}
+		})
+	}
+}
+
+func TestServerHealthAdvertisesSessionFeaturesOnlyWhileCoreReady(t *testing.T) {
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	core := &recordingSessionCoreReadiness{}
+	server, err := NewServer(config, Dependencies{
+		Scheduler: acceptSchedulerFunc(func(context.Context, ExecuteCommand) (ExecutionProjection, error) {
+			return ExecutionProjection{ExecutionID: "exec-runner-test", Status: infrasandbox.ExecutionStatusAccepted}, nil
+		}),
+		Session: &recordingSessionHandler{status: http.StatusNoContent}, CoreReadiness: core,
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	readFeatures := func() []domainsandbox.ProviderFeature {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("health status/body = %d/%s", response.Code, response.Body.String())
+		}
+		var body struct {
+			Features []domainsandbox.ProviderFeature `json:"features"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Features
+	}
+
+	ready := readFeatures()
+	if len(ready) != 4 || ready[2] != domainsandbox.ProviderFeatureSandboxSessionV1 || ready[3] != domainsandbox.ProviderFeatureSignedSessionContextV2 {
+		t.Fatalf("ready features = %#v", ready)
+	}
+	core.err = ErrUnavailable
+	notReady := readFeatures()
+	if len(notReady) != 2 || notReady[0] != domainsandbox.ProviderFeatureQueueStatusV1 || notReady[1] != domainsandbox.ProviderFeatureSignedExecutionContext {
+		t.Fatalf("not-ready features = %#v", notReady)
 	}
 }
 
@@ -446,6 +552,26 @@ type recordingDependencies struct {
 	beginBuildCalls, buildStatusCalls, publishArtifactCalls, configurationCalls int
 	runtimeStatusCalls                                                          int
 	readinessErr                                                                error
+}
+
+type recordingSessionHandler struct {
+	status int
+	calls  int
+}
+
+func (handler *recordingSessionHandler) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
+	handler.calls++
+	writer.WriteHeader(handler.status)
+}
+
+type recordingSessionCoreReadiness struct {
+	err   error
+	calls int
+}
+
+func (readiness *recordingSessionCoreReadiness) CoreReady(context.Context) error {
+	readiness.calls++
+	return readiness.err
 }
 
 func (d *recordingDependencies) Dependencies() Dependencies {

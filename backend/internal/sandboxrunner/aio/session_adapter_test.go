@@ -6,7 +6,6 @@ package aio
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -85,8 +84,23 @@ func TestSessionAdapterSerializesSharedControlShellAcrossAdapters(t *testing.T) 
 	require.NoError(t, <-done)
 }
 
+func TestSessionAdapterUsesCollisionFreeShellLockRegistry(t *testing.T) {
+	controlID := "newx-generation-0123456789abcdef0123456789abcdef"
+	locks := make(map[*sync.Mutex]string)
+	for index := 0; index < 65; index++ {
+		client := newRecordingSessionUpstream()
+		client.lockIdentity = fmt.Sprintf("endpoint-%d", index)
+		adapter, err := NewSessionAdapter(sessionAdapterTestRef(), fmt.Sprintf("opaque-%d", index), client, WithControlShellID(controlID))
+		require.NoError(t, err)
+		if previous, collision := locks[adapter.controlShellMu]; collision {
+			t.Fatalf("unrelated upstream %q shares a shell lock with %q", client.lockIdentity, previous)
+		}
+		locks[adapter.controlShellMu] = client.lockIdentity
+	}
+}
+
 func TestSessionAdapterExecMapsOnlyCWDAndBoundsResult(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	client := newRecordingSessionUpstream()
 	client.execResponse = shellResponse("opaque-shell-01", "completed", strings.Repeat("x", 10), 7)
 	adapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-01", client,
@@ -109,8 +123,14 @@ func TestSessionAdapterExecMapsOnlyCWDAndBoundsResult(t *testing.T) {
 		"logical command text must not be path-rewritten")
 	require.Equal(t, true, value(request.Strict))
 	require.Equal(t, false, value(request.PreserveSymlinks))
-	require.Equal(t, false, value(request.AsyncMode))
+	require.Equal(t, true, value(request.AsyncMode))
 	require.Equal(t, 30.0, value(request.HardTimeout))
+	require.Len(t, client.viewRequests, 2)
+	require.Equal(t, "opaque-shell-01", client.viewRequests[0].Id)
+	require.Len(t, client.waitRequests, 1)
+	require.Equal(t, "opaque-shell-01", client.waitRequests[0].Id)
+	require.Equal(t, 1, value(client.waitRequests[0].Seconds))
+	require.Equal(t, 1, value(client.waitRequests[0].MaxWaitSeconds))
 
 	stdout, err := stream.Recv(context.Background())
 	require.NoError(t, err)
@@ -125,7 +145,7 @@ func TestSessionAdapterExecMapsOnlyCWDAndBoundsResult(t *testing.T) {
 }
 
 func TestSessionAdapterExecQuotesArgvWithoutRewritingArguments(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	client := newRecordingSessionUpstream()
 	adapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-01", client,
 		WithSessionClock(func() time.Time { return now }), WithAllowedEnvironmentNames("LANG"))
@@ -156,7 +176,7 @@ func TestSessionAdapterValidatesTrustedEnvironmentAllowlistAtConstruction(t *tes
 }
 
 func TestSessionAdapterSerializesSameShellAndKillsOnlyCancelledExec(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	client := newRecordingSessionUpstream()
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -174,7 +194,7 @@ func TestSessionAdapterSerializesSameShellAndKillsOnlyCancelledExec(t *testing.T
 		entered <- struct{}{}
 		select {
 		case <-release:
-			return shellResponse(value(request.Id), "completed", "ok", 0), nil
+			return shellResponse(value(request.Id), "running", "", 0), nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -202,8 +222,11 @@ func TestSessionAdapterSerializesSameShellAndKillsOnlyCancelledExec(t *testing.T
 
 	cancelClient := newRecordingSessionUpstream()
 	cancelEntered := make(chan struct{})
-	cancelClient.execFunc = func(ctx context.Context, _ *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
+	cancelClient.execFunc = func(_ context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
 		close(cancelEntered)
+		return shellResponse(value(request.Id), "running", "", 0), nil
+	}
+	cancelClient.waitFunc = func(ctx context.Context, _ *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -221,14 +244,14 @@ func TestSessionAdapterSerializesSameShellAndKillsOnlyCancelledExec(t *testing.T
 }
 
 func TestSessionAdapterSerializesSharedShellAcrossAdapters(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	client := newRecordingSessionUpstream()
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	client.execFunc = func(_ context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
 		entered <- struct{}{}
 		<-release
-		return shellResponse(value(request.Id), "completed", "ok", 0), nil
+		return shellResponse(value(request.Id), "running", "", 0), nil
 	}
 	first, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shared", client,
 		WithSessionClock(func() time.Time { return now }))
@@ -256,7 +279,7 @@ func TestSessionAdapterSerializesSharedShellAcrossAdapters(t *testing.T) {
 }
 
 func TestSessionAdapterKillsCancelledExecEvenWhenUpstreamReturnsAResponse(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	client := newRecordingSessionUpstream()
 	client.execFunc = func(ctx context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
 		cancel, ok := ctx.Value(cancelAfterExecKey{}).(context.CancelFunc)
@@ -275,6 +298,46 @@ func TestSessionAdapterKillsCancelledExecEvenWhenUpstreamReturnsAResponse(t *tes
 	})
 	require.Equal(t, ReasonUpstreamCancelled, ReasonCode(err))
 	require.Equal(t, []string{"opaque-shell-01"}, client.killIDs)
+}
+
+func TestSessionAdapterAsyncExecRejectsMalformedStateAndBoundsDeadline(t *testing.T) {
+	now := time.Now().UTC()
+	client := newRecordingSessionUpstream()
+	client.execFunc = func(_ context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
+		return shellResponse(value(request.Id), "running", "", 0), nil
+	}
+	client.viewFunc = func(_ context.Context, request *sandboxapi.ShellViewRequest) (*sandboxapi.ResponseShellViewResult, error) {
+		return &sandboxapi.ResponseShellViewResult{Success: ptr(true), Data: &sandboxapi.ShellViewResult{
+			SessionId: request.Id, Status: sandboxapi.BashCommandStatus("unexpected"),
+		}}, nil
+	}
+	adapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-01", client,
+		WithSessionClock(func() time.Time { return now }))
+	require.NoError(t, err)
+	_, err = adapter.Exec(context.Background(), infrasandbox.ExecRequest{
+		OperationID: "op-malformed-state", Command: "pwd", CWD: "/mnt/user-data/workspace",
+		Deadline: now.Add(time.Minute), MaxOutputBytes: 100,
+	})
+	require.Equal(t, ReasonAdapterContractInvalid, ReasonCode(err))
+	require.Equal(t, []string{"opaque-shell-01"}, client.killIDs)
+
+	deadlineClient := newRecordingSessionUpstream()
+	deadlineClient.execFunc = func(_ context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
+		return shellResponse(value(request.Id), "running", "", 0), nil
+	}
+	deadlineClient.waitFunc = func(ctx context.Context, _ *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	deadlineAdapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-deadline", deadlineClient,
+		WithSessionClock(func() time.Time { return now }))
+	require.NoError(t, err)
+	_, err = deadlineAdapter.Exec(context.Background(), infrasandbox.ExecRequest{
+		OperationID: "op-deadline", Command: "sleep 30", CWD: "/mnt/user-data/workspace",
+		Deadline: time.Now().UTC().Add(25 * time.Millisecond), MaxOutputBytes: 100,
+	})
+	require.Equal(t, ReasonUpstreamTimeout, ReasonCode(err))
+	require.Equal(t, []string{"opaque-shell-deadline"}, deadlineClient.killIDs)
 }
 
 type cancelAfterExecKey struct{}
@@ -423,10 +486,13 @@ func shellResponse(sessionID, status, output string, exitCode int) *sandboxapi.R
 }
 
 type recordingSessionUpstream struct {
-	mu sync.Mutex
+	mu           sync.Mutex
+	lockIdentity string
 
 	createRequests  []*sandboxapi.ShellCreateSessionRequest
 	execRequests    []*sandboxapi.ShellExecRequest
+	viewRequests    []*sandboxapi.ShellViewRequest
+	waitRequests    []*sandboxapi.ShellWaitRequest
 	readRequests    []*sandboxapi.FileReadRequest
 	writeRequests   []*sandboxapi.FileWriteRequest
 	listRequests    []*sandboxapi.FileListRequest
@@ -442,9 +508,16 @@ type recordingSessionUpstream struct {
 	downloadBody    io.Reader
 	listResultCount int
 	execFunc        func(context.Context, *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error)
+	viewFunc        func(context.Context, *sandboxapi.ShellViewRequest) (*sandboxapi.ResponseShellViewResult, error)
+	waitFunc        func(context.Context, *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error)
 }
 
-func (*recordingSessionUpstream) ShellLockIdentity() string { return "recording-session-upstream" }
+func (client *recordingSessionUpstream) ShellLockIdentity() string {
+	if client.lockIdentity != "" {
+		return client.lockIdentity
+	}
+	return "recording-session-upstream"
+}
 
 func newRecordingSessionUpstream() *recordingSessionUpstream {
 	root := "/mnt/user-data/42/43/thread-abc"
@@ -487,6 +560,9 @@ func (client *recordingSessionUpstream) Exec(ctx context.Context, request *sandb
 	if fn != nil {
 		return fn(ctx, request)
 	}
+	if request.AsyncMode != nil && *request.AsyncMode {
+		return shellResponse(value(request.Id), "running", "", 0), nil
+	}
 	if response != nil && response.Data != nil && response.Data.SessionId == "opaque-shell-01" && value(request.Id) != "opaque-shell-01" {
 		clone := *response
 		data := *response.Data
@@ -497,17 +573,51 @@ func (client *recordingSessionUpstream) Exec(ctx context.Context, request *sandb
 	return response, nil
 }
 
-func (client *recordingSessionUpstream) View(context.Context, *sandboxapi.ShellViewRequest) (*sandboxapi.ResponseShellViewResult, error) {
-	return nil, errors.New("unexpected View")
+func (client *recordingSessionUpstream) View(ctx context.Context, request *sandboxapi.ShellViewRequest) (*sandboxapi.ResponseShellViewResult, error) {
+	client.mu.Lock()
+	copyRequest := *request
+	client.viewRequests = append(client.viewRequests, &copyRequest)
+	fn := client.viewFunc
+	execResponse := client.execResponse
+	viewCount := len(client.viewRequests)
+	client.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, request)
+	}
+	status := sandboxapi.BashCommandStatusRunning
+	output := ""
+	var exitCode *int
+	if viewCount > 1 && execResponse != nil && execResponse.Data != nil {
+		status = execResponse.Data.Status
+		if execResponse.Data.Output != nil {
+			output = *execResponse.Data.Output
+		}
+		exitCode = execResponse.Data.ExitCode
+	}
+	return &sandboxapi.ResponseShellViewResult{Success: ptr(true), Data: &sandboxapi.ShellViewResult{
+		SessionId: request.Id, Status: status, Output: output, ExitCode: exitCode,
+	}}, nil
 }
-func (client *recordingSessionUpstream) Wait(context.Context, *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error) {
-	return nil, errors.New("unexpected Wait")
+func (client *recordingSessionUpstream) Wait(ctx context.Context, request *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error) {
+	client.mu.Lock()
+	copyRequest := *request
+	client.waitRequests = append(client.waitRequests, &copyRequest)
+	fn := client.waitFunc
+	client.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, request)
+	}
+	return &sandboxapi.ResponseShellWaitResult{Success: ptr(true), Data: &sandboxapi.ShellWaitResult{
+		Status: sandboxapi.BashCommandStatusCompleted,
+	}}, nil
 }
 func (client *recordingSessionUpstream) Kill(_ context.Context, request *sandboxapi.ShellKillProcessRequest) (*sandboxapi.ResponseShellKillResult, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	client.killIDs = append(client.killIDs, request.Id)
-	return &sandboxapi.ResponseShellKillResult{}, nil
+	return &sandboxapi.ResponseShellKillResult{Success: ptr(true), Data: &sandboxapi.ShellKillResult{
+		Status: sandboxapi.BashCommandStatusTerminated,
+	}}, nil
 }
 func (client *recordingSessionUpstream) Cleanup(context.Context, string) error { return nil }
 

@@ -26,6 +26,34 @@ func TestRuntimeStatusProjectsDisabledCoreWithoutCallingSessionDependencies(t *t
 	}
 }
 
+func TestRuntimeStatusProjectsDatabaseDisabledCoreWithoutCallingLifecycle(t *testing.T) {
+	core := &recordingCoreRuntimeStatusSource{snapshot: CoreRuntimeStatusSnapshot{State: coreRuntimeReady, Generation: 9}}
+	source := newRuntimeStatusSourceForTest(t, true, core)
+	source.coreSettings = &mutableCoreSettingsGate{}
+
+	status, err := source.RuntimeStatus(context.Background())
+	if err != nil {
+		t.Fatalf("RuntimeStatus() error = %v", err)
+	}
+	if status.CoreState != coreRuntimeDisabled || status.AIORuntimeGeneration != 0 || core.calls != 0 {
+		t.Fatalf("Core status/calls = %q/%d/%d", status.CoreState, status.AIORuntimeGeneration, core.calls)
+	}
+}
+
+func TestRuntimeStatusProjectsUnknownWhenDatabaseCoreSettingCannotBeRead(t *testing.T) {
+	core := &recordingCoreRuntimeStatusSource{snapshot: CoreRuntimeStatusSnapshot{State: coreRuntimeReady, Generation: 9}}
+	source := newRuntimeStatusSourceForTest(t, true, core)
+	source.coreSettings = nil
+
+	status, err := source.RuntimeStatus(context.Background())
+	if err != nil {
+		t.Fatalf("RuntimeStatus() error = %v", err)
+	}
+	if status.CoreState != coreRuntimeUnknown || status.AIORuntimeGeneration != 0 || core.calls != 0 {
+		t.Fatalf("Core status/calls = %q/%d/%d", status.CoreState, status.AIORuntimeGeneration, core.calls)
+	}
+}
+
 func TestRuntimeStatusProjectsReadyCoreGenerationWithoutInternalDetails(t *testing.T) {
 	core := &recordingCoreRuntimeStatusSource{snapshot: CoreRuntimeStatusSnapshot{State: coreRuntimeReady, Generation: 9}}
 	source := newRuntimeStatusSourceForTest(t, true, core)
@@ -100,6 +128,7 @@ func newRuntimeStatusSourceForTest(t *testing.T, sessionEnabled bool, core CoreR
 		lifecycle:             lifecycle,
 		configuration:         fixedRuntimeStatusConfiguration{version: 3},
 		sessionBackendEnabled: sessionEnabled,
+		coreSettings:          &mutableCoreSettingsGate{enabled: true},
 		core:                  core,
 	}
 }

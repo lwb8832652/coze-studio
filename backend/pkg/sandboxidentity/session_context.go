@@ -22,11 +22,28 @@ const (
 	SessionContextHeader          = "X-Coze-Sandbox-Session-Context"
 	SessionContextSignatureHeader = "X-Coze-Sandbox-Session-Context-Signature"
 	SessionContextSchemaV2        = "coze.sandbox.session_context.v2"
+	SessionContextIssuer          = "coze-sandbox-control-plane"
 
 	maxSessionContextBytes = 16 * 1024
 )
 
+type SessionContextAudience string
+
+const (
+	SessionContextAudienceProvider SessionContextAudience = "provider"
+	SessionContextAudienceRunner   SessionContextAudience = "runner"
+)
+
+// SessionContextTarget is supplied by the receiving Runner. It is never
+// derived from the signed envelope, so a valid signature for one deployment
+// cannot be replayed against another deployment sharing the same keyring.
+type SessionContextTarget struct {
+	DeploymentID string
+	Audience     SessionContextAudience
+}
+
 type SessionRequest struct {
+	DeploymentID  string
 	ProviderID    int64
 	Scope         Scope
 	SpaceID       int64
@@ -58,6 +75,14 @@ type SessionSigner interface {
 
 type SessionVerifier interface {
 	VerifySession(context.Context, string, string, SessionRequest, string, string, time.Time, SessionNonceStore) (SessionRequest, error)
+}
+
+// SessionContextVerifier authenticates the canonical v2 envelope before its
+// signed claims are compared with server-owned Session facts. Unlike
+// VerifySession, callers do not have to derive an expected identity from an
+// untrusted request body merely to authenticate GET or empty-body routes.
+type SessionContextVerifier interface {
+	VerifySessionContext(context.Context, string, string, SessionContextTarget, string, string, []byte, time.Time, SessionNonceStore) (SessionRequest, error)
 }
 
 func (keyring Keyring) SignSession(request SessionRequest, method, requestPath string) (SignedContext, error) {
@@ -129,23 +154,96 @@ func (keyring Keyring) VerifySession(
 	return cloneSessionRequest(expected), nil
 }
 
+func (keyring Keyring) VerifySessionContext(
+	ctx context.Context,
+	encodedContext string,
+	encodedSignature string,
+	expectedTarget SessionContextTarget,
+	method string,
+	requestPath string,
+	expectedDigest []byte,
+	now time.Time,
+	nonceStore SessionNonceStore,
+) (SessionRequest, error) {
+	if ctx == nil || keyring.valid() != nil || !validSessionContextTarget(expectedTarget, requestPath) || !validSessionBinding(method, requestPath) ||
+		len(expectedDigest) != sha256.Size || hmac.Equal(expectedDigest, make([]byte, sha256.Size)) ||
+		now.IsZero() || nonceStore == nil {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	body, err := base64.RawURLEncoding.DecodeString(encodedContext)
+	if err != nil || len(body) == 0 || len(body) > maxSessionContextBytes {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	envelope, err := decodeCanonicalSessionEnvelope(body)
+	if err != nil || envelope.Schema != SessionContextSchemaV2 || envelope.Issuer != SessionContextIssuer ||
+		envelope.Method != method || envelope.Path != requestPath ||
+		envelope.IssuedAtUnix <= 0 || envelope.ExpiresAtUnix <= envelope.IssuedAtUnix ||
+		!validIdentifier(envelope.KeyID) || !validIdentifier(envelope.Nonce) {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	digest, err := base64.RawURLEncoding.DecodeString(envelope.RequestDigest)
+	if err != nil || !hmac.Equal(digest, expectedDigest) {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	request := SessionRequest{
+		DeploymentID: expectedTarget.DeploymentID, ProviderID: envelope.ProviderID, Scope: envelope.Scope, SpaceID: envelope.SpaceID,
+		UserID: envelope.UserID, ThreadID: envelope.ThreadID, RunID: envelope.RunID,
+		OperationID: envelope.OperationID, Profile: envelope.Profile,
+		RequestDigest: append([]byte(nil), expectedDigest...),
+	}
+	if !validSessionRequest(request) {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	if envelope.Audience != expectedSessionAudience(expectedTarget, request.ProviderID) {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	key, ok := keyring.Keys[envelope.KeyID]
+	if !ok || len(key) < 16 {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(encodedSignature)
+	if err != nil || len(signature) != sha256.Size {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(body)
+	now = now.UTC()
+	if !hmac.Equal(signature, mac.Sum(nil)) || envelope.IssuedAtUnix > now.Unix() ||
+		envelope.ExpiresAtUnix <= now.Unix() {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	consumed, err := nonceStore.Consume(ctx, envelope.KeyID, envelope.Nonce, time.Unix(envelope.ExpiresAtUnix, 0).UTC())
+	if err != nil || !consumed {
+		return SessionRequest{}, ErrInvalidContext
+	}
+	return request, nil
+}
+
 type sessionEnvelope struct {
-	Schema        string `json:"schema"`
-	KeyID         string `json:"key_id"`
-	IssuedAtUnix  int64  `json:"issued_at_unix"`
-	ExpiresAtUnix int64  `json:"expires_at_unix"`
-	Nonce         string `json:"nonce"`
-	ProviderID    int64  `json:"provider_id"`
-	Scope         Scope  `json:"scope"`
-	SpaceID       int64  `json:"space_id"`
-	UserID        int64  `json:"user_id"`
-	ThreadID      string `json:"thread_id"`
-	RunID         string `json:"run_id"`
-	OperationID   string `json:"operation_id"`
-	Profile       string `json:"profile"`
-	Method        string `json:"method"`
-	Path          string `json:"path"`
-	RequestDigest string `json:"request_digest"`
+	Schema        string          `json:"schema"`
+	Issuer        string          `json:"issuer"`
+	Audience      sessionAudience `json:"audience"`
+	KeyID         string          `json:"key_id"`
+	IssuedAtUnix  int64           `json:"issued_at_unix"`
+	ExpiresAtUnix int64           `json:"expires_at_unix"`
+	Nonce         string          `json:"nonce"`
+	ProviderID    int64           `json:"provider_id"`
+	Scope         Scope           `json:"scope"`
+	SpaceID       int64           `json:"space_id"`
+	UserID        int64           `json:"user_id"`
+	ThreadID      string          `json:"thread_id"`
+	RunID         string          `json:"run_id"`
+	OperationID   string          `json:"operation_id"`
+	Profile       string          `json:"profile"`
+	Method        string          `json:"method"`
+	Path          string          `json:"path"`
+	RequestDigest string          `json:"request_digest"`
+}
+
+type sessionAudience struct {
+	Kind         SessionContextAudience `json:"kind"`
+	DeploymentID string                 `json:"deployment_id"`
+	ProviderID   int64                  `json:"provider_id"`
 }
 
 func newSessionEnvelope(
@@ -161,8 +259,13 @@ func newSessionEnvelope(
 		issuedAtUnix <= 0 || expiresAtUnix <= issuedAtUnix || !validSessionBinding(method, requestPath) {
 		return sessionEnvelope{}, ErrInvalidContext
 	}
+	audience, err := newSessionAudience(request, requestPath)
+	if err != nil {
+		return sessionEnvelope{}, err
+	}
 	return sessionEnvelope{
-		Schema: SessionContextSchemaV2, KeyID: keyID, IssuedAtUnix: issuedAtUnix,
+		Schema: SessionContextSchemaV2, Issuer: SessionContextIssuer, Audience: audience,
+		KeyID: keyID, IssuedAtUnix: issuedAtUnix,
 		ExpiresAtUnix: expiresAtUnix, Nonce: nonce, ProviderID: request.ProviderID,
 		Scope: request.Scope, SpaceID: request.SpaceID, UserID: request.UserID,
 		ThreadID: request.ThreadID, RunID: request.RunID, OperationID: request.OperationID,
@@ -172,7 +275,9 @@ func newSessionEnvelope(
 }
 
 func (value sessionEnvelope) validate(expected SessionRequest, method, requestPath string) error {
-	if value.Schema != SessionContextSchemaV2 || value.ProviderID != expected.ProviderID ||
+	expectedAudience, err := newSessionAudience(expected, requestPath)
+	if err != nil || value.Schema != SessionContextSchemaV2 || value.Issuer != SessionContextIssuer ||
+		value.Audience != expectedAudience || value.ProviderID != expected.ProviderID ||
 		value.Scope != expected.Scope || value.SpaceID != expected.SpaceID || value.UserID != expected.UserID ||
 		value.ThreadID != expected.ThreadID || value.RunID != expected.RunID ||
 		value.OperationID != expected.OperationID || value.Profile != expected.Profile ||
@@ -193,7 +298,7 @@ func decodeCanonicalSessionEnvelope(body []byte) (sessionEnvelope, error) {
 		return sessionEnvelope{}, ErrInvalidContext
 	}
 	allowed := map[string]struct{}{
-		"schema": {}, "key_id": {}, "issued_at_unix": {}, "expires_at_unix": {}, "nonce": {},
+		"schema": {}, "issuer": {}, "audience": {}, "key_id": {}, "issued_at_unix": {}, "expires_at_unix": {}, "nonce": {},
 		"provider_id": {}, "scope": {}, "space_id": {}, "user_id": {}, "thread_id": {},
 		"run_id": {}, "operation_id": {}, "profile": {}, "method": {}, "path": {}, "request_digest": {},
 	}
@@ -232,6 +337,9 @@ func decodeCanonicalSessionEnvelope(body []byte) (sessionEnvelope, error) {
 	if json.Unmarshal(body, &value) != nil {
 		return sessionEnvelope{}, ErrInvalidContext
 	}
+	if !validCanonicalSessionAudience(value.Audience) {
+		return sessionEnvelope{}, ErrInvalidContext
+	}
 	canonical, err := json.Marshal(value)
 	if err != nil || !bytes.Equal(canonical, body) {
 		return sessionEnvelope{}, ErrInvalidContext
@@ -239,8 +347,22 @@ func decodeCanonicalSessionEnvelope(body []byte) (sessionEnvelope, error) {
 	return value, nil
 }
 
+func validCanonicalSessionAudience(audience sessionAudience) bool {
+	if !validIdentifier(audience.DeploymentID) {
+		return false
+	}
+	switch audience.Kind {
+	case SessionContextAudienceProvider:
+		return audience.ProviderID > 0
+	case SessionContextAudienceRunner:
+		return audience.ProviderID == 0
+	default:
+		return false
+	}
+}
+
 func validSessionRequest(request SessionRequest) bool {
-	if request.ProviderID <= 0 || request.SpaceID <= 0 || request.UserID <= 0 ||
+	if !validIdentifier(request.DeploymentID) || request.ProviderID <= 0 || request.SpaceID <= 0 || request.UserID <= 0 ||
 		!validIdentifier(request.ThreadID) || !validIdentifier(request.RunID) ||
 		!validIdentifier(request.OperationID) || len(request.RequestDigest) != sha256.Size ||
 		hmac.Equal(request.RequestDigest, make([]byte, sha256.Size)) {
@@ -252,6 +374,33 @@ func validSessionRequest(request SessionRequest) bool {
 		return false
 	}
 	return request.Profile == "core" || request.Profile == "interactive"
+}
+
+func newSessionAudience(request SessionRequest, requestPath string) (sessionAudience, error) {
+	if !validIdentifier(request.DeploymentID) || request.ProviderID <= 0 {
+		return sessionAudience{}, ErrInvalidContext
+	}
+	if requestPath == "/v1/session-configuration" {
+		return sessionAudience{Kind: SessionContextAudienceRunner, DeploymentID: request.DeploymentID}, nil
+	}
+	return sessionAudience{Kind: SessionContextAudienceProvider, DeploymentID: request.DeploymentID, ProviderID: request.ProviderID}, nil
+}
+
+func validSessionContextTarget(target SessionContextTarget, requestPath string) bool {
+	if !validIdentifier(target.DeploymentID) {
+		return false
+	}
+	if requestPath == "/v1/session-configuration" {
+		return target.Audience == SessionContextAudienceRunner
+	}
+	return target.Audience == SessionContextAudienceProvider
+}
+
+func expectedSessionAudience(target SessionContextTarget, providerID int64) sessionAudience {
+	if target.Audience == SessionContextAudienceRunner {
+		return sessionAudience{Kind: SessionContextAudienceRunner, DeploymentID: target.DeploymentID}
+	}
+	return sessionAudience{Kind: SessionContextAudienceProvider, DeploymentID: target.DeploymentID, ProviderID: providerID}
 }
 
 func validSessionBinding(method, requestPath string) bool {

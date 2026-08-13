@@ -23,6 +23,7 @@ import (
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/aio"
 	sandboxruntime "github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/runtime"
+	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 const defaultRunnerDispatchInterval = 100 * time.Millisecond
@@ -38,6 +39,35 @@ type RuntimeStore interface {
 	LifecycleManager
 }
 
+type RuntimeSessionStore interface {
+	SessionOperationStore
+	SessionLeaseManager
+	sandboxidentity.SessionNonceStore
+}
+
+type RuntimeSessionRepository interface {
+	domainsandbox.RuntimeSessionRepository
+	domainsandbox.AIOGenerationRepository
+	domainsandbox.SessionSettingsRepository
+}
+
+type RuntimeAIOUpstream interface {
+	aio.LifecycleUpstream
+	aio.SessionUpstreamClient
+	aio.ShellLockIdentityProvider
+}
+
+type runtimeSessionStoreSource interface {
+	RuntimeSessionStore() RuntimeSessionStore
+}
+
+type runtimeStoreBundle struct {
+	RuntimeStore
+	session RuntimeSessionStore
+}
+
+func (bundle runtimeStoreBundle) RuntimeSessionStore() RuntimeSessionStore { return bundle.session }
+
 type RuntimeDependencies struct {
 	Store               RuntimeStore
 	Driver              sandboxruntime.Driver
@@ -46,6 +76,9 @@ type RuntimeDependencies struct {
 	ConfigurationSigner *infrasandbox.SchedulerConfigSigner
 	CoreLifecycle       CoreLifecycle
 	CoreRedisReadiness  cache.ReadinessChecker
+	CoreSettings        CoreSettingsGate
+	CoreRecovery        CoreOperationRecovery
+	Session             http.Handler
 	SQLPool             io.Closer
 	Now                 func() time.Time
 }
@@ -55,6 +88,14 @@ type CoreLifecycle interface {
 	Snapshot() aio.LifecycleSnapshot
 }
 
+type CoreSettingsGate interface {
+	CoreEnabled() bool
+}
+
+type CoreOperationRecovery interface {
+	Recover(context.Context) ([]SessionOperationRecord, error)
+}
+
 type Runtime struct {
 	server                *Server
 	scheduler             *RunnerScheduler
@@ -62,6 +103,9 @@ type Runtime struct {
 	configStore           *ConfigurationStore
 	coreLifecycle         CoreLifecycle
 	coreRedisReadiness    cache.ReadinessChecker
+	coreSettings          CoreSettingsGate
+	coreRecovery          CoreOperationRecovery
+	coreRecoveryReady     atomic.Bool
 	sessionBackendEnabled bool
 	sqlPool               io.Closer
 	closeOnce             sync.Once
@@ -80,6 +124,9 @@ func NewRuntime(config Config, dependencies RuntimeDependencies) (*Runtime, erro
 		}
 	}()
 	if dependencies.Store == nil || dependencies.Driver == nil || dependencies.Resources == nil || dependencies.ConfigurationSigner == nil {
+		return nil, ErrConfiguration
+	}
+	if config.SessionBackendEnabled && (dependencies.Session == nil || dependencies.CoreLifecycle == nil || dependencies.CoreRedisReadiness == nil) {
 		return nil, ErrConfiguration
 	}
 	settings, err := domainsandbox.NormalizeSchedulerSettings(dependencies.InitialSettings)
@@ -115,17 +162,22 @@ func NewRuntime(config Config, dependencies RuntimeDependencies) (*Runtime, erro
 		return nil, ErrConfiguration
 	}
 	lifecycleManager := runtimeLifecycleManager{store: dependencies.Store, scheduler: scheduler, lifecycle: lifecycle}
-	server, err := NewServer(config, Dependencies{Scheduler: scheduler, Store: dependencies.Store, Lifecycle: lifecycleManager, Configuration: configStore, ConfigurationApplier: configStore, RuntimeStatus: runtimeStatusSource{scheduler: scheduler, lifecycle: lifecycle, configuration: configStore, sessionBackendEnabled: config.SessionBackendEnabled, core: runtimeCoreStatusSource{lifecycle: dependencies.CoreLifecycle, redisReadiness: dependencies.CoreRedisReadiness}}, Readiness: runtimeReadinessProbe{driver: dependencies.Driver}})
+	runtime := &Runtime{
+		scheduler: scheduler, lifecycle: lifecycle, configStore: configStore,
+		coreLifecycle: dependencies.CoreLifecycle, coreRedisReadiness: dependencies.CoreRedisReadiness, coreSettings: dependencies.CoreSettings,
+		coreRecovery: dependencies.CoreRecovery, sessionBackendEnabled: config.SessionBackendEnabled,
+		sqlPool: dependencies.SQLPool, dispatchTick: defaultRunnerDispatchInterval,
+		aioObservationTick: defaultAIOObservationInterval, aioObservationTimeout: defaultAIOObservationTimeout,
+	}
+	runtime.coreRecoveryReady.Store(!config.SessionBackendEnabled)
+	coreReadiness := runtimeCoreReadiness{sessionBackendEnabled: config.SessionBackendEnabled, lifecycle: dependencies.CoreLifecycle, redisReadiness: dependencies.CoreRedisReadiness, settings: dependencies.CoreSettings, recoveryReady: &runtime.coreRecoveryReady}
+	server, err := NewServer(config, Dependencies{Scheduler: scheduler, Store: dependencies.Store, Lifecycle: lifecycleManager, Configuration: configStore, ConfigurationApplier: configStore, RuntimeStatus: runtimeStatusSource{scheduler: scheduler, lifecycle: lifecycle, configuration: configStore, sessionBackendEnabled: config.SessionBackendEnabled, coreSettings: dependencies.CoreSettings, core: runtimeCoreStatusSource{lifecycle: dependencies.CoreLifecycle, redisReadiness: dependencies.CoreRedisReadiness}, recoveryReady: &runtime.coreRecoveryReady}, Readiness: runtimeReadinessProbe{driver: dependencies.Driver}, Session: dependencies.Session, CoreReadiness: coreReadiness})
 	if err != nil {
 		return nil, ErrConfiguration
 	}
 	succeeded = true
-	return &Runtime{
-		server: server, scheduler: scheduler, lifecycle: lifecycle, configStore: configStore,
-		coreLifecycle: dependencies.CoreLifecycle, coreRedisReadiness: dependencies.CoreRedisReadiness, sessionBackendEnabled: config.SessionBackendEnabled,
-		sqlPool: dependencies.SQLPool, dispatchTick: defaultRunnerDispatchInterval,
-		aioObservationTick: defaultAIOObservationInterval, aioObservationTimeout: defaultAIOObservationTimeout,
-	}, nil
+	runtime.server = server
+	return runtime, nil
 }
 
 // NewProcessRuntime wires the only production implementation: Redis for
@@ -156,7 +208,17 @@ func defaultProcessRuntimeFactories() processRuntimeFactories {
 			}
 			store, err := NewRedisStore(client, RedisStoreConfig{DeploymentID: config.DeploymentID, ActiveKeyID: config.ActiveQueueKeyID, Keys: config.QueueKeys.Keys,
 				MaxQueueDepth: domainsandboxDefaultSettings().GlobalQueueDepth, PerSpaceQueueDepth: domainsandboxDefaultSettings().PerSpaceQueueDepth, PerUserQueueDepth: domainsandboxDefaultSettings().PerUserQueueDepth, RecordTTL: 24 * time.Hour})
-			return store, readiness, err
+			if err != nil {
+				return nil, nil, err
+			}
+			sessionStore, err := NewRedisSessionStore(client, RedisSessionStoreConfig{
+				DeploymentID: config.DeploymentID, ActiveKeyID: config.ActiveQueueKeyID, Keys: config.QueueKeys.Keys,
+				RecordTTL: 24 * time.Hour, LeaseTTL: 30 * time.Second, MaxQueueDepth: maxSessionOperationQueueDepth,
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return runtimeStoreBundle{RuntimeStore: store, session: sessionStore}, readiness, nil
 		},
 		newDriver: func(config Config) (sandboxruntime.Driver, error) {
 			return sandboxruntime.NewDockerDriver(sandboxruntime.DockerDriverConfig{Endpoint: config.RootlessEndpoint})
@@ -221,16 +283,54 @@ func newProcessRuntime(ctx context.Context, config Config, factories processRunt
 			return aio.NewLifecycleSupervisor(config)
 		}
 	}
+	var sessionStore RuntimeSessionStore
+	if source, ok := store.(runtimeSessionStoreSource); ok {
+		sessionStore = source.RuntimeSessionStore()
+	}
 	if config.SessionBackendEnabled && factories.newGenerationRepository != nil && factories.newAIOUpstream != nil {
 		repository, ownedPool, repositoryErr := factories.newGenerationRepository()
+		sessionRepository, repositoryOK := repository.(RuntimeSessionRepository)
 		if repositoryErr == nil && repository != nil && ownedPool != nil {
 			upstream, upstreamErr := factories.newAIOUpstream(config)
-			if upstreamErr == nil && upstream != nil {
+			sessionUpstream, upstreamOK := upstream.(RuntimeAIOUpstream)
+			if upstreamErr == nil && sessionStore != nil && repositoryOK && sessionRepository != nil && upstreamOK && sessionUpstream != nil {
+				initialSessionSettings, settingsErr := sessionRepository.GetSessionSettings(ctx)
 				supervisor, lifecycleErr := lifecycleFactory(aio.LifecycleConfig{
 					Enabled: true, DeploymentID: config.DeploymentID, Repository: repository, Upstream: upstream,
 				})
-				if lifecycleErr == nil {
+				if settingsErr == nil && lifecycleErr == nil {
+					coreScheduler, schedulerErr := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: sessionStore, Settings: initialSessionSettings})
+					adapterFactory, adapterErr := NewAIOSessionAdapterFactory(sessionUpstream, time.Now, nil)
+					ids, idsErr := NewRandomSessionIDSource(nil)
+					verifier, verifierErr := NewSessionContextIdentityVerifier(config.ContextVerifyKeys, sessionStore, time.Now)
+					if schedulerErr != nil || adapterErr != nil || idsErr != nil || verifierErr != nil {
+						if ownedPool != nil {
+							_ = ownedPool.Close()
+						}
+						return nil, ErrConfiguration
+					}
+					dispatcher, dispatcherErr := NewSessionDispatcher(SessionDispatcherConfig{
+						Repository: sessionRepository, Leases: sessionStore, Generation: sessionRepository, AdapterFactory: adapterFactory,
+						IDs: ids, Clock: time.Now, SessionTTL: time.Duration(initialSessionSettings.SessionIdleTTLSeconds) * time.Second,
+					})
+					service, serviceErr := NewSessionService(SessionServiceConfig{
+						DeploymentID: config.DeploymentID, Manager: dispatcher, Repository: sessionRepository, Scheduler: coreScheduler,
+						Settings: sessionRepository, SettingsApplier: coreScheduler, Clock: time.Now,
+					})
+					coreReadiness := runtimeCoreReadiness{sessionBackendEnabled: true, lifecycle: supervisor, redisReadiness: redisReadiness, settings: coreScheduler}
+					sessionHandler, handlerErr := NewSessionHTTPHandler(SessionHTTPConfig{
+						DeploymentID: config.DeploymentID, AuthToken: config.AuthToken, Now: time.Now,
+					}, SessionHTTPDependencies{Readiness: coreReadiness, Verifier: verifier, Service: service})
+					if dispatcherErr != nil || serviceErr != nil || handlerErr != nil {
+						if ownedPool != nil {
+							_ = ownedPool.Close()
+						}
+						return nil, ErrConfiguration
+					}
 					dependencies.CoreLifecycle = supervisor
+					dependencies.CoreSettings = coreScheduler
+					dependencies.CoreRecovery = coreScheduler
+					dependencies.Session = sessionHandler
 					dependencies.SQLPool = ownedPool
 					ownedPool = nil // NewRuntime owns the pool on both success and failure.
 				}
@@ -239,6 +339,17 @@ func newProcessRuntime(ctx context.Context, config Config, factories processRunt
 		if ownedPool != nil {
 			_ = ownedPool.Close()
 		}
+	}
+	if config.SessionBackendEnabled && dependencies.Session == nil {
+		// Preserve the desired enabled state for operations visibility. Frozen
+		// Session routes remain present but fail closed until every Core dependency
+		// can be composed; one-shot routes and readiness remain independent.
+		dependencies.Session = unavailableSessionHandler{}
+		dependencies.CoreLifecycle = unavailableCoreLifecycle{}
+		// The persisted setting could not be read, so this is an unknown dependency
+		// state rather than a confirmed database-level disable. A nil settings gate
+		// keeps Core admission closed while runtime status reports unknown.
+		dependencies.CoreSettings = nil
 	}
 	return NewRuntime(config, dependencies)
 }
@@ -259,6 +370,9 @@ func (runtime *Runtime) Run(ctx context.Context, config Config) error {
 		return err
 	}
 	if err := runtime.scheduler.Recover(ctx); err != nil {
+		return err
+	}
+	if err := runtime.recoverCoreOperations(ctx); err != nil {
 		return err
 	}
 	listener, err := net.Listen("tcp", config.ListenAddr)
@@ -317,16 +431,31 @@ func (runtime *Runtime) scheduleCoreObservation(ctx context.Context) {
 }
 
 func (runtime *Runtime) CoreReady(ctx context.Context) error {
-	if runtime == nil || ctx == nil || !runtime.sessionBackendEnabled || runtime.coreLifecycle == nil {
+	if runtime == nil {
 		return ErrUnavailable
 	}
-	if runtime.coreRedisReadiness == nil || runtime.coreRedisReadiness.CheckReadiness(ctx) != nil {
-		return ErrUnavailable
+	return runtimeCoreReadiness{sessionBackendEnabled: runtime.sessionBackendEnabled, lifecycle: runtime.coreLifecycle, redisReadiness: runtime.coreRedisReadiness, settings: runtime.coreSettings, recoveryReady: &runtime.coreRecoveryReady}.CoreReady(ctx)
+}
+
+func (runtime *Runtime) recoverCoreOperations(ctx context.Context) error {
+	if runtime == nil || ctx == nil {
+		return ErrProtocol
 	}
-	snapshot := runtime.coreLifecycle.Snapshot()
-	if !snapshot.Enabled || !snapshot.Ready || snapshot.State != aio.LifecycleStateReady || snapshot.Generation == 0 {
-		return ErrUnavailable
+	if !runtime.sessionBackendEnabled {
+		runtime.coreRecoveryReady.Store(true)
+		return nil
 	}
+	runtime.coreRecoveryReady.Store(false)
+	if runtime.coreRecovery == nil {
+		return nil
+	}
+	if _, err := runtime.coreRecovery.Recover(ctx); err != nil {
+		// Core uncertainty must not prevent the established one-shot listener
+		// from starting. Readiness remains closed until a future process start
+		// completes recovery successfully.
+		return nil
+	}
+	runtime.coreRecoveryReady.Store(true)
 	return nil
 }
 
@@ -358,6 +487,41 @@ func (runtime *Runtime) Close() error {
 type runtimeCoreStatusSource struct {
 	lifecycle      CoreLifecycle
 	redisReadiness cache.ReadinessChecker
+}
+
+type unavailableSessionHandler struct{}
+
+func (unavailableSessionHandler) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
+	writePublicError(writer, http.StatusServiceUnavailable, "SANDBOX_UNAVAILABLE")
+}
+
+type unavailableCoreLifecycle struct{}
+
+func (unavailableCoreLifecycle) Observe(context.Context) (aio.LifecycleSnapshot, error) {
+	return aio.LifecycleSnapshot{}, ErrUnavailable
+}
+func (unavailableCoreLifecycle) Snapshot() aio.LifecycleSnapshot {
+	return aio.LifecycleSnapshot{Enabled: true, State: aio.LifecycleStateUnknown}
+}
+
+type runtimeCoreReadiness struct {
+	sessionBackendEnabled bool
+	lifecycle             CoreLifecycle
+	redisReadiness        cache.ReadinessChecker
+	settings              CoreSettingsGate
+	recoveryReady         *atomic.Bool
+}
+
+func (source runtimeCoreReadiness) CoreReady(ctx context.Context) error {
+	if ctx == nil || !source.sessionBackendEnabled || source.lifecycle == nil || source.redisReadiness == nil || source.settings == nil || !source.settings.CoreEnabled() ||
+		source.recoveryReady != nil && !source.recoveryReady.Load() || source.redisReadiness.CheckReadiness(ctx) != nil {
+		return ErrUnavailable
+	}
+	snapshot := source.lifecycle.Snapshot()
+	if !snapshot.Enabled || !snapshot.Ready || snapshot.State != aio.LifecycleStateReady || snapshot.Generation == 0 {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func (source runtimeCoreStatusSource) CoreRuntimeStatus(ctx context.Context) (CoreRuntimeStatusSnapshot, error) {

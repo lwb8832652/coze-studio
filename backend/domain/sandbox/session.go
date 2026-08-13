@@ -99,13 +99,20 @@ const (
 type SessionAction string
 
 const (
-	SessionActionAcquire        SessionAction = "acquire"
-	SessionActionGet            SessionAction = "get"
-	SessionActionRelease        SessionAction = "release"
-	SessionActionDestroy        SessionAction = "destroy"
-	SessionActionMarkRecovering SessionAction = "mark_recovering"
-	SessionActionRecover        SessionAction = "recover"
+	SessionActionAcquire           SessionAction = "acquire"
+	SessionActionGet               SessionAction = "get"
+	SessionActionRelease           SessionAction = "release"
+	SessionActionDestroy           SessionAction = "destroy"
+	SessionActionMarkRecovering    SessionAction = "mark_recovering"
+	SessionActionRecover           SessionAction = "recover"
+	SessionActionBeginOperation    SessionAction = "begin_operation"
+	SessionActionCompleteOperation SessionAction = "complete_operation"
 )
+
+// SessionOperationFenceReason distinguishes an in-flight upstream call from
+// generation recovery. It is persisted so a replacement lease owner cannot
+// enter the same opaque shell after the Redis lease expires.
+const SessionOperationFenceReason = "operation_in_flight"
 
 func TransitionSessionState(state SessionState, action SessionAction) (SessionState, bool, error) {
 	switch action {
@@ -123,7 +130,7 @@ func TransitionSessionState(state SessionState, action SessionAction) (SessionSt
 		}
 	case SessionActionRelease:
 		switch state {
-		case SessionStateActive:
+		case SessionStateActive, SessionStateRecovering:
 			return SessionStateReleased, true, nil
 		case SessionStateReleased:
 			return state, false, nil
@@ -148,6 +155,14 @@ func TransitionSessionState(state SessionState, action SessionAction) (SessionSt
 			return SessionStateActive, true, nil
 		case SessionStateActive:
 			return state, false, nil
+		}
+	case SessionActionBeginOperation:
+		if state == SessionStateActive {
+			return SessionStateRecovering, true, nil
+		}
+	case SessionActionCompleteOperation:
+		if state == SessionStateRecovering {
+			return SessionStateActive, true, nil
 		}
 	}
 	return "", false, ErrInvalidInput
@@ -256,6 +271,22 @@ func NormalizeTransitionRuntimeSessionInput(input TransitionRuntimeSessionInput)
 	case SessionActionRecover:
 		if input.NextRuntimeGeneration == 0 || !validSessionIdentifier(input.UpstreamShellID) ||
 			isReservedAIOGenerationID(input.UpstreamShellID) || input.RecoveryReason != "" || input.ExpiresAt.IsZero() {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+		input.ExpiresAt = input.ExpiresAt.UTC()
+		if !input.ExpiresAt.After(input.Now) || input.ExpiresAt.After(input.Now.Add(MaxSessionLifetime)) {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+	case SessionActionBeginOperation:
+		if input.NextRuntimeGeneration != 0 || !validSessionIdentifier(input.UpstreamShellID) ||
+			isReservedAIOGenerationID(input.UpstreamShellID) || input.RecoveryReason != SessionOperationFenceReason ||
+			!input.ExpiresAt.IsZero() {
+			return TransitionRuntimeSessionInput{}, ErrInvalidInput
+		}
+	case SessionActionCompleteOperation:
+		if input.NextRuntimeGeneration != 0 || !validSessionIdentifier(input.UpstreamShellID) ||
+			isReservedAIOGenerationID(input.UpstreamShellID) || input.RecoveryReason != SessionOperationFenceReason ||
+			input.ExpiresAt.IsZero() {
 			return TransitionRuntimeSessionInput{}, ErrInvalidInput
 		}
 		input.ExpiresAt = input.ExpiresAt.UTC()

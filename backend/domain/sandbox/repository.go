@@ -213,6 +213,9 @@ type SessionSettingsAuditRepository interface {
 type RuntimeSessionRepository interface {
 	AcquireRuntimeSession(ctx context.Context, input AcquireRuntimeSessionInput) (RuntimeSession, error)
 	GetRuntimeSession(ctx context.Context, ref SessionRef) (RuntimeSession, error)
+	// GetRuntimeSessionByKey resolves an existing persisted generation while
+	// still binding the opaque session ID to its complete canonical tenant key.
+	GetRuntimeSessionByKey(ctx context.Context, sessionID string, key SessionKey) (RuntimeSession, error)
 	BindRuntimeSessionCAS(ctx context.Context, input BindRuntimeSessionInput) (RuntimeSession, error)
 	TransitionRuntimeSessionCAS(ctx context.Context, input TransitionRuntimeSessionInput) (RuntimeSession, error)
 	ListRecoverableRuntimeSessions(ctx context.Context, input ListRecoverableRuntimeSessionsInput) ([]RuntimeSession, error)

@@ -105,6 +105,42 @@ func TestMySQLRuntimeSessionAcquireIsIdempotentAndTenantBound(t *testing.T) {
 	}
 }
 
+func TestMySQLRuntimeSessionLookupByIDAndKeyIgnoresGenerationButNeverTenantBinding(t *testing.T) {
+	repository, _ := newSQLiteRuntimeSessionRepository(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	firstGeneration := activateTestAIOGeneration(t, repository, "runner-dev-a")
+	created, err := repository.AcquireRuntimeSession(ctx, validAcquireRuntimeSessionInput(now))
+	if err != nil {
+		t.Fatalf("AcquireRuntimeSession() error = %v", err)
+	}
+	if _, replaced, err := repository.CompareAndReplaceAIOSentinel(ctx, domainsandbox.CompareAndReplaceAIOSentinelInput{
+		DeploymentID:        created.Ref.Key.DeploymentID,
+		ExpectedSentinelID:  firstGeneration.SentinelID,
+		CandidateSentinelID: "newx-generation-fedcba9876543210fedcba9876543210",
+	}); err != nil || !replaced {
+		t.Fatalf("advance AIO generation = replaced %t, error %v", replaced, err)
+	}
+
+	got, err := repository.GetRuntimeSessionByKey(ctx, created.Ref.SessionID, created.Ref.Key)
+	if err != nil {
+		t.Fatalf("GetRuntimeSessionByKey() error = %v", err)
+	}
+	if got.Ref.RuntimeGeneration != created.Ref.RuntimeGeneration || got.Ref.RuntimeGeneration != 1 {
+		t.Fatalf("GetRuntimeSessionByKey() generation = %d, want persisted old generation 1", got.Ref.RuntimeGeneration)
+	}
+
+	wrongSessionID := "ed28cd36-e62b-42ae-9f20-08f7aa6dc886"
+	if _, err := repository.GetRuntimeSessionByKey(ctx, wrongSessionID, created.Ref.Key); !errors.Is(err, domainsandbox.ErrSessionNotFound) {
+		t.Fatalf("GetRuntimeSessionByKey(wrong session ID) error = %v, want ErrSessionNotFound", err)
+	}
+	wrongKey := created.Ref.Key
+	wrongKey.UserID++
+	if _, err := repository.GetRuntimeSessionByKey(ctx, created.Ref.SessionID, wrongKey); !errors.Is(err, domainsandbox.ErrSessionNotFound) {
+		t.Fatalf("GetRuntimeSessionByKey(wrong tenant key) error = %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestMySQLRuntimeSessionRejectsCandidateUUIDCollisionAcrossBusinessKeys(t *testing.T) {
 	repository, _ := newSQLiteRuntimeSessionRepository(t)
 	ctx := context.Background()
@@ -162,6 +198,51 @@ func TestMySQLRuntimeSessionBindAndLifecycleCAS(t *testing.T) {
 	if err != nil || reacquired.Ref.SessionID != released.Ref.SessionID ||
 		reacquired.State != domainsandbox.SessionStateActive || reacquired.Version != released.Version+1 {
 		t.Fatalf("reacquire released session = %#v, %v", reacquired, err)
+	}
+}
+
+func TestMySQLRuntimeSessionOperationFenceRetainsShellAndSuccessfulCompletionTouchesIdleTTL(t *testing.T) {
+	repository, _ := newSQLiteRuntimeSessionRepository(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	activateTestAIOGeneration(t, repository, "runner-dev-a")
+	created, err := repository.AcquireRuntimeSession(ctx, validAcquireRuntimeSessionInput(now))
+	if err != nil {
+		t.Fatalf("AcquireRuntimeSession() error = %v", err)
+	}
+	bound, err := repository.BindRuntimeSessionCAS(ctx, domainsandbox.BindRuntimeSessionInput{
+		Ref: created.Ref, ExpectedVersion: created.Version, UpstreamShellID: "shell-a",
+		ExpiresAt: now.Add(time.Minute), Now: now,
+	})
+	if err != nil {
+		t.Fatalf("BindRuntimeSessionCAS() error = %v", err)
+	}
+	fenced, err := repository.TransitionRuntimeSessionCAS(ctx, domainsandbox.TransitionRuntimeSessionInput{
+		Ref: bound.Ref, ExpectedVersion: bound.Version, Action: domainsandbox.SessionActionBeginOperation,
+		UpstreamShellID: bound.UpstreamShellID, RecoveryReason: domainsandbox.SessionOperationFenceReason,
+		Now: now.Add(30 * time.Second),
+	})
+	if err != nil || fenced.State != domainsandbox.SessionStateRecovering ||
+		fenced.UpstreamShellID != bound.UpstreamShellID || fenced.RecoveryReason != domainsandbox.SessionOperationFenceReason {
+		t.Fatalf("begin operation fence = %#v, %v", fenced, err)
+	}
+
+	completedAt := now.Add(45 * time.Second)
+	completed, err := repository.TransitionRuntimeSessionCAS(ctx, domainsandbox.TransitionRuntimeSessionInput{
+		Ref: fenced.Ref, ExpectedVersion: fenced.Version, Action: domainsandbox.SessionActionCompleteOperation,
+		UpstreamShellID: fenced.UpstreamShellID, RecoveryReason: domainsandbox.SessionOperationFenceReason,
+		ExpiresAt: completedAt.Add(20 * time.Minute), Now: completedAt,
+	})
+	if err != nil || completed.State != domainsandbox.SessionStateActive || completed.UpstreamShellID != bound.UpstreamShellID ||
+		completed.RecoveryReason != "" || completed.LastActivityAt != completedAt || completed.ExpiresAt != completedAt.Add(20*time.Minute) {
+		t.Fatalf("complete operation fence = %#v, %v", completed, err)
+	}
+	if _, err := repository.TransitionRuntimeSessionCAS(ctx, domainsandbox.TransitionRuntimeSessionInput{
+		Ref: fenced.Ref, ExpectedVersion: fenced.Version, Action: domainsandbox.SessionActionCompleteOperation,
+		UpstreamShellID: fenced.UpstreamShellID, RecoveryReason: domainsandbox.SessionOperationFenceReason,
+		ExpiresAt: completedAt.Add(20 * time.Minute), Now: completedAt,
+	}); !errors.Is(err, domainsandbox.ErrVersionConflict) {
+		t.Fatalf("late completion error = %v, want ErrVersionConflict", err)
 	}
 }
 

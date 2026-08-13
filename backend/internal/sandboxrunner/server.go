@@ -135,6 +135,7 @@ type Server struct {
 	configurationApplier ConfigurationApplier
 	runtimeStatus        RuntimeStatusSource
 	readiness            ReadinessProbe
+	coreReadiness        SessionCoreReadiness
 	handler              http.Handler
 }
 
@@ -147,13 +148,31 @@ type Dependencies struct {
 	ConfigurationApplier ConfigurationApplier
 	RuntimeStatus        RuntimeStatusSource
 	Readiness            ReadinessProbe
+	Session              http.Handler
+	CoreReadiness        SessionCoreReadiness
 }
 
 func NewServer(config Config, dependencies Dependencies) (*Server, error) {
 	if dependencies.Scheduler == nil || config.AuthToken == "" || config.ContextVerifyKeys.ActiveKeyID == "" {
 		return nil, ErrConfiguration
 	}
-	server := &Server{config: config, scheduler: dependencies.Scheduler, store: dependencies.Store, lifecycle: dependencies.Lifecycle, artifacts: dependencies.Artifacts, configuration: dependencies.Configuration, configurationApplier: dependencies.ConfigurationApplier, runtimeStatus: dependencies.RuntimeStatus, readiness: dependencies.Readiness}
+	if config.SessionBackendEnabled && (dependencies.Session == nil || dependencies.CoreReadiness == nil) {
+		return nil, ErrConfiguration
+	}
+	server := &Server{config: config, scheduler: dependencies.Scheduler, store: dependencies.Store, lifecycle: dependencies.Lifecycle, artifacts: dependencies.Artifacts, configuration: dependencies.Configuration, configurationApplier: dependencies.ConfigurationApplier, runtimeStatus: dependencies.RuntimeStatus, readiness: dependencies.Readiness, coreReadiness: dependencies.CoreReadiness}
+	sessionHandler := dependencies.Session
+	if config.SessionBackendEnabled {
+		sessionHandler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			// Preserve the inner Session handler's authentication ordering for bad
+			// credentials, while ensuring every authenticated Core route shares the
+			// runtime startup-recovery gate used by feature advertisement.
+			if authenticateBearer(request, config.AuthToken) && server.coreReadiness.CoreReady(request.Context()) != nil {
+				writePublicError(writer, http.StatusServiceUnavailable, "SANDBOX_UNAVAILABLE")
+				return
+			}
+			dependencies.Session.ServeHTTP(writer, request)
+		})
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", server.health)
 	mux.HandleFunc("GET /v1/metrics", server.metrics)
@@ -164,6 +183,12 @@ func NewServer(config Config, dependencies Dependencies) (*Server, error) {
 	mux.HandleFunc("GET /v1/configuration", server.control)
 	mux.HandleFunc("PUT /v1/configuration", server.control)
 	mux.HandleFunc("GET /v1/runtime-status", server.control)
+	if config.SessionBackendEnabled {
+		mux.Handle("POST /v1/sessions:acquire", sessionHandler)
+		mux.Handle("/v1/sessions/", sessionHandler)
+		mux.Handle("GET /v1/session-configuration", sessionHandler)
+		mux.Handle("PUT /v1/session-configuration", sessionHandler)
+	}
 	mux.HandleFunc("/v1/", server.notFound)
 	server.handler = mux
 	return server, nil
@@ -189,7 +214,11 @@ func (s *Server) health(writer http.ResponseWriter, request *http.Request) {
 	// until its reviewed runtime adapter is present in the immutable execution
 	// image; claiming MCP/AppDev here would route real work to a guaranteed
 	// failure instead of allowing an existing compatible Provider to serve it.
-	writeJSON(writer, http.StatusOK, map[string]any{"protocol_version": "v1", "status": domainsandbox.HealthStatusHealthy, "capabilities": []domainsandbox.Scope{domainsandbox.ScopeAgent, domainsandbox.ScopePlugin}, "features": []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1, domainsandbox.ProviderFeatureSignedExecutionContext}})
+	features := []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureQueueStatusV1, domainsandbox.ProviderFeatureSignedExecutionContext}
+	if s.config.SessionBackendEnabled && s.coreReadiness != nil && s.coreReadiness.CoreReady(request.Context()) == nil {
+		features = append(features, domainsandbox.ProviderFeatureSandboxSessionV1, domainsandbox.ProviderFeatureSignedSessionContextV2)
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"protocol_version": "v1", "status": domainsandbox.HealthStatusHealthy, "capabilities": []domainsandbox.Scope{domainsandbox.ScopeAgent, domainsandbox.ScopePlugin}, "features": features})
 }
 
 func (s *Server) execute(writer http.ResponseWriter, request *http.Request) {

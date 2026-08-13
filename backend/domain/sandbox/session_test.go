@@ -135,6 +135,8 @@ func TestSessionLifecycleTransitionsAreIdempotent(t *testing.T) {
 	state = assertTransition(state, SessionActionGet, SessionStateReleased, false)
 	state = assertTransition(state, SessionActionRelease, SessionStateReleased, false)
 	state = assertTransition(state, SessionActionAcquire, SessionStateActive, true)
+	state = assertTransition(state, SessionActionBeginOperation, SessionStateRecovering, true)
+	state = assertTransition(state, SessionActionCompleteOperation, SessionStateActive, true)
 	state = assertTransition(state, SessionActionMarkRecovering, SessionStateRecovering, true)
 	state = assertTransition(state, SessionActionGet, SessionStateRecovering, false)
 	state = assertTransition(state, SessionActionMarkRecovering, SessionStateRecovering, false)
@@ -156,6 +158,41 @@ func TestSessionLifecycleTransitionsAreIdempotent(t *testing.T) {
 	}{{"", SessionActionGet}, {SessionState("unknown"), SessionActionGet}, {SessionStateActive, SessionAction("archive")}} {
 		if _, _, err := TransitionSessionState(input.state, input.action); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("TransitionSessionState(%q, %q) error = %v, want ErrInvalidInput", input.state, input.action, err)
+		}
+	}
+}
+
+func TestNormalizeRuntimeSessionOperationFenceInputs(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	ref := SessionRef{
+		SessionID:         "91df5ac2-cf99-461f-b1a4-44fdd067b942",
+		Key:               SessionKey{DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 42, UserID: 43, ThreadID: "thread-a", Profile: SessionProfileCore},
+		RuntimeGeneration: 1,
+	}
+	begin, err := NormalizeTransitionRuntimeSessionInput(TransitionRuntimeSessionInput{
+		Ref: ref, ExpectedVersion: 3, Action: SessionActionBeginOperation,
+		UpstreamShellID: "shell-a", RecoveryReason: SessionOperationFenceReason, Now: now,
+	})
+	if err != nil || begin.Now != now {
+		t.Fatalf("NormalizeTransitionRuntimeSessionInput(begin) = %#v, %v", begin, err)
+	}
+	complete, err := NormalizeTransitionRuntimeSessionInput(TransitionRuntimeSessionInput{
+		Ref: ref, ExpectedVersion: 4, Action: SessionActionCompleteOperation,
+		UpstreamShellID: "shell-a", RecoveryReason: SessionOperationFenceReason,
+		ExpiresAt: now.Add(time.Minute), Now: now,
+	})
+	if err != nil || complete.ExpiresAt != now.Add(time.Minute) {
+		t.Fatalf("NormalizeTransitionRuntimeSessionInput(complete) = %#v, %v", complete, err)
+	}
+
+	invalid := []TransitionRuntimeSessionInput{
+		{Ref: ref, ExpectedVersion: 3, Action: SessionActionBeginOperation, UpstreamShellID: "", RecoveryReason: SessionOperationFenceReason, Now: now},
+		{Ref: ref, ExpectedVersion: 3, Action: SessionActionBeginOperation, UpstreamShellID: "shell-a", RecoveryReason: "other", Now: now},
+		{Ref: ref, ExpectedVersion: 4, Action: SessionActionCompleteOperation, UpstreamShellID: "shell-a", RecoveryReason: SessionOperationFenceReason, ExpiresAt: now, Now: now},
+	}
+	for index, input := range invalid {
+		if _, err := NormalizeTransitionRuntimeSessionInput(input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("invalid operation fence input %d error = %v, want ErrInvalidInput", index, err)
 		}
 	}
 }
