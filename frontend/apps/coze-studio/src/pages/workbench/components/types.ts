@@ -14,6 +14,17 @@
  * limitations under the License.
  */
 
+/* eslint-disable max-lines -- Shared Workbench composer contracts remain one reviewed boundary. */
+
+import type {
+  CanonicalHumanInteractionResponseV2,
+  CanonicalInitialRunSubmissionV2,
+  CanonicalRunConfigV2,
+  CanonicalRunSubmissionV2,
+} from '@coze-studio/api-schema/workbench-thread';
+
+import type { HumanInteractionResponse } from '../thread-client/types';
+
 export type WorkbenchComposerVariant = 'home' | 'detail';
 
 export interface WorkbenchResourceSelection {
@@ -385,3 +396,171 @@ export const createWorkbenchRunConfig = (
 export const stringifyWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => JSON.stringify(createWorkbenchRunConfig(payload));
+
+const canonicalModelID = (value: number | undefined): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('模型 ID 无效');
+  }
+  return String(value);
+};
+
+const createCanonicalRunConfigV2 = (
+  payload: WorkbenchComposerSubmitPayload,
+): CanonicalRunConfigV2 => {
+  const { runtimeSettings } = payload;
+  const failoverCandidateIDs =
+    runtimeSettings.model_failover.candidate_model_ids;
+
+  return {
+    runtime: runtimeSettings.runtime,
+    memory_retrieval: {
+      ...runtimeSettings.memory_retrieval,
+      scopes: [...runtimeSettings.memory_retrieval.scopes],
+    },
+    skills: {
+      enabled: runtimeSettings.skills.enabled,
+      visibility: runtimeSettings.skills.visibility,
+    },
+    mcp_tools: {
+      enabled: runtimeSettings.mcp_tools.enabled,
+      visibility: runtimeSettings.mcp_tools.visibility,
+    },
+    web_tools: {
+      enabled: runtimeSettings.web_tools.enabled,
+      visibility: runtimeSettings.web_tools.visibility,
+      http: {
+        ...runtimeSettings.web_tools.http,
+        allowed_hosts: [...runtimeSettings.web_tools.http.allowed_hosts],
+      },
+      search: { ...runtimeSettings.web_tools.search },
+    },
+    ...(runtimeSettings.model_retry.enabled
+      ? {
+          model_retry: {
+            max_retries: runtimeSettings.model_retry.max_retries,
+            backoff_ms: runtimeSettings.model_retry.backoff_ms,
+            retry_empty_output: runtimeSettings.model_retry.retry_empty_output,
+            retry_finish_reasons: [
+              ...runtimeSettings.model_retry.retry_finish_reasons,
+            ],
+          },
+        }
+      : {}),
+    ...(runtimeSettings.model_failover.enabled &&
+    failoverCandidateIDs.length > 0
+      ? {
+          model_failover: {
+            candidate_model_ids: failoverCandidateIDs.map(id => {
+              const candidateID = canonicalModelID(id);
+              if (candidateID === undefined) {
+                throw new Error('模型 ID 无效');
+              }
+              return candidateID;
+            }),
+            max_retries: Math.min(
+              runtimeSettings.model_failover.max_retries,
+              failoverCandidateIDs.length,
+            ),
+            failover_empty_output:
+              runtimeSettings.model_failover.failover_empty_output,
+            failover_finish_reasons: [
+              ...runtimeSettings.model_failover.failover_finish_reasons,
+            ],
+          },
+        }
+      : {}),
+    token_usage: { ...runtimeSettings.token_usage },
+  };
+};
+
+const createCanonicalSubmissionBaseV2 = (
+  payload: WorkbenchComposerSubmitPayload,
+) => {
+  const modelType = canonicalModelID(payload.modelType);
+
+  return {
+    input: { message: payload.message, uploaded_files: [] },
+    composer: {
+      ...(modelType === undefined ? {} : { model_type: modelType }),
+      ...(payload.modelName ? { model_name: payload.modelName } : {}),
+      ...(payload.enable_skills === undefined
+        ? {}
+        : { explicit_enable_skills: [...payload.enable_skills] }),
+      allowed_skills: [...payload.runtimeSettings.skills.allowed_skills],
+      enable_mcp: [...payload.enable_mcp],
+      enable_kbs: [...payload.enable_kbs],
+      enable_databases: [...payload.enable_databases],
+      allowed_mcp_tools: [
+        ...(payload.runtimeSettings.mcp_tools.allowed_tools ?? []),
+      ],
+    },
+    config: createCanonicalRunConfigV2(payload),
+  };
+};
+
+export const createInitialSubmissionV2 = (
+  payload: WorkbenchComposerSubmitPayload,
+): CanonicalInitialRunSubmissionV2 => ({
+  schema_version: 'coze.workbench.initial_run_submission.v2',
+  ...createCanonicalSubmissionBaseV2(payload),
+});
+
+export const createTurnSubmissionV2 = (
+  payload: WorkbenchComposerSubmitPayload,
+  uploadedFileIDs: string[],
+  source: 'workbench_new_task' | 'workbench_detail_followup',
+): CanonicalRunSubmissionV2 => ({
+  schema_version: 'coze.workbench.run_submission.v2',
+  kind: 'turn',
+  ...createCanonicalSubmissionBaseV2(payload),
+  input: {
+    message: payload.message,
+    uploaded_files: uploadedFileIDs.map(fileID => ({ file_id: fileID })),
+  },
+  metadata: { source },
+});
+
+export const requireUploadedFileIDs = (
+  files: Array<{ file_id?: string }>,
+): string[] =>
+  files.map(file => {
+    const fileID = file.file_id?.trim();
+    if (!fileID) {
+      throw new Error('上传文件缺少 ID');
+    }
+    return fileID;
+  });
+
+export const createRetrySubmissionV2 = (
+  payload: WorkbenchComposerSubmitPayload,
+  sourceRunID: string,
+): CanonicalRunSubmissionV2 => ({
+  schema_version: 'coze.workbench.run_submission.v2',
+  kind: 'retry',
+  ...createCanonicalSubmissionBaseV2(payload),
+  lineage: { source_run_id: sourceRunID },
+  metadata: { source: 'task_retry' },
+});
+
+export const normalizeHumanResponseV2 = (
+  response: HumanInteractionResponse,
+): CanonicalHumanInteractionResponseV2 =>
+  response.kind === 'clarification'
+    ? {
+        schema: response.schema,
+        interaction_id: response.interaction_id,
+        kind: response.kind,
+        decision: response.decision,
+        ...(response.answer ? { answer: response.answer } : {}),
+        ...(response.choice_id ? { choice_id: response.choice_id } : {}),
+      }
+    : {
+        schema: response.schema,
+        interaction_id: response.interaction_id,
+        kind: response.kind,
+        decision: response.decision,
+        ...(response.comment ? { comment: response.comment } : {}),
+      };

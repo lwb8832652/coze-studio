@@ -129,6 +129,9 @@ const checkModule: NodeCheck = node => {
   if (!ts.isStringLiteral(node) || !isModuleString(node)) {
     return;
   }
+  if (node.text === '@coze-studio/api-schema/workbench-thread') {
+    return;
+  }
   const forbidden =
     node.text === '@coze-studio/api-schema' ||
     node.text.startsWith('@coze-studio/api-schema/') ||
@@ -647,13 +650,20 @@ describe('WorkbenchThreadClient production boundary', () => {
   it('exposes explicit app-owned turn metadata and top-level retry fields', () => {
     const source = readProductionSource(productionFiles[1]);
     const types = inspectTypes('workbench-thread-client.ts', source);
-    expect(types.shape('CreateWorkbenchRunRequest')).toEqual(
+    expect(types.shape('LegacyCreateWorkbenchRunRequest')).toEqual(
       expect.arrayContaining([
         "attempt_kind?: 'turn' | 'retry'",
         'source_run_id?: string',
         'message_metadata?: string',
       ]),
     );
+    const versionedRequest = types.declaration('CreateWorkbenchRunRequest');
+    expect(versionedRequest).toContain('LegacyCreateWorkbenchRunRequest');
+    expect(versionedRequest).toContain(
+      'submission_v2: CanonicalRunSubmissionV2',
+    );
+    expect(versionedRequest).toContain('input?: never');
+    expect(versionedRequest).toContain('message_content?: never');
     expect(canonicalRunSubmissionExtensions).toEqual({
       turn: {
         message_metadata: { source: 'workbench_detail_followup' },
