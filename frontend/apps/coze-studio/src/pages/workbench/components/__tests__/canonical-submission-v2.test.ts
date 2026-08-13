@@ -60,6 +60,7 @@ describe('canonical typed submission v2', () => {
         mcpEnabled: true,
         enabledSkills: ['skill.b', 'skill.a'],
         enabledMCP: ['mcp.b'],
+        allowedMCP: ['mcp.b'],
       },
     ],
     [
@@ -69,6 +70,7 @@ describe('canonical typed submission v2', () => {
         mcpEnabled: true,
         enabledSkills: undefined,
         enabledMCP: [],
+        allowedMCP: [],
       },
     ],
     [
@@ -78,6 +80,7 @@ describe('canonical typed submission v2', () => {
         mcpEnabled: false,
         enabledSkills: [],
         enabledMCP: [],
+        allowedMCP: ['mcp.b'],
       },
     ],
   ] as const)(
@@ -89,6 +92,9 @@ describe('canonical typed submission v2', () => {
       });
       valuePayload.runtimeSettings.skills.enabled = state.skillsEnabled;
       valuePayload.runtimeSettings.mcp_tools.enabled = state.mcpEnabled;
+      valuePayload.runtimeSettings.mcp_tools.allowed_tools = [
+        ...state.allowedMCP,
+      ];
       const value = createInitialSubmissionV2(valuePayload);
 
       expect(value.composer.explicit_enable_skills).toEqual(
@@ -96,7 +102,7 @@ describe('canonical typed submission v2', () => {
       );
       expect(value.composer.enable_mcp).toEqual(state.enabledMCP);
       expect(value.composer.allowed_skills).toEqual(['skill.b', 'skill.a']);
-      expect(value.composer.allowed_mcp_tools).toEqual(['mcp.b']);
+      expect(value.composer.allowed_mcp_tools).toEqual(state.allowedMCP);
     },
   );
 

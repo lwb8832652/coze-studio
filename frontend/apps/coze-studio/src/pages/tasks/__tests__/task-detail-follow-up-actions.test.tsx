@@ -115,7 +115,7 @@ const humanResponse: HumanInteractionResponse = {
   schema: 'coze.human_interaction_response.v1',
   interaction_id: 'interaction-1',
   kind: 'confirmation',
-  decision: 'approve',
+  decision: 'approved',
 };
 
 const resumeClientError = (
@@ -543,7 +543,7 @@ describe('useTaskDetailActions follow-up request scope', () => {
       await currentActions.handleHumanInteractionSubmit(humanResponse);
       await currentActions.handleHumanInteractionSubmit({
         ...humanResponse,
-        decision: 'reject',
+        decision: 'rejected',
         comment: '需要修改',
       });
     });
