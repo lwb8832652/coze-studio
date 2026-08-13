@@ -68,12 +68,12 @@ it('generates the closed canonical typed submission V2 contract', () => {
   expect(interfaceSourceFrom(generatedSource, 'CanonicalComposerSelectionV2'))
     .toMatch(/model_type\?:\s*string/);
   expect(interfaceSourceFrom(generatedSource, 'CanonicalModelFailoverV2'))
-    .toMatch(/candidate_model_ids:\s*Array<string>/);
+    .toMatch(/candidate_model_ids:\s*string\[\]/);
   expect(interfaceSourceFrom(generatedSource, 'CanonicalUploadedFileReferenceV2'))
     .toMatch(/file_id:\s*string/);
 });
 ```
-把现有 API mapping 期望精确扩为：Create Thread body 追加 `initial_submission_v2`、`deferred_initial_submission_v2`；Create/Stream Run body 追加 `submission_v2`；Wait body 追加 `submission_v2`；Resume body 为 `interrupt_id,response,response_v2` 且 header 为 `Idempotency-Key,X-Coze-Space-ID`。
+把现有 API mapping 期望精确扩为：Create Thread body 追加 `initial_submission_v2`、`deferred_initial_submission_v2`；Create/Stream Run body 追加 `submission_v2`；Wait body 追加 `submission_v2`；Resume body 为 `interrupt_id,response,response_v2` 且 header 按冻结 field 5/6 的生成器顺序为 `X-Coze-Space-ID,Idempotency-Key`。
 - [ ] **Step 2: 运行 RED**
 Run:
 ```bash
@@ -139,7 +139,7 @@ bash scripts/verify_api_codegen.sh
 cd ../frontend/packages/arch/api-schema
 rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
-Expected: codegen 所有 PASS marker 出现；Vitest PASS；TS scalar IDs 为 `string`、candidate IDs 为 `Array<string>`；V2 interfaces 不含 `any`/map/retired field。
+Expected: codegen 所有 PASS marker 出现；Vitest PASS；TS scalar IDs 为 `string`、candidate IDs 为生成器固定形式 `string[]`；V2 interfaces 不含 `any`/map/retired field。
 - [ ] **Step 6: 提交 IDL 与生成物**
 ```bash
 git add idl/workbench/thread.thrift \
