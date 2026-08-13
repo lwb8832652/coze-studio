@@ -441,6 +441,27 @@ func TestFinalizeJournalAttemptGeneratesEventIDAndDelegatesStatus(t *testing.T) 
 	require.Equal(t, int64(1234), repo.lastFinalizeJournalReq.EndedAt)
 }
 
+func TestFinalizeJournalAttemptRejectsInterrupted(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask}}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2401)})
+
+	event, won, err := svc.FinalizeJournalAttempt(context.Background(), &FinalizeJournalAttemptRequest{
+		Status: entity.RunAttemptStatusInterrupted,
+		Event: AppendJournalEventRequest{
+			RunID: 20, IdempotencyKey: "interrupted", EventType: "run.lifecycle",
+			Status:  string(entity.RunAttemptStatusInterrupted),
+			Payload: `{"type":"terminal","data":{"status":"interrupted"}}`,
+		},
+		EndedAt: 1234,
+	})
+
+	require.ErrorIs(t, err, ErrInvalidArgument)
+	require.Nil(t, event)
+	require.False(t, won)
+	require.Zero(t, repo.lastFinalizeJournalReq.RunID)
+}
+
 func TestListThreadsNormalizesPaging(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(901)})

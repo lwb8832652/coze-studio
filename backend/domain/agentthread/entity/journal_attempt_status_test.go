@@ -25,6 +25,7 @@ import (
 func TestRunAttemptStatusInterruptedContract(t *testing.T) {
 	require.Equal(t, RunAttemptStatus("interrupted"), RunAttemptStatusInterrupted)
 	require.False(t, RunAttemptStatusInterrupted.IsActive())
+	require.True(t, RunAttemptStatusInterrupted.IsTerminal())
 	require.Equal(t, "1.1", JournalSchemaVersion)
 	require.Equal(t, "1.0", JournalPayloadVersion)
 }

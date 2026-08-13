@@ -1203,7 +1203,8 @@ func (s *threadService) FinalizeJournalAttempt(
 	if err := s.requireComponents(); err != nil {
 		return nil, false, err
 	}
-	if req == nil || req.Event.RunID <= 0 || !req.Status.IsTerminal() {
+	if req == nil || req.Event.RunID <= 0 ||
+		!entity.IsLegacyFinalizableRunAttemptStatus(req.Status) {
 		return nil, false, InvalidArgumentErrorf("terminal run id and attempt status are required")
 	}
 	journalRepo, err := s.journalRepository()

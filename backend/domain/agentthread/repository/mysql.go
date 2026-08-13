@@ -1660,9 +1660,6 @@ func prepareRecoveryRunBundleAttempt(
 		return ErrJournalParentMismatch
 	}
 	sourceStatus := entity.RunAttemptStatus(sourceAttempt.Status)
-	if !sourceStatus.IsTerminal() && !sourceStatus.IsActive() {
-		return ErrJournalInvalidStateTransition
-	}
 	if sourceLease != nil {
 		if !sourceStatus.IsActive() {
 			return ErrJournalInvalidStateTransition
@@ -1679,6 +1676,8 @@ func prepareRecoveryRunBundleAttempt(
 				sourceLease.RunID,
 			)
 		}
+	} else if !entity.IsLegacyFinalizableRunAttemptStatus(sourceStatus) {
+		return ErrJournalInvalidStateTransition
 	}
 
 	var checkpoint checkpointPO
@@ -2289,7 +2288,8 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 
 	query := r.db.WithContext(ctx).
 		Model(&runEventPO{}).
-		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal))
+		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal)).
+		Where("event_type <> ?", entity.JournalAttemptInterruptedRunEventType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	} else {

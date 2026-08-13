@@ -1595,6 +1595,31 @@ func TestThreadRepositoryListRunEventsFiltersAfterCursor(t *testing.T) {
 	require.Equal(t, int64(4), got[1].ID)
 }
 
+func TestThreadRepositoryListRunEventsSkipsJournalAttemptInterruptedBeforePagination(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, event := range []*entity.RunEvent{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: `{}`},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 3, ThreadID: 10, RunID: 20, EventType: "message.completed", Payload: `{}`},
+		{ID: 4, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 5, ThreadID: 10, RunID: 20, EventType: "run.completed", Payload: `{}`},
+	} {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	}
+
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Equal(t, []int64{1, 3}, runEventIDs(events))
+}
+
 func TestThreadRepositoryGenericRunEventWriterRejectsReservedAdaptiveFacts(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

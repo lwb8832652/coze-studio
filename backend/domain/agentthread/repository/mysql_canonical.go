@@ -147,7 +147,8 @@ func (r *threadRepository) ListRunEventsByCursor(
 	query := r.db.WithContext(ctx).
 		Model(&runEventPO{}).
 		Where("thread_id = ?", req.ThreadID).
-		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal))
+		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal)).
+		Where("event_type <> ?", entity.JournalAttemptInterruptedRunEventType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}

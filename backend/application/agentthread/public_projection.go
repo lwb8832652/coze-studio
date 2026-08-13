@@ -249,7 +249,7 @@ func ProjectPublicMessages(messages []*MessageSummary) []*PublicMessage {
 }
 
 func ProjectPublicRunEvent(event *RunEventSummary) *PublicRunEvent {
-	if event == nil {
+	if event == nil || event.EventType == domainentity.JournalAttemptInterruptedRunEventType {
 		return nil
 	}
 

@@ -934,7 +934,7 @@ func (r *threadRepository) FinalizeJournalAttempt(
 	ctx context.Context,
 	req FinalizeJournalAttemptRequest,
 ) (*entity.JournalEvent, bool, error) {
-	if req.RunID <= 0 || !req.Status.IsTerminal() {
+	if req.RunID <= 0 || !entity.IsLegacyFinalizableRunAttemptStatus(req.Status) {
 		return nil, false, fmt.Errorf("terminal execution run id and attempt status are required")
 	}
 	normalized, err := normalizeJournalEvent(req.Event)

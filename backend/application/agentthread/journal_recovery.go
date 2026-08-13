@@ -192,7 +192,8 @@ func (s *ApplicationService) RecoverJournal(
 	if source == nil {
 		source = selectJournalRecoverySourceAttempt(attempts, req.SourceAttemptID)
 	}
-	if source == nil || (!source.Status.IsTerminal() && source != activeSource) ||
+	if source == nil ||
+		(!domainentity.IsLegacyFinalizableRunAttemptStatus(source.Status) && source != activeSource) ||
 		source.ThreadID != req.ThreadID ||
 		source.JournalRunID != req.RunID {
 		return nil, ErrJournalRecoveryInvalid
@@ -394,7 +395,8 @@ func selectJournalRecoverySourceAttempt(
 ) *domainentity.RunAttempt {
 	var selected *domainentity.RunAttempt
 	for _, attempt := range attempts {
-		if attempt == nil || !attempt.Status.IsTerminal() {
+		if attempt == nil ||
+			!domainentity.IsLegacyFinalizableRunAttemptStatus(attempt.Status) {
 			continue
 		}
 		if requestedID != "" {

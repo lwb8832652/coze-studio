@@ -21,6 +21,8 @@ import "strings"
 const (
 	JournalSchemaVersion  = "1.1"
 	JournalPayloadVersion = "1.0"
+
+	JournalAttemptInterruptedRunEventType = "journal.attempt.interrupted"
 )
 
 type RunAttemptStatus string
@@ -46,6 +48,17 @@ func (s RunAttemptStatus) IsActive() bool {
 
 func (s RunAttemptStatus) IsTerminal() bool {
 	switch s {
+	case RunAttemptStatusCompleted, RunAttemptStatusFailed,
+		RunAttemptStatusCancelled, RunAttemptStatusTimedOut,
+		RunAttemptStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsLegacyFinalizableRunAttemptStatus(status RunAttemptStatus) bool {
+	switch status {
 	case RunAttemptStatusCompleted, RunAttemptStatusFailed,
 		RunAttemptStatusCancelled, RunAttemptStatusTimedOut:
 		return true

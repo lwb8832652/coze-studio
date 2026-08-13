@@ -31,6 +31,20 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
+func TestSelectJournalRecoverySourceRejectsInterruptedExplicitAndImplicit(t *testing.T) {
+	attempt := &domainentity.RunAttempt{
+		ID: 99, AttemptID: "att_interrupted", Ordinal: 9,
+		Status: domainentity.RunAttemptStatusInterrupted,
+	}
+
+	require.Nil(t, selectJournalRecoverySourceAttempt(
+		[]*domainentity.RunAttempt{attempt}, attempt.AttemptID,
+	))
+	require.Nil(t, selectJournalRecoverySourceAttempt(
+		[]*domainentity.RunAttempt{attempt}, "",
+	))
+}
+
 func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing.T) {
 	app, threadSVC, repo := newJournalRecoveryTestService(t)
 	legacyConfig := `{

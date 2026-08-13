@@ -150,6 +150,53 @@ func TestJournalFrozenMigrationAndModels(t *testing.T) {
 	require.False(t, db.Migrator().HasIndex(&runEventPO{}, "idx_agent_run_events_journal_cursor"))
 }
 
+func TestJournalInterruptedMigrationRebuildsAllAttemptChecks(t *testing.T) {
+	migration, err := os.ReadFile(filepath.Join(
+		"..", "..", "..", "..", "docker", "atlas", "migrations",
+		"20260813000100_agent_run_attempts_interrupted.sql",
+	))
+	require.NoError(t, err)
+	sql := string(migration)
+
+	for _, constraint := range []string{
+		"chk_agent_run_attempts_status",
+		"chk_agent_run_attempts_active_slot",
+		"chk_agent_run_attempts_lifecycle",
+	} {
+		require.Contains(t, sql, "DROP CHECK `"+constraint+"`")
+		require.Contains(t, sql, "ADD CONSTRAINT `"+constraint+"` CHECK")
+	}
+	require.Contains(t, sql, "'timed_out', 'interrupted'")
+	require.Contains(t, sql, "AND `active_slot` IS NULL")
+	require.Contains(t, sql, "AND `started_at` IS NOT NULL AND `ended_at` IS NOT NULL AND `terminal_event_id` IS NOT NULL")
+}
+
+func TestJournalFinalizeRejectsInterruptedOutsideHumanRollover(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRun(t, db, 10, 1)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusRunning, 1)
+
+	event, won, err := repo.FinalizeJournalAttempt(context.Background(), FinalizeJournalAttemptRequest{
+		RunID: 10, Status: entity.RunAttemptStatusInterrupted,
+		Event: &entity.JournalEvent{
+			ID: 2000, ThreadID: 1, RunID: 10, IdempotencyKey: "terminal-interrupted",
+			EventType: "run.lifecycle", Status: string(entity.RunAttemptStatusInterrupted),
+			Payload: `{"type":"terminal","data":{"status":"interrupted"}}`,
+		},
+		EndedAt: 1234,
+	})
+
+	require.Error(t, err)
+	require.Nil(t, event)
+	require.False(t, won)
+	var attempt runAttemptPO
+	require.NoError(t, db.Where("id = ?", 100).First(&attempt).Error)
+	require.Equal(t, string(entity.RunAttemptStatusRunning), attempt.Status)
+	require.NotNil(t, attempt.ActiveSlot)
+	require.Nil(t, attempt.TerminalEventID)
+}
+
 func TestJournalAttemptFrozenFieldsRoundTrip(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	sourceCheckpointID := int64(44)

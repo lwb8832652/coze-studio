@@ -687,6 +687,29 @@ func TestCanonicalListRunEventsByCursorSkipsInternalFactsBeforePagination(t *tes
 	require.Equal(t, []int64{3, 5}, runEventIDs(events))
 }
 
+func TestCanonicalListRunEventsByCursorSkipsJournalAttemptInterruptedBeforePagination(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &runEventPO{})
+	repo := &threadRepository{db: db}
+	for _, event := range []*entity.RunEvent{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "message", Payload: `{}`},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 3, ThreadID: 10, RunID: 20, EventType: "status", Payload: `{}`},
+		{ID: 4, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 5, ThreadID: 10, RunID: 20, EventType: "message", Payload: `{}`},
+	} {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	}
+
+	events, total, hasMore, err := repo.ListRunEventsByCursor(context.Background(), ListRunEventsByCursorRequest{
+		ThreadID: 10, RunID: 20, AfterEventID: 1, Limit: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.False(t, hasMore)
+	require.Equal(t, []int64{3, 5}, runEventIDs(events))
+}
+
 func TestCanonicalListCheckpointsBeforeUsesIDCursorOrderAndReportsHasMore(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &checkpointPO{})
 	repo := &threadRepository{db: db}
