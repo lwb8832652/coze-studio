@@ -118,6 +118,15 @@ P1M-A 已冻结 canonical 外部执行控制：CreateThread、Create/Wait/Stream
 这些字段，并暂时隐藏“模型推理”控件；`runtime=eino_adk`、模型、Skill、MCP、知识库、
 数据库和资源配置仍是合法输入。该冻结不代表后端 mode、ADK consumer 或恢复继承已经退休。
 
+P1M-C3i1 已交付 canonical Typed Submission V2 的封闭 IDL 与 Go/TypeScript 生成合同，
+并让服务端 Create Thread、Create/Wait/Stream Run 与 Resume 接受
+`initial_submission_v2`、`deferred_initial_submission_v2`、`submission_v2` 和
+`response_v2`。handler 在任何 application mutation 前完成 raw JSON 重复键、字段、presence、
+`null`、预算、union 和 V1/V2 混用校验，再把 V2 确定性映射到既有 application command 与
+idempotency fingerprint；V1 继续可读。五个第一方 writer 仍写 V1，C3i2 保持 locked；该接受层
+不实现 writer cutover、legacy decoder、Human Attempt rollover、ordinary non-Journal enrollment、
+gate-on producer 或真实 MySQL typed recovery race。后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
+
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
 closed；因此 canonical、Scheduled Task、飞书和其它 public Application caller 共享同一

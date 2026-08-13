@@ -402,6 +402,14 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       fenced commit。source 缺失、损坏、identity/lineage 漂移或 gate-on 均 fail closed，不做 legacy
       Config fallback。本包不处理 Human/ordinary non-Journal Resume，不新增 migration、IDL/UI 或
       producer；真实 MySQL 双连接仍 `NOT_VERIFIED`，完成本项也不得把 P1M 标为 PASS。
+- [x] P1M-C3i1 按交付优先先交付 canonical Typed Submission V2 服务端接受：18 个封闭 IDL
+      struct 与生成的 Go/TypeScript 合同覆盖 Create Thread 的 atomic/deferred submission、
+      Create/Wait/Stream Run 的 turn/retry submission 和 Resume human response；raw strict validator
+      在 mutation 前拒绝 duplicate/unknown/null/presence/union/V1-V2 mix，并确定性映射到既有
+      application command、附件顺序和 idempotency fingerprint。V1 继续可读，五个第一方 writer
+      仍写 V1，C3i2 保持 `locked`。本包不实现 writer cutover、legacy decoder、Human Attempt
+      rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race；
+      后者仍 `NOT_VERIFIED`，P1M 未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

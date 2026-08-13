@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  'eb1ed7ba831248a1373749267cc1e592e4b6b724eff622bfb33bf2c08dd4d3df';
+  '149b8f417d38005c4cdc792332a671094cee93c2e7730c6676a86528b8d4388d';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -90,6 +90,8 @@ const REQUIRED_NODE_IDS = [
   'http.workbench.canonical_thread',
   'http.workbench.canonical_run',
   'http.workbench.canonical_run_stream',
+  'http.workbench.canonical_typed_v2_validation',
+  'http.workbench.canonical_typed_v2_mapping',
   'framework.fetch_stream',
   'compat.deerflow_config',
   'integration.scheduled.execute',
@@ -114,6 +116,13 @@ const REQUIRED_EDGE_IDS = [
   'edge.canonical_thread_submission_calls_create_task_thread',
   'edge.canonical_create_run_routes_handler',
   'edge.canonical_run_handler_calls_app_create_run',
+  'edge.canonical_thread_validates_typed_v2',
+  'edge.canonical_run_validates_typed_v2',
+  'edge.canonical_run_stream_validates_typed_v2',
+  'edge.typed_v2_validation_maps_submission',
+  'edge.typed_v2_mapping_calls_create_task_thread',
+  'edge.typed_v2_mapping_calls_create_run',
+  'edge.typed_v2_mapping_preserves_fingerprint',
   'edge.repo_event_streams_canonical',
   'edge.canonical_stream_to_subscription',
   'edge.run_subscription_uses_fetch_stream',

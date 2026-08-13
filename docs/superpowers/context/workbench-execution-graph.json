@@ -2642,7 +2642,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization"
         }
       ]
     },
@@ -2680,6 +2680,84 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go",
           "locator": "func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_typed_v2_validation",
+      "label": "Canonical Typed Submission V2 raw validation",
+      "layer": "http_handler",
+      "kind": "transport_contract",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "decodeCanonicalTypedRunSubmissionV2",
+          "locator": "func decodeCanonicalTypedRunSubmissionV2(raw []byte)"
+        },
+        {
+          "path": "idl/workbench/thread.thrift",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "struct CanonicalComposerSelectionV2 {"
+        },
+        {
+          "path": "backend/api/model/workbench/thread_contract/thread.go",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "type CanonicalComposerSelectionV2 struct {"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/thread.ts",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "export interface CanonicalComposerSelectionV2 {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2FlowAndCollectionMatrix"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestCreateCanonicalThreadAcceptsAtomicTypedV2"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCreateCanonicalRunTypedV2TurnPersistsMappedMessage"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunTypedV2RejectsBeforeThreadAuthorizationAndSSE"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_typed_v2_mapping",
+      "label": "Canonical Typed Submission V2 deterministic mapping",
+      "layer": "http_handler",
+      "kind": "transport_adapter",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "mapCanonicalTypedRunV2",
+          "locator": "func mapCanonicalTypedRunV2(v *canonicalTypedRunV2)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "mapCanonicalTypedInitialV2",
+          "locator": "func mapCanonicalTypedInitialV2(v *canonicalTypedInitialV2, deferred bool)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2PositiveParityFingerprintAndDeepCopy"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint"
         }
       ]
     },
@@ -2837,7 +2915,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesPathBeforeReadingSubmission"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
@@ -4567,6 +4645,52 @@
       ]
     },
     {
+      "id": "edge.canonical_thread_validates_typed_v2",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "canonicalTypedThreadV2RootCaseError(raw)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_validation_maps_submission",
+      "from": "http.workbench.canonical_typed_v2_validation",
+      "to": "http.workbench.canonical_typed_v2_mapping",
+      "relation": "precedes",
+      "chain_ids": [
+        "entry.workbench_canonical_thread_http",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "locator": "func mapCanonicalTypedRunV2(v *canonicalTypedRunV2)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_calls_create_task_thread",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "application.create_task_thread",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
       "id": "edge.canonical_thread_handler_applies_delete_guard",
       "from": "http.workbench.canonical_thread",
       "to": "http.workbench.canonical_thread_delete_guard",
@@ -4702,6 +4826,59 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service.go",
           "locator": "canonicalExecutionControlRootOnly"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_validates_typed_v2",
+      "from": "http.workbench.canonical_run",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalTypedRunV2RootSubmission(c.Request.Body())"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_calls_create_run",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "application.create_run",
+      "relation": "delegates_to",
+      "chain_ids": [
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalApplicationCreateRunRequest(threadID, submission)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_preserves_fingerprint",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "domain.run_idempotency_contract",
+      "relation": "maps_to",
+      "chain_ids": [
+        "entry.workbench_canonical_thread_http",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2PositiveParityFingerprintAndDeepCopy"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint"
         }
       ]
     },
@@ -4860,6 +5037,20 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
           "locator": "canonicalExecutionControlRunSubmission"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_validates_typed_v2",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "submission, public := parseCanonicalRunSubmission(c, false)"
         }
       ]
     },
@@ -5916,6 +6107,10 @@
       "required_side_edge_ids": [
         "edge.canonical_thread_handler_validates_space",
         "edge.canonical_thread_handler_validates_execution_controls",
+        "edge.canonical_thread_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_task_thread",
+        "edge.typed_v2_mapping_preserves_fingerprint",
         "edge.canonical_thread_handler_applies_delete_guard",
         "edge.canonical_thread_create_calls_create_thread",
         "edge.canonical_thread_submission_calls_create_task_thread",
@@ -5963,6 +6158,10 @@
       "required_side_edge_ids": [
         "edge.canonical_run_handler_validates_space",
         "edge.canonical_run_handler_validates_execution_controls",
+        "edge.canonical_run_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_run",
+        "edge.typed_v2_mapping_preserves_fingerprint",
         "edge.canonical_run_handler_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_idempotency_race_validates_fingerprint",
@@ -6028,6 +6227,10 @@
       "required_side_edge_ids": [
         "edge.canonical_run_stream_validates_space",
         "edge.canonical_run_stream_validates_execution_controls",
+        "edge.canonical_run_stream_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_run",
+        "edge.typed_v2_mapping_preserves_fingerprint",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_run_stream_calls_app_query",
@@ -6043,7 +6246,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",

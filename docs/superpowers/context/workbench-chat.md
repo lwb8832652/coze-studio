@@ -48,6 +48,10 @@ Thread
   `422 unsupported_execution_control`。该检查不扫描用户字符串、数组或普通资源对象，合法的
   `runtime=eino_adk`、模型与资源设置仍可提交。P1M-A 只冻结外部 HTTP；内部 mode、恢复链与
   ADK consumer 仍保留。
+- C3i1 已让 canonical Create Thread、Create/Wait/Stream Run 与 Resume 服务端接受封闭的
+  Typed Submission V2：raw JSON 先严格校验，再确定性映射到既有 application command 和
+  idempotency fingerprint，V1 继续可读。五个第一方 writer 仍发送 V1；C3i2 writer cutover
+  保持 locked，P1M 未 PASS，真实 MySQL typed recovery race 仍为 `NOT_VERIFIED`。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

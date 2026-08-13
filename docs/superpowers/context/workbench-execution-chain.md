@@ -315,6 +315,17 @@ P1M-A 还在 raw JSON binder 与任何业务持久化前冻结七个客户端执
 数组或普通资源对象。命中返回稳定 `422 unsupported_execution_control`，但
 `runtime=eino_adk`、model、Skill、MCP、knowledge/database、附件和可靠性配置仍合法。
 
+P1M-C3i1 在这条入口链增加封闭 Typed Submission V2 接受层。IDL 和生成的 Go/TypeScript
+合同为 Create Thread 的 `initial_submission_v2`/`deferred_initial_submission_v2`、
+Create/Wait/Stream Run 的 `submission_v2` 以及 Resume 的 `response_v2` 提供 typed 字段；
+handler 的有向顺序固定为 raw typed validation → deterministic mapping → 既有
+application command/idempotency fingerprint。raw 阶段先处理 body budget、重复键、未知字段、
+presence/`null`、union、V1/V2 混用和退休执行控制，映射阶段保持附件顺序、composer/resource
+选择、retry source lineage、Human response union 与 fingerprint namespace。V1 继续可读；五个
+第一方 writer 仍为 V1，C3i2 locked。该链没有增加 repository/runtime 状态机，也没有完成 legacy
+decoder、Human rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed
+recovery race；后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
+
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error
 继续由 canonical mapper 输出 `422 unsupported_execution_control`，只公开规范化字段路径。
