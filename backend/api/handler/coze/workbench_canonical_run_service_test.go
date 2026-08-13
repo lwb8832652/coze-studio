@@ -987,6 +987,49 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 	assertCanonicalResumePersistence(t, sourceRunID, "canonical-resume-route-1")
 }
 
+func TestCanonicalResumeRolloverExactReplayAfterSourceLifecycleChange(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
+	payload := `{
+		"interrupt_id":"interrupt-1",
+		"response":{
+			"schema":"coze.human_interaction_response.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"decision":"answered",
+			"answer":"最近 7 天"
+		}
+	}`
+	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-resume-lifecycle-replay"}
+
+	created := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID), payload, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var first canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &first))
+
+	failed, err := appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID: sourceRunID, From: appagentthread.RunStatusInterrupted,
+		ErrorCode: "source_lifecycle_advanced", ErrorMessage: "source advanced after resume",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, failed)
+	require.Equal(t, appagentthread.RunStatusFailed, failed.Run.Status)
+
+	replayed := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID), payload, header,
+	)
+	require.Equal(t, http.StatusOK, replayed.Code, replayed.Result().Body())
+	var second canonicalRun
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &second))
+	require.Equal(t, first.RunID, second.RunID)
+	require.Len(t, canonicalRunsForThread(t, 1), 2)
+}
+
 func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint(t *testing.T) {
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)

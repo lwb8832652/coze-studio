@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	"github.com/stretchr/testify/require"
@@ -228,6 +229,66 @@ func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {
 			require.Equal(t, req.Decision, facts.Decision)
 		})
 	}
+}
+
+func TestAdaptiveBootstrapHumanResumeConsumesTypedLineageBeforeADKBuild(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+	order := make([]string, 0, 6)
+	repo := &adaptiveBootstrapRepositoryStub{
+		readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+		readErrs: []error{
+			repository.ErrAdaptiveExecutionBootstrapNotFound,
+			nil,
+		},
+		order: &order,
+	}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: &adaptiveBootstrapAttemptReaderStub{attempt: attempt, order: &order},
+		Repository:    repo,
+		IDGen:         &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}},
+		Now:           func() int64 { return 999 },
+	})
+	stopAfterBuild := errors.New("stop after typed lineage reaches adk build")
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(ctx context.Context, _ *RunSummary) (adk.ResumableAgent, error) {
+			order = append(order, "build-agent")
+			facts, ok := adaptiveBootstrapFactsFromContext(ctx)
+			require.True(t, ok)
+			require.Equal(t, entity.AdaptiveAdmissionSourceTypedInheritance, facts.Admission.Source)
+			require.Equal(t, input.SourceRunID, requireInt64PointerForAdaptiveBootstrapTest(t, facts.Admission.SourceRunID))
+			require.Equal(t, source.Authority.ExecutionGeneration, requireUint64PointerForAdaptiveBootstrapTest(t, facts.Admission.SourceExecutionGeneration))
+			require.Equal(t, run.RunID, facts.Decision.ExecutionRunID)
+			require.Equal(t, attempt.AttemptID, facts.Decision.AttemptID)
+			return nil, stopAfterBuild
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			order = append(order, "build-store")
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(coordinator),
+	)
+	input.Runtime = RuntimeModeEinoADK
+	input.RuntimeKey = "coze-run-21"
+	input.ADKCheckpoint = &ADKCheckpointEnvelope{RuntimeKey: input.RuntimeKey}
+
+	result, err := executor.Resume(context.Background(), run, input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, stopAfterBuild)
+	require.Equal(t, []string{
+		"read-target-attempt",
+		"read-bootstrap-21",
+		"read-bootstrap-20",
+		"commit-bootstrap-21",
+		"build-store",
+		"build-agent",
+	}, order)
+	require.Len(t, repo.commitRequests, 1)
+	require.Equal(t, attempt.AttemptID, repo.commitRequests[0].AttemptID)
+	require.Equal(t, input.SourceRunID, *repo.commitRequests[0].Admission.SourceRunID)
 }
 
 func TestAdaptiveBootstrapCoordinatorResumeFailsClosed(t *testing.T) {
@@ -661,6 +722,7 @@ type adaptiveBootstrapAttemptReaderStub struct {
 	err     error
 	calls   int
 	runIDs  []int64
+	order   *[]string
 }
 
 func (s *adaptiveBootstrapAttemptReaderStub) GetActiveJournalAttempt(
@@ -669,6 +731,9 @@ func (s *adaptiveBootstrapAttemptReaderStub) GetActiveJournalAttempt(
 ) (*entity.RunAttempt, error) {
 	s.calls++
 	s.runIDs = append(s.runIDs, runID)
+	if s.order != nil {
+		*s.order = append(*s.order, "read-target-attempt")
+	}
 	return s.attempt, s.err
 }
 
@@ -682,6 +747,7 @@ type adaptiveBootstrapRepositoryStub struct {
 	returnNilCommitResult bool
 	readRequests          []repository.ReadAdaptiveExecutionBootstrapRequest
 	commitRequests        []repository.CommitAdaptiveExecutionBootstrapRequest
+	order                 *[]string
 }
 
 func (s *adaptiveBootstrapRepositoryStub) ReadAdaptiveExecutionBootstrap(
@@ -689,6 +755,9 @@ func (s *adaptiveBootstrapRepositoryStub) ReadAdaptiveExecutionBootstrap(
 	req repository.ReadAdaptiveExecutionBootstrapRequest,
 ) (*repository.CommitAdaptiveExecutionBootstrapResult, error) {
 	s.readRequests = append(s.readRequests, req)
+	if s.order != nil {
+		*s.order = append(*s.order, "read-bootstrap-"+strconv.FormatInt(req.ExecutionRunID, 10))
+	}
 	index := len(s.readRequests) - 1
 	if s.readResults != nil || s.readErrs != nil {
 		var result *repository.CommitAdaptiveExecutionBootstrapResult
@@ -712,6 +781,9 @@ func (s *adaptiveBootstrapRepositoryStub) CommitAdaptiveExecutionBootstrap(
 	req repository.CommitAdaptiveExecutionBootstrapRequest,
 ) (*repository.CommitAdaptiveExecutionBootstrapResult, error) {
 	s.commitRequests = append(s.commitRequests, req)
+	if s.order != nil {
+		*s.order = append(*s.order, "commit-bootstrap-"+strconv.FormatInt(req.ExecutionRunID, 10))
+	}
 	if s.commitResult == nil && s.commitErr == nil && !s.returnNilCommitResult {
 		s.commitResult = &repository.CommitAdaptiveExecutionBootstrapResult{
 			Admission: req.Admission,
@@ -724,6 +796,18 @@ func (s *adaptiveBootstrapRepositoryStub) CommitAdaptiveExecutionBootstrap(
 		}
 	}
 	return s.commitResult, s.commitErr
+}
+
+func requireInt64PointerForAdaptiveBootstrapTest(t *testing.T, value *int64) int64 {
+	t.Helper()
+	require.NotNil(t, value)
+	return *value
+}
+
+func requireUint64PointerForAdaptiveBootstrapTest(t *testing.T, value *uint64) uint64 {
+	t.Helper()
+	require.NotNil(t, value)
+	return *value
 }
 
 type adaptiveBootstrapIDGeneratorStub struct {

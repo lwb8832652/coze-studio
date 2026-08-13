@@ -156,6 +156,19 @@ func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDele
 	require.Equal(t, int64(2), attemptCount)
 }
 
+func TestHumanResumeRolloverStableReplayMissReturnsNil(t *testing.T) {
+	db := newJournalRepositoryTestDB(t)
+	replayRepo, ok := NewThreadRepository(db).(HumanResumeRolloverReplayRepository)
+	require.True(t, ok)
+
+	replayed, err := replayRepo.GetHumanResumeRolloverReplay(
+		context.Background(), humanResumeRolloverReplayRequest("human-resume-missing"),
+	)
+
+	require.NoError(t, err)
+	require.Nil(t, replayed)
+}
+
 func TestHumanResumeRolloverRejectsCrossArtifactDriftWithoutWrites(t *testing.T) {
 	tests := []struct {
 		name  string

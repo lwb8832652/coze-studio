@@ -263,6 +263,20 @@ func (s *threadService) GetThread(ctx context.Context, id int64) (*entity.Thread
 	return s.repo.GetThread(ctx, id)
 }
 
+func (s *threadService) GetHumanResumeRolloverReplay(
+	ctx context.Context,
+	req repository.HumanResumeRolloverReplayRequest,
+) (*repository.HumanResumeRolloverReplayResult, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	replayRepo, ok := s.repo.(repository.HumanResumeRolloverReplayRepository)
+	if !ok {
+		return nil, fmt.Errorf("human resume rollover replay repository is unavailable")
+	}
+	return replayRepo.GetHumanResumeRolloverReplay(ctx, req)
+}
+
 func (s *threadService) UpdateThreadTitle(
 	ctx context.Context,
 	req *UpdateThreadTitleRequest,

@@ -87,7 +87,7 @@ func (r *threadRepository) GetHumanResumeRolloverReplay(
 		return nil, err
 	}
 	if !found {
-		return nil, gorm.ErrRecordNotFound
+		return nil, nil
 	}
 	return &HumanResumeRolloverReplayResult{
 		Run: result.Run, Message: result.Message, Event: result.Event,

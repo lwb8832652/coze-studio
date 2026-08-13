@@ -48,6 +48,71 @@ func TestCreateThreadRequiresTitle(t *testing.T) {
 	require.True(t, IsClientError(err))
 }
 
+func TestHumanResumeRolloverReplayServiceDelegatesRepositoryCapability(t *testing.T) {
+	want := &repository.HumanResumeRolloverReplayResult{
+		Run:      &entity.Run{ID: 101},
+		Replayed: true,
+	}
+	repo := &humanResumeRolloverReplayRepo{result: want}
+	svc := NewService(&Components{Repo: repo})
+	replaySvc, ok := svc.(HumanResumeRolloverReplayService)
+	require.True(t, ok)
+	req := repository.HumanResumeRolloverReplayRequest{
+		SpaceID:                1,
+		ThreadID:               2,
+		SourceRunID:            3,
+		IdempotencyKey:         "resume-1",
+		IdempotencyOperation:   "human_resume",
+		IdempotencyFingerprint: "fingerprint-1",
+		ResolvedJournalKey:     "resolved-1",
+		InterruptID:            "interrupt-1",
+	}
+
+	got, err := replaySvc.GetHumanResumeRolloverReplay(context.Background(), req)
+
+	require.NoError(t, err)
+	require.Same(t, want, got)
+	require.Equal(t, req, repo.request)
+}
+
+func TestHumanResumeRolloverReplayServicePreservesMissAndDomainError(t *testing.T) {
+	domainErr := fmt.Errorf("%w: replay authority drift", repository.ErrHumanResumeRolloverConflict)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "miss"},
+		{name: "domain error", err: domainErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &humanResumeRolloverReplayRepo{err: tc.err}
+			svc := NewService(&Components{Repo: repo}).(HumanResumeRolloverReplayService)
+
+			got, err := svc.GetHumanResumeRolloverReplay(
+				context.Background(),
+				repository.HumanResumeRolloverReplayRequest{},
+			)
+
+			require.Nil(t, got)
+			require.Equal(t, tc.err, err)
+		})
+	}
+}
+
+func TestHumanResumeRolloverReplayServiceFailsClosedWithoutRepositoryCapability(t *testing.T) {
+	svc := NewService(&Components{
+		Repo: &threadRepoWithoutHumanResumeRolloverReplay{},
+	}).(HumanResumeRolloverReplayService)
+
+	got, err := svc.GetHumanResumeRolloverReplay(
+		context.Background(),
+		repository.HumanResumeRolloverReplayRequest{},
+	)
+
+	require.Nil(t, got)
+	require.ErrorContains(t, err, "human resume rollover replay repository is unavailable")
+}
+
 func TestCreateThreadDefaultsToIdleWebTask(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 901}})
@@ -2649,6 +2714,25 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 	require.Equal(t, int64(10), repo.lastTokenUsageListReq.ThreadID)
 	require.Equal(t, int64(25), aggregate.TotalTokens)
 	require.Equal(t, int64(5), aggregate.MiddlewareTokens)
+}
+
+type humanResumeRolloverReplayRepo struct {
+	repository.ThreadRepository
+	request repository.HumanResumeRolloverReplayRequest
+	result  *repository.HumanResumeRolloverReplayResult
+	err     error
+}
+
+func (r *humanResumeRolloverReplayRepo) GetHumanResumeRolloverReplay(
+	_ context.Context,
+	req repository.HumanResumeRolloverReplayRequest,
+) (*repository.HumanResumeRolloverReplayResult, error) {
+	r.request = req
+	return r.result, r.err
+}
+
+type threadRepoWithoutHumanResumeRolloverReplay struct {
+	repository.ThreadRepository
 }
 
 type memoryRepo struct {

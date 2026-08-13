@@ -98,6 +98,64 @@ func TestGetCanonicalRunJournalReturnsFrozenBootstrap(t *testing.T) {
 	require.NotContains(t, string(response.Result().Body()), "internal_reason")
 }
 
+func TestCanonicalHumanResumeJournalBootstrapExposesInterruptedSourceAndPendingTarget(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunFixture(t, 1, "human resume journal bootstrap")
+	startedAt, endedAt := run.CreatedAt, run.CreatedAt+1
+	sourceAttemptID := "attempt-source"
+	sourceCheckpointID := int64(7001)
+	recoveryKey := "human-resume:source:response-1"
+	sourceTerminalEventID := int64(502)
+	active := uint8(1)
+	source := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: run.RunID, ExecutionRunID: run.RunID,
+		AttemptID: sourceAttemptID, Ordinal: 1,
+		Status: domainentity.RunAttemptStatusInterrupted, NextSequence: 3,
+		ProjectionState: domainentity.JournalProjectionStateHealthy,
+		CreatedAt:       run.CreatedAt, StartedAt: &startedAt, EndedAt: &endedAt,
+		TerminalEventID: &sourceTerminalEventID,
+	}
+	target := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: run.RunID, ExecutionRunID: run.RunID + 1,
+		AttemptID: "attempt-target", Ordinal: 2,
+		Status: domainentity.RunAttemptStatusPending, ActiveSlot: &active,
+		NextSequence: 1, ProjectionState: domainentity.JournalProjectionStateHealthy,
+		CreatedAt: endedAt, SourceAttemptID: &sourceAttemptID,
+		SourceCheckpointID: &sourceCheckpointID, RecoveryIdempotencyKey: &recoveryKey,
+	}
+	appagentthread.SVC.JournalQueryRepository = &canonicalJournalQueryRepositoryStub{
+		result: &domainrepo.GetJournalBootstrapResult{
+			Attempts: []*domainentity.RunAttempt{source, target}, SelectedAttempt: target,
+		},
+	}
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1)
+	h.GET("/api/workbench/threads/:thread_id/runs/:run_id/journal", GetCanonicalRunJournal)
+
+	response := performCanonicalRunJSONRequest(
+		t, h, http.MethodGet,
+		"/api/workbench/threads/1/runs/"+strconv.FormatInt(run.RunID, 10)+"/journal",
+		"",
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &body))
+	require.Equal(t, "attempt-target", body["default_attempt_id"])
+	selected := body["default_attempt"].(map[string]any)
+	require.Equal(t, "attempt-target", selected["attempt_id"])
+	require.Equal(t, "pending", selected["status"])
+	attempts := body["attempts"].([]any)
+	require.Len(t, attempts, 2)
+	require.Equal(t, "attempt-source", attempts[0].(map[string]any)["attempt_id"])
+	require.Equal(t, "interrupted", attempts[0].(map[string]any)["status"])
+	require.Equal(t, "attempt-target", attempts[1].(map[string]any)["attempt_id"])
+	require.Equal(t, "pending", attempts[1].(map[string]any)["status"])
+	responseBody := string(response.Result().Body())
+	require.NotContains(t, responseBody, "source_attempt_id")
+	require.NotContains(t, responseBody, "source_checkpoint_id")
+	require.NotContains(t, responseBody, recoveryKey)
+}
+
 func TestListCanonicalRunEventsUsesJournalAttemptSequence(t *testing.T) {
 	installAgentThreadTestService(t)
 	run := createCanonicalRunFixture(t, 1, "journal polling")

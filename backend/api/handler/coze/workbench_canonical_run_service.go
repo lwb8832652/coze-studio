@@ -1091,31 +1091,6 @@ func resumeCanonicalHumanInteraction(
 			false,
 		), nil
 	}
-	if sourceRun.Status != appagentthread.RunStatusInterrupted {
-		return nil, newCanonicalError(
-			consts.StatusConflict,
-			"run_not_resumable",
-			"Run is not resumable",
-			"resume_source_not_interrupted",
-			false,
-		), nil
-	}
-	// ResumeHumanInteraction keeps its existing application semantics for current
-	// callers. Canonical requests add this authorized lookup so a header key already
-	// owned by another Thread is reported as the public 409 contract, rather than
-	// being mistaken for an invalid resumed Run after the application call.
-	if strings.TrimSpace(idempotencyKey) != "" {
-		if _, err := appagentthread.SVC.GetRunByIdempotencyKey(
-			accessCtx,
-			&appagentthread.GetRunByIdempotencyKeyRequest{
-				ThreadID: threadID, IdempotencyKey: idempotencyKey,
-				IdempotencyOperation:   submission.IdempotencyOperation,
-				IdempotencyFingerprint: submission.IdempotencyFingerprint,
-			},
-		); err != nil {
-			return nil, nil, err
-		}
-	}
 	response := submission.Response
 	resumed, err := appagentthread.SVC.ResumeHumanInteraction(accessCtx, &appagentthread.ResumeHumanInteractionRequest{
 		ThreadID:                threadID,

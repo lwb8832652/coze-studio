@@ -667,6 +667,13 @@ type ThreadService interface {
 	CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 }
 
+type HumanResumeRolloverReplayService interface {
+	GetHumanResumeRolloverReplay(
+		ctx context.Context,
+		req repository.HumanResumeRolloverReplayRequest,
+	) (*repository.HumanResumeRolloverReplayResult, error)
+}
+
 type JournalService interface {
 	CreateJournalAttempt(ctx context.Context, req *CreateJournalAttemptRequest) (*entity.RunAttempt, error)
 	AppendJournalEvent(ctx context.Context, req *AppendJournalEventRequest) (*entity.JournalEvent, error)

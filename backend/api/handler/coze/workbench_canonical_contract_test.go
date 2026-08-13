@@ -655,6 +655,7 @@ func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
 		{"idempotency conflict", appagentthread.ErrRunIdempotencyConflict, hertzconsts.StatusConflict, "idempotency_conflict", false},
 		{"invalid resume", appagentthread.ErrHumanInteractionResumeInvalid, hertzconsts.StatusUnprocessableEntity, "invalid_resume", false},
 		{"resume conflict", appagentthread.ErrHumanInteractionResumeConflict, hertzconsts.StatusConflict, "run_not_resumable", false},
+		{"resume active run conflict", &canonicalHumanResumeConflictTestError{cause: appagentthread.ErrActiveRunExists}, hertzconsts.StatusConflict, "run_not_resumable", false},
 		{"journal budget", errCanonicalJournalBudgetExceeded, hertzconsts.StatusUnprocessableEntity, "journal_too_large", false},
 		{"deadline", context.DeadlineExceeded, hertzconsts.StatusGatewayTimeout, "run_wait_timeout", true},
 		{"canceled", context.Canceled, hertzconsts.StatusRequestTimeout, "request_canceled", true},
@@ -674,6 +675,18 @@ func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
 			require.NotContains(t, public.Detail, tt.err.Error())
 		})
 	}
+}
+
+type canonicalHumanResumeConflictTestError struct {
+	cause error
+}
+
+func (e *canonicalHumanResumeConflictTestError) Error() string {
+	return "human interaction resume conflict"
+}
+
+func (e *canonicalHumanResumeConflictTestError) Is(target error) bool {
+	return target == appagentthread.ErrHumanInteractionResumeConflict || errors.Is(e.cause, target)
 }
 
 func TestCanonicalErrorMapsUnsupportedExecutionControlPath(t *testing.T) {

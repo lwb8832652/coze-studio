@@ -2070,12 +2070,14 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	}
 	domainSVC := &recordingThreadService{
 		gotRun: &entity.Run{
-			ID:       20,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusInterrupted,
-			Config:   legacyConfig,
-			Context:  legacyContext,
+			ID:        20,
+			ThreadID:  10,
+			SpaceID:   1,
+			CreatorID: 2,
+			RunKind:   entity.RunKindTask,
+			Status:    entity.RunStatusInterrupted,
+			Config:    legacyConfig,
+			Context:   legacyContext,
 		},
 		checkpoints: []*entity.Checkpoint{
 			{
@@ -2126,6 +2128,7 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	require.Zero(t, domainSVC.humanResumeReplayCalls)
 	require.Equal(t, 1, journalRepo.calls)
 	require.Equal(t, int64(20), journalRepo.sourceRunID)
 	require.Equal(t, int64(21), resp.Run.RunID)
@@ -2161,13 +2164,183 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 	))
 }
 
+func TestApplicationResumeHumanInteractionCreatesJournalRollover(t *testing.T) {
+	activeSlot := uint8(1)
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1},
+		Interrupts: map[string]ADKInterruptItem{
+			"interrupt-1": {
+				ID: "interrupt-1", Info: HumanInteractionPrompt{
+					Schema: humanInteractionSchema, InteractionID: "hi_1",
+					Kind: HumanInteractionKindClarification, Question: "请选择时间范围",
+					Required: true, AllowFreeText: true,
+				},
+			},
+		},
+	}
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			AssistantID: "agent", RunKind: entity.RunKindTask,
+			Status: entity.RunStatusInterrupted, Config: `{"runtime":"eino_adk"}`,
+		},
+		checkpoints: []*entity.Checkpoint{{
+			ID: 503, ThreadID: 10, RunID: 20, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "checkpoint-1", EnvelopeVersion: 1,
+			ChannelValues:   mustADKCheckpointEnvelopeJSON(t, envelope),
+			ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{"runtime":"eino_adk"}`,
+		}},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run:     &entity.Run{ID: 21, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusQueued},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser},
+			Event:   &entity.RunEvent{ID: 40, ThreadID: 10, RunID: 21, EventType: humanInteractionResolvedEventType},
+			Attempt: &entity.RunAttempt{ID: 50, ThreadID: 10, ExecutionRunID: 21, Status: entity.RunAttemptStatusPending},
+			Created: true,
+		},
+	}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{attempt: &entity.RunAttempt{
+		ID: 91, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "attempt-source", Status: entity.RunAttemptStatusRunning,
+		ActiveSlot: &activeSlot, EnrollmentVersion: "1.0", SnapshotsEnabled: true,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyKey = "resume-key"
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("c", 64)
+	req.PersistMessageReference = true
+	req.Response.SubmittedAt = 1
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(21), resp.Run.RunID)
+	require.Equal(t, 1, domainSVC.humanResumeReplayCalls)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.True(t, domainSVC.createRunBundleReq.EnrollJournal)
+	require.NotNil(t, domainSVC.createRunBundleReq.JournalEnrollment)
+	require.NotNil(t, domainSVC.createRunBundleReq.JournalEnrollment.HumanResume)
+	human := domainSVC.createRunBundleReq.JournalEnrollment.HumanResume
+	require.Equal(t, int64(20), human.JournalRunID)
+	require.Equal(t, int64(20), human.SourceRunID)
+	require.Equal(t, "attempt-source", human.SourceAttemptID)
+	require.Equal(t, int64(503), human.SourceCheckpointID)
+	require.Equal(t, "resume-key", human.IdempotencyKey)
+	require.False(t, domainSVC.createRunBundleReq.Event.JournalProjectionFailed)
+	require.NotNil(t, domainSVC.createRunBundleReq.Event.Journal)
+	var command struct {
+		Resume struct {
+			Targets map[string]HumanInteractionResponse `json:"targets"`
+		} `json:"resume"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Command), &command))
+	require.Greater(t, command.Resume.Targets["interrupt-1"].SubmittedAt, int64(1))
+}
+
+func TestApplicationResumeHumanInteractionRejectsDriftedActiveJournalAttemptBeforeCheckpoint(t *testing.T) {
+	activeSlot := uint8(1)
+	domainSVC := &recordingThreadService{gotRun: &entity.Run{
+		ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
+	}}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{attempt: &entity.RunAttempt{
+		ID: 91, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 21,
+		AttemptID: "attempt-successor", Status: entity.RunAttemptStatusRunning,
+		ActiveSlot: &activeSlot,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyKey = "resume-key"
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("d", 64)
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+	require.EqualError(t, err, "active journal attempt does not match source run")
+	require.Equal(t, 1, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionRejectsIncompleteJournalRolloverBundle(t *testing.T) {
+	activeSlot := uint8(1)
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1, Runtime: string(RuntimeModeEinoADK), RuntimeVersion: "0.9.9", RuntimeKey: "checkpoint-1",
+		MessageType: "schema.Message", Checkpoint: []byte{1},
+		Interrupts: map[string]ADKInterruptItem{"interrupt-1": {
+			ID: "interrupt-1", Info: HumanInteractionPrompt{
+				Schema: humanInteractionSchema, InteractionID: "hi_1",
+				Kind: HumanInteractionKindClarification, Required: true, AllowFreeText: true,
+			},
+		}},
+	}
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
+		},
+		checkpoints: []*entity.Checkpoint{{
+			ID: 503, ThreadID: 10, RunID: 20, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "checkpoint-1", EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, envelope), Metadata: `{"runtime":"eino_adk"}`,
+		}},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run:     &entity.Run{ID: 21, ThreadID: 10},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 21},
+			Event:   &entity.RunEvent{ID: 40, ThreadID: 10, RunID: 21},
+			Created: true,
+		},
+	}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{attempt: &entity.RunAttempt{
+		ID: 91, ThreadID: 10, JournalRunID: 20, ExecutionRunID: 20,
+		AttemptID: "attempt-source", Status: entity.RunAttemptStatusRunning, ActiveSlot: &activeSlot,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("2", 64)
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.Nil(t, resp)
+	require.EqualError(t, err, "agent thread service returned incomplete human resume bundle")
+	require.NotNil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionRejectsChildSourceBeforeReplay(t *testing.T) {
+	domainSVC := &recordingThreadService{gotRun: &entity.Run{
+		ID: 20, ThreadID: 10, ParentRunID: 19, SpaceID: 1, CreatorID: 2,
+		RunKind: entity.RunKindSubagent, Status: entity.RunStatusInterrupted,
+	}}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), validHumanInteractionResumeRequest())
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+	require.EqualError(t, err, "source run must be a resumable top-level task")
+	require.Zero(t, domainSVC.humanResumeReplayCalls)
+	require.Empty(t, domainSVC.getRunByIdemKey)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
 func TestApplicationResumeHumanInteractionRejectsNonInterruptedSourceRun(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: &recordingThreadService{
 		gotRun: &entity.Run{
-			ID:       20,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusRunning,
+			ID:        20,
+			ThreadID:  10,
+			SpaceID:   1,
+			CreatorID: 2,
+			RunKind:   entity.RunKindTask,
+			Status:    entity.RunStatusRunning,
 		},
 	}}
 
@@ -2205,10 +2378,12 @@ func TestApplicationResumeHumanInteractionRejectsUnknownInterrupt(t *testing.T) 
 	app := &ApplicationService{
 		ThreadSVC: &recordingThreadService{
 			gotRun: &entity.Run{
-				ID:       20,
-				ThreadID: 10,
-				SpaceID:  1,
-				Status:   entity.RunStatusInterrupted,
+				ID:        20,
+				ThreadID:  10,
+				SpaceID:   1,
+				CreatorID: 2,
+				RunKind:   entity.RunKindTask,
+				Status:    entity.RunStatusInterrupted,
 			},
 			checkpoints: []*entity.Checkpoint{
 				{
@@ -2249,10 +2424,12 @@ func TestApplicationResumeHumanInteractionRejectsUnknownInterrupt(t *testing.T) 
 func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		gotRun: &entity.Run{
-			ID:       20,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusInterrupted,
+			ID:        20,
+			ThreadID:  10,
+			SpaceID:   1,
+			CreatorID: 2,
+			RunKind:   entity.RunKindTask,
+			Status:    entity.RunStatusInterrupted,
 		},
 		idempotentRun: &entity.Run{
 			ID:             21,
@@ -2261,6 +2438,7 @@ func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testin
 			Status:         entity.RunStatusQueued,
 			IdempotencyKey: "resume-key",
 		},
+		humanResumeReplayErr: domainrepo.ErrJournalNotEnrolled,
 	}
 	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: errors.New("journal lookup must not run")}
 	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
@@ -2285,40 +2463,177 @@ func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testin
 	require.Equal(t, 0, journalRepo.calls)
 }
 
-func TestApplicationResumeHumanInteractionRejectsJournalEnrolledSourceRun(t *testing.T) {
-	tests := []struct {
-		name    string
-		attempt *entity.RunAttempt
-		err     error
-	}{
-		{name: "active attempt", attempt: &entity.RunAttempt{ID: 91, JournalRunID: 20, Status: entity.RunAttemptStatusRunning}},
-		{name: "terminal attempt", err: domainrepo.ErrJournalAttemptTerminal},
+func TestApplicationResumeHumanInteractionReturnsExistingNonJournalRunAfterFullReplayMiss(t *testing.T) {
+	operation := "workbench.run.resume.v1"
+	fingerprint := strings.Repeat("e", 64)
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusSucceeded,
+		},
+		idempotentRun: &entity.Run{
+			ID: 21, ThreadID: 10, SpaceID: 1, Status: entity.RunStatusRunning,
+			IdempotencyKey: "resume-key",
+			Metadata: fmt.Sprintf(`{"_idempotency":{"operation":%q,"fingerprint":%q}}`,
+				operation, fingerprint),
+		},
+		humanResumeReplayErr: domainrepo.ErrJournalNotEnrolled,
 	}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: errors.New("journal lookup must not run")}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyKey = "resume-key"
+	req.IdempotencyOperation = operation
+	req.IdempotencyFingerprint = fingerprint
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			domainSVC := &recordingThreadService{gotRun: &entity.Run{
-				ID: 20, ThreadID: 10, SpaceID: 1, Status: entity.RunStatusInterrupted,
-			}}
-			journalRepo := &humanInteractionJournalRecoveryRepositoryStub{attempt: tc.attempt, err: tc.err}
-			app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
 
-			resp, err := app.ResumeHumanInteraction(context.Background(), validHumanInteractionResumeRequest())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int64(21), resp.Run.RunID)
+	require.Equal(t, 1, domainSVC.humanResumeReplayCalls)
+	require.Equal(t, "resume-key", domainSVC.getRunByIdemKey)
+	require.Zero(t, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
 
-			require.Nil(t, resp)
-			require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
-			require.EqualError(t, err, "journal-enrolled human interaction resume requires attempt rollover")
-			require.Equal(t, 1, journalRepo.calls)
-			require.Nil(t, domainSVC.listCheckpointsReq)
-			require.Nil(t, domainSVC.createRunBundleReq)
-		})
+func TestApplicationResumeHumanInteractionReturnsFullRolloverReplayBeforeMutableState(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusSucceeded,
+		},
+		humanResumeReplay: &domainrepo.HumanResumeRolloverReplayResult{
+			Run: &entity.Run{
+				ID: 21, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusRunning,
+			},
+			Message:       &entity.Message{ID: 30, ThreadID: 10, RunID: 21},
+			Event:         &entity.RunEvent{ID: 40, ThreadID: 10, RunID: 21},
+			Attempt:       &entity.RunAttempt{ID: 50, ThreadID: 10, ExecutionRunID: 21},
+			SourceAttempt: &entity.RunAttempt{ID: 51, ThreadID: 10, ExecutionRunID: 20},
+			TerminalEvent: &entity.RunEvent{ID: 41, ThreadID: 10, RunID: 20},
+			Replayed:      true,
+		},
 	}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: errors.New("attempt lookup must not run")}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyKey = "resume-key"
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("a", 64)
+	req.PersistMessageReference = true
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int64(21), resp.Run.RunID)
+	require.Equal(t, 1, domainSVC.humanResumeReplayCalls)
+	require.Equal(t, int64(20), domainSVC.humanResumeReplayReq.SourceRunID)
+	require.Equal(t, "resume-key", domainSVC.humanResumeReplayReq.IdempotencyKey)
+	require.Equal(t, "最近 7 天", domainSVC.humanResumeReplayReq.Response.Answer)
+	require.True(t, domainSVC.humanResumeReplayReq.PersistMessageReference)
+	require.Zero(t, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionRejectsCorruptRolloverReplayBeforeMutableReads(t *testing.T) {
+	wantErr := fmt.Errorf("%w: target message drift", domainrepo.ErrRunIdempotencyConflict)
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
+		},
+		humanResumeReplayErr: wantErr,
+	}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: errors.New("attempt lookup must not run")}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyKey = "resume-key"
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("b", 64)
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, domainrepo.ErrRunIdempotencyConflict)
+	require.Equal(t, 1, domainSVC.humanResumeReplayCalls)
+	require.Zero(t, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionRejectsIncompleteFullRolloverReplay(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusSucceeded,
+		},
+		humanResumeReplay: &domainrepo.HumanResumeRolloverReplayResult{
+			Run: &entity.Run{ID: 21, ThreadID: 10, SpaceID: 1}, Replayed: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("f", 64)
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.Nil(t, resp)
+	require.EqualError(t, err, "human resume rollover replay result is incomplete")
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionMapsRolloverReplayConflict(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRun: &entity.Run{
+			ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
+		},
+		humanResumeReplayErr: domainrepo.ErrHumanResumeRolloverConflict,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	req := validHumanInteractionResumeRequest()
+	req.IdempotencyOperation = "workbench.run.resume.v1"
+	req.IdempotencyFingerprint = strings.Repeat("1", 64)
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), req)
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+	require.ErrorIs(t, err, domainrepo.ErrHumanResumeRolloverConflict)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationResumeHumanInteractionRejectsTerminalJournalSourceAttempt(t *testing.T) {
+	domainSVC := &recordingThreadService{gotRun: &entity.Run{
+		ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
+	}}
+	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: domainrepo.ErrJournalAttemptTerminal}
+	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
+
+	resp, err := app.ResumeHumanInteraction(context.Background(), validHumanInteractionResumeRequest())
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+	require.EqualError(t, err, "journal human interaction source attempt is terminal")
+	require.Equal(t, 1, journalRepo.calls)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
 }
 
 func TestApplicationResumeHumanInteractionPropagatesJournalLookupError(t *testing.T) {
 	wantErr := errors.New("journal lookup failed")
 	domainSVC := &recordingThreadService{gotRun: &entity.Run{
-		ID: 20, ThreadID: 10, SpaceID: 1, Status: entity.RunStatusInterrupted,
+		ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted,
 	}}
 	journalRepo := &humanInteractionJournalRecoveryRepositoryStub{err: wantErr}
 	app := &ApplicationService{ThreadSVC: domainSVC, JournalRecoveryRepository: journalRepo}
@@ -5888,6 +6203,10 @@ type recordingThreadService struct {
 	getRunID                       int64
 	completeRunErr                 error
 	completeRunErrors              map[int64]error
+	humanResumeReplay              *domainrepo.HumanResumeRolloverReplayResult
+	humanResumeReplayErr           error
+	humanResumeReplayReq           domainrepo.HumanResumeRolloverReplayRequest
+	humanResumeReplayCalls         int
 }
 
 type recordingArtifactService struct {
@@ -6542,6 +6861,15 @@ func (s *recordingThreadService) GetRunByIdempotencyKey(
 	s.getRunByIdemSpaceID = spaceID
 	s.getRunByIdemKey = idempotencyKey
 	return s.idempotentRun, nil
+}
+
+func (s *recordingThreadService) GetHumanResumeRolloverReplay(
+	_ context.Context,
+	req domainrepo.HumanResumeRolloverReplayRequest,
+) (*domainrepo.HumanResumeRolloverReplayResult, error) {
+	s.humanResumeReplayCalls++
+	s.humanResumeReplayReq = req
+	return s.humanResumeReplay, s.humanResumeReplayErr
 }
 
 func (s *recordingThreadService) ListRuns(ctx context.Context, req *domainservice.ListRunsRequest) ([]*entity.Run, int64, error) {

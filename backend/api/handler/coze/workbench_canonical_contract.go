@@ -599,6 +599,14 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"top_level_retry_source_not_failed",
 			false,
 		)
+	case errors.Is(err, appagentthread.ErrHumanInteractionResumeConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_resumable",
+			"Run is not resumable",
+			"human_interaction_resume_conflict",
+			false,
+		)
 	case errors.Is(err, appagentthread.ErrActiveRunExists):
 		return *newCanonicalError(
 			hertzconsts.StatusConflict,
@@ -621,14 +629,6 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"invalid_resume",
 			"Resume request does not match the pending interaction",
 			"invalid_human_interaction_resume",
-			false,
-		)
-	case errors.Is(err, appagentthread.ErrHumanInteractionResumeConflict):
-		return *newCanonicalError(
-			hertzconsts.StatusConflict,
-			"run_not_resumable",
-			"Run is not resumable",
-			"human_interaction_resume_conflict",
 			false,
 		)
 	case errors.Is(err, errCanonicalJournalBudgetExceeded):
