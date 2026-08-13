@@ -33,6 +33,146 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
+func TestCreateCanonicalRunTypedV2TurnPersistsMappedMessage(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "typed create turn", `{}`)
+	body := canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("typed follow-up"), "")
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID),
+		body,
+		ut.Header{Key: "Idempotency-Key", Value: "typed-create-turn"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	messages, runs := canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, "typed follow-up", messages[0].Content)
+	require.NotEmpty(t, runs[0].Config)
+	require.JSONEq(t, runs[0].Config, messages[0].Metadata)
+	require.Contains(t, runs[0].Input, "typed follow-up")
+}
+
+func TestWaitCanonicalRunTypedV2RetryReplaysWithoutMessage(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "typed wait retry", `{}`)
+	source := createCanonicalRunFixture(t, thread.ThreadID, "failed typed source")
+	failCanonicalRunFixture(t, source, "runtime_failed", "failed")
+	submissionBody := canonicalTypedRunRetryV2(source.RunID, "retry typed source")
+	body := canonicalTypedRunRequestV2(submissionBody, "")
+	header := ut.Header{Key: "Idempotency-Key", Value: "typed-wait-retry"}
+	created := performCanonicalRunJSONRequest(
+		t, canonicalRunTestServer(), http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID), body, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var projected canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &projected))
+	retryRunID := mustCanonicalTestID(t, projected.RunID)
+	messages, runs := canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+	var retryRun *appagentthread.RunSummary
+	for _, run := range runs {
+		if run != nil && run.RunID == retryRunID {
+			retryRun = run
+			break
+		}
+	}
+	require.NotNil(t, retryRun)
+	require.Contains(t, retryRun.Input, "retry typed source")
+	require.NotContains(t, retryRun.Metadata, `"_message"`)
+	completeCanonicalRunWithPublicState(t, retryRun, `{"custom":{"status":"waited"}}`)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/wait", thread.ThreadID),
+		body,
+		header,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var values map[string]any
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &values))
+	require.Equal(t, "waited", values["custom"].(map[string]any)["status"])
+	messages, runs = canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+}
+
+func TestCreateCanonicalRunTypedV2RejectsVersionMixingAndCaseVariant(t *testing.T) {
+	typedUnknownBeforeBinder := canonicalTypedV2Replace(
+		canonicalTypedRunTurnV2("strict before binder"),
+		`"input":{`,
+		`"input":{"future":"must-not-leak",`,
+	)
+	tests := []struct {
+		name, body, code string
+	}{
+		{"input null", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"input":null`), "invalid_request"},
+		{"command case folded", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"CoMmAnD":null`), "invalid_request"},
+		{"metadata", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"metadata":{}`), "invalid_request"},
+		{"config null", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"config":null`), "invalid_request"},
+		{"context", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"context":{}`), "invalid_request"},
+		{"coze case folded", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"CoZe":null`), "invalid_request"},
+		{"typed root case variant", fmt.Sprintf(`{"assistant_id":"agent","Submission_V2":%s}`, canonicalTypedRunTurnV2("case variant")), "unsupported_sdk_field"},
+		{"typed root unicode fold variant", fmt.Sprintf(`{"assistant_id":"agent","ſubmission_v2":%s,"input":"{\"message\":\"must not run\",\"uploaded_files\":[]}"}`, canonicalTypedRunTurnV2("unicode case variant")), "unsupported_sdk_field"},
+		{"typed root unicode fold duplicate", fmt.Sprintf(`{"assistant_id":"agent","submission_v2":%s,"ſubmission_v2":%s}`, canonicalTypedRunTurnV2("exact"), canonicalTypedRunTurnV2("alias")), "unsupported_sdk_field"},
+		{"typed assistant must be exact", fmt.Sprintf(`{"assistant_id":" agent ","submission_v2":%s}`, canonicalTypedRunTurnV2("assistant exact")), "invalid_request"},
+		{"typed strict validation precedes binder", fmt.Sprintf(`{"assistant_id":{},"submission_v2":%s}`, typedUnknownBeforeBinder), "unsupported_sdk_field"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			thread := createCanonicalTestThread(t, 1001, "typed run rejection", `{}`)
+			response := performCanonicalRunJSONRequest(
+				t, canonicalRunTestServer(), http.MethodPost,
+				fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID), test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			require.Empty(t, canonicalRunsForThread(t, thread.ThreadID))
+		})
+	}
+}
+
+func canonicalTypedRunTurnV2(message string) string {
+	return canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictRunV2),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+}
+
+func canonicalTypedRunRetryV2(sourceRunID int64, message string) string {
+	body := canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictRunV2WithOptionals()),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+	return canonicalTypedV2Replace(
+		body,
+		`"source_run_id":"9"`,
+		fmt.Sprintf(`"source_run_id":"%d"`, sourceRunID),
+	)
+}
+
+func canonicalTypedRunRequestV2(submission, extraFields string) string {
+	return fmt.Sprintf(
+		`{"assistant_id":"agent","submission_v2":%s%s}`,
+		submission,
+		extraFields,
+	)
+}
+
 func TestCanonicalRunRequestDefaultsAndAllowlist(t *testing.T) {
 	installAgentThreadTestService(t)
 

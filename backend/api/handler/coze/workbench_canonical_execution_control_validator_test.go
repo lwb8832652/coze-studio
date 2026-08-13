@@ -391,28 +391,46 @@ func TestCanonicalExecutionControlIngressBudgets(t *testing.T) {
 }
 
 func TestCanonicalExecutionControlIngressTypedV2(t *testing.T) {
-	tests := []struct{ name, body, path string }{
+	tests := []struct {
+		name, body, path string
+		kind             canonicalExecutionControlIngressKind
+	}{
 		{
 			name: "initial direct",
 			body: `{"initial_submission_v2":{"config":{"mode":"legacy"}}}`,
 			path: "initial_submission_v2.config.mode",
+			kind: canonicalExecutionControlCreateThread,
 		},
 		{
 			name: "deferred reserved nested",
 			body: `{"deferred_initial_submission_v2":{"config":{"configurable":{"context":{"reasoning_effort":"high"}}}}}`,
 			path: "deferred_initial_submission_v2.config.configurable.context.reasoning_effort",
+			kind: canonicalExecutionControlCreateThread,
 		},
 		{
 			name: "typed control wins in mixed request",
 			body: `{"initial_submission_v2":{"config":{"thinking_enabled":true}},"coze":{"initial_run":{}}}`,
 			path: "initial_submission_v2.config.thinking_enabled",
+			kind: canonicalExecutionControlCreateThread,
+		},
+		{
+			name: "run typed direct wins over version mixing",
+			body: `{"input":null,"submission_v2":{"config":{"mode":"legacy"}}}`,
+			path: "submission_v2.config.mode",
+			kind: canonicalExecutionControlRunSubmission,
+		},
+		{
+			name: "run typed reserved nested",
+			body: `{"submission_v2":{"config":{"configurable":{"context":{"reasoning_effort":"high"}}}}}`,
+			path: "submission_v2.config.configurable.context.reasoning_effort",
+			kind: canonicalExecutionControlRunSubmission,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			public := validateCanonicalExecutionControlIngress(
 				[]byte(test.body),
-				canonicalExecutionControlCreateThread,
+				test.kind,
 			)
 			assertCanonicalExecutionControlUnsupported(t, public, test.path)
 		})

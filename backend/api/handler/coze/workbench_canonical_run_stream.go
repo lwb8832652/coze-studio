@@ -87,6 +87,11 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.ThreadID = threadID
+	submission, public := parseCanonicalRunSubmission(c, false)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	if err := appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
 		ViewerID: workbenchViewerIDFromCtx(ctx),
@@ -94,12 +99,6 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		ThreadID: threadID,
 	}); err != nil {
 		writeCanonicalApplicationError(ctx, c, err)
-		return
-	}
-
-	submission, public := parseCanonicalRunSubmission(c, false)
-	if public != nil {
-		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
 	requestLog.ResponseBodyKind = "event_page"

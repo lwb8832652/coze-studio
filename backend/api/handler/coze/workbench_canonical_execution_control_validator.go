@@ -132,6 +132,20 @@ func validateCanonicalExecutionControlIngress(
 				return public
 			}
 		}
+		submission := canonicalExecutionControlObjectField(root, "submission_v2")
+		if submission != nil && submission.kind == canonicalExecutionControlJSONObject {
+			config := canonicalExecutionControlObjectField(submission, "config")
+			if config != nil && config.kind == canonicalExecutionControlJSONObject {
+				if public := auditCanonicalExecutionControlConfig(
+					config,
+					"submission_v2.config",
+					0,
+					&budget,
+				); public != nil {
+					return public
+				}
+			}
+		}
 	}
 	return nil
 }

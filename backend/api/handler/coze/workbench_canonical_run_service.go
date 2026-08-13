@@ -68,6 +68,7 @@ type canonicalRunOptions struct {
 
 type canonicalCreateRunRequest struct {
 	AssistantID       string          `json:"assistant_id"`
+	SubmissionV2      json.RawMessage `json:"submission_v2,omitempty"`
 	Input             json.RawMessage `json:"input"`
 	Command           json.RawMessage `json:"command,omitempty"`
 	Metadata          map[string]any  `json:"metadata,omitempty"`
@@ -970,6 +971,12 @@ func resolveCanonicalRunInput(
 	if submission == nil {
 		return canonicalInvalidRequest("Run request is required", "missing_request"), nil
 	}
+	// A typed retry already carries its validated prompt in Input while deliberately
+	// leaving MessageContent empty so the application cannot append a User Message.
+	// Legacy retries keep their non-empty MessageContent and use the resolver below.
+	if submission.TopLevelRetry != nil && submission.MessageContent == "" {
+		return nil, nil
+	}
 	if len(submission.UploadedFileIDs) == 0 {
 		return nil, setCanonicalResolvedRunInput(submission, []any{})
 	}
@@ -1476,6 +1483,22 @@ func parseCanonicalRunSubmission(
 	); public != nil {
 		return nil, public
 	}
+	typedRaw, typed, public := canonicalTypedRunV2RootSubmission(c.Request.Body())
+	if public != nil {
+		return nil, public
+	}
+	var typedValue *canonicalTypedRunV2
+	var typedSubmission *canonicalRunSubmission
+	if typed {
+		typedValue, public = decodeCanonicalTypedRunSubmissionV2(typedRaw)
+		if public != nil {
+			return nil, public
+		}
+		typedSubmission, public = mapCanonicalTypedRunV2(typedValue)
+		if public != nil {
+			return nil, public
+		}
+	}
 	var req canonicalCreateRunRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
 		return nil, public
@@ -1489,8 +1512,20 @@ func parseCanonicalRunSubmission(
 		return nil, public
 	}
 	assistantID := strings.TrimSpace(req.AssistantID)
-	if assistantID != canonicalPublicAssistantID {
+	if typed && req.AssistantID != canonicalPublicAssistantID {
 		return nil, canonicalInvalidRequest("assistant_id is invalid", "invalid_assistant_id")
+	}
+	if !typed && assistantID != canonicalPublicAssistantID {
+		return nil, canonicalInvalidRequest("assistant_id is invalid", "invalid_assistant_id")
+	}
+	if typed {
+		return completeCanonicalTypedRunSubmission(
+			typedSubmission,
+			typedValue,
+			options,
+			raiseError,
+			c,
+		)
 	}
 	command, resume, public := canonicalRunCommandPayload(req.Command)
 	if public != nil {
@@ -1560,6 +1595,79 @@ func parseCanonicalRunSubmission(
 		submission.IdempotencyOperation = canonicalRunIdempotencyOperationRetry
 		submission.IdempotencyFingerprint = canonicalRunRetryRequestFingerprint(submission)
 	} else if idempotencyKey != "" {
+		submission.IdempotencyOperation = canonicalRunIdempotencyOperationTurn
+		submission.IdempotencyFingerprint = canonicalRunTurnRequestFingerprint(submission)
+	}
+	return submission, nil
+}
+
+func canonicalTypedRunV2RootSubmission(raw []byte) (json.RawMessage, bool, *canonicalError) {
+	root, err := parseCanonicalExecutionControlOrderedJSON(raw)
+	if err != nil || root == nil || root.kind != canonicalExecutionControlJSONObject {
+		return nil, false, nil
+	}
+	typed := false
+	legacy := false
+	for _, field := range root.fields {
+		switch {
+		case strings.EqualFold(field.name, "submission_v2"):
+			if field.name != "submission_v2" {
+				return nil, false, canonicalUnsupportedField(canonicalV2SafeKey(field.name))
+			}
+			typed = true
+		case strings.EqualFold(field.name, "input"),
+			strings.EqualFold(field.name, "command"),
+			strings.EqualFold(field.name, "metadata"),
+			strings.EqualFold(field.name, "config"),
+			strings.EqualFold(field.name, "context"),
+			strings.EqualFold(field.name, "coze"):
+			legacy = true
+		}
+	}
+	if typed && legacy {
+		return nil, false, canonicalTypedV2Mixed("submission_v2")
+	}
+	if !typed {
+		return nil, false, nil
+	}
+	rawRoot, ok := canonicalV2RootRawMessages(raw)
+	if !ok || rawRoot["submission_v2"] == nil {
+		return nil, false, canonicalTypedV2Invalid("submission_v2")
+	}
+	return rawRoot["submission_v2"], true, nil
+}
+
+func completeCanonicalTypedRunSubmission(
+	submission *canonicalRunSubmission,
+	typed *canonicalTypedRunV2,
+	options canonicalRunOptions,
+	raiseError *bool,
+	c *app.RequestContext,
+) (*canonicalRunSubmission, *canonicalError) {
+	if submission == nil || typed == nil || typed.Value.Input == nil {
+		return nil, canonicalTypedV2Invalid("submission_v2")
+	}
+	var public *canonicalError
+	idempotencyKey, public := canonicalRunIdempotencyKey(c)
+	if public != nil {
+		return nil, public
+	}
+	submission.Options = options
+	submission.RaiseError = raiseError
+	submission.IdempotencyKey = idempotencyKey
+	submission.AcceptedHeaderKind = "omitted"
+	if idempotencyKey == "" {
+		submission.IdempotencyOperation = ""
+		submission.IdempotencyFingerprint = ""
+		return submission, nil
+	}
+	submission.AcceptedHeaderKind = "present"
+	if submission.TopLevelRetry != nil {
+		submission.IdempotencyOperation = canonicalRunIdempotencyOperationRetry
+		fingerprintInput := *submission
+		fingerprintInput.MessageContent = strings.TrimSpace(typed.Value.Input.Message)
+		submission.IdempotencyFingerprint = canonicalRunRetryRequestFingerprint(&fingerprintInput)
+	} else {
 		submission.IdempotencyOperation = canonicalRunIdempotencyOperationTurn
 		submission.IdempotencyFingerprint = canonicalRunTurnRequestFingerprint(submission)
 	}

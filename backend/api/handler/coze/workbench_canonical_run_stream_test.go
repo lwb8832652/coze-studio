@@ -46,6 +46,36 @@ const canonicalRunStreamRequestBody = `{
 	"on_disconnect":"continue"
 }`
 
+func TestStreamCanonicalRunTypedV2RejectsBeforeThreadAuthorizationAndSSE(t *testing.T) {
+	installAgentThreadTestService(t)
+	authorizer := &countingCanonicalRunThreadAuthorizer{}
+	appagentthread.SVC.ThreadAuthorizer = authorizer
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	invalid := canonicalTypedV2Replace(
+		canonicalTypedRunTurnV2("typed invalid stream"),
+		`"message":"typed invalid stream","uploaded_files":[]`,
+		`"message":"typed invalid stream","uploaded_files":[],"future":"do-not-echo"`,
+	)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunStreamTestServer(20*time.Millisecond),
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		canonicalTypedRunRequestV2(invalid, `,"stream_mode":["events"]`),
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_sdk_field", public.Code)
+	require.Contains(t, public.Detail, "submission_v2.input.future")
+	require.NotContains(t, public.Detail, "do-not-echo")
+	require.Zero(t, authorizer.calls)
+	require.Empty(t, writers.writers)
+	require.NotEqual(t, "text/event-stream; charset=utf-8", response.Result().Header.Get("Content-Type"))
+}
+
 func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) {
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
@@ -221,27 +251,28 @@ func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE(t *testing.T) {
 	require.Empty(t, canonicalRunsForThread(t, 1))
 }
 
-func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
+func TestStreamCanonicalRunParsesPathBeforeReadingSubmission(t *testing.T) {
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
-	h := server.Default()
-	h.Use(workbenchSessionMiddlewareForTest(999))
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
 	h.POST("/api/workbench/threads/:thread_id/runs/stream", StreamCanonicalRun)
 
 	response := performCanonicalRunJSONRequest(
 		t,
 		h,
 		http.MethodPost,
-		"/api/workbench/threads/1/runs/stream",
+		"/api/workbench/threads/not-a-thread/runs/stream",
 		`{`,
-		ut.Header{Key: canonicalSpaceIDHeader, Value: "1"},
 	)
 
-	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "invalid_path_parameter", public.Code)
 	require.Empty(t, writers.writers)
 }
 
-func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *testing.T) {
+func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization(t *testing.T) {
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
@@ -255,10 +286,10 @@ func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *tes
 		`{`,
 	)
 
-	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Result().Body())
 	var public canonicalError
 	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
-	require.Equal(t, "resource_not_found", public.Code)
+	require.Equal(t, "invalid_json", public.Code)
 	require.Empty(t, writers.writers)
 }
 
@@ -1126,6 +1157,10 @@ type revokedCanonicalJournalThreadAuthorizer struct {
 	calls int
 }
 
+type countingCanonicalRunThreadAuthorizer struct {
+	calls int
+}
+
 type revokedCanonicalJournalWorkspaceAuthorizer struct {
 	calls int
 }
@@ -1136,6 +1171,14 @@ func (a *revokedCanonicalJournalThreadAuthorizer) AuthorizeThreadAccess(
 ) error {
 	a.calls++
 	return appagentthread.ErrThreadAccessDenied
+}
+
+func (a *countingCanonicalRunThreadAuthorizer) AuthorizeThreadAccess(
+	context.Context,
+	appagentthread.ThreadAccessRequest,
+) error {
+	a.calls++
+	return nil
 }
 
 func (a *revokedCanonicalJournalWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
