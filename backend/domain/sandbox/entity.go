@@ -36,6 +36,8 @@ type ProviderFeature string
 const (
 	ProviderFeatureQueueStatusV1          ProviderFeature = "queue_status_v1"
 	ProviderFeatureSignedExecutionContext ProviderFeature = "signed_execution_context_v1"
+	ProviderFeatureSandboxSessionV1       ProviderFeature = "sandbox_session_v1"
+	ProviderFeatureSignedSessionContextV2 ProviderFeature = "signed_session_context_v2"
 )
 
 type ProviderType string

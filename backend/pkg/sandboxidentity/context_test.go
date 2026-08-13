@@ -13,6 +13,24 @@ import (
 	"time"
 )
 
+func TestExecutionIdentityV1GoldenBytesRemainStable(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	keyring := newTestKeyring(t, now)
+	digest := sha256.Sum256([]byte("canonical execute body"))
+	signed, err := keyring.Sign(Request{
+		Scope: ScopeAppDev, SpaceID: 11, UserID: 22, ProjectID: "project_33",
+		ExecutionID: "exec_44", RequestDigest: digest[:],
+	})
+	if err != nil {
+		t.Fatalf("Sign() error = %v", err)
+	}
+	const wantContext = "eyJrZXlfaWQiOiJjdXJyZW50IiwiaXNzdWVkX2F0X3VuaXgiOjE3ODY0NDk2MDAsImV4cGlyZXNfYXRfdW5peCI6MTc4NjQ0OTY2MCwibm9uY2UiOiJub25jZV8xMjMiLCJzcGFjZV9pZCI6MTEsInVzZXJfaWQiOjIyLCJwcm9qZWN0X2lkIjoicHJvamVjdF8zMyIsImV4ZWN1dGlvbl9pZCI6ImV4ZWNfNDQiLCJyZXF1ZXN0X2RpZ2VzdCI6IndnYVBXbXg0RnVMUFVnbG1JUVB5Sk5keTlBVjlGbzctc2NKU0hLVkFENmcifQ"
+	const wantSignature = "kzKokWSJuGQuyFFXLljmmSLOmfflwfMzmkwm6LEzfXs"
+	if signed.Context != wantContext || signed.Signature != wantSignature {
+		t.Fatalf("v1 signed bytes changed: context=%q signature=%q", signed.Context, signed.Signature)
+	}
+}
+
 func TestRequestContextRetainsOnlyValidatedServerOwnedIdentity(t *testing.T) {
 	request := Request{Scope: ScopeMCPStdio, SpaceID: 11, UserID: 22, SessionID: "session_33", ExecutionID: "exec_44", RequestDigest: []byte("must-not-be-propagated")}
 	ctx := WithRequest(context.Background(), request)
