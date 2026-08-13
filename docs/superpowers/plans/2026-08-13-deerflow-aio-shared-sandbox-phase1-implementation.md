@@ -12,13 +12,13 @@
 **Architecture:** NewX 控制面继续选择 Provider、签发身份和保存业务状态；Native
 Runner 复用现有 Redis 持久公平队列和全局权重槽位，新增独立 Session 队列命名空间、
 MySQL Session 元数据以及 AIO generation fencing。生产 Core 操作通过派生 AIO 镜像内
-的 NewX `sessiond` 执行；上游 AIO Go SDK 用于锁定版本的能力探针，但不能直接承担
+的 NewX `sessiond` 执行；上游 AIO Go SDK 用于真实能力探针，但不能直接承担
 租户隔离，因为已核对的公开 Shell/File 请求没有 UID/GID 字段。本阶段只发布后端能力
 和管理配置，不把 Agent、Subagent 或 Plugin 业务流量切到 Session；第二、三阶段另写
 实施计划。
 
 **Tech Stack:** Go 1.24、Hertz/net/http、GORM/MySQL、Redis、
-`github.com/agent-infra/sandbox-sdk-go` v0.0.5、AIO Sandbox 1.11.0、Linux
+`github.com/agent-infra/sandbox-sdk-go` v0.0.5、`ghcr.io/agent-infra/sandbox:latest`、Linux
 UID/GID/进程组、React 18、TypeScript、Vitest、Atlas Community 1.2.3、Docker
 Compose、GitHub Actions。
 
@@ -38,7 +38,7 @@ worktree；若实施者另行执行，则先按仓库规则使用 `using-git-wor
 
 ### 本计划交付
 
-- 锁定并真实探测 AIO `1.11.0` 与 Go SDK `v0.0.5`；
+- 使用真正的 GHCR AIO `latest` 并真实探测其与 Go SDK `v0.0.5` 的合同；
 - 新增 `sandbox_session_v1`、Session 身份 v2 和 Core Session Go 合同；
 - 新增 `sandbox_runtime_identities`、`sandbox_runtime_sessions` 两张 Phase 1 表，
   `sandbox_runtime_service_leases` 留到 Phase 3；
@@ -67,7 +67,7 @@ worktree；若实施者另行执行，则先按仓库规则使用 `using-git-wor
 ### 单一所有者规则
 
 - `deploy/dev/docker-compose.runner-2c4g.yml` 和 `deploy/dev/deploy.sh` 是 AIO 容器、
-  私网、镜像、资源硬限制与持久 volume 的唯一生命周期所有者；
+  私网、镜像与持久 volume 的唯一生命周期所有者；
 - Runner 不通过 Docker socket 创建、删除或重启 AIO，只监督 AIO/sessiond 健康、校验
   boot fingerprint、管理 generation、Session、队列和 grant；
 - Runner 现有 rootless Docker socket 继续只服务 one-shot Adapter，不赋予 AIO 管理权；
@@ -75,17 +75,26 @@ worktree；若实施者另行执行，则先按仓库规则使用 `using-git-wor
   fencing，不能出现
   Compose 和 Runner 同时争抢同名容器的双控制面。
 
-## 已锁定的上游事实
+## 已确认的上游事实
 
-- AIO 镜像引用固定为
-  `ghcr.io/agent-infra/sandbox:1.11.0@sha256:6328d7fd2f0ff0b4c147c3d05b3df1ce331f4a482eb6e550ecd64ed1fcf906e7`；
-  该索引同时包含 `linux/amd64` 和 `linux/arm64`，禁止改用 `latest`。
-- AIO `1.11.0` 入口是 `/opt/gem/run.sh`，公开端口是 `8080`，默认运行用户语义为
-  `gem:1000`，并支持 `JWT_PUBLIC_KEY`；派生镜像必须保留该入口的信号和退出语义。
+- AIO 镜像直接使用 `ghcr.io/agent-infra/sandbox:latest`，不固定 tag、OCI digest 或平台
+  manifest；每次部署和探针都先拉取当时的真实 `latest`。
+- 当前实测 `latest` 自报 AIO `1.11.0`，入口是 `/opt/gem/run.sh`，公开端口是 `8080`，
+  默认运行用户语义为 `gem:1000`；这些是本轮观测值，不转化为版本锁。
+- 官方启动合同要求 `--security-opt seccomp=unconfined`。本地 ARM64 上
+  `cryptography 49.0.0` 的 `_rust.abi3.so` 默认导入会以 SIGILL/132 退出；
+  `OPENSSL_armcap=0` 后 AIO health、`/v1/ping` 和 `/v1/sandbox` 正常，因此部署必须保留
+  该兼容环境变量，并将显式 seccomp 放宽作为已接受的上游风险记录。
 - Go SDK 固定为 `github.com/agent-infra/sandbox-sdk-go v0.0.5`，客户端必须注入有
   deadline 的 `http.Client` 并设置 `WithMaxAttempts(1)`，禁止对有副作用请求自动重试。
+- 上游 raw AIO 默认不要求认证；SDK Adapter 的 Bearer token 可选，配置 token 时仍只
+  通过 `Authorization` header 发送，不把 token 放入 URL 或日志。生产 `sessiond` 的
+  service token/HMAC grant 是独立私有合同，不等同于上游 AIO 认证。
 - 上游显式 Shell Session、Shell 取消及 File API 可以用于兼容探针；公开请求类型不含
   UID/GID。生产 Core 操作必须通过 NewX `sessiond` 降权，不能共享 `gem` 或 root。
+- async Session 的真实顺序是 Exec → View → Wait → Kill；Kill 后 Session 可能立即消失，
+  也可能保留到 Cleanup，因此只对被 Kill 的 Session 接受 Cleanup 成功或 404，另一个
+  活 Session 必须 Cleanup 成功。
 - 上游仓库不包含可直接修改的完整 AIO 服务实现。本计划使用派生镜像添加最小适配层，
   不 fork 或复制上游服务源码。
 
@@ -126,10 +135,6 @@ Session 配置独立版本化，存入现有 `sandbox_scheduler_settings` 的新
   "shell_idle_ttl_seconds": 300,
   "command_timeout_seconds": 600,
   "cancel_grace_seconds": 5,
-  "aio_cpu_limit": 1.25,
-  "aio_memory_limit_mb": 1536,
-  "aio_pid_limit": 256,
-  "aio_shm_limit_mb": 512,
   "workspace_quota_mb": 2048,
   "uid_min": 20000,
   "uid_max": 59999
@@ -138,20 +143,20 @@ Session 配置独立版本化，存入现有 `sandbox_scheduler_settings` 的新
 
 规则：`interactive_enabled` 在 Phase 1 永远校验为 `false`；`host_shell_enabled` 只是期望
 配置，运行时仍需满足 debug/loopback 门禁；热更新不允许改变 UID 范围、AIO endpoint、
-镜像 digest、JWT/HMAC 密钥或持久卷；这些启动级配置变化必须重启并重新健康检查。
+service token/HMAC 密钥或持久卷；这些启动级配置变化必须重启并重新健康检查。
 
 ## Phase 1 完成门槛
 
 只有以下条件全部满足才可把计划标记完成：
 
-1. AIO/SDK 锁定探针、Session 单元/合同测试、现有 Sandbox/Plugin 回归全部通过；
+1. AIO `latest`/SDK 真实探针、Session 单元/合同测试、现有 Sandbox/Plugin 回归全部通过；
 2. 同一共享 AIO 容器内两个 Core Session 并发，第三个进入队列而非 500；
 3. 同用户不同 Thread、不同用户之间均不能读、列出、写入或软链接逃逸到对方目录；
 4. `ps`/文件属主证据证明命令以对应非 root UID/GID 运行；
 5. 取消只杀当前 Thread 进程组，后台子进程不泄漏；
 6. AIO 重启后 generation 增加、上游 Session 失效、持久工作区保留，命令不自动重放；
-7. AIO 容器在 `1536 MiB / 1.25 CPU / 256 PID / 512 MiB shm` 硬限制下通过 Core
-   压测，宿主机和 NewX 主服务无 OOM；
+7. AIO 采用官网启动参数通过 `2C4G` Core 压测，宿主机和 NewX 主服务无 OOM、无资源
+   泄漏；本阶段不要求 AIO 启动时配置 cgroup 资源参数；
 8. Session capability 默认关闭，AIO 与 `sessiond` 无宿主机公开端口；
 9. 回滚到旧应用版本不读取新 Session 路径，也不要求删除新表或工作区；
 10. 当前用户未提交文档仍保持未暂存、内容不变。
@@ -209,7 +214,7 @@ Expected: 当前基线通过；若已有失败，先记录且只修与本计划�
 
 ---
 
-## Task 1: 锁定 AIO/SDK 合同并建立真实兼容探针
+## Task 1: 固化 AIO/SDK API 合同并建立真实兼容探针
 
 **Files:**
 
@@ -218,8 +223,8 @@ Expected: 当前基线通过；若已有失败，先记录且只修与本计划�
 - Create: `backend/cmd/sandbox-aio-compat-probe/main.go`
 - Create: `backend/internal/sandboxrunner/aio/upstream_client.go`
 - Create: `backend/internal/sandboxrunner/aio/upstream_client_test.go`
-- Create: `deploy/sandbox-runner/aio.lock.json`
 - Create: `deploy/sandbox-runner/tests/aio_upstream_contract_test.sh`
+- Create: `deploy/sandbox-runner/tests/aio_upstream_contract_script_test.sh`
 - Modify after evidence: `docs/superpowers/specs/2026-08-13-deerflow-aio-shared-sandbox-design.md`
 
 - [ ] **Step 1: 先写 SDK Adapter 失败测试**
@@ -227,7 +232,7 @@ Expected: 当前基线通过；若已有失败，先记录且只修与本计划�
 测试必须用 `httptest.Server` 固定验证：
 
 - base URL 只能是启动配置给定的私有 AIO origin；
-- Authorization 使用 Bearer JWT，不在 URL 或日志中出现；
+- Authorization 可选；空 token 不发送 header，非空 token 使用 Bearer 且不在 URL 或日志中出现；
 - `http.Client.Timeout` 有界，所有调用继承 context deadline；
 - `WithMaxAttempts(1)`，500/timeout 不自动重放命令或文件写入；
 - 上游错误只映射稳定 reason code，不回传正文；
@@ -263,7 +268,7 @@ cd backend
 GOCACHE=/private/tmp/coze-go-build go test ./internal/sandboxrunner/aio -run 'TestUpstream'
 ```
 
-Expected: FAIL，因为 package、锁文件和 Adapter 尚不存在。
+Expected: FAIL，因为 package 和 Adapter 尚不存在。
 
 - [ ] **Step 3: 引入唯一允许的上游 SDK 版本**
 
@@ -277,7 +282,9 @@ go mod tidy
 
 ```go
 headers := make(http.Header)
-headers.Set("Authorization", "Bearer "+token)
+if token != "" {
+    headers.Set("Authorization", "Bearer "+token)
+}
 sdk := sandboxclient.NewClient(
     option.WithBaseURL(baseURL),
     option.WithHTTPClient(httpClient),
@@ -288,49 +295,34 @@ sdk := sandboxclient.NewClient(
 
 实现不得调用 SDK README 中不存在于 v0.0.5 源码的 `option.WithToken`。
 
-- [ ] **Step 4: 写入不可变锁文件**
+- [ ] **Step 4: 写官网启动合同测试**
 
-`deploy/sandbox-runner/aio.lock.json` 使用严格 JSON：
-
-```json
-{
-  "schema": "newx.aio.lock.v1",
-  "image": "ghcr.io/agent-infra/sandbox:1.11.0@sha256:6328d7fd2f0ff0b4c147c3d05b3df1ce331f4a482eb6e550ecd64ed1fcf906e7",
-  "amd64_manifest": "sha256:9a597aaa3716aca2fd42a517ceedc41063e5ceedcef43eb68bf7c059c0128b7a",
-  "arm64_manifest": "sha256:5ca2cd5619ee1e18c5479301e740c1e35307ce85d4142a145aec65d459655eee",
-  "go_sdk": "github.com/agent-infra/sandbox-sdk-go@v0.0.5",
-  "native_uid_gid": false,
-  "entrypoint": "/opt/gem/run.sh",
-  "private_api_port": 8080
-}
-```
+脚本合同固定 `ghcr.io/agent-infra/sandbox:latest`、官网要求的
+`--security-opt seccomp=unconfined`、ARM64 兼容变量 `OPENSSL_armcap=0` 和随机
+loopback 端口。不得固定 digest/manifest，不要求 JWT、资源参数或 `DISABLE_*`，也不得
+使用 privileged、host network、宿主 Docker socket 或宿主 bind mount。
 
 - [ ] **Step 5: 实现真实容器探针 CLI 和脚本**
 
-探针仅接受环境变量中的临时 JWT 和私有 base URL，执行以下固定序列：
+探针只要求环境变量中的私有 base URL；Bearer JWT 是可选兼容输入，官网默认模式为空。
+执行以下固定序列：
 
 1. 创建 `newx-probe-a`、`newx-probe-b` 两个显式 Shell Session；
 2. 并发写入各自 cwd/env marker，交叉读取不得串扰；
-3. 前台、后台、View/Wait、Kill、Cleanup；
+3. 前台执行；后台按 Exec → View → Wait → Kill 验证，Kill 后从另一 Session 确认进程消失；
 4. File Write/Read/List/Glob/Grep/Replace；
 5. 取消 `sleep 30`，确认子进程消失；
-6. 输出版本、能力、耗时和容器资源聚合，不输出 token 或文件正文；
+6. 输出镜像自报版本、能力和耗时，不输出 token 或文件正文；
 7. 删除 probe Session 和 probe 目录。
 
-脚本必须用锁文件中的 digest 启动临时容器，不发布到非 loopback；交互服务全部关闭：
+脚本按官网启动 `latest`，只把端口收窄到 loopback，并应用已验证的 ARM64 兼容变量：
 
 ```bash
 docker run --detach --rm --name newx-aio-contract \
-  --memory 1536m --cpus 1.25 --pids-limit 256 --shm-size 512m \
-  -e DISABLE_BROWSER=true \
-  -e DISABLE_JUPYTER=true \
-  -e DISABLE_CODE_SERVER=true \
-  -e DISABLE_MCP_BROWSER=true \
-  -e DISABLE_VNC=true \
-  -e DISABLE_NODEJS_REPL=true \
-  -e JWT_PUBLIC_KEY="$JWT_PUBLIC_KEY" \
+  --security-opt seccomp=unconfined \
+  -e OPENSSL_armcap=0 \
   -p 127.0.0.1::8080 \
-  ghcr.io/agent-infra/sandbox:1.11.0@sha256:6328d7fd2f0ff0b4c147c3d05b3df1ce331f4a482eb6e550ecd64ed1fcf906e7
+  ghcr.io/agent-infra/sandbox:latest
 ```
 
 测试脚本用 trap 停止临时容器，不删除任何已有容器或 volume。
@@ -347,19 +339,19 @@ bash deploy/sandbox-runner/tests/aio_upstream_contract_test.sh
 ```
 
 Expected: SDK 合同与真实 AIO Core 探针通过；报告明确 `native_uid_gid=false`。如果显式
-Session、取消、文件 API 或 `1536m` 启动任一失败，停止 Phase 1，不写绕过补丁。
+Session、取消或任一文件 API 失败，停止 Phase 1，不写绕过补丁。
 
 - [ ] **Step 7: 用真实证据修正文档认证名词**
 
-将设计中“启用 `SANDBOX_API_KEY`”改为“锁定版 AIO 使用 `JWT_PUBLIC_KEY` 和 Runner
-签发的短期 JWT；NewX `sessiond` 使用独立 HMAC grant”。只改这一条已核实事实，不能
-扩大设计范围。
+将设计改为：raw AIO 默认无鉴权但只能处于 Runner 私网；SDK Bearer 可选；NewX
+`sessiond` 继续使用独立 service token 和 HMAC grant。同时记录官网 seccomp 和 ARM64
+`OPENSSL_armcap=0` 启动事实。
 
-- [ ] **Step 8: 提交锁定合同**
+- [ ] **Step 8: 提交上游合同**
 
 ```bash
-git add backend/go.mod backend/go.sum backend/cmd/sandbox-aio-compat-probe backend/internal/sandboxrunner/aio deploy/sandbox-runner/aio.lock.json deploy/sandbox-runner/tests/aio_upstream_contract_test.sh docs/superpowers/specs/2026-08-13-deerflow-aio-shared-sandbox-design.md
-git commit -m "test: lock AIO core sandbox contract"
+git add backend/go.mod backend/go.sum backend/cmd/sandbox-aio-compat-probe backend/internal/sandboxrunner/aio deploy/sandbox-runner/tests/aio_upstream_contract_test.sh deploy/sandbox-runner/tests/aio_upstream_contract_script_test.sh docs/superpowers/plans/2026-08-13-deerflow-aio-shared-sandbox-phase1-implementation.md docs/superpowers/specs/2026-08-13-deerflow-aio-shared-sandbox-design.md
+git commit -m "test: verify AIO core sandbox contract"
 ```
 
 ---
@@ -844,7 +836,7 @@ Expected: FAIL，因为 `sessiond` 尚不存在。
 
 `sessiond` 只监听启动配置指定的容器私网地址，端点固定为：
 
-- `GET /v1/health`：`boot_id`、AIO version/base digest/image revision、sessiond version、
+- `GET /v1/health`：`boot_id`、AIO observed version/image revision、sessiond version、
   generation 支持以及 identity/file/process capability；
 - `POST /v1/sessions:prepare`：创建/校验 Thread 目录；
 - `POST /v1/sessions/{id}/operations`：以 NDJSON 流返回 start/stdout/stderr/result；
@@ -868,13 +860,12 @@ RUN go mod download
 COPY backend ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/newx-aio-sessiond ./cmd/newx-aio-sessiond
 
-FROM ghcr.io/agent-infra/sandbox:1.11.0@sha256:6328d7fd2f0ff0b4c147c3d05b3df1ce331f4a482eb6e550ecd64ed1fcf906e7
+FROM ghcr.io/agent-infra/sandbox:latest
 USER root
 ARG NEWX_AIO_IMAGE_REVISION
 RUN test -n "${NEWX_AIO_IMAGE_REVISION}"
 LABEL org.opencontainers.image.revision=${NEWX_AIO_IMAGE_REVISION}
-ENV NEWX_AIO_VERSION=1.11.0 \
-    NEWX_AIO_BASE_DIGEST=sha256:6328d7fd2f0ff0b4c147c3d05b3df1ce331f4a482eb6e550ecd64ed1fcf906e7 \
+ENV OPENSSL_armcap=0 \
     NEWX_AIO_IMAGE_REVISION=${NEWX_AIO_IMAGE_REVISION}
 COPY --from=sessiond-builder /out/newx-aio-sessiond /opt/newx/newx-aio-sessiond
 COPY deploy/sandbox-runner/aio/supervisord.newx_sessiond.conf /opt/gem/supervisord/supervisord.newx_sessiond.conf
@@ -885,7 +876,7 @@ RUN chmod 0755 /opt/newx/newx-aio-sessiond \
 不得改写 `/opt/gem/run.sh`。使用上游约定的 `/opt/gem/supervisord/*.conf` 注册
 `sessiond`，配置 `autorestart=true`、`stopasgroup=true`、`killasgroup=true`、
 `stopsignal=TERM` 和有限 `stopwaitsecs`，由 AIO 现有 supervisor 负责启动、重启和退出
-回收，不使用未经锁定探针证实的自定义 shutdown 环境变量。`sessiond` 每次进程启动时在
+回收，不使用未经真实探针证实的自定义 shutdown 环境变量。`sessiond` 每次进程启动时在
 容器 tmpfs `/run/newx-aio` 原子生成新 `boot_id`；因此 AIO 或 `sessiond` 重启都会触发
 保守 generation fencing。它只从上述非秘密镜像元数据和本地 `boot_id` 形成健康响应，
 不信任请求方提交这些字段。镜像构建测试检查 ENTRYPOINT 仍是 `/opt/gem/run.sh`、
@@ -909,9 +900,8 @@ supervisor 实际管理 `sessiond`，且 revision 为空时构建必须失败。
 bash deploy/sandbox-runner/tests/aio_identity_contract_test.sh
 ```
 
-Expected: PASS。若上游 hook 不以允许安全降权的启动身份运行，或必须使用
-`seccomp=unconfined` 才能完成 Core 操作，停止实施并回到设计评审；不得给容器增加
-`privileged: true`。
+Expected: PASS。若上游 hook 不以允许安全降权的启动身份运行，停止实施并回到设计评审；
+容器保留官网要求的 `seccomp=unconfined`，但不得增加 `privileged: true`。
 
 - [ ] **Step 8: 运行 Go GREEN**
 
@@ -951,23 +941,23 @@ Session backend 启用时必须同时存在：
 - `SANDBOX_RUNNER_SESSION_ENABLED=true`；
 - `SANDBOX_RUNNER_AIO_INTERNAL_URL=http://coze-sandbox-aio:8090`；
 - `SANDBOX_RUNNER_AIO_UPSTREAM_URL=http://coze-sandbox-aio:8080`；
-- `SANDBOX_RUNNER_AIO_SERVICE_TOKEN_FILE`、JWT private key file、session grant keyring；
-- `MYSQL_DSN`、锁定 AIO base digest 和当前部署 AIO image revision；
+- `SANDBOX_RUNNER_AIO_SERVICE_TOKEN_FILE`、session grant keyring；
+- `MYSQL_DSN` 和当前部署 AIO image revision；
 - 两个 URL 只能是同一专用私网的精确 host/port，无 userinfo/query/fragment；
 - secret file 权限不宽于 `0600`；
-- Session 关闭时旧 Runner 配置仍能启动，不要求 AIO/MySQL/JWT 新变量。
+- Session 关闭时旧 Runner 配置仍能启动，不要求 AIO/MySQL 新变量。
 
 - [ ] **Step 2: 写共享容器监督失败测试**
 
 用 fake AIO health source 和 fake repository 覆盖：
 
 - Runner 不创建、删除或重启 AIO 容器，AIO 的唯一生命周期所有者是 Compose/部署层；
-- Runner 只通过私网 health 读取 AIO `boot_id`、base digest、revision 和 sessiond contract；
+- Runner 只通过私网 health 读取 AIO `boot_id`、observed version、revision 和 sessiond contract；
 - AIO ready 且 boot fingerprint 首次出现/发生变化时才从 MySQL 取下一个 generation；
 - Runner 自身重启并连接同一 `boot_id` 不增加 generation；
 - AIO `boot_id` 变化触发 generation 增加和旧 Session stale 标记；
 - AIO 丢失时 Session unavailable，等待部署层按 restart policy 恢复，不重放 running operation；
-- health/grant/JWT/MySQL 任一失败，capability 不 ready。
+- health/grant/MySQL 任一失败，capability 不 ready。
 
 - [ ] **Step 3: 写私有客户端失败测试**
 
@@ -1001,9 +991,9 @@ type AIOHealthSource interface {
 }
 ```
 
-health 必须返回由 AIO/sessiond 自报且被锁定合同校验的 `boot_id`、AIO version/base
-digest、sessiond version、能力和 readiness。Runner 不接 Docker socket 查询 AIO；部署
-合同负责 image/volume/network/resource/revision，Runner 负责运行时身份与 generation。
+health 必须返回由 AIO/sessiond 自报且被 API 合同校验的 `boot_id`、AIO observed
+version、sessiond version、能力和 readiness。Runner 不接 Docker socket 查询 AIO；部署
+合同负责 image/volume/network/revision，Runner 负责运行时身份与 generation。
 
 - [ ] **Step 6: 实现 `AIOLifecycle`**
 
@@ -1011,7 +1001,7 @@ digest、sessiond version、能力和 readiness。Runner 不接 Docker socket �
 
 1. 读取 MySQL Session 设置；
 2. 检查 raw AIO SDK health 与 `sessiond /v1/health`；
-3. 校验 version/base digest/revision 与 Runner 启动配置；
+3. 校验 observed version/revision 与 Runner 启动配置；
 4. 比较持久化的 boot fingerprint；
 5. 首次健康 boot 或 fingerprint 改变时事务递增 generation；
 6. 将旧 generation Session 标记 recovering，不触发 Exec；
@@ -1193,7 +1183,7 @@ dispatcher 流程：
 }
 ```
 
-只有 Core 开关、MySQL、Redis、AIO、sessiond、JWT/grant 和 generation 全部 ready 时才
+只有 Core 开关、MySQL、Redis、AIO、sessiond、service token/grant 和 generation 全部 ready 时才
 把 `sandbox_session_v1` 与 `signed_session_context_v2` 同时加入顶层 features；任何一个
 缺失都不能对外声明 Session 可用。旧 one-shot 健康不能被 AIO unavailable 误判为失败。
 
@@ -1548,16 +1538,14 @@ git commit -m "feat: add gated debug host shell sessions"
 测试 `coze-sandbox-aio`：
 
 - 每个 Runner profile 恰好一个 service，不按用户/Thread 动态创建 Compose service；
-- 使用构建后的 NewX AIO digest，禁止 `latest`；
-- `mem_limit: 1536m`、`cpus: 1.25`、`pids_limit: 256`、`shm_size: 512m`；
-- `DISABLE_BROWSER/JUPYTER/CODE_SERVER/MCP_BROWSER/VNC/NODEJS_REPL=true`；
+- 派生镜像直接以 `ghcr.io/agent-infra/sandbox:latest` 为 base，不另做 base digest 锁；
+- 按官网显式设置 `seccomp=unconfined`，并注入 ARM64 兼容变量 `OPENSSL_armcap=0`；
+- 启动不要求 `mem_limit`、`cpus`、`pids_limit`、`shm_size`、`DISABLE_*` 或 raw AIO JWT；
 - 只 `expose` 私网 `8080/8090`，没有 `ports`、host network、privileged、Docker socket；
 - `restart: unless-stopped`，且 healthcheck 通过带 service token 的容器内检查，不从宿主机
   publish 探活；
 - 持久 named volume 只挂 Thread 根目录，skills 只读；
-- 上游要求的 `JWT_PUBLIC_KEY` 通过 AIO 专用 env 以 base64 公钥传入；公钥不是秘密，
-  但不得把 JWT private key 放入 env；
-- JWT private key、sessiond service token 和 grant keyring 通过权限 `0600` 的只读文件
+- sessiond service token 和 grant keyring 通过权限 `0600` 的只读文件
   分别挂载到 Runner/AIO，不写进 Compose、镜像或通用 `app.env`；
 - Runner 等待 AIO 与 sessiond 双健康，但 AIO failure 不停止 coze-server/web；
 - Runner env file 不复用完整 `app.env`，只含 MySQL/Redis/AIO/签名必需值；
@@ -1572,8 +1560,7 @@ GitHub Actions 新增 `build-sandbox-aio`：
 - buildx 构建当前部署所需平台；
 - verify job 同时校验 server/web/runner/runtime/AIO 五个 immutable candidate；
 - 只有全部成功才 promote `coze-sandbox-aio:dev`；
-- AIO base digest 必须与 `aio.lock.json` 一致；
-- 不把 JWT private key、grant key、DB/Redis secret 作为 build args；
+- 不把 service token、grant key、DB/Redis secret 作为 build args；
 - 旧部署没有启用 runner profile 时，AIO job 可跳过且 server/web 流程不变。
 
 - [ ] **Step 3: 写 deploy/rollback 失败合同**
@@ -1606,10 +1593,10 @@ Expected: 至少 AIO 相关断言 FAIL。
 - [ ] **Step 5: 更新镜像和 Compose**
 
 `backend/Dockerfile.sandbox-runner` 保留非 root Runner 用户；现有 `/app/secrets` 已能承载
-TLS、JWT 和 keyring 文件，只在镜像合同证明缺少目录时才做最小修改，不制造空 diff。
+TLS、service token 和 keyring 文件，只在镜像合同证明缺少目录时才做最小修改，不制造空 diff。
 MySQL CA 也作为只读 secret file 挂载。不要把 sessiond 放入 Runner 镜像。
 `coze-sandbox-aio` 使用单独 AIO 镜像，容器内 `sessiond` 的最小 UID/GID 切换 capability
-由 Task 5 真实合同决定；禁止为了让测试通过加 `privileged` 或
+由 Task 5 真实合同决定；禁止加 `privileged`，但保留官网要求的
 `seccomp=unconfined`。
 
 - [ ] **Step 6: 更新发布脚本与 Actions**
@@ -1620,7 +1607,6 @@ MySQL CA 也作为只读 secret file 挂载。不要把 sessiond 放入 Runner �
 ```text
 SANDBOX_AIO_IMAGE_REF
 SANDBOX_AIO_IMAGE_ID
-SANDBOX_AIO_BASE_DIGEST
 SANDBOX_AIO_RUNTIME_GENERATION
 ```
 
@@ -1632,7 +1618,7 @@ Runbook 必须写清：
 - dedicated `sandbox-runner.env` 和 secret 文件清单、权限、轮换；
 - 迁移 status/apply 的职责与禁止重刷数据库；
 - Core enable 顺序、generation、drain、重启、保留 volume、孤儿进程检查；
-- `2C4G` 参数和不得临时提高硬限制的要求；
+- `2C4G` 压测水位和 AIO 启动不要求 cgroup 参数的事实；
 - HTTP Provider 的来源防火墙和未加密风险；
 - 回滚关闭 capability 而不删数据；
 - Phase 1 尚未接 Agent/Plugin/Interactive。
@@ -1654,7 +1640,8 @@ bash deploy/dev/tests/deploy_test.sh
 docker compose -f deploy/dev/docker-compose.runner-2c4g.yml config --quiet
 ```
 
-Expected: PASS；渲染结果无 `ports` for AIO，无 `latest`，且资源硬限制存在。
+Expected: PASS；渲染结果无 `ports` for AIO，包含官网 seccomp 与
+`OPENSSL_armcap=0`，且没有虚构的 AIO 启动资源限制。
 
 - [ ] **Step 10: 提交打包和运维合同**
 
@@ -1677,7 +1664,7 @@ git commit -m "feat: package shared AIO sandbox runtime"
 
 - [ ] **Step 1: 写可重复的 E2E harness**
 
-Harness 使用临时 network、MySQL schema、Redis namespace、volume、JWT/grant keys 和
+Harness 使用临时 network、MySQL schema、Redis namespace、volume、service token/grant keys 和
 Provider，绝不连接或清空用户 dev 数据。每次测试生成唯一 deployment ID，trap 只删除
 本轮已确认创建的容器/network/schema/Redis namespace；volume 在 persistence case 中跨
 容器重启保留，测试结束后只删除本轮命名 volume。
@@ -1738,7 +1725,7 @@ bash deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh --duration 30m
 
 通过标准：
 
-- AIO 不超过 1536 MiB/1.25 CPU/256 PID/512 MiB shm 硬限制；
+- 采集并记录 AIO 在 `2C4G` 宿主上的实际 memory/CPU/PID 水位，不要求启动 cgroup 参数；
 - Runner 常驻目标约 128 MiB，绝对不超过 Compose 192 MiB；
 - 无 OOMKilled、无持续增长的 PID/fd/session/shell；
 - 队列有界且 drain 后归零；
@@ -1753,7 +1740,7 @@ bash deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh --duration 30m
 ```
 
 Expected: 全部通过。任何隔离逃逸、跨 Session cancel、OOM、自动重放或公开端口都属于
-阻断缺陷，不能通过降低断言或提高资源上限放行。
+阻断缺陷，不能通过降低断言放行。
 
 - [ ] **Step 7: 记录运行手册中的实测水位**
 
@@ -1916,7 +1903,7 @@ git diff --name-status origin/dev...HEAD
 git status --short
 ```
 
-确认迁移仅 `20260813000100_sandbox_shared_aio_core.sql`，AIO lock、镜像、Runner、UI、
+确认迁移仅 `20260813000100_sandbox_shared_aio_core.sql`，AIO 探针、镜像、Runner、UI、
 runbook 和测试范围与本计划一致；用户未提交文档不在任何 commit 中。
 
 - [ ] **Step 2: 运行本轮新鲜的最终验证**
@@ -1929,7 +1916,7 @@ revision。不能复用实现中间的过期“曾经通过”输出。
 逐项确认：
 
 - AIO/sessiond 无公开端口；
-- 无 privileged/root Docker socket/seccomp unconfined；
+- 无 privileged/root Docker socket；AIO 仅使用官网要求的显式 `seccomp=unconfined`；
 - raw AIO 不能被控制面外调用；
 - UID/GID 真实降权、目录 `0700`、openat2 fail closed；
 - v1 one-shot wire/Redis 未变化；
@@ -1960,13 +1947,13 @@ deploy/dev/publish-dev.sh "$AUDITED_ORIGIN_DEV_SHA" "$AUDITED_TARGET_DEV_SHA"
 
 | 维度 | 必测 | 阻断条件 |
 | --- | --- | --- |
-| 上游 | AIO 1.11.0 + SDK v0.0.5 真实 Shell/File/Cancel | 任一 Core API 不兼容 |
+| 上游 | GHCR AIO `latest` + SDK v0.0.5 真实 Shell/File/Cancel | 任一 Core API 不兼容 |
 | Unix 隔离 | 非 root UID/GID、0700、跨 Thread 拒绝 | 共享 gem/root 或可逃逸 |
 | Session | acquire/release/destroy/recover、idle shell | 串 Session 或资源泄漏 |
 | 调度 | 两 Core、第三排队、与 one-shot 共权重 | 越权重、500、单用户占满 |
 | 取消 | 排队取消、进程组 TERM/KILL | 杀错 Thread 或留孙进程 |
 | 恢复 | generation、工作区保留、不重放 | generation 不变或重复副作用 |
-| 资源 | 1536m/1.25 CPU/256 PID/512m shm | OOM、提上限、无界增长 |
+| 资源 | `2C4G` 实测水位、队列/进程有界 | OOM、无界增长 |
 | 传输 | HTTP/HTTPS exact origin、防 SSRF/rebind | downgrade、redirect、特殊地址 |
 | 兼容 | v1 one-shot、Plugin/AppDev/MCP/Agent 回归 | 现有链行为变化 |
 | 运维 | 默认关闭、健康、审计、rollback | 暴露端口、删表/volume/数据 |

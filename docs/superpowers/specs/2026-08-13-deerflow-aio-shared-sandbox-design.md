@@ -62,9 +62,9 @@ AIO 的扩展能力，不属于 DeerFlow 当前 Agent 合同，但纳入本设�
 - `https://github.com/agent-infra/sandbox`
 - `https://github.com/agent-infra/sandbox-sdk-go`
 
-实施必须固定 AIO 发布版本和 OCI digest，并固定 Go SDK 版本；运行环境不得使用
-`latest`。设计基线使用上游文档当前示例版本 `1.11.0`，正式启用的准确 digest 由兼容性
-验收产出并写入部署配置。
+实施直接使用 `ghcr.io/agent-infra/sandbox:latest`，不固定 AIO tag、OCI digest 或平台
+manifest；Go SDK 仍固定为 `v0.0.5` 以稳定客户端字段和路由合同。每次部署必须重新拉取
+并运行真实兼容探针，以镜像自报版本记录观测值，而不是把本轮的 `1.11.0` 转化为锁。
 
 ## 目标
 
@@ -294,8 +294,8 @@ UID，以免碰撞后跨 Thread 访问。
 文件权限，`0700` 无法阻止它们互相读取。Subagent 继承父 Thread 的运行 UID/GID，只有
 明确的业务共享操作才能通过对象存储或审核后的共享目录交换文件。
 
-AIO Adapter 在创建 Session 和执行命令时必须把命令降权到对应 Thread UID/GID。若锁定
-版 AIO 不支持按 Session 或命令指定 UID/GID，则必须在 NewX 适配镜像中增加受审核的
+AIO Adapter 在创建 Session 和执行命令时必须把命令降权到对应 Thread UID/GID。公开
+AIO API 不支持按 Session 或命令指定 UID/GID，因此必须在 NewX 适配镜像中增加受审核的
 执行代理；生产环境不得退回所有用户共用 `gem`、root 或用户级共享 UID。
 
 ### 线程身份
@@ -374,19 +374,16 @@ Session。递归 Subagent 是否允许由 Agent Runtime 策略决定，与 Sandb
 AIO 容器持续运行并接受健康检查。它不是每次命令冷启动，也不是每个用户或 Thread
 创建一个容器。
 
-### `2C4G` 容器预算
+### `2C4G` 宿主预算
 
-共机最低配置下，AIO 容器的初始硬上限为 `1.5 GiB` 内存、`1.25 CPU`、`256 PID`，
-共享内存上限为 `512 MiB`；Runner 常驻预算保持约 `128 MiB`。调度器在宿主机可用内存
-低于安全水位时停止出队。以上数值是首轮兼容性和压测目标，不允许业务请求覆盖。
+共机最低配置仍是 `2C4G`，Runner 常驻预算保持约 `128 MiB`；调度器在宿主机可用内存
+低于安全水位时停止出队。按用户确认的官网启动合同，AIO 容器启动不要求设置 memory、
+CPU、PID 或 shm cgroup 参数；兼容探针和 Compose 不虚构这些限制。容量安全由全局权重、
+单用户上限、进程组、`rlimit`、TTL、输出/磁盘限制和实测水位共同约束，并在系统管理页
+明确标记为共享容器配额，不能宣称是独立 cgroup。
 
-共享容器的 cgroup 是最终硬边界。Thread 级 CPU、内存和 PID 如果能由锁定 AIO 版本
-或适配执行代理创建子 cgroup，则按权重继续细分；否则 Thread 级限制由 Runner 准入、
-进程组和 `rlimit` 组合实现，并在系统管理页标记为共享容器配额，不能宣称是独立 cgroup。
-
-若 Core Profile 无法在该预算内稳定执行，第一阶段不得上线。若 Interactive Profile
-无法在该预算内通过真实浏览器和 Jupyter 压测，则只关闭 Interactive Profile，不能
-静默提高上限挤占 NewX 主服务资源，也不能降低 Core 的安全水位。
+若 Core Profile 在 `2C4G` 宿主实测出现 OOM 或无界增长，第一阶段不得上线。若
+Interactive Profile 无法通过真实浏览器和 Jupyter 压测，则只关闭 Interactive Profile。
 
 ### 动态配置
 
@@ -398,12 +395,12 @@ AIO 容器持续运行并接受健康检查。它不是每次命令冷启动，�
 - 空闲 Session 元数据上限，默认 `20`；
 - 空闲上游 Shell 进程上限，默认 `4`；
 - 命令、后台进程、Kernel、Context 和服务租约 TTL；
-- AIO 容器 CPU、内存、PID、共享内存和磁盘上限；
+- AIO 容器观测水位以及磁盘、输出、进程和运行时间上限；
 - Host Shell、Core Profile 和 Interactive Profile 独立开关。
 
 安全范围内的并发、TTL 和容量水位可以动态更新；已执行任务继续使用入队时的配置快照。
-降低上限后不强杀已运行任务，但停止新的出队，直到用量回到新上限。AIO endpoint、API
-Key、镜像 digest、传输模式和 Host Shell 环境门禁属于启动或 Provider 安全配置，修改后
+降低上限后不强杀已运行任务，但停止新的出队，直到用量回到新上限。AIO endpoint、
+`sessiond` service token/grant key、传输模式和 Host Shell 环境门禁属于启动或 Provider 安全配置，修改后
 必须重新健康检查，不能当作普通热更新参数。
 
 ## 持久化与运行状态
@@ -476,9 +473,15 @@ Thread，用户不能声明任意宿主机端口。NewX 只代理 Context 或服
 
 ### AIO 内部网络
 
-AIO `8080` 只绑定 Runner 私有 loopback 或私有容器网络，并启用 `SANDBOX_API_KEY`。
-上游文档明确说明容器内监听 `0.0.0.0`，云部署应保持端口私有；本设计不得把该端口
-直接发布给用户。
+AIO `8080` 只绑定 Runner 私有 loopback 或私有容器网络。官方 raw AIO 默认模式不要求
+JWT/API Key，因此私网与 loopback 是必要边界；SDK Adapter 支持可选 Bearer，但不能把
+它描述成默认认证。NewX `sessiond` 仍使用独立 service token 和 HMAC grant。上游文档
+明确说明容器内监听 `0.0.0.0`，本设计不得把该端口直接发布给用户。
+
+官网启动要求显式 `seccomp=unconfined`；本地 ARM64 的 `cryptography 49.0.0`
+`_rust.abi3.so` 默认会 SIGILL/132，实测 `OPENSSL_armcap=0` 后 health、`/v1/ping` 和
+`/v1/sandbox` 正常。部署保留这两个启动项，并把 seccomp 放宽记录为已接受风险；不得
+再叠加 privileged 或宿主 Docker socket。
 
 ### Remote Provider
 
@@ -569,8 +572,8 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 
 因此生产启用必须满足：
 
-- AIO 镜像和 SDK 固定版本并完成漏洞扫描；
-- AIO 以最小 capability、`no-new-privileges` 和受审核 seccomp 运行；
+- AIO `latest` 每次部署重新拉取、扫描并通过真实兼容探针；Go SDK 固定为 `v0.0.5`；
+- AIO 使用官网要求的 `seccomp=unconfined`，这是明确接受的上游风险；不得使用 privileged；
 - 不挂载宿主机 Docker Socket、Secret 目录或任意宿主机路径；
 - 持久卷只包含受管理的线程工作区；
 - AIO API 和交互服务保持私有；
@@ -585,7 +588,7 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 
 ### 第一阶段：Session 基础和 Core Backend
 
-- 完成锁定 AIO 镜像及 Go SDK 的兼容性探针；
+- 完成 AIO `latest` 及 Go SDK 的真实兼容性探针；
 - 增加统一 Go Session 合同和 `sandbox_session_v1` capability；
 - 增加签名身份 v2、Thread UID/GID 映射和线程工作区；
 - 增加共享 AIO 容器、显式 Shell Session、文件能力和 generation 恢复；
@@ -593,9 +596,10 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 - 增加本机 debug Host Shell；
 - 保持现有 Plugin one-shot 链不变。
 
-第一阶段的 AIO 兼容性探针必须实际验证多 Session 并发、UID/GID 降权、文件 API、
-取消、Session 清理和资源占用。上游缺失能力通过锁定的 NewX 适配镜像补齐，不能只在
-客户端假设支持。
+第一阶段的 AIO 兼容性探针必须实际验证多 Session 并发、UID/GID 能力边界、文件 API、
+取消和 Session 清理。公开 API 不提供 UID/GID，因此生产降权必须由 NewX `sessiond`
+补齐，不能只在客户端假设支持。真实上游顺序为 Exec → View → Wait → Kill；被 Kill 的
+Session 后续 Cleanup 允许成功或 404，另一个活 Session 必须 Cleanup 成功。
 
 ### 第二阶段：Agent、Subagent、Plugin 和 Artifact
 
@@ -617,7 +621,7 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 
 ### 合同与单元测试
 
-- AIO SDK Adapter 的请求映射、超时、取消、错误裁剪和 API Key 注入；
+- AIO SDK Adapter 的请求映射、超时、取消、错误裁剪和可选 Bearer 注入；
 - v1 one-shot 与 v2 Session 身份兼容；
 - Thread UID/GID 分配唯一性、并发创建和回收；
 - Session、Context、Kernel、端口和 generation 状态机；
@@ -625,7 +629,7 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 - Host Shell debug 门禁和非 debug fail-closed；
 - HTTP/HTTPS Provider、签名、防重放、SSRF 和重定向策略。
 
-### 锁定 AIO 合同测试
+### AIO 真实合同测试
 
 - 两个显式 Shell Session 并发执行，不出现 DeerFlow 默认 Session 的并发损坏；
 - 同一用户两个 Thread 的 `cwd`、环境和输出互不串扰；
@@ -685,7 +689,7 @@ AIO 容器中的其他用户。该风险已作为“所有用户共用一个 AIO
 本设计完成的判定不是“AIO 健康检查成功”，而是同时满足：
 
 1. DeerFlow Core 能力全部通过真实 AIO 合同测试；
-2. 一个常驻 AIO 容器能够在硬限流下可靠执行两个并发 Core Session；
+2. 一个常驻 AIO 容器能够在 `2C4G` 宿主准入边界下可靠执行两个并发 Core Session；
 3. 不同用户和 Thread 的文件、进程和交互状态按本设计隔离；
 4. AIO 重启不丢工作区，且不会盲目重放命令；
 5. Agent、Subagent、Plugin 和 Artifact 业务回归通过；

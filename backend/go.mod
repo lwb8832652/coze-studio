@@ -8,6 +8,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/IBM/sarama v1.45.1
 	github.com/PuerkitoBio/goquery v1.10.3
+	github.com/agent-infra/sandbox-sdk-go v0.0.5
 	github.com/alicebob/miniredis/v2 v2.34.0
 	github.com/apache/rocketmq-client-go/v2 v2.1.3-0.20250427084711-67ec50b93040
 	github.com/apache/thrift v0.21.0
