@@ -71,6 +71,12 @@ for compose_file in "${compose_files[@]}"; do
     "${compose_file##*/} must not contain declarative schema apply"
   forbid_text "$mysql_block" 'docker-entrypoint-initdb\.d|curl[[:space:]].*atlasgo|entrypoint:' \
     "${compose_file##*/} mysql startup must not execute schema/bootstrap scripts"
+  require_text "$mysql_block" "'127.0.0.1'" \
+    "${compose_file##*/} MySQL healthcheck must target the final TCP listener"
+  require_text "$mysql_block" "'--protocol=tcp'" \
+    "${compose_file##*/} MySQL healthcheck must not use the initialization socket"
+  require_text "$mysql_block" "'3306'" \
+    "${compose_file##*/} MySQL healthcheck must target TCP port 3306"
 
   require_text "$migrate_block" '^  mysql-migrate-local:$' \
     "${compose_file##*/} must define mysql-migrate-local"
@@ -101,6 +107,11 @@ local_migrate_block=$(printf '%s\n' "$makefile" | awk '
   in_target && /^[[:alnum:]_.-]+:/ && $0 !~ /^db_local_migrate:/ {exit}
   in_target {print}
 ')
+atlas_hash_block=$(printf '%s\n' "$makefile" | awk '
+  /^atlas-hash:/ {in_target=1}
+  in_target && /^[[:alnum:]_.-]+:/ && $0 !~ /^atlas-hash:/ {exit}
+  in_target {print}
+')
 
 require_text "$makefile" '^db_local_up:' 'Makefile must expose db_local_up'
 require_text "$makefile" '^db_local_migrate:' 'Makefile must expose db_local_migrate'
@@ -110,6 +121,12 @@ forbid_text "$sync_db_block" 'docker compose|db_migrate_apply' \
   'legacy sync_db target must not execute any database tool'
 require_text "$local_migrate_block" "--profile local-db-migrate run --rm mysql-migrate-local" \
   'db_local_migrate must invoke only the explicit local migration service'
+require_text "$atlas_hash_block" "$ATLAS_IMAGE" \
+  'atlas-hash must use the approved pinned Atlas image'
+require_text "$atlas_hash_block" 'migrate hash --dir file:///migrations' \
+  'atlas-hash must hash only the versioned migration directory'
+forbid_text "$atlas_hash_block" '^([[:space:]]*@)?\(?cd .*&&[[:space:]]*atlas|[[:space:]]atlas[[:space:]]+migrate' \
+  'atlas-hash must not depend on an unpinned host Atlas binary'
 
 legacy_apply=$(<"$REPO_ROOT/scripts/setup/db_migrate_apply.sh")
 forbid_text "$legacy_apply" 'schema[[:space:]]+apply|--auto-approve|ATLAS_URL' \
@@ -120,11 +137,26 @@ require_text "$legacy_apply" 'publish-dev\.sh' \
   'legacy db_migrate_apply.sh must point remote dev changes to the publish workflow'
 
 legacy_dump=$(<"$REPO_ROOT/scripts/setup/db_migrate_dump.sh")
+[ -x "$REPO_ROOT/scripts/setup/db_migrate_dump.sh" ] || \
+  fail 'legacy db_migrate_dump.sh must remain executable so it can fail with safe guidance'
 forbid_text "$legacy_dump" 'ATLAS_URL|schema[[:space:]]+inspect|migrate[[:space:]]+diff|opencoze_latest_schema\.hcl' \
   'legacy db_migrate_dump.sh must not inspect arbitrary databases or generate executable snapshots'
 require_text "$legacy_dump" '已停用' \
   'legacy db_migrate_dump.sh must fail closed with explicit guidance'
 require_text "$legacy_dump" 'docker/atlas/migrations' \
   'legacy db_migrate_dump.sh must point users to versioned migrations'
+
+for env_example in \
+  "$REPO_ROOT/docker/.env.debug.example" \
+  "$REPO_ROOT/docker/.env.example"; do
+  env_source=$(<"$env_example")
+  forbid_text "$env_source" '^export[[:space:]]+ATLAS_URL=' \
+    "${env_example##*/} must not give the application a migration credential"
+done
+debug_env=$(<"$REPO_ROOT/docker/.env.debug.example")
+forbid_text "$debug_env" '^export[[:space:]]+MYSQL_USER=root([[:space:]]|$)' \
+  'debug example must not use a remote DDL-capable root account'
+forbid_text "$debug_env" 'sql\.tencentcdb\.com|gz-cynosdbmysql' \
+  'debug example must not embed a specific shared database endpoint'
 
 printf '%s\n' 'local database safety tests passed'

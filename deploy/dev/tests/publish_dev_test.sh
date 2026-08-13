@@ -203,6 +203,31 @@ case "${1:-}" in
       exit 1
     fi
     ;;
+  ls-tree)
+    [ "${2:-}" = -r ] && [ "${3:-}" = --name-only ] || {
+      printf 'unexpected fake git ls-tree arguments: %s\n' "$*" >&2
+      exit 91
+    }
+    revision=${4:-}
+    [ "${5:-}" = -- ] && [ "${6:-}" = docker/atlas/migrations ] || {
+      printf 'unexpected fake git ls-tree path: %s\n' "$*" >&2
+      exit 91
+    }
+    printf '%s\n' 'docker/atlas/migrations/20260812000100_expand_fixture_add_value.sql'
+    if [ "$revision" = "$TARGET_SHA" ]; then
+      case "$TEST_CASE" in
+        contract-migration)
+          printf '%s\n' 'docker/atlas/migrations/20260814100000_contract_legacy_drop_columns.sql'
+          ;;
+        repair-migration)
+          printf '%s\n' 'docker/atlas/migrations/20260814103000_repair_legacy_restore_indexes.sql'
+          ;;
+        destructive-expand-migration)
+          printf '%s\n' 'docker/atlas/migrations/20260813110000_expand_legacy_drop_column.sql'
+          ;;
+      esac
+    fi
+    ;;
   diff)
     [ "$*" = "diff --name-status --no-renames $EXPECTED_ORIGIN $TARGET_SHA -- docker/atlas/migrations/*.sql" ] || {
       printf 'unexpected fake git diff arguments: %s\n' "$*" >&2

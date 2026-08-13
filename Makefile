@@ -117,7 +117,10 @@ dump_sql_schema:
 
 atlas-hash:
 	@echo "Rehash atlas migration files..."
-	@(cd ./docker/atlas && atlas migrate hash)
+	@docker run --rm \
+		-v "$(CURDIR)/docker/atlas/migrations:/migrations" \
+		arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
+		migrate hash --dir file:///migrations
 
 setup_es_index:
 	@echo "Setting up Elasticsearch index..."

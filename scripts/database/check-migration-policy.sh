@@ -38,6 +38,17 @@ changed_migrations=$(git diff --name-status --no-renames "$base_sha" "$target_sh
 }
 
 added_count=0
+base_max_version=''
+
+while IFS= read -r base_path; do
+  base_filename=${base_path##*/}
+  if [[ "$base_filename" =~ ^([0-9]{14})_.*\.sql$ ]]; then
+    base_version=${BASH_REMATCH[1]}
+    if [ -z "$base_max_version" ] || [[ "$base_version" > "$base_max_version" ]]; then
+      base_max_version=$base_version
+    fi
+  fi
+done < <(git ls-tree -r --name-only "$base_sha" -- docker/atlas/migrations)
 
 while IFS=$'\t' read -r status path extra_path; do
   [ -n "$status" ] || continue
@@ -57,6 +68,23 @@ while IFS=$'\t' read -r status path extra_path; do
   fi
 
   migration_type=${BASH_REMATCH[1]}
+  migration_version=${filename%%_*}
+  if [ -n "$base_max_version" ] && [[ "$migration_version" < "$base_max_version" || "$migration_version" = "$base_max_version" ]]; then
+    fail "new migration version must be greater than the existing maximum $base_max_version: $filename"
+  fi
+
+  matching_version_count=0
+  while IFS= read -r target_path; do
+    target_filename=${target_path##*/}
+    case "$target_filename" in
+      "$migration_version"_*.sql)
+        matching_version_count=$((matching_version_count + 1))
+        ;;
+    esac
+  done < <(git ls-tree -r --name-only "$target_sha" -- docker/atlas/migrations)
+  [ "$matching_version_count" -eq 1 ] || \
+    fail "migration version must be unique: $migration_version"
+
   migration_sql=$(git show "$target_sha:$path") || fail "cannot read migration from target SHA: $path"
 
   case "$migration_type" in

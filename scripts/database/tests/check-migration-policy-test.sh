@@ -91,6 +91,25 @@ printf '%s\n' 'CREATE TABLE bad_name (id bigint PRIMARY KEY);' \
 commit_case
 expect_failure invalid-name 'invalid migration filename'
 
+new_repo duplicate-version
+printf '%s\n' 'CREATE TABLE first_table (id bigint PRIMARY KEY);' \
+  >"$CASE_DIR/docker/atlas/migrations/20260813105000_expand_first_create_table.sql"
+printf '%s\n' 'CREATE TABLE second_table (id bigint PRIMARY KEY);' \
+  >"$CASE_DIR/docker/atlas/migrations/20260813105000_expand_second_create_table.sql"
+commit_case
+expect_failure duplicate-version 'migration version must be unique'
+
+new_repo out-of-order-version
+printf '%s\n' 'CREATE TABLE future_table (id bigint PRIMARY KEY);' \
+  >"$CASE_DIR/docker/atlas/migrations/20260813120000_expand_future_create_table.sql"
+git -C "$CASE_DIR" add docker/atlas/migrations
+git -C "$CASE_DIR" commit -q -m future-baseline
+BASE_SHA=$(git -C "$CASE_DIR" rev-parse HEAD)
+printf '%s\n' 'CREATE TABLE older_table (id bigint PRIMARY KEY);' \
+  >"$CASE_DIR/docker/atlas/migrations/20260813110000_expand_older_create_table.sql"
+commit_case
+expect_failure out-of-order-version 'new migration version must be greater than the existing maximum'
+
 new_repo contract-default-blocked
 printf '%s\n' 'ALTER TABLE legacy_table DROP COLUMN obsolete_value;' \
   >"$CASE_DIR/docker/atlas/migrations/20260814100000_contract_legacy_drop_columns.sql"
