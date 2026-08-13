@@ -255,35 +255,56 @@ func auditCanonicalCreateThreadExecutionControls(
 	budget *canonicalExecutionControlIngressBudget,
 ) *canonicalError {
 	coze := canonicalExecutionControlObjectField(root, "coze")
-	if coze == nil || coze.kind != canonicalExecutionControlJSONObject {
-		return nil
-	}
-	if public := auditCanonicalExecutionControlObject(coze, "coze", 0, false, budget); public != nil {
-		return public
+	if coze != nil && coze.kind == canonicalExecutionControlJSONObject {
+		if public := auditCanonicalExecutionControlObject(coze, "coze", 0, false, budget); public != nil {
+			return public
+		}
+
+		for _, runContainer := range [...]string{"initial_run", "deferred_initial_run"} {
+			run := canonicalExecutionControlObjectField(coze, runContainer)
+			if run == nil || run.kind != canonicalExecutionControlJSONObject {
+				continue
+			}
+			runPath := canonicalExecutionControlPath("coze", runContainer)
+			if public := auditCanonicalExecutionControlObject(run, runPath, 0, false, budget); public != nil {
+				return public
+			}
+			for _, controlContainer := range [...]string{"config", "context"} {
+				value := canonicalExecutionControlObjectField(run, controlContainer)
+				if value == nil || value.kind != canonicalExecutionControlJSONObject {
+					continue
+				}
+				if public := auditCanonicalExecutionControlConfig(
+					value,
+					canonicalExecutionControlPath(runPath, controlContainer),
+					0,
+					budget,
+				); public != nil {
+					return public
+				}
+			}
+		}
 	}
 
-	for _, runContainer := range [...]string{"initial_run", "deferred_initial_run"} {
-		run := canonicalExecutionControlObjectField(coze, runContainer)
+	for _, field := range [...]string{"initial_submission_v2", "deferred_initial_submission_v2"} {
+		run := canonicalExecutionControlObjectField(root, field)
 		if run == nil || run.kind != canonicalExecutionControlJSONObject {
 			continue
 		}
-		runPath := canonicalExecutionControlPath("coze", runContainer)
-		if public := auditCanonicalExecutionControlObject(run, runPath, 0, false, budget); public != nil {
+		if public := auditCanonicalExecutionControlObject(run, field, 0, false, budget); public != nil {
 			return public
 		}
-		for _, controlContainer := range [...]string{"config", "context"} {
-			value := canonicalExecutionControlObjectField(run, controlContainer)
-			if value == nil || value.kind != canonicalExecutionControlJSONObject {
-				continue
-			}
-			if public := auditCanonicalExecutionControlConfig(
-				value,
-				canonicalExecutionControlPath(runPath, controlContainer),
-				0,
-				budget,
-			); public != nil {
-				return public
-			}
+		config := canonicalExecutionControlObjectField(run, "config")
+		if config == nil || config.kind != canonicalExecutionControlJSONObject {
+			continue
+		}
+		if public := auditCanonicalExecutionControlConfig(
+			config,
+			canonicalExecutionControlPath(field, "config"),
+			0,
+			budget,
+		); public != nil {
+			return public
 		}
 	}
 	return nil

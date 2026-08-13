@@ -390,6 +390,35 @@ func TestCanonicalExecutionControlIngressBudgets(t *testing.T) {
 	})
 }
 
+func TestCanonicalExecutionControlIngressTypedV2(t *testing.T) {
+	tests := []struct{ name, body, path string }{
+		{
+			name: "initial direct",
+			body: `{"initial_submission_v2":{"config":{"mode":"legacy"}}}`,
+			path: "initial_submission_v2.config.mode",
+		},
+		{
+			name: "deferred reserved nested",
+			body: `{"deferred_initial_submission_v2":{"config":{"configurable":{"context":{"reasoning_effort":"high"}}}}}`,
+			path: "deferred_initial_submission_v2.config.configurable.context.reasoning_effort",
+		},
+		{
+			name: "typed control wins in mixed request",
+			body: `{"initial_submission_v2":{"config":{"thinking_enabled":true}},"coze":{"initial_run":{}}}`,
+			path: "initial_submission_v2.config.thinking_enabled",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			public := validateCanonicalExecutionControlIngress(
+				[]byte(test.body),
+				canonicalExecutionControlCreateThread,
+			)
+			assertCanonicalExecutionControlUnsupported(t, public, test.path)
+		})
+	}
+}
+
 func assertCanonicalExecutionControlUnsupported(t *testing.T, public *canonicalError, path string) {
 	t.Helper()
 	require.NotNil(t, public)

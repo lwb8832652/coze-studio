@@ -414,6 +414,300 @@ func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
 	require.Empty(t, runs)
 }
 
+func TestCreateCanonicalThreadAcceptsAtomicTypedV2(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	submission := canonicalTypedInitialThreadSubmissionV2("hello")
+	body := `{"metadata":{},"initial_submission_v2":` + submission + `}`
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var created canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &created))
+	require.NotNil(t, created.Coze.InitialSubmission)
+	initialJSON, err := json.Marshal(created.Coze.InitialSubmission)
+	require.NoError(t, err)
+	require.Contains(t, string(initialJSON), `"content":"hello"`)
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, created.ThreadID))
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, canonicalPublicAssistantID, runs[0].AssistantID)
+	require.JSONEq(t, `{"source":"workbench_new_task"}`, messages[0].Metadata)
+	typed, public := decodeCanonicalTypedInitialSubmissionV2([]byte(submission), "initial_submission_v2")
+	require.Nil(t, public)
+	mapped, public := mapCanonicalTypedInitialV2(typed, false)
+	require.Nil(t, public)
+	require.JSONEq(t, mapped.Config, runs[0].Config)
+}
+
+func TestCreateCanonicalThreadAcceptsDeferredTypedV2(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	body := canonicalTypedInitialThreadRequestV2(
+		"deferred_initial_submission_v2",
+		"分析附件中的销售数据",
+	)
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var created canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &created))
+	require.Equal(t, "分析附件中的销售数据", created.Metadata["title"])
+	require.Nil(t, created.Coze.InitialSubmission)
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, created.ThreadID))
+	require.Empty(t, messages)
+	require.Empty(t, runs)
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsAllVersionMixesWithoutMutation(t *testing.T) {
+	initial := canonicalTypedInitialThreadSubmissionV2("typed initial")
+	deferred := canonicalTypedInitialThreadSubmissionV2("typed deferred")
+	tests := []struct {
+		name string
+		body string
+		path string
+	}{
+		{
+			name: "both typed variants",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"deferred_initial_submission_v2":` + deferred + `}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed initial and legacy initial",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"initial_run":{}}}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed initial and legacy deferred",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"deferred_initial_run":{}}}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed deferred and legacy initial",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred +
+				`,"coze":{"initial_run":{}}}`,
+			path: "deferred_initial_submission_v2",
+		},
+		{
+			name: "typed deferred and legacy deferred",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred +
+				`,"coze":{"deferred_initial_run":{}}}`,
+			path: "deferred_initial_submission_v2",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			_, _, public := canonicalCreateThreadTypedSubmissionV2([]byte(test.body))
+			require.NotNil(t, public)
+			require.Equal(t, "mixed_submission_versions", public.errorClass)
+			require.Contains(t, public.Detail, test.path)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var responseError canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &responseError))
+			require.Equal(t, "invalid_request", responseError.Code)
+			require.Contains(t, responseError.Detail, test.path)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsClosedShapeViolationsWithoutMutation(t *testing.T) {
+	unknown := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("secret-message-not-in-error"),
+		`"config":{`,
+		`"config":{"foo":"secret-config-value",`,
+	)
+	tests := []struct {
+		name, body, code, path string
+	}{
+		{
+			name: "explicit null",
+			body: `{"metadata":{},"initial_submission_v2":null}`,
+			code: "invalid_request",
+			path: "initial_submission_v2",
+		},
+		{
+			name: "unknown nested field",
+			body: `{"metadata":{},"initial_submission_v2":` + unknown + `}`,
+			code: "unsupported_sdk_field",
+			path: "initial_submission_v2.config.foo",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			require.Contains(t, public.Detail, test.path)
+			require.NotContains(t, public.Detail, "secret-")
+			require.False(t, public.Retryable)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsCaseVariantRootWithoutMutation(t *testing.T) {
+	legacy := `{"assistant_id":"agent","input":{"messages":[{"role":"user","content":"legacy must not run"}]}}`
+	tests := []string{
+		`{"metadata":{},"Initial_Submission_V2":` + canonicalTypedInitialThreadSubmissionV2("case variant") + `}`,
+		`{"metadata":{},"DEFERRED_INITIAL_SUBMISSION_V2":` + canonicalTypedInitialThreadSubmissionV2("case variant") + `,"coze":{"initial_run":` + legacy + `}}`,
+	}
+	for _, body := range tests {
+		h := canonicalAgentThreadTestServer()
+		h.POST("/api/workbench/threads", CreateCanonicalThread)
+		installAgentThreadTestService(t)
+		response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+		require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+		var public canonicalError
+		require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+		require.Equal(t, "unsupported_sdk_field", public.Code)
+		require.Zero(t, canonicalThreadCount(t, 1001, 2))
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2RetiredControlWinsBeforeStrictAndMixing(t *testing.T) {
+	deferred := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("do not persist deferred"),
+		`"config":{`,
+		`"config":{"configurable":{"context":{"reasoning_effort":"high"}},`,
+	)
+	initial := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("do not persist mixed"),
+		`"config":{`,
+		`"config":{"mode":"legacy",`,
+	)
+	tests := []struct{ name, body, path string }{
+		{
+			name: "deferred nested before strict unknown",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred + `}`,
+			path: "deferred_initial_submission_v2.config.configurable.context.reasoning_effort",
+		},
+		{
+			name: "retired before version mix",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"initial_run":{}}}`,
+			path: "initial_submission_v2.config.mode",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Equal(t, "Unsupported execution control: "+test.path, public.Detail)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2IdempotencyReplayAndConflict(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	firstBody := canonicalTypedInitialThreadRequestV2("initial_submission_v2", "typed idempotent payload")
+	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-typed-initial-thread-1"}
+	first := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, header,
+	)
+	require.Equal(t, http.StatusOK, first.Code, first.Result().Body())
+	var firstThread canonicalThread
+	require.NoError(t, json.Unmarshal(first.Result().Body(), &firstThread))
+
+	replay := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, header,
+	)
+	require.Equal(t, http.StatusOK, replay.Code, replay.Result().Body())
+	var replayedThread canonicalThread
+	require.NoError(t, json.Unmarshal(replay.Result().Body(), &replayedThread))
+	require.Equal(t, firstThread.ThreadID, replayedThread.ThreadID)
+
+	changedBody := canonicalTypedInitialThreadRequestV2("initial_submission_v2", "changed typed payload")
+	conflict := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", changedBody, header,
+	)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(conflict.Result().Body(), &public))
+	require.Equal(t, "idempotency_conflict", public.Code)
+	require.Equal(t, 1, canonicalThreadCount(t, 1001, 2))
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, firstThread.ThreadID))
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, "typed idempotent payload", messages[0].Content)
+	require.Contains(t, runs[0].Metadata, `"_idempotency"`)
+}
+
+func TestCreateCanonicalThreadTypedV2AuthorizesBeforeHostileBody(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+	authorizer := &canonicalRecordingWorkspaceAuthorizer{err: appagentthread.ErrThreadAccessDenied}
+	appagentthread.SVC.WorkspaceAuthorizer = authorizer
+
+	response := performCanonicalThreadJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads",
+		`{"initial_submission_v2":{"config":{"mode":"hostile-secret"}}}`,
+	)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "workspace_not_found", public.Code)
+	require.Equal(t, 1, authorizer.calls)
+	authorizer.err = nil
+	require.Zero(t, canonicalThreadCount(t, 1001, 2))
+}
+
+func canonicalTypedInitialThreadSubmissionV2(message string) string {
+	return canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictInitialV2),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+}
+
+func canonicalTypedInitialThreadRequestV2(field, message string) string {
+	return fmt.Sprintf(
+		`{"metadata":{},%q:%s}`,
+		field,
+		canonicalTypedInitialThreadSubmissionV2(message),
+	)
+}
+
 func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *testing.T) {
 	initial := `{
 		"assistant_id":"agent",

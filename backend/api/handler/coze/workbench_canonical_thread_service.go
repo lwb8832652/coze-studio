@@ -17,6 +17,7 @@
 package coze
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -62,12 +63,14 @@ func (b *canonicalJournalBudget) consume(recordBytes int) error {
 }
 
 type canonicalCreateThreadRequest struct {
-	ThreadID   *string                    `json:"thread_id,omitempty"`
-	Metadata   map[string]any             `json:"metadata,omitempty"`
-	IfExists   *string                    `json:"if_exists,omitempty"`
-	TTL        any                        `json:"ttl,omitempty"`
-	Supersteps []json.RawMessage          `json:"supersteps,omitempty"`
-	Coze       *canonicalCreateThreadCoze `json:"coze,omitempty"`
+	ThreadID                    *string                    `json:"thread_id,omitempty"`
+	Metadata                    map[string]any             `json:"metadata,omitempty"`
+	IfExists                    *string                    `json:"if_exists,omitempty"`
+	TTL                         any                        `json:"ttl,omitempty"`
+	Supersteps                  []json.RawMessage          `json:"supersteps,omitempty"`
+	Coze                        *canonicalCreateThreadCoze `json:"coze,omitempty"`
+	InitialSubmissionV2         json.RawMessage            `json:"initial_submission_v2,omitempty"`
+	DeferredInitialSubmissionV2 json.RawMessage            `json:"deferred_initial_submission_v2,omitempty"`
 }
 
 type canonicalCreateThreadCoze struct {
@@ -168,6 +171,11 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
+	typedRun, typedDeferred, public := canonicalCreateThreadTypedSubmissionV2(c.Request.Body())
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 
 	var req canonicalCreateThreadRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
@@ -196,7 +204,13 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	var responseThread *appagentthread.ThreadSummary
 	var initialSubmission *canonicalInitialSubmission
 	initialRun, deferred := canonicalCreateThreadSubmission(&req)
-	if initialRun == nil {
+	var validatedTypedRun *canonicalValidatedInitialThreadRun
+	if typedRun != nil {
+		initialRun = nil
+		deferred = typedDeferred
+		validatedTypedRun = typedRun
+	}
+	if initialRun == nil && validatedTypedRun == nil {
 		requestLog.SubmissionKind = "empty_thread"
 		if title == "" {
 			title = defaultWorkbenchThreadTitle
@@ -223,10 +237,13 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		} else {
 			requestLog.SubmissionKind = "initial_run"
 		}
-		validatedRun, public := validateCanonicalInitialThreadRun(initialRun)
-		if public != nil {
-			writeCanonicalError(ctx, c, public.status, *public)
-			return
+		validatedRun := validatedTypedRun
+		if validatedRun == nil {
+			validatedRun, public = validateCanonicalInitialThreadRun(initialRun)
+			if public != nil {
+				writeCanonicalError(ctx, c, public.status, *public)
+				return
+			}
 		}
 		clientIdempotencyKey, public := canonicalRunIdempotencyKey(c)
 		if public != nil {
@@ -1682,6 +1699,56 @@ func canonicalCreateThreadSubmission(
 		return req.Coze.DeferredInitialRun, true
 	}
 	return nil, false
+}
+
+func canonicalCreateThreadTypedSubmissionV2(
+	raw []byte,
+) (*canonicalValidatedInitialThreadRun, bool, *canonicalError) {
+	if public := canonicalTypedThreadV2RootCaseError(raw); public != nil {
+		return nil, false, public
+	}
+	if public := validateCanonicalTypedThreadVersionMixing(raw); public != nil {
+		return nil, false, public
+	}
+	root, ok := canonicalV2RootRawMessages(raw)
+	if !ok {
+		return nil, false, nil
+	}
+	field := "initial_submission_v2"
+	selected := root[field]
+	deferred := false
+	if selected == nil {
+		field = "deferred_initial_submission_v2"
+		selected = root[field]
+		deferred = selected != nil
+	}
+	if selected == nil {
+		return nil, false, nil
+	}
+	typed, public := decodeCanonicalTypedInitialSubmissionV2(selected, field)
+	if public != nil {
+		return nil, false, public
+	}
+	mapped, public := mapCanonicalTypedInitialV2(typed, deferred)
+	if public != nil {
+		return nil, false, public
+	}
+	return mapped, deferred, nil
+}
+
+func canonicalTypedThreadV2RootCaseError(raw []byte) *canonicalError {
+	node, public := decodeCanonicalV2Node(bytes.TrimSpace(raw), "")
+	if public != nil || node == nil || node.kind != canonicalV2ObjectKind {
+		return nil
+	}
+	for _, key := range node.order {
+		for _, canonical := range [...]string{"initial_submission_v2", "deferred_initial_submission_v2"} {
+			if key != canonical && strings.EqualFold(key, canonical) {
+				return canonicalUnsupportedField(canonicalV2SafeKey(key))
+			}
+		}
+	}
+	return nil
 }
 
 func canonicalCreateThreadMetadata(
