@@ -26,12 +26,13 @@ const (
 type RunAttemptStatus string
 
 const (
-	RunAttemptStatusPending   RunAttemptStatus = "pending"
-	RunAttemptStatusRunning   RunAttemptStatus = "running"
-	RunAttemptStatusCompleted RunAttemptStatus = "completed"
-	RunAttemptStatusFailed    RunAttemptStatus = "failed"
-	RunAttemptStatusCancelled RunAttemptStatus = "cancelled"
-	RunAttemptStatusTimedOut  RunAttemptStatus = "timed_out"
+	RunAttemptStatusPending     RunAttemptStatus = "pending"
+	RunAttemptStatusRunning     RunAttemptStatus = "running"
+	RunAttemptStatusCompleted   RunAttemptStatus = "completed"
+	RunAttemptStatusFailed      RunAttemptStatus = "failed"
+	RunAttemptStatusCancelled   RunAttemptStatus = "cancelled"
+	RunAttemptStatusTimedOut    RunAttemptStatus = "timed_out"
+	RunAttemptStatusInterrupted RunAttemptStatus = "interrupted"
 
 	// Compatibility aliases keep existing internal callers source-compatible
 	// while persisting only the frozen wire values above.

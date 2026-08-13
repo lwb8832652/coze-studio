@@ -15,6 +15,7 @@ const JournalExecutionStatus JournalExecutionStatus_Completed = "completed"
 const JournalExecutionStatus JournalExecutionStatus_Failed = "failed"
 const JournalExecutionStatus JournalExecutionStatus_Cancelled = "cancelled"
 const JournalExecutionStatus JournalExecutionStatus_TimedOut = "timed_out"
+const JournalExecutionStatus JournalExecutionStatus_Interrupted = "interrupted"
 
 typedef string JournalContentStatus (ts.enum="true")
 const JournalContentStatus JournalContentStatus_Empty = "empty"

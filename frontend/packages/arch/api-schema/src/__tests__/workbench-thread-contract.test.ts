@@ -1539,6 +1539,7 @@ describe('canonical Workbench thread generated contract', () => {
     expect(journal.JOURNAL_SCHEMA_VERSION).toBe('1.1');
     expect(journal.JOURNAL_PAYLOAD_VERSION).toBe('1.0');
     expect(journal.JOURNAL_PROTOCOL_VERSION).toBe('1.1');
+    expect(journal.JournalExecutionStatus.Interrupted).toBe('interrupted');
     expect(journal.JOURNAL_SPLIT_RATIO_MIN).toBe(0.4);
     expect(journal.JOURNAL_SPLIT_RATIO_MAX).toBe(0.7);
 
