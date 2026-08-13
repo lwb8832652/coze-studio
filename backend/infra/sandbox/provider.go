@@ -71,10 +71,16 @@ const (
 
 type RuntimeMemoryReserveState string
 
+type CoreRuntimeState string
+
 const (
 	RuntimeMemoryReserveAvailable      RuntimeMemoryReserveState = "available"
 	RuntimeMemoryReserveBelowWatermark RuntimeMemoryReserveState = "below_watermark"
 	RuntimeMemoryReserveUnknown        RuntimeMemoryReserveState = "unknown"
+
+	CoreRuntimeDisabled CoreRuntimeState = "disabled"
+	CoreRuntimeReady    CoreRuntimeState = "ready"
+	CoreRuntimeUnknown  CoreRuntimeState = "unknown"
 )
 
 // SchedulerRuntimeStatus is the authenticated, aggregate-only projection
@@ -83,6 +89,8 @@ const (
 type SchedulerRuntimeStatus struct {
 	Schema                      string                      `json:"schema"`
 	AppliedConfigurationVersion uint64                      `json:"applied_configuration_version"`
+	CoreState                   CoreRuntimeState            `json:"core_state"`
+	AIORuntimeGeneration        uint64                      `json:"aio_runtime_generation"`
 	Queued                      int                         `json:"queued"`
 	QueuedByScope               map[domainsandbox.Scope]int `json:"queued_by_scope"`
 	Running                     int                         `json:"running"`

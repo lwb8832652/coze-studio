@@ -19,10 +19,12 @@ package aio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -284,6 +286,293 @@ func TestUpstreamClientDoesNotRetryTimeout(t *testing.T) {
 	require.Equal(t, ReasonUpstreamTimeout, ReasonCode(err))
 }
 
+func TestUpstreamClientRawHealthRequiresExactPingContract(t *testing.T) {
+	var (
+		method        string
+		path          string
+		authorization string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		method = request.Method
+		path = request.URL.Path
+		authorization = request.Header.Get("Authorization")
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = writer.Write([]byte("pong"))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+	require.NoError(t, client.Health(context.Background()))
+	require.Equal(t, http.MethodGet, method)
+	require.Equal(t, "/v1/ping", path)
+	require.Equal(t, "Bearer temporary-jwt", authorization)
+}
+
+func TestUpstreamClientRawHealthRejectsMalformedResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		body        string
+	}{
+		{name: "wrong status", statusCode: http.StatusCreated, contentType: "text/plain; charset=utf-8", body: "pong"},
+		{name: "wrong media type", statusCode: http.StatusOK, contentType: "application/json", body: `{"status":"ok"}`},
+		{name: "wrong body", statusCode: http.StatusOK, contentType: "text/plain", body: "ok"},
+		{name: "trailing newline", statusCode: http.StatusOK, contentType: "text/plain; charset=utf-8", body: "pong\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", test.contentType)
+				writer.WriteHeader(test.statusCode)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			t.Cleanup(server.Close)
+
+			client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+			err := client.Health(context.Background())
+			require.Equal(t, ReasonUpstreamMalformedResponse, ReasonCode(err))
+			require.NotContains(t, err.Error(), test.body)
+		})
+	}
+}
+
+func TestUpstreamClientListSessionsRequiresSuccessfulCompleteShape(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodGet, request.Method)
+		require.Equal(t, "/v1/shell/sessions", request.URL.Path)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true,"data":{"sessions":{"newx-generation-0123456789abcdef0123456789abcdef":{"working_dir":"/mnt/user-data","created_at":"2026-08-13T00:00:00Z","last_used_at":"2026-08-13T00:00:00Z","age_seconds":1,"status":"idle"}}}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+	response, err := client.ListSessions(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.NotNil(t, response.Data)
+	require.Contains(t, response.Data.Sessions, "newx-generation-0123456789abcdef0123456789abcdef")
+}
+
+func TestUpstreamClientListSessionsMalformedShapeIsUnknownNotMissing(t *testing.T) {
+	for _, body := range []string{
+		`{"success":true}`,
+		`{"success":true,"data":{}}`,
+		`{"success":false,"data":{"sessions":{}}}`,
+		`{"success":true,"data":{"sessions":{"candidate":null}}}`,
+	} {
+		body := body
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+
+			client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+			response, err := client.ListSessions(context.Background())
+			require.Nil(t, response)
+			require.Equal(t, ReasonUpstreamMalformedResponse, ReasonCode(err))
+			require.NotEqual(t, ReasonUpstreamNotFound, ReasonCode(err))
+			require.NotContains(t, err.Error(), body)
+		})
+	}
+}
+
+func TestUpstreamClientOnlyMapsStableNotFoundToMissing(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		reasonCode string
+	}{
+		{name: "not found", statusCode: http.StatusNotFound, body: `{"detail":"secret missing id"}`, reasonCode: ReasonUpstreamNotFound},
+		{name: "server error", statusCode: http.StatusInternalServerError, body: "secret failure", reasonCode: ReasonUpstreamServerError},
+		{name: "decode error", statusCode: http.StatusOK, body: "not-json", reasonCode: ReasonUpstreamUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.statusCode)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			t.Cleanup(server.Close)
+
+			client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+			response, err := client.ListSessions(context.Background())
+			require.Nil(t, response)
+			require.Equal(t, test.reasonCode, ReasonCode(err))
+			require.NotContains(t, err.Error(), test.body)
+			if test.statusCode != http.StatusNotFound {
+				require.NotEqual(t, ReasonUpstreamNotFound, ReasonCode(err))
+			}
+		})
+	}
+}
+
+func TestUpstreamClientShellLifecycleOnlyStableNotFoundIsMissing(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		method     string
+		statusCode int
+		call       func(context.Context, *UpstreamClient) error
+		reasonCode string
+	}{
+		{
+			name: "create server error", path: "/v1/shell/sessions/create", method: http.MethodPost,
+			statusCode: http.StatusInternalServerError, reasonCode: ReasonUpstreamServerError,
+			call: func(ctx context.Context, client *UpstreamClient) error {
+				id, execDir := "newx-generation-0123456789abcdef0123456789abcdef", "/mnt/user-data"
+				_, err := client.Create(ctx, &sandboxapi.ShellCreateSessionRequest{Id: &id, ExecDir: &execDir})
+				return err
+			},
+		},
+		{
+			name: "view not found", path: "/v1/shell/view", method: http.MethodPost,
+			statusCode: http.StatusNotFound, reasonCode: ReasonUpstreamNotFound,
+			call: func(ctx context.Context, client *UpstreamClient) error {
+				_, err := client.View(ctx, &sandboxapi.ShellViewRequest{Id: "newx-generation-0123456789abcdef0123456789abcdef"})
+				return err
+			},
+		},
+		{
+			name: "view server error", path: "/v1/shell/view", method: http.MethodPost,
+			statusCode: http.StatusBadGateway, reasonCode: ReasonUpstreamServerError,
+			call: func(ctx context.Context, client *UpstreamClient) error {
+				_, err := client.View(ctx, &sandboxapi.ShellViewRequest{Id: "newx-generation-0123456789abcdef0123456789abcdef"})
+				return err
+			},
+		},
+		{
+			name: "cleanup not found", path: "/v1/shell/sessions/newx-generation-0123456789abcdef0123456789abcdef", method: http.MethodDelete,
+			statusCode: http.StatusNotFound, reasonCode: ReasonUpstreamNotFound,
+			call: func(ctx context.Context, client *UpstreamClient) error {
+				return client.Cleanup(ctx, "newx-generation-0123456789abcdef0123456789abcdef")
+			},
+		},
+		{
+			name: "cleanup server error", path: "/v1/shell/sessions/newx-generation-0123456789abcdef0123456789abcdef", method: http.MethodDelete,
+			statusCode: http.StatusServiceUnavailable, reasonCode: ReasonUpstreamServerError,
+			call: func(ctx context.Context, client *UpstreamClient) error {
+				return client.Cleanup(ctx, "newx-generation-0123456789abcdef0123456789abcdef")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, test.method, request.Method)
+				require.Equal(t, test.path, request.URL.Path)
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.statusCode)
+				_, _ = writer.Write([]byte(`{"detail":"secret upstream lifecycle body"}`))
+			}))
+			t.Cleanup(server.Close)
+
+			client := newTestUpstreamClient(t, server.URL, &http.Client{Timeout: 2 * time.Second})
+			err := test.call(context.Background(), client)
+			require.Equal(t, test.reasonCode, ReasonCode(err))
+			require.NotContains(t, err.Error(), "secret")
+			if test.statusCode != http.StatusNotFound {
+				require.NotEqual(t, ReasonUpstreamNotFound, ReasonCode(err))
+			}
+		})
+	}
+}
+
+func TestUpstreamClientHealthTimeoutAndTransportErrorsAreUnknown(t *testing.T) {
+	tests := []struct {
+		name       string
+		transport  http.RoundTripper
+		reasonCode string
+	}{
+		{
+			name: "deadline", reasonCode: ReasonUpstreamTimeout,
+			transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}),
+		},
+		{
+			name: "transport", reasonCode: ReasonUpstreamUnavailable,
+			transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("secret transport failure")
+			}),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newTestUpstreamClient(t, "http://127.0.0.1:8080", &http.Client{Timeout: 25 * time.Millisecond, Transport: test.transport})
+			err := client.Health(context.Background())
+			require.Equal(t, test.reasonCode, ReasonCode(err))
+			require.NotEqual(t, ReasonUpstreamNotFound, ReasonCode(err))
+			require.NotContains(t, err.Error(), "secret")
+		})
+	}
+}
+
+func TestUpstreamClientDisablesRedirectsAndConfiguredProxy(t *testing.T) {
+	t.Run("redirect", func(t *testing.T) {
+		var redirected atomic.Int32
+		target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			redirected.Add(1)
+			writer.Header().Set("Content-Type", "text/plain")
+			_, _ = writer.Write([]byte("pong"))
+		}))
+		t.Cleanup(target.Close)
+		origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			http.Redirect(writer, request, target.URL+"/v1/ping", http.StatusFound)
+		}))
+		t.Cleanup(origin.Close)
+
+		client := newTestUpstreamClient(t, origin.URL, &http.Client{Timeout: 2 * time.Second})
+		err := client.Health(context.Background())
+		require.Equal(t, ReasonUpstreamRejected, ReasonCode(err))
+		require.Zero(t, redirected.Load())
+	})
+
+	t.Run("proxy", func(t *testing.T) {
+		var proxied atomic.Int32
+		proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			proxied.Add(1)
+			writer.WriteHeader(http.StatusBadGateway)
+		}))
+		t.Cleanup(proxy.Close)
+		proxyURL, err := url.Parse(proxy.URL)
+		require.NoError(t, err)
+		origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = writer.Write([]byte("pong"))
+		}))
+		t.Cleanup(origin.Close)
+
+		client := newTestUpstreamClient(t, origin.URL, &http.Client{
+			Timeout:   2 * time.Second,
+			Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		})
+		require.NoError(t, client.Health(context.Background()))
+		require.Zero(t, proxied.Load())
+	})
+}
+
+func TestUpstreamClientRejectsOversizedResponseWithoutLeakingBody(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Content-Type": []string{"text/plain"}},
+			Body:          io.NopCloser(strings.NewReader("secret oversized body")),
+			ContentLength: maxUpstreamResponseBytes + 1,
+			Request:       request,
+		}, nil
+	})
+	client := newTestUpstreamClient(t, "http://127.0.0.1:8080", &http.Client{Timeout: time.Second, Transport: transport})
+	err := client.Health(context.Background())
+	require.Equal(t, ReasonUpstreamResponseTooLarge, ReasonCode(err))
+	require.NotContains(t, err.Error(), "secret oversized body")
+}
+
 func newTestUpstreamClient(t *testing.T, baseURL string, httpClient *http.Client) *UpstreamClient {
 	t.Helper()
 	client, err := NewUpstreamClient(UpstreamClientConfig{BaseURL: baseURL, BearerJWT: "temporary-jwt", HTTPClient: httpClient})
@@ -303,4 +592,10 @@ func (transport *deadlineTransport) RoundTrip(request *http.Request) (*http.Resp
 		Body:       io.NopCloser(strings.NewReader(`{"success":true,"data":{}}`)),
 		Request:    request,
 	}, nil
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }

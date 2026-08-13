@@ -7,17 +7,27 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"gorm.io/gorm"
+
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
+	"github.com/coze-dev/coze-studio/backend/infra/cache"
 	redisimpl "github.com/coze-dev/coze-studio/backend/infra/cache/impl/redis"
+	mysqlimpl "github.com/coze-dev/coze-studio/backend/infra/orm/impl/mysql"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/aio"
 	sandboxruntime "github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/runtime"
 )
 
 const defaultRunnerDispatchInterval = 100 * time.Millisecond
+const defaultAIOObservationInterval = 5 * time.Second
+const defaultAIOObservationTimeout = 5 * time.Second
 
 // RuntimeStore is the single trusted encrypted execution store shared by HTTP
 // status handlers, scheduling, recovery, and terminal result persistence.
@@ -34,18 +44,41 @@ type RuntimeDependencies struct {
 	Resources           ResourceSampler
 	InitialSettings     domainsandbox.SchedulerSettings
 	ConfigurationSigner *infrasandbox.SchedulerConfigSigner
+	CoreLifecycle       CoreLifecycle
+	CoreRedisReadiness  cache.ReadinessChecker
+	SQLPool             io.Closer
 	Now                 func() time.Time
 }
 
+type CoreLifecycle interface {
+	Observe(context.Context) (aio.LifecycleSnapshot, error)
+	Snapshot() aio.LifecycleSnapshot
+}
+
 type Runtime struct {
-	server       *Server
-	scheduler    *RunnerScheduler
-	lifecycle    *Lifecycle
-	configStore  *ConfigurationStore
-	dispatchTick time.Duration
+	server                *Server
+	scheduler             *RunnerScheduler
+	lifecycle             *Lifecycle
+	configStore           *ConfigurationStore
+	coreLifecycle         CoreLifecycle
+	coreRedisReadiness    cache.ReadinessChecker
+	sessionBackendEnabled bool
+	sqlPool               io.Closer
+	closeOnce             sync.Once
+	closeErr              error
+	coreObservationActive atomic.Bool
+	dispatchTick          time.Duration
+	aioObservationTick    time.Duration
+	aioObservationTimeout time.Duration
 }
 
 func NewRuntime(config Config, dependencies RuntimeDependencies) (*Runtime, error) {
+	succeeded := false
+	defer func() {
+		if !succeeded && dependencies.SQLPool != nil {
+			_ = dependencies.SQLPool.Close()
+		}
+	}()
 	if dependencies.Store == nil || dependencies.Driver == nil || dependencies.Resources == nil || dependencies.ConfigurationSigner == nil {
 		return nil, ErrConfiguration
 	}
@@ -82,30 +115,96 @@ func NewRuntime(config Config, dependencies RuntimeDependencies) (*Runtime, erro
 		return nil, ErrConfiguration
 	}
 	lifecycleManager := runtimeLifecycleManager{store: dependencies.Store, scheduler: scheduler, lifecycle: lifecycle}
-	server, err := NewServer(config, Dependencies{Scheduler: scheduler, Store: dependencies.Store, Lifecycle: lifecycleManager, Configuration: configStore, ConfigurationApplier: configStore, RuntimeStatus: runtimeStatusSource{scheduler: scheduler, lifecycle: lifecycle, configuration: configStore}, Readiness: runtimeReadinessProbe{driver: dependencies.Driver}})
+	server, err := NewServer(config, Dependencies{Scheduler: scheduler, Store: dependencies.Store, Lifecycle: lifecycleManager, Configuration: configStore, ConfigurationApplier: configStore, RuntimeStatus: runtimeStatusSource{scheduler: scheduler, lifecycle: lifecycle, configuration: configStore, sessionBackendEnabled: config.SessionBackendEnabled, core: runtimeCoreStatusSource{lifecycle: dependencies.CoreLifecycle, redisReadiness: dependencies.CoreRedisReadiness}}, Readiness: runtimeReadinessProbe{driver: dependencies.Driver}})
 	if err != nil {
 		return nil, ErrConfiguration
 	}
-	return &Runtime{server: server, scheduler: scheduler, lifecycle: lifecycle, configStore: configStore, dispatchTick: defaultRunnerDispatchInterval}, nil
+	succeeded = true
+	return &Runtime{
+		server: server, scheduler: scheduler, lifecycle: lifecycle, configStore: configStore,
+		coreLifecycle: dependencies.CoreLifecycle, coreRedisReadiness: dependencies.CoreRedisReadiness, sessionBackendEnabled: config.SessionBackendEnabled,
+		sqlPool: dependencies.SQLPool, dispatchTick: defaultRunnerDispatchInterval,
+		aioObservationTick: defaultAIOObservationInterval, aioObservationTimeout: defaultAIOObservationTimeout,
+	}, nil
 }
 
 // NewProcessRuntime wires the only production implementation: Redis for
 // encrypted queue state and a dedicated rootless Docker-compatible socket for
 // execution containers. It intentionally has no host-execution fallback.
 func NewProcessRuntime(ctx context.Context, config Config) (*Runtime, error) {
+	return newProcessRuntime(ctx, config, defaultProcessRuntimeFactories())
+}
+
+type processRuntimeFactories struct {
+	newStore                func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error)
+	newDriver               func(Config) (sandboxruntime.Driver, error)
+	newGenerationRepository func() (domainsandbox.AIOGenerationRepository, io.Closer, error)
+	newAIOUpstream          func(Config) (aio.LifecycleUpstream, error)
+	newCoreLifecycle        func(aio.LifecycleConfig) (CoreLifecycle, error)
+}
+
+func defaultProcessRuntimeFactories() processRuntimeFactories {
+	return processRuntimeFactories{
+		newStore: func(ctx context.Context, config Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			client, err := redisimpl.New(ctx)
+			if err != nil {
+				return nil, nil, ErrUnavailable
+			}
+			readiness, ok := client.(cache.ReadinessChecker)
+			if !ok {
+				return nil, nil, ErrUnavailable
+			}
+			store, err := NewRedisStore(client, RedisStoreConfig{DeploymentID: config.DeploymentID, ActiveKeyID: config.ActiveQueueKeyID, Keys: config.QueueKeys.Keys,
+				MaxQueueDepth: domainsandboxDefaultSettings().GlobalQueueDepth, PerSpaceQueueDepth: domainsandboxDefaultSettings().PerSpaceQueueDepth, PerUserQueueDepth: domainsandboxDefaultSettings().PerUserQueueDepth, RecordTTL: 24 * time.Hour})
+			return store, readiness, err
+		},
+		newDriver: func(config Config) (sandboxruntime.Driver, error) {
+			return sandboxruntime.NewDockerDriver(sandboxruntime.DockerDriverConfig{Endpoint: config.RootlessEndpoint})
+		},
+		newGenerationRepository: func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			db, err := mysqlimpl.New()
+			if err != nil {
+				return nil, nil, ErrUnavailable
+			}
+			return generationRepositoryFromDB(db)
+		},
+		newAIOUpstream: func(config Config) (aio.LifecycleUpstream, error) {
+			return aio.NewUpstreamClient(aio.UpstreamClientConfig{BaseURL: config.AIOUpstreamURL, BearerJWT: config.AIOBearerToken, HTTPClient: NewAIOHTTPClient()})
+		},
+		newCoreLifecycle: func(config aio.LifecycleConfig) (CoreLifecycle, error) {
+			return aio.NewLifecycleSupervisor(config)
+		},
+	}
+}
+
+func generationRepositoryFromDB(db *gorm.DB) (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+	if db == nil {
+		return nil, nil, ErrUnavailable
+	}
+	sqlPool, err := db.DB()
+	if err != nil || sqlPool == nil {
+		if sqlPool != nil {
+			_ = sqlPool.Close()
+		} else if pool, ok := db.ConnPool.(io.Closer); ok && pool != nil {
+			_ = pool.Close()
+		}
+		return nil, nil, ErrUnavailable
+	}
+	return infrasandbox.NewMySQLRepository(db), sqlPool, nil
+}
+
+func newProcessRuntime(ctx context.Context, config Config, factories processRuntimeFactories) (*Runtime, error) {
 	if ctx == nil {
 		return nil, ErrConfiguration
 	}
-	client, err := redisimpl.New(ctx)
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	store, err := NewRedisStore(client, RedisStoreConfig{DeploymentID: config.DeploymentID, ActiveKeyID: config.ActiveQueueKeyID, Keys: config.QueueKeys.Keys,
-		MaxQueueDepth: domainsandboxDefaultSettings().GlobalQueueDepth, PerSpaceQueueDepth: domainsandboxDefaultSettings().PerSpaceQueueDepth, PerUserQueueDepth: domainsandboxDefaultSettings().PerUserQueueDepth, RecordTTL: 24 * time.Hour})
-	if err != nil {
+	if factories.newStore == nil || factories.newDriver == nil {
 		return nil, ErrConfiguration
 	}
-	driver, err := sandboxruntime.NewDockerDriver(sandboxruntime.DockerDriverConfig{Endpoint: config.RootlessEndpoint})
+	store, redisReadiness, err := factories.newStore(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	driver, err := factories.newDriver(config)
 	if err != nil {
 		return nil, ErrConfiguration
 	}
@@ -115,7 +214,33 @@ func NewProcessRuntime(ctx context.Context, config Config) (*Runtime, error) {
 	if err != nil {
 		return nil, ErrConfiguration
 	}
-	return NewRuntime(config, RuntimeDependencies{Store: store, Driver: driver, Resources: NewHostMemorySampler(), InitialSettings: settings, ConfigurationSigner: signer})
+	dependencies := RuntimeDependencies{Store: store, Driver: driver, Resources: NewHostMemorySampler(), InitialSettings: settings, ConfigurationSigner: signer, CoreRedisReadiness: redisReadiness}
+	lifecycleFactory := factories.newCoreLifecycle
+	if lifecycleFactory == nil {
+		lifecycleFactory = func(config aio.LifecycleConfig) (CoreLifecycle, error) {
+			return aio.NewLifecycleSupervisor(config)
+		}
+	}
+	if config.SessionBackendEnabled && factories.newGenerationRepository != nil && factories.newAIOUpstream != nil {
+		repository, ownedPool, repositoryErr := factories.newGenerationRepository()
+		if repositoryErr == nil && repository != nil && ownedPool != nil {
+			upstream, upstreamErr := factories.newAIOUpstream(config)
+			if upstreamErr == nil && upstream != nil {
+				supervisor, lifecycleErr := lifecycleFactory(aio.LifecycleConfig{
+					Enabled: true, DeploymentID: config.DeploymentID, Repository: repository, Upstream: upstream,
+				})
+				if lifecycleErr == nil {
+					dependencies.CoreLifecycle = supervisor
+					dependencies.SQLPool = ownedPool
+					ownedPool = nil // NewRuntime owns the pool on both success and failure.
+				}
+			}
+		}
+		if ownedPool != nil {
+			_ = ownedPool.Close()
+		}
+	}
+	return NewRuntime(config, dependencies)
 }
 
 func (runtime *Runtime) Handler() http.Handler {
@@ -129,6 +254,7 @@ func (runtime *Runtime) Run(ctx context.Context, config Config) error {
 	if runtime == nil || runtime.server == nil || runtime.scheduler == nil || runtime.lifecycle == nil || ctx == nil {
 		return ErrConfiguration
 	}
+	defer runtime.Close()
 	if err := runtime.lifecycle.Recover(ctx); err != nil {
 		return err
 	}
@@ -152,6 +278,14 @@ func (runtime *Runtime) Run(ctx context.Context, config Config) error {
 	}()
 	ticker := time.NewTicker(runtime.dispatchTick)
 	defer ticker.Stop()
+	var aioTicker *time.Ticker
+	var aioTick <-chan time.Time
+	if runtime.sessionBackendEnabled && runtime.coreLifecycle != nil {
+		aioTicker = time.NewTicker(runtime.aioObservationTick)
+		aioTick = aioTicker.C
+		defer aioTicker.Stop()
+		runtime.scheduleCoreObservation(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,8 +300,78 @@ func (runtime *Runtime) Run(ctx context.Context, config Config) error {
 			return ErrUnavailable
 		case <-ticker.C:
 			_, _ = runtime.scheduler.DispatchNext(ctx)
+		case <-aioTick:
+			runtime.scheduleCoreObservation(ctx)
 		}
 	}
+}
+
+func (runtime *Runtime) scheduleCoreObservation(ctx context.Context) {
+	if runtime == nil || runtime.coreLifecycle == nil || ctx == nil || !runtime.coreObservationActive.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer runtime.coreObservationActive.Store(false)
+		runtime.observeCore(ctx)
+	}()
+}
+
+func (runtime *Runtime) CoreReady(ctx context.Context) error {
+	if runtime == nil || ctx == nil || !runtime.sessionBackendEnabled || runtime.coreLifecycle == nil {
+		return ErrUnavailable
+	}
+	if runtime.coreRedisReadiness == nil || runtime.coreRedisReadiness.CheckReadiness(ctx) != nil {
+		return ErrUnavailable
+	}
+	snapshot := runtime.coreLifecycle.Snapshot()
+	if !snapshot.Enabled || !snapshot.Ready || snapshot.State != aio.LifecycleStateReady || snapshot.Generation == 0 {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func (runtime *Runtime) observeCore(ctx context.Context) {
+	if runtime == nil || runtime.coreLifecycle == nil || ctx == nil {
+		return
+	}
+	timeout := runtime.aioObservationTimeout
+	if timeout <= 0 {
+		timeout = defaultAIOObservationTimeout
+	}
+	observeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_, _ = runtime.coreLifecycle.Observe(observeCtx)
+}
+
+func (runtime *Runtime) Close() error {
+	if runtime == nil {
+		return nil
+	}
+	runtime.closeOnce.Do(func() {
+		if runtime.sqlPool != nil {
+			runtime.closeErr = runtime.sqlPool.Close()
+		}
+	})
+	return runtime.closeErr
+}
+
+type runtimeCoreStatusSource struct {
+	lifecycle      CoreLifecycle
+	redisReadiness cache.ReadinessChecker
+}
+
+func (source runtimeCoreStatusSource) CoreRuntimeStatus(ctx context.Context) (CoreRuntimeStatusSnapshot, error) {
+	if source.lifecycle == nil {
+		return CoreRuntimeStatusSnapshot{}, ErrUnavailable
+	}
+	if source.redisReadiness == nil || source.redisReadiness.CheckReadiness(ctx) != nil {
+		return CoreRuntimeStatusSnapshot{}, ErrUnavailable
+	}
+	snapshot := source.lifecycle.Snapshot()
+	if !snapshot.Enabled || !snapshot.Ready || snapshot.State != aio.LifecycleStateReady || snapshot.Generation == 0 {
+		return CoreRuntimeStatusSnapshot{State: coreRuntimeUnknown}, nil
+	}
+	return CoreRuntimeStatusSnapshot{State: coreRuntimeReady, Generation: snapshot.Generation}, nil
 }
 
 type resultFinisherFunc func(context.Context, infrasandbox.ExecuteResult) error

@@ -7,34 +7,45 @@
 package sandboxrunner
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
+
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
 var ErrConfiguration = errors.New("sandbox runner configuration is invalid")
 
+var errAIOUpstreamRedirect = errors.New("AIO upstream redirect is forbidden")
+
+const aioHTTPTimeout = 30 * time.Second
+
 type Config struct {
-	DeploymentID        string
-	ListenAddr          string
-	TLSCertFile         string
-	TLSKeyFile          string
-	DebugLoopbackHTTP   bool
-	AuthToken           string
-	ContextVerifyKeys   sandboxidentity.Keyring
-	SchedulerConfigKeys keyringConfig
-	QueueKeys           keyringConfig
-	ActiveQueueKeyID    string
-	RootlessEndpoint    string
-	ExecutionImage      string
+	DeploymentID          string
+	ListenAddr            string
+	TLSCertFile           string
+	TLSKeyFile            string
+	DebugLoopbackHTTP     bool
+	AuthToken             string
+	ContextVerifyKeys     sandboxidentity.Keyring
+	SchedulerConfigKeys   keyringConfig
+	QueueKeys             keyringConfig
+	ActiveQueueKeyID      string
+	RootlessEndpoint      string
+	ExecutionImage        string
+	SessionBackendEnabled bool
+	AIOUpstreamURL        string
+	AIOBearerToken        string
 }
 
 func (Config) String() string   { return "sandboxrunner.Config{secrets:<redacted>}" }
@@ -65,6 +76,11 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, ErrConfiguration
 	}
 	config.DebugLoopbackHTTP = debugValue == "true"
+	sessionValue := getenv("SANDBOX_RUNNER_SESSION_ENABLED")
+	if sessionValue != "" && sessionValue != "true" && sessionValue != "false" {
+		return Config{}, ErrConfiguration
+	}
+	config.SessionBackendEnabled = sessionValue == "true"
 	if !validKeyID(config.DeploymentID) || config.ListenAddr == "" || len(config.AuthToken) < 16 || !validUnixEndpoint(config.RootlessEndpoint) ||
 		!validDigestImage(config.ExecutionImage) || !validListener(config.ListenAddr) {
 		return Config{}, ErrConfiguration
@@ -89,7 +105,107 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		config.ActiveQueueKeyID == "" || config.ActiveQueueKeyID != config.QueueKeys.ActiveKeyID {
 		return Config{}, ErrConfiguration
 	}
+	if config.SessionBackendEnabled {
+		config.AIOUpstreamURL = strings.TrimSpace(getenv("SANDBOX_RUNNER_AIO_UPSTREAM_URL"))
+		config.AIOBearerToken = getenv("SANDBOX_RUNNER_AIO_BEARER_TOKEN")
+		if !validMySQLDSN(getenv("MYSQL_DSN")) || !validRedisAddress(getenv("REDIS_ADDR")) ||
+			!validAIOUpstreamOrigin(config.AIOUpstreamURL, config.DebugLoopbackHTTP) ||
+			!validHTTPHeaderValue(config.AIOBearerToken) {
+			return Config{}, ErrConfiguration
+		}
+	}
 	return config, nil
+}
+
+// NewAIOHTTPClient returns a bounded client that never follows redirects or
+// inherits environment proxy configuration. AIO is addressed only through the
+// validated, exact private origin from Config.
+func NewAIOHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   aioHTTPTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errAIOUpstreamRedirect
+		},
+	}
+}
+
+func validMySQLDSN(raw string) bool {
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return false
+	}
+	_, err := mysqldriver.ParseDSN(raw)
+	return err == nil
+}
+
+func validRedisAddress(raw string) bool {
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return false
+	}
+	host, port, err := net.SplitHostPort(raw)
+	if err != nil || host == "" || port == "" {
+		return false
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value > 0 && value <= 65535
+}
+
+func validAIOUpstreamOrigin(raw string, allowLoopback bool) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.Opaque != "" || parsed.User != nil ||
+		parsed.Host == "" || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" ||
+		parsed.ForceQuery || parsed.Fragment != "" || parsed.Port() != "8080" {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "" || strings.ContainsAny(host, " \t\r\n") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			return allowLoopback
+		}
+		return isPrivateAIOIP(ip)
+	}
+	if host == "localhost" {
+		return allowLoopback
+	}
+	return validComposeServiceName(host)
+}
+
+func isPrivateAIOIP(ip net.IP) bool {
+	if ip == nil || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return ipv4[0] == 10 || ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31 || ipv4[0] == 192 && ipv4[1] == 168
+	}
+	bytes := ip.To16()
+	return bytes != nil && bytes[0]&0xfe == 0xfc
+}
+
+func validComposeServiceName(host string) bool {
+	if host == "" || len(host) > 63 || strings.Contains(host, ".") || host[0] == '-' || host[len(host)-1] == '-' {
+		return false
+	}
+	hasLetter := false
+	for _, char := range host {
+		switch {
+		case char >= 'a' && char <= 'z':
+			hasLetter = true
+		case char >= '0' && char <= '9', char == '-':
+		default:
+			return false
+		}
+	}
+	return hasLetter
+}
+
+func validHTTPHeaderValue(value string) bool {
+	return !strings.ContainsAny(value, "\r\n")
 }
 
 func loadIdentityKeyring(raw string) (sandboxidentity.Keyring, error) {

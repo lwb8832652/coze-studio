@@ -106,6 +106,8 @@ const (
 type RuntimeStatusProjection struct {
 	Schema                      string         `json:"schema"`
 	AppliedConfigurationVersion uint64         `json:"applied_configuration_version"`
+	CoreState                   string         `json:"core_state"`
+	AIORuntimeGeneration        uint64         `json:"aio_runtime_generation"`
 	Queued                      int            `json:"queued"`
 	QueuedByScope               map[string]int `json:"queued_by_scope"`
 	Running                     int            `json:"running"`

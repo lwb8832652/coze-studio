@@ -368,6 +368,7 @@ func (p *RemoteProvider) RuntimeStatus(ctx context.Context) (SchedulerRuntimeSta
 
 func validSchedulerRuntimeStatus(status SchedulerRuntimeStatus) bool {
 	if status.Schema != SchedulerRuntimeStatusSchemaV1 || status.AppliedConfigurationVersion == 0 ||
+		!validCoreRuntimeStatus(status.CoreState, status.AIORuntimeGeneration) ||
 		status.Queued < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight < 1 ||
 		status.UsedWeight > status.TotalWeight || status.IdleContainers < 0 || status.ActiveContainers < 0 ||
 		status.QuarantinedContainers < 0 {
@@ -384,6 +385,17 @@ func validSchedulerRuntimeStatus(status SchedulerRuntimeStatus) bool {
 		queued += count
 	}
 	return queued == status.Queued
+}
+
+func validCoreRuntimeStatus(state CoreRuntimeState, generation uint64) bool {
+	switch state {
+	case CoreRuntimeDisabled, CoreRuntimeUnknown:
+		return generation == 0
+	case CoreRuntimeReady:
+		return generation > 0
+	default:
+		return false
+	}
 }
 
 func validRuntimeStatusScope(scope domainsandbox.Scope) bool {

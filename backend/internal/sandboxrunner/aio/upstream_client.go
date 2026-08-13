@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,18 +34,24 @@ import (
 )
 
 const (
-	maxUpstreamHTTPTimeout = 30 * time.Second
+	maxUpstreamHTTPTimeout   = 30 * time.Second
+	maxUpstreamResponseBytes = int64(64 * 1024 * 1024)
+	maxHealthResponseBytes   = int64(16)
 
-	ReasonUpstreamCancelled    = "AIO_UPSTREAM_CANCELLED"
-	ReasonUpstreamTimeout      = "AIO_UPSTREAM_TIMEOUT"
-	ReasonUpstreamUnauthorized = "AIO_UPSTREAM_UNAUTHORIZED"
-	ReasonUpstreamNotFound     = "AIO_UPSTREAM_NOT_FOUND"
-	ReasonUpstreamRejected     = "AIO_UPSTREAM_REJECTED"
-	ReasonUpstreamServerError  = "AIO_UPSTREAM_SERVER_ERROR"
-	ReasonUpstreamUnavailable  = "AIO_UPSTREAM_UNAVAILABLE"
+	ReasonUpstreamCancelled         = "AIO_UPSTREAM_CANCELLED"
+	ReasonUpstreamTimeout           = "AIO_UPSTREAM_TIMEOUT"
+	ReasonUpstreamUnauthorized      = "AIO_UPSTREAM_UNAUTHORIZED"
+	ReasonUpstreamNotFound          = "AIO_UPSTREAM_NOT_FOUND"
+	ReasonUpstreamRejected          = "AIO_UPSTREAM_REJECTED"
+	ReasonUpstreamServerError       = "AIO_UPSTREAM_SERVER_ERROR"
+	ReasonUpstreamUnavailable       = "AIO_UPSTREAM_UNAVAILABLE"
+	ReasonUpstreamMalformedResponse = "AIO_UPSTREAM_MALFORMED_RESPONSE"
+	ReasonUpstreamResponseTooLarge  = "AIO_UPSTREAM_RESPONSE_TOO_LARGE"
 )
 
 var ErrInvalidUpstreamConfig = errors.New("invalid AIO upstream configuration")
+
+var errUpstreamResponseTooLarge = errors.New("AIO upstream response exceeded limit")
 
 type UpstreamClientConfig struct {
 	BaseURL    string
@@ -54,6 +61,9 @@ type UpstreamClientConfig struct {
 
 type UpstreamClient struct {
 	sdk          *sandboxclient.Client
+	baseURL      string
+	httpClient   *http.Client
+	headers      http.Header
 	lockIdentity string
 }
 
@@ -66,6 +76,7 @@ func NewUpstreamClient(config UpstreamClientConfig) (*UpstreamClient, error) {
 	if config.HTTPClient == nil || config.HTTPClient.Timeout <= 0 || config.HTTPClient.Timeout > maxUpstreamHTTPTimeout {
 		return nil, ErrInvalidUpstreamConfig
 	}
+	httpClient := isolatedHTTPClient(config.HTTPClient)
 
 	headers := make(http.Header)
 	if config.BearerJWT != "" {
@@ -73,14 +84,66 @@ func NewUpstreamClient(config UpstreamClientConfig) (*UpstreamClient, error) {
 	}
 	sdk := sandboxclient.NewClient(
 		option.WithBaseURL(baseURL),
-		option.WithHTTPClient(config.HTTPClient),
+		option.WithHTTPClient(httpClient),
 		option.WithHTTPHeader(headers),
 		option.WithMaxAttempts(1),
 	)
-	return &UpstreamClient{sdk: sdk, lockIdentity: baseURL}, nil
+	return &UpstreamClient{
+		sdk: sdk, baseURL: baseURL, httpClient: httpClient, headers: headers.Clone(), lockIdentity: baseURL,
+	}, nil
 }
 
 func (client *UpstreamClient) ShellLockIdentity() string { return client.lockIdentity }
+
+func (client *UpstreamClient) Health(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/ping", nil)
+	if err != nil {
+		return sanitizeUpstreamError(ctx, err)
+	}
+	request.Header = client.headers.Clone()
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return sanitizeUpstreamError(ctx, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		if response.StatusCode > http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			return &UpstreamError{reasonCode: ReasonUpstreamMalformedResponse}
+		}
+		return sanitizeUpstreamError(ctx, core.NewAPIError(response.StatusCode, response.Header, nil))
+	}
+	mediaType, parameters, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "text/plain" || len(parameters) != 1 || !strings.EqualFold(parameters["charset"], "utf-8") {
+		return &UpstreamError{reasonCode: ReasonUpstreamMalformedResponse}
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxHealthResponseBytes+1))
+	if err != nil {
+		return sanitizeUpstreamError(ctx, err)
+	}
+	if int64(len(body)) > maxHealthResponseBytes {
+		return &UpstreamError{reasonCode: ReasonUpstreamResponseTooLarge}
+	}
+	if string(body) != "pong" {
+		return &UpstreamError{reasonCode: ReasonUpstreamMalformedResponse}
+	}
+	return nil
+}
+
+func (client *UpstreamClient) ListSessions(ctx context.Context) (*sandboxapi.ResponseActiveShellSessionsResult, error) {
+	response, err := client.sdk.Shell.ListSessions(ctx)
+	if err != nil {
+		return nil, sanitizeUpstreamError(ctx, err)
+	}
+	if response == nil || response.Success == nil || !*response.Success || response.Data == nil || response.Data.Sessions == nil {
+		return nil, &UpstreamError{reasonCode: ReasonUpstreamMalformedResponse}
+	}
+	for _, session := range response.Data.Sessions {
+		if session == nil {
+			return nil, &UpstreamError{reasonCode: ReasonUpstreamMalformedResponse}
+		}
+	}
+	return response, nil
+}
 
 func (client *UpstreamClient) Create(ctx context.Context, request *sandboxapi.ShellCreateSessionRequest) (*sandboxapi.ResponseShellCreateSessionResponse, error) {
 	response, err := client.sdk.Shell.CreateSession(ctx, request)
@@ -173,6 +236,9 @@ func sanitizeUpstreamError(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return &UpstreamError{reasonCode: ReasonUpstreamTimeout}
 	}
+	if errors.Is(err, errUpstreamResponseTooLarge) {
+		return &UpstreamError{reasonCode: ReasonUpstreamResponseTooLarge}
+	}
 	var apiError *core.APIError
 	if errors.As(err, &apiError) {
 		switch {
@@ -180,7 +246,7 @@ func sanitizeUpstreamError(ctx context.Context, err error) error {
 			return &UpstreamError{reasonCode: ReasonUpstreamUnauthorized}
 		case apiError.StatusCode == http.StatusNotFound:
 			return &UpstreamError{reasonCode: ReasonUpstreamNotFound}
-		case apiError.StatusCode >= http.StatusBadRequest && apiError.StatusCode < http.StatusInternalServerError:
+		case apiError.StatusCode >= http.StatusMultipleChoices && apiError.StatusCode < http.StatusInternalServerError:
 			return &UpstreamError{reasonCode: ReasonUpstreamRejected}
 		case apiError.StatusCode >= http.StatusInternalServerError:
 			return &UpstreamError{reasonCode: ReasonUpstreamServerError}
@@ -192,3 +258,70 @@ func sanitizeUpstreamError(ctx context.Context, err error) error {
 func (err *UpstreamError) Format(state fmt.State, _ rune) {
 	_, _ = fmt.Fprint(state, err.Error())
 }
+
+func isolatedHTTPClient(source *http.Client) *http.Client {
+	client := *source
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	client.Transport = isolatedTransport(source.Transport)
+	return &client
+}
+
+func isolatedTransport(source http.RoundTripper) http.RoundTripper {
+	if source == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		return &boundedResponseTransport{delegate: transport}
+	}
+	if transport, ok := source.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.Proxy = nil
+		source = clone
+	}
+	return &boundedResponseTransport{delegate: source}
+}
+
+type boundedResponseTransport struct {
+	delegate http.RoundTripper
+}
+
+func (transport *boundedResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := transport.delegate.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.ContentLength > maxUpstreamResponseBytes {
+		_ = response.Body.Close()
+		return nil, errUpstreamResponseTooLarge
+	}
+	response.Body = &boundedResponseBody{delegate: response.Body, remaining: maxUpstreamResponseBytes}
+	return response, nil
+}
+
+type boundedResponseBody struct {
+	delegate  io.ReadCloser
+	remaining int64
+}
+
+func (body *boundedResponseBody) Read(buffer []byte) (int, error) {
+	if body.remaining < 0 {
+		return 0, errUpstreamResponseTooLarge
+	}
+	limit := int64(len(buffer))
+	if limit > body.remaining+1 {
+		limit = body.remaining + 1
+	}
+	read, err := body.delegate.Read(buffer[:limit])
+	body.remaining -= int64(read)
+	if body.remaining < 0 {
+		allowed := read + int(body.remaining)
+		if allowed < 0 {
+			allowed = 0
+		}
+		return allowed, errUpstreamResponseTooLarge
+	}
+	return read, err
+}
+
+func (body *boundedResponseBody) Close() error { return body.delegate.Close() }

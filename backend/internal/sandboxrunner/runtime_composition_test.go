@@ -5,13 +5,21 @@ package sandboxrunner
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"io"
+	"sync"
 	"testing"
 	"time"
 
+	sandboxapi "github.com/agent-infra/sandbox-sdk-go"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
+	"github.com/coze-dev/coze-studio/backend/infra/cache"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/aio"
 	sandboxruntime "github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/runtime"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
@@ -46,6 +54,285 @@ func TestNewRuntimeRejectsMissingExecutionDependencies(t *testing.T) {
 	require.ErrorIs(t, err, ErrConfiguration)
 }
 
+func TestNewRuntimeRequiresCoreLifecycleOnlyWhenSessionBackendEnabled(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+	dependencies := RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true},
+		Resources: fixedMemorySampler(4096), InitialSettings: settings,
+		ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: alwaysReadyCache{},
+	}
+
+	disabled := validRuntimeConfig()
+	disabled.SessionBackendEnabled = false
+	runtime, err := NewRuntime(disabled, dependencies)
+	require.NoError(t, err)
+	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+
+	enabled := validRuntimeConfig()
+	enabled.SessionBackendEnabled = true
+	runtime, err = NewRuntime(enabled, dependencies)
+	require.NoError(t, err)
+	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+
+	core := &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
+		Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 3,
+	}}
+	dependencies.CoreLifecycle = core
+	runtime, err = NewRuntime(enabled, dependencies)
+	require.NoError(t, err)
+	require.NoError(t, runtime.CoreReady(context.Background()))
+}
+
+func TestRuntimeClosesOwnedSQLPoolOnceIncludingConstructionFailure(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+
+	failedCloser := &recordingCloser{}
+	_, err = NewRuntime(validRuntimeConfig(), RuntimeDependencies{
+		InitialSettings: settings, ConfigurationSigner: signer, SQLPool: failedCloser,
+	})
+	require.ErrorIs(t, err, ErrConfiguration)
+	require.Equal(t, 1, failedCloser.Count())
+
+	closer := &recordingCloser{}
+	runtime, err := NewRuntime(validRuntimeConfig(), RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true},
+		Resources: fixedMemorySampler(4096), InitialSettings: settings,
+		ConfigurationSigner: signer, Now: clock.now, SQLPool: closer,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runtime.Close())
+	require.NoError(t, runtime.Close())
+	require.Equal(t, 1, closer.Count())
+}
+
+func TestCoreReadyFailsClosedWhenRedisBecomesUnavailable(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+	redisReadiness := &mutableCacheReadiness{}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	runtime, err := NewRuntime(config, RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true}, Resources: fixedMemorySampler(4096),
+		InitialSettings: settings, ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: redisReadiness,
+		CoreLifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 1}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, runtime.CoreReady(context.Background()))
+	redisReadiness.err = errors.New("redis down")
+	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+}
+
+func TestProcessRuntimeFactoriesInitializeSessionDependenciesOnlyWhenEnabled(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	repository := &generationRepositoryFake{}
+	upstream := &lifecycleUpstreamFake{}
+	closer := &recordingCloser{}
+	var repositoryCalls, upstreamCalls int
+	factories := processRuntimeFactories{
+		newStore: func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			return newRuntimeStore(clock.now), alwaysReadyCache{}, nil
+		},
+		newDriver: func(Config) (sandboxruntime.Driver, error) { return &lifecycleDriverFake{stopped: true}, nil },
+		newGenerationRepository: func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			repositoryCalls++
+			return repository, closer, nil
+		},
+		newAIOUpstream: func(Config) (aio.LifecycleUpstream, error) {
+			upstreamCalls++
+			return upstream, nil
+		},
+	}
+
+	disabled := validRuntimeConfig()
+	disabled.SessionBackendEnabled = false
+	runtime, err := newProcessRuntime(context.Background(), disabled, factories)
+	require.NoError(t, err)
+	require.Equal(t, 0, repositoryCalls)
+	require.Equal(t, 0, upstreamCalls)
+	require.NoError(t, runtime.Close())
+	require.Equal(t, 0, closer.Count())
+
+	enabled := validRuntimeConfig()
+	enabled.SessionBackendEnabled = true
+	runtime, err = newProcessRuntime(context.Background(), enabled, factories)
+	require.NoError(t, err)
+	require.Equal(t, 1, repositoryCalls)
+	require.Equal(t, 1, upstreamCalls)
+	require.NoError(t, runtime.Close())
+	require.Equal(t, 1, closer.Count())
+}
+
+func TestProcessRuntimeKeepsOneShotAvailableWhenCoreDependenciesFail(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	baseFactories := processRuntimeFactories{
+		newStore: func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			return newRuntimeStore(clock.now), alwaysReadyCache{}, nil
+		},
+		newDriver:      func(Config) (sandboxruntime.Driver, error) { return &lifecycleDriverFake{stopped: true}, nil },
+		newAIOUpstream: func(Config) (aio.LifecycleUpstream, error) { return &lifecycleUpstreamFake{}, nil },
+	}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+
+	t.Run("MySQL initialization", func(t *testing.T) {
+		factories := baseFactories
+		factories.newGenerationRepository = func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return nil, nil, errors.New("secret MySQL failure")
+		}
+		runtime, err := newProcessRuntime(context.Background(), config, factories)
+		require.NoError(t, err)
+		require.NotNil(t, runtime.Handler())
+		require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+		require.NoError(t, runtime.Close())
+	})
+
+	t.Run("MySQL partial initialization", func(t *testing.T) {
+		factories := baseFactories
+		closer := &recordingCloser{}
+		factories.newGenerationRepository = func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return &generationRepositoryFake{}, closer, errors.New("secret MySQL failure after pool creation")
+		}
+		runtime, err := newProcessRuntime(context.Background(), config, factories)
+		require.NoError(t, err)
+		require.NotNil(t, runtime.Handler())
+		require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+		require.Equal(t, 1, closer.Count())
+		require.NoError(t, runtime.Close())
+		require.Equal(t, 1, closer.Count())
+	})
+
+	t.Run("invalid MySQL repository", func(t *testing.T) {
+		factories := baseFactories
+		closer := &recordingCloser{}
+		factories.newGenerationRepository = func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return nil, closer, nil
+		}
+		runtime, err := newProcessRuntime(context.Background(), config, factories)
+		require.NoError(t, err)
+		require.NotNil(t, runtime.Handler())
+		require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+		require.Equal(t, 1, closer.Count())
+		require.NoError(t, runtime.Close())
+		require.Equal(t, 1, closer.Count())
+	})
+
+	t.Run("upstream initialization", func(t *testing.T) {
+		factories := baseFactories
+		closer := &recordingCloser{}
+		factories.newGenerationRepository = func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return &generationRepositoryFake{}, closer, nil
+		}
+		factories.newAIOUpstream = func(Config) (aio.LifecycleUpstream, error) {
+			return nil, errors.New("secret upstream failure")
+		}
+		runtime, err := newProcessRuntime(context.Background(), config, factories)
+		require.NoError(t, err)
+		require.NotNil(t, runtime.Handler())
+		require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+		require.Equal(t, 1, closer.Count())
+		require.NoError(t, runtime.Close())
+		require.Equal(t, 1, closer.Count())
+	})
+}
+
+func TestGenerationRepositoryFromDBClosesPoolWhenExtractionFails(t *testing.T) {
+	pool := &invalidGORMConnPool{}
+	db := &gorm.DB{Config: &gorm.Config{ConnPool: pool}}
+
+	repository, ownedPool, err := generationRepositoryFromDB(db)
+
+	require.ErrorIs(t, err, ErrUnavailable)
+	require.Nil(t, repository)
+	require.Nil(t, ownedPool)
+	require.Equal(t, 1, pool.Count())
+}
+
+func TestCoreReadyReadsCachedLifecycleWithoutBlockingOnObservation(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+	core := &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 4}}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	runtime, err := NewRuntime(config, RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true}, Resources: fixedMemorySampler(4096),
+		InitialSettings: settings, ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: alwaysReadyCache{}, CoreLifecycle: core,
+	})
+	require.NoError(t, err)
+	require.NoError(t, runtime.CoreReady(context.Background()))
+	require.Equal(t, 0, core.observeCalls)
+	core.snapshot = aio.LifecycleSnapshot{Enabled: true, State: aio.LifecycleStateUnknown, Generation: 4}
+	require.ErrorIs(t, runtime.CoreReady(context.Background()), ErrUnavailable)
+	require.Equal(t, 0, core.observeCalls)
+}
+
+func TestRuntimeCoreStatusReadsCachedLifecycleWithoutStartingObservation(t *testing.T) {
+	core := &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
+		Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 4,
+	}}
+	source := runtimeCoreStatusSource{lifecycle: core, redisReadiness: alwaysReadyCache{}}
+
+	status, err := source.CoreRuntimeStatus(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, CoreRuntimeStatusSnapshot{State: coreRuntimeReady, Generation: 4}, status)
+	require.Equal(t, 0, core.observeCalls)
+}
+
+func TestNewProcessRuntimeDoesNotSynchronouslyObserveAIO(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	closer := &recordingCloser{}
+	block := make(chan struct{})
+	core := &recordingCoreLifecycle{observeBlock: block}
+	factories := processRuntimeFactories{
+		newStore: func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			return newRuntimeStore(clock.now), alwaysReadyCache{}, nil
+		},
+		newDriver: func(Config) (sandboxruntime.Driver, error) { return &lifecycleDriverFake{stopped: true}, nil },
+		newGenerationRepository: func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return &generationRepositoryFake{}, closer, nil
+		},
+		newAIOUpstream:   func(Config) (aio.LifecycleUpstream, error) { return &lifecycleUpstreamFake{}, nil },
+		newCoreLifecycle: func(aio.LifecycleConfig) (CoreLifecycle, error) { return core, nil },
+	}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+
+	started := time.Now()
+	runtime, err := newProcessRuntime(context.Background(), config, factories)
+	require.NoError(t, err)
+	require.Less(t, time.Since(started), 100*time.Millisecond)
+	require.Equal(t, 0, core.observeCalls)
+	require.NoError(t, runtime.Close())
+}
+
+func TestCoreObservationIsBoundedAndNeverOverlaps(t *testing.T) {
+	block := make(chan struct{})
+	core := &recordingCoreLifecycle{observeBlock: block}
+	runtime := &Runtime{coreLifecycle: core, aioObservationTimeout: 20 * time.Millisecond}
+
+	runtime.scheduleCoreObservation(context.Background())
+	require.Eventually(t, func() bool { return core.ObserveCalls() == 1 }, time.Second, time.Millisecond)
+	runtime.scheduleCoreObservation(context.Background())
+	time.Sleep(5 * time.Millisecond)
+	require.Equal(t, 1, core.ObserveCalls())
+	require.Eventually(t, func() bool { return !runtime.coreObservationActive.Load() }, time.Second, time.Millisecond)
+}
+
 func TestRuntimeLifecycleManagerCancelsRunningContainerBeforeReleasingSchedulerCapacity(t *testing.T) {
 	clock := newSchedulerClock(time.Date(2026, time.August, 12, 10, 0, 0, 0, time.UTC))
 	store := newRuntimeStore(clock.now)
@@ -74,7 +361,11 @@ func TestRuntimeLifecycleManagerCancelsRunningContainerBeforeReleasingSchedulerC
 
 func validRuntimeConfig() Config {
 	keyring, _ := sandboxidentity.NewKeyring("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
-	return Config{DeploymentID: "runner-dev-1", AuthToken: "runner-auth-token-0123456789", ContextVerifyKeys: keyring, ActiveQueueKeyID: "key-1", ExecutionImage: "registry.example/coze-sandbox-runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	return Config{
+		DeploymentID: "runner-dev-1", AuthToken: "runner-auth-token-0123456789", ContextVerifyKeys: keyring,
+		SchedulerConfigKeys: keyringConfig{ActiveKeyID: "key-1", Keys: map[string]string{"key-1": "0123456789abcdef0123456789abcdef"}},
+		ActiveQueueKeyID:    "key-1", ExecutionImage: "registry.example/coze-sandbox-runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
 }
 
 type runtimeStore struct{ *schedulerStore }
@@ -97,3 +388,111 @@ func (store *runtimeStore) KeepAlive(context.Context, string) error { return nil
 func (store *runtimeStore) Cancel(context.Context, string) error    { return nil }
 
 var _ sandboxruntime.Driver = (*lifecycleDriverFake)(nil)
+
+type recordingCoreLifecycle struct {
+	mu           sync.Mutex
+	snapshot     aio.LifecycleSnapshot
+	err          error
+	observeBlock <-chan struct{}
+	observeCalls int
+}
+
+func (lifecycle *recordingCoreLifecycle) Observe(ctx context.Context) (aio.LifecycleSnapshot, error) {
+	lifecycle.mu.Lock()
+	lifecycle.observeCalls++
+	lifecycle.mu.Unlock()
+	if lifecycle.observeBlock != nil {
+		select {
+		case <-lifecycle.observeBlock:
+		case <-ctx.Done():
+			return lifecycle.snapshot, ctx.Err()
+		}
+	}
+	return lifecycle.snapshot, lifecycle.err
+}
+
+func (lifecycle *recordingCoreLifecycle) Snapshot() aio.LifecycleSnapshot {
+	lifecycle.mu.Lock()
+	defer lifecycle.mu.Unlock()
+	return lifecycle.snapshot
+}
+
+func (lifecycle *recordingCoreLifecycle) ObserveCalls() int {
+	lifecycle.mu.Lock()
+	defer lifecycle.mu.Unlock()
+	return lifecycle.observeCalls
+}
+
+type recordingCloser struct {
+	mu    sync.Mutex
+	count int
+}
+
+type invalidGORMConnPool struct{ recordingCloser }
+
+func (*invalidGORMConnPool) PrepareContext(context.Context, string) (*sql.Stmt, error) {
+	return nil, errors.New("not used")
+}
+func (*invalidGORMConnPool) ExecContext(context.Context, string, ...interface{}) (sql.Result, error) {
+	return nil, errors.New("not used")
+}
+func (*invalidGORMConnPool) QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error) {
+	return nil, errors.New("not used")
+}
+func (*invalidGORMConnPool) QueryRowContext(context.Context, string, ...interface{}) *sql.Row {
+	return nil
+}
+
+func (closer *recordingCloser) Close() error {
+	closer.mu.Lock()
+	defer closer.mu.Unlock()
+	closer.count++
+	return nil
+}
+
+func (closer *recordingCloser) Count() int {
+	closer.mu.Lock()
+	defer closer.mu.Unlock()
+	return closer.count
+}
+
+type generationRepositoryFake struct{}
+
+func (*generationRepositoryFake) GetAIOGeneration(context.Context, string) (domainsandbox.AIOGenerationState, error) {
+	return domainsandbox.AIOGenerationState{
+		DeploymentID: "runner-dev-1", Generation: 1,
+		SentinelID: "newx-generation-0123456789abcdef0123456789abcdef",
+	}, nil
+}
+
+func (*generationRepositoryFake) CompareAndReplaceAIOSentinel(context.Context, domainsandbox.CompareAndReplaceAIOSentinelInput) (domainsandbox.AIOGenerationState, bool, error) {
+	return domainsandbox.AIOGenerationState{}, false, errors.New("not used")
+}
+
+type lifecycleUpstreamFake struct{}
+
+func (*lifecycleUpstreamFake) Health(context.Context) error { return nil }
+func (*lifecycleUpstreamFake) ListSessions(context.Context) (*sandboxapi.ResponseActiveShellSessionsResult, error) {
+	success := true
+	return &sandboxapi.ResponseActiveShellSessionsResult{
+		Success: &success,
+		Data: &sandboxapi.ActiveShellSessionsResult{Sessions: map[string]*sandboxapi.ShellSessionInfo{
+			"newx-generation-0123456789abcdef0123456789abcdef": {WorkingDir: "/mnt/user-data"},
+		}},
+	}, nil
+}
+func (*lifecycleUpstreamFake) Create(context.Context, *sandboxapi.ShellCreateSessionRequest) (*sandboxapi.ResponseShellCreateSessionResponse, error) {
+	return nil, errors.New("not used")
+}
+func (*lifecycleUpstreamFake) View(context.Context, *sandboxapi.ShellViewRequest) (*sandboxapi.ResponseShellViewResult, error) {
+	return nil, errors.New("not used")
+}
+func (*lifecycleUpstreamFake) Cleanup(context.Context, string) error { return nil }
+
+type alwaysReadyCache struct{}
+
+func (alwaysReadyCache) CheckReadiness(context.Context) error { return nil }
+
+type mutableCacheReadiness struct{ err error }
+
+func (readiness *mutableCacheReadiness) CheckReadiness(context.Context) error { return readiness.err }
