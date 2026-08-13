@@ -492,7 +492,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2b delivery-first runtime and new-write retirement",
+      "label": "P1M-C1/C2a/C2b contract plus C3a-C3h2d mode-free runtime, recovery and rolling repository foundation",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -539,6 +539,21 @@
           "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
         },
         {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).BootstrapResume",
+          "locator": "func (c *adaptiveBootstrapCoordinator) BootstrapResume("
+        },
+        {
+          "path": "backend/application/agentthread/legacy_adaptive_admission_decoder.go",
+          "symbol": "(*LegacyAdaptiveAdmissionDecoder).Decode",
+          "locator": "func (*LegacyAdaptiveAdmissionDecoder) Decode(source *entity.Run)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapLegacySource",
+          "locator": "func lockAndValidateAdaptiveBootstrapLegacySource("
+        },
+        {
           "path": "backend/application/agentthread/adk_executor.go",
           "symbol": "(*ADKExecutor).Execute",
           "locator": "facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)"
@@ -552,6 +567,31 @@
           "path": "backend/application/agentthread/adk_subagent_tool_provider.go",
           "symbol": "(*ADKSubagentToolProvider).ResolveToolSet",
           "locator": "adaptiveAllowed, hasAdaptivePolicy := adaptiveSubagentsAllowedFromContext(ctx)"
+        },
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "symbol": "parseADKRuntimeConfig",
+          "locator": "func parseADKRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_builtin_subagent.go",
+          "symbol": "buildADKBuiltinSubagentRunSummary",
+          "locator": "func buildADKBuiltinSubagentRunSummary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_singleagent_subagent_agent_factory.go",
+          "symbol": "buildADKSingleAgentSubagentRunSummary",
+          "locator": "func buildADKSingleAgentSubagentRunSummary("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "(*threadRepository).CommitAdaptiveExecutionBoundary",
+          "locator": "func (r *threadRepository) CommitAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "validateAdaptiveExecutionSourceBoundaryChain",
+          "locator": "func validateAdaptiveExecutionSourceBoundaryChain("
         },
         {
           "path": "backend/application/agentthread/journal_feature_gate.go",
@@ -638,6 +678,26 @@
           "locator": "func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {"
         },
         {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/legacy_adaptive_admission_decoder_test.go",
+          "locator": "func TestLegacyAdaptiveAdmissionDecoderRejectsAmbiguousOrInvalidLegacyConfig(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapTypedInheritanceAcceptsDurableLegacySource(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
         },
@@ -652,6 +712,26 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryIgnoresRetiredModeControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestRetiredExecutionModeHasNoProductionADKConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestADKChildConfigWritersDoNotWriteRetiredExecutionMode(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryRollsPlanAcrossSameRecoveryAttemptAndReplaysHistory(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/journal_feature_gate_test.go",
@@ -820,6 +900,10 @@
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationResumeHumanInteractionReturnsFullRolloverReplayBeforeMutableState"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLDifferentKeySingleWinner(t *testing.T) {"
         }
       ]
     },
@@ -4358,6 +4442,18 @@
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
           "locator": "func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
         }
       ]
     },
@@ -5917,8 +6013,32 @@
           "locator": "func TestHumanResumeRolloverCommitsExactAggregateAndAdjacentSequences"
         },
         {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLSameKeyReplay(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLSameKeyDriftConflict(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLDifferentKeySingleWinner(t *testing.T) {"
+        },
+        {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
           "locator": "func TestAdaptiveBootstrapHumanResumeConsumesTypedLineageBeforeADKBuild"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
         },
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
@@ -6572,9 +6692,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2b delivery-first slice",
+      "term": "P0A/P0B/P0C/P0D wiring and adaptive capabilities outside the C3a-C3h2d delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a adds exactly one production edge: after valid input parsing, an already enrolled, fresh, top-level Eino ADK Execute invokes the gate-off bootstrap coordinator before checkpoint-store and Agent runtime construction; durable replay is read first and first write is fenced. For explicit task and the existing empty-RunKind top-level compatibility form, unenrolled is a no-op only after Execute Thread/Run identity validation and with startup dependencies installed; logical Journal root may differ from the execution Run. C3b carries those server-owned facts through the Execute context and makes them authoritative only for that path's local Plan capability, keeping Todo prompt and Plan backend aligned; absent facts preserve compatibility, while mismatched or blocked facts fail closed before Agent creation. C3c makes SubagentsAllowed=false authoritative on the same path for the local prompt, Subagent limit middleware, and standard Subagent tool provider; it skips definition resolution and child construction while clearing the private disable signal before the base provider. C3d neutralizes retired mode/thinking/reasoning controls on the same local runtime config so primary and failover model option projection plus provider-capability middleware receive thinking=false and empty reasoning effort; it does not define a replacement inference policy or mutate persisted Config. C3e is a delivery-first consumer retirement only: Journal enrollment requires explicit runtime=eino_adk plus the existing fresh top-level task and rollout/kill-switch conditions, while completed completeness uses actual Enrolled and Completed facts without Mode. It adds no metrics emitter and no replacement server inference policy. C3f stops public CreateTaskThread, CreateRun and top-level retry normalization from persisting the seven retired execution-control fields while preserving runtime and legal model/resource/token/opaque config. C3g additionally rejects caller-owned child shapes, lets only the package-private trusted seam persist exact durable child Runs without the seven fields, and makes the Agent Factory locally disable Plan, Subagent, thinking and reasoning for exact ParentRunID>0 plus RunKind=subagent identity even after adaptive facts are projected; old historical child Config remains safer-compatible. Builtin and single-agent in-memory child builders are unchanged, so this is not complete child-consumer retirement. C3h1a reuses the existing Human resume, ordinary non-Journal lease recovery, and Journal recovery paths while stripping only the seven top-level retired controls before target Config new writes; runtime, model, resources, token usage, opaque and nested values remain, and source historical Config plus Context are unchanged. C3h2a adds the narrow Resume bootstrap edge for an already-enrolled target whose immediate source has valid fresh/typed durable bootstrap. C3h2b replaces the C3h1b fail-closed gate with full immutable aggregate replay plus a Thread-first atomic Journal rollover: source resolved and dedicated interrupted terminal facts commit before the source active slot is released and the lineage-bearing target Attempt is inserted, then ADK Resume consumes typed inheritance before buildRuntime. The physical `journal.attempt.interrupted` helper is filtered before public RunEvent counts/cursors and again at projection. Ordinary non-Journal enrollment, legacy fallback and gate-on producer remain deferred. The real MySQL typed recovery race is not implemented and remains NOT_VERIFIED. Adaptive finalizer gate, runtime selector/handler and other recovery-source consumers remain unwired. A true server inference policy and other historical runtime controls remain, so P1M-A/B1/C1/C2a/C2b/C3a/C3b/C3c/C3d/C3e/C3f/C3g/C3h1a/C3h1b/C3h2a/C3h2b are not P1M PASS. The same-recovery rolling Plan authority still blocks P1D/P2, while P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add the fenced fresh Execute bootstrap and make its durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d makes production ADK Factory, Middleware, standard Subagent provider and builtin definition ignore top-level requested_policy/mode, and removes those keys from builtin/single-agent child writers while keeping explicit server-owned Plan/Subagent/reasoning/model configuration. C3h2d also extends the repository primitive for B1/B2/B3 same-recovery rolling Plan, immutable historical replay and a rolling checkpoint as the next Attempt recovery source with strict lineage, revision/version, fingerprint and event-anchor validation. It does not connect ApplicationADKPlanStore or ADKCheckpointStore to CommitAdaptiveExecutionBoundary; no production path yet submits the complete Plan mutation, Eino checkpoint and event in that single fenced transaction. Ordinary non-Journal enrollment, gate-on producer, the Application rolling writer, Adaptive finalizer gate and a true server inference policy remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -6611,6 +6731,18 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
           "locator": "func TestThreadRepositoryCreateRunBundleRecoveryLocksExecutionRunBeforeSourceAttempt("
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestRetiredExecutionModeHasNoProductionADKConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryRollsPlanAcrossSameRecoveryAttemptAndReplaysHistory(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {"
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_integration_test.go",

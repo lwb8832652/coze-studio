@@ -53,16 +53,28 @@ Thread
   idempotency fingerprint，V1 继续可读。C3i2 的五个第一方 writer 已全部发送 V2：无附件新任务、
   带附件新任务、追问、top-level retry 与 Human Resume；附件流仍先上传，歧义重试仍复用同一
   idempotency key。服务端 V1 reader 与第三方兼容调用仍存在；C3i2 自身不含 Attempt rollover，
-  后续 C3h2b 已补齐 enrolled Human Resume。P1M 未 PASS，真实 MySQL typed recovery/rollover race仍为
-  `NOT_VERIFIED`。
+  后续 C3h2b 已补齐 enrolled Human Resume，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss
+  fallback。P1M 仍未 PASS。
 - C3h2b 已让 enrolled Human Resume 先做不可变 authority 的 full aggregate replay，并在首次写入时
   以单个 Thread-first 事务完成 source resolved、source Attempt `interrupted`/active-slot 释放和
   pending target Attempt 创建。target 继承 source Attempt/checkpoint lineage，继续复用 C3h2a 在
   `ADKExecutor.Resume` 构建 runtime 前的 typed bootstrap。physical
   `journal.attempt.interrupted` helper 不进入公共 RunEvents、total/cursor 或 TaskDetail replay/live。
-  compatible-reader floor `38ddbaf6f` 是 activation `212546bc` 后的回滚下限；ordinary
-  non-Journal enrollment、gate-on producer 和 legacy decoder 仍 deferred，真实 MySQL 验收为
-  `NOT_VERIFIED`，P1M 未 PASS。
+  compatible-reader floor `38ddbaf6f` 是 activation `212546bc` 后的回滚下限。dev disposable MySQL
+  已通过 same-key replay、drift conflict、different-key single-winner 三项 Human rollover 双连接门禁。
+- C3h2c 的 Resume bootstrap 始终先 exact replay target，再读 source durable facts；只有 source
+  精确 NotFound 才严格解码 source Run 的已知 root legacy control，repository 冲突、损坏与其它错误
+  fail closed。decoder 只生成保守 gate-off admission，baseline decision 与 source
+  Run/generation/config digest/decoder version 在 target fence 下原子提交或 replay；后续 hop 继承 typed
+  snapshot，不重解、不回写来源 Config。dev disposable MySQL 已通过 typed recovery race 与 legacy
+  recovery 的单写/replay/漂移/readback 门禁。
+- C3h2d 已让 production ADK parser 忽略顶层 `requested_policy`/`mode`，Factory、Middleware、标准
+  Subagent provider 与 builtin definition 不再以这两个旧键分支；builtin/single-agent child writer
+  也不再写入它们。显式 server-owned Plan/Subagent/reasoning/model 配置继续保留。
+- 同一提交的 repository foundation 已支持单个 recovery Attempt 内 B1→B2→B3 rolling Plan、历史
+  exact replay 和 rolling checkpoint 跨 Attempt 恢复；但 Application ADK Plan/Checkpoint 的单事务
+  production writer 尚未接入。ordinary non-Journal enrollment、gate-on producer 与该 writer 是下一
+  硬主线，P1M 未 PASS。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

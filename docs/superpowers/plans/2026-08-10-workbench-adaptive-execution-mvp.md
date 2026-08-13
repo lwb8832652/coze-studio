@@ -369,9 +369,10 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       caller-owned child shape，仅 package-private trusted seam 可以持久化 exact
       `ParentRunID > 0 && RunKind=subagent` child，且其新写 Config 不再包含七个退休字段；Factory 对
       exact durable child identity 本地强制关闭 Plan、Subagent、thinking 与 reasoning，并在 adaptive
-      facts 投影后再次覆盖，使旧历史 child Config 继续安全兼容。builtin/single-agent 内存 child
-      builder、`Resume`、legacy parser、IDL/UI 与全部 consumer 退休继续 deferred；真实 MySQL 双连接仍
-      `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE guard 不变。
+      facts 投影后再次覆盖，使旧历史 child Config 继续安全兼容。C3g 当时的 builtin/single-agent
+      内存 child writer 与全部 consumer 退休范围后续已由 C3h2d 收口；`Resume`、legacy parser、IDL/UI
+      不属于 C3g。真实 MySQL 双连接当时仍 `NOT_VERIFIED`，P1M 未 PASS，P1L/whole-Thread DELETE
+      guard 不变。
 - [x] P1M-C3h1a 按交付优先只收口 Human resume、ordinary non-Journal lease
       recovery 和 Journal recovery 的目标 Config 新写：写入前只删除来源 Config 顶层
       `requested_policy`、`mode`、`thinking_enabled`、`reasoning_effort`、
@@ -388,8 +389,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       或 checkpoint 可用性，半写/漂移 fail closed，不同 key 并发只允许单赢家；target lineage 继续由
       C3h2a 在 `ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 在公共
       RunEvents count/cursor 与 projector 两层过滤。compatible-reader floor `38ddbaf6f` 是 activation
-      `212546bc` 后的回滚下限。真实 MySQL 双连接验收因缺 disposable DSN/DDL 仍为 `NOT_VERIFIED`；
-      ordinary non-Journal enrollment、legacy decoder 和 gate-on producer仍 deferred，因此 P1M 未 PASS。
+      `212546bc` 后的回滚下限。`3c241d012` 已在 dev disposable MySQL 通过 same-key replay、drift
+      conflict 与 different-key single-winner 三项双连接验收。ordinary non-Journal enrollment 与
+      gate-on producer 仍 deferred，因此 P1M 未 PASS。
 - [x] P1M-C3h1b 按交付优先先落临时安全门：Human Resume 保留 existing idempotent replay 优先；
       idempotency miss 后、checkpoint 或任何新写前，active 或 terminal 的已 enrolled Journal Attempt
       均返回现有 `ErrHumanInteractionResumeConflict`（canonical `409 run_not_resumable`）；只有明确
@@ -402,8 +404,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       `typed_inheritance` admission 与 target revision-1 baseline decision，并用 target lease/generation
       fenced commit。source 缺失、损坏、identity/lineage 漂移或 gate-on 均 fail closed，不做 legacy
       Config fallback。该 C3h2a 切片当时不处理 Human/ordinary non-Journal Resume；后续 C3h2b 已接入
-      enrolled Human rollover。ordinary enrollment与gate-on producer仍 deferred；真实 MySQL 双连接仍
-      `NOT_VERIFIED`，完成这些切片也不得把 P1M 标为 PASS。
+      enrolled Human rollover，C3h2c 已增加受限的 legacy exact-miss fallback 并完成真实 MySQL typed
+      recovery gate。ordinary enrollment与gate-on producer仍 deferred，完成这些切片也不得把 P1M
+      标为 PASS。
 - [x] P1M-C3i1 按交付优先先交付 canonical Typed Submission V2 服务端接受：18 个封闭 IDL
       struct 与生成的 Go/TypeScript 合同覆盖 Create Thread 的 atomic/deferred submission、
       Create/Wait/Stream Run 的 turn/retry submission 和 Resume human response；raw strict validator
@@ -418,8 +421,31 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       `submission_v2` 或 `response_v2`；upload-before-run、附件顺序、歧义 key 复用、固定 retry key、
       Human semantic attempt 与 409 authoritative refresh 均保持。V1 server reader 和第三方兼容
       调用仍保留。C3i2 自身不实现 Human Attempt rollover；后续 C3h2b 已完成 enrolled Human Resume
-      原子 rollover 与 full replay。legacy decoder、ordinary non-Journal enrollment、gate-on producer
-      和真实 MySQL typed recovery/rollover race仍未完成；后者为 `NOT_VERIFIED`，P1M 未 PASS。
+      原子 rollover 与 full replay，C3h2c 已完成 enrolled Resume 的 legacy exact-miss fallback；dev
+      disposable MySQL 已完成 Human rollover、typed recovery race 与 legacy recovery 门禁。ordinary
+      non-Journal enrollment 与 gate-on producer 仍未完成；production mode/policy consumer 后续已由
+      C3h2d 退休，Application rolling Plan/Checkpoint writer 仍未接入，P1M 未 PASS。
+- [x] P1M-C3h2c 只扩展 already-enrolled Resume bootstrap：target exact replay 与 source typed
+      bootstrap 均优先；只有 source durable exact NotFound 才读取 source Run，并用隔离的
+      `LegacyAdaptiveAdmissionDecoder` 严格解析已知 root `requested_policy`/`mode`。unknown、冲突、
+      source generation/config drift、source 已有 partial/complete bootstrap 或 repository 错误均 fail
+      closed。decoder 只生成携带 source Run/generation/config digest/decoder v1 的保守 gate-off
+      admission，baseline decision 由独立 producer 生成，并在 target lease/generation fence 下原子
+      commit/readback/exact replay；下一 hop 只做 typed inheritance，不重解、不回写 source Config。
+      dev disposable MySQL 已通过 typed recovery concurrent single-write/replay/drift/readback 与 legacy
+      recovery commit/replay/drift/readback。ordinary non-Journal enrollment 与 gate-on producer 仍
+      deferred；production mode/policy consumer 与 repository rolling foundation 后续由 C3h2d 完成，
+      但 Application production writer 尚未接入，P1M 未 PASS。
+- [x] P1M-C3h2d 退休 production ADK 的旧 mode/policy consumer，并交付 rolling repository
+      foundation：Factory、Middleware、标准 Subagent provider 与 builtin definition 统一经
+      production-only `parseADKRuntimeConfig` 忽略顶层 `requested_policy`/`mode`；builtin/single-agent
+      child writer 不再写入这两个键，显式 Plan/Subagent/reasoning/model provider 配置仍保留。repository
+      在同一 recovery Attempt 中可连续提交 B1/B2/B3 的 revision/version、event sequence 与 checkpoint
+      parent，旧 boundary 可 exact replay，rolling checkpoint 可成为下一 Attempt 的严格恢复来源，漂移
+      零写入 fail closed。该项只完成 repository primitive；`ApplicationADKPlanStore`/
+      `ADKCheckpointStore` 尚未接入携带完整 Plan mutation、Eino checkpoint 与 event 的单个受 fence
+      production transaction。ordinary non-Journal enrollment、gate-on producer 和该 Application writer
+      仍 deferred，P1M 未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知
@@ -438,9 +464,9 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       `ErrAdaptiveProducerUnavailable`，直到 P1D 安装 adaptive producer，不能增加第二个隐藏分类器。
 - [ ] fresh 顶层 Execute 的 Plan capability、Subagent 禁用与旧 reasoning 控制中和已由
       P1M-C3b/C3c/C3d 切到 durable admission/decision，Journal enrollment/completed metrics 的旧
-      mode consumer 已由 C3e 退休；继续把 Resume/历史兼容 Plan 路径和真正的 server inference
-      policy 切换到 admission、purpose binding 与 server inference config，再删除其余 mode consumer；
-      `RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
+      mode consumer 已由 C3e 退休，production ADK 的 `requested_policy`/`mode` consumer 又由 C3h2d
+      退休；继续把 Resume/历史兼容 Plan 路径和真正的 server inference policy 切换到 admission、
+      purpose binding 与 server inference config。`RuntimeModeEinoADK/legacy` 执行内核路由保持不变。
 - [ ] 把 root、附件、follow-up、retry、resume 与 child/retry config 写入全部切到审核后的 canonical
       typed V2 envelope；先证明 IDL/生成 client 能无损承载现有模型、Skill、MCP、知识库和数据库选择，
       再删除前端 `WORKBENCH_REQUESTED_POLICY` 与旧 runtime config/mode metadata。缺少 typed 替代字段

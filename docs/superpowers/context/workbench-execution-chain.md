@@ -138,7 +138,8 @@ public Application 用例的新提交不能绕过 ingress freeze。`CreateRun` �
 `ParentRunID` 与精确 `subagent` Run kind；未知 provenance fail closed。该兼容缝仍允许
 服务端子运行生成旧控制字段。Human interaction resume、Subagent retry、Journal recovery
 与 lease recovery 不接收新的外部 Config/Context，而是原样继承已持久化来源；P1M-B1
-不改写历史 Run，也不代表 mode consumer 或完整 P1M 已退休。
+不改写历史 Run，也不代表 mode consumer 或完整 P1M 已退休；后续 C3h2d 已另行完成 production
+ADK 的 `requested_policy`/`mode` consumer 退休。
 
 P1M-C1 在此 admission 边界之后定义内部、mode-free 的纯 Go
 `AdaptiveAdmissionSnapshot`、`ExecutionDecision` 和 validators。它的
@@ -171,8 +172,9 @@ P1M-C3g 又让 public `CreateRun` 拒绝 caller-owned child shape，只有 packa
 可以持久化 exact `ParentRunID > 0 && RunKind=subagent` child；这些 child 的 Config 新写也删除七个退休
 字段。异步 child 或 source-child retry 进入同一个 Agent Factory 时，Factory 根据 exact durable child
 identity 在本地关闭 Plan、Subagent、thinking 与 reasoning，并在 adaptive facts 之后再次覆盖；因此
-旧历史 child Config 仍兼容且不会重新开启这些能力。builtin/single-agent 内存 child builder 保持不变，
-本切片不代表全部 child consumer 退休。
+旧历史 child Config 仍兼容且不会重新开启这些能力。后续 C3h2d 已让 builtin/single-agent 内存 child
+writer 停止写入 `requested_policy`/`mode`，并让 production ADK consumer 忽略这两个顶层旧键；C3g
+本身仍不等于该退休完成。
 继续按交付优先完成的 P1M-C3h1a 不新增执行边：Human interaction resume、ordinary
 non-Journal lease recovery 和 Journal recovery 仍使用各自现有的 Run bundle/create 链，
 但目标 Run Config 新写前仅删除来源 Config 顶层的七个退休字段。`runtime`、模型、
@@ -183,8 +185,13 @@ non-Journal lease recovery 和 Journal recovery 仍使用各自现有的 Run bun
 P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：immediate source 必须具有有效
 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
 `typed_inheritance` snapshot。该 C3h2a 切片当时不包含 Human rollover；后续 C3h2b 已补齐 enrolled
-Human Resume。Legacy fallback、ordinary non-Journal enrollment 与 gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
-明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
+Human Resume。后续 C3h2c 在同一 production edge 上增加 typed-first、legacy-exact-miss fallback：
+target durable replay 仍最优先；只有 source durable bootstrap 精确 NotFound 才读取 source Run 并用
+隔离 decoder 严格解析已知 root legacy control，冲突、损坏或其它 repository 错误均 fail closed。
+decoder 只生成保守 gate-off admission；baseline decision 由独立 producer 生成，两者连同 source
+Run/generation/config digest/decoder version 在 target lease/generation fence 下一次提交或 exact replay。
+多跳只继承 durable typed snapshot，不再次解码或回写来源 Config。ordinary non-Journal enrollment 与
+gate-on producer 仍 deferred，P1M 未 PASS；P1L 与 whole-Thread DELETE hard guard 不变。
 P1M-C3h2b 把 enrolled Human Resume 接入 full replay 与原子 Attempt rollover。Application 在任何
 source status/Attempt/checkpoint 可变读取前查询完整 Run/Message/resolved/source+target
 Attempt/terminal aggregate；exact aggregate 直接回放，漂移或半写 fail closed。首次写复用
@@ -193,12 +200,20 @@ physical terminal、CAS source Attempt 为 `interrupted` 并释放 active slot�
 Attempt/checkpoint lineage 的 pending target Attempt；随后继续走 C3h2a typed
 bootstrap-before-buildRuntime。physical helper 不改变公共 RunEvent total/cursor 或 TaskDetail
 replay/live。compatible-reader floor 是 `38ddbaf6f`，activation 是 `212546bc`；ordinary
-non-Journal enrollment、gate-on producer、legacy decoder 仍 deferred，真实 MySQL C3h2b 验收为
-`NOT_VERIFIED`，P1M 未 PASS。
-真实 MySQL 双连接验收仍待显式 disposable DSN/DDL gate；legacy runtime、gate-on、runtime
-selector/handler、IDL 与 frontend/UI 仍未接；reasoning/model inference 中的真正 server inference
-policy 仍未切换。historical runtime controls 与 package-private
-server-owned subagent compatibility seam 继续存在；P1M 未 PASS。P1L 仍 deferred，whole-Thread
+non-Journal enrollment 与 gate-on producer 仍 deferred。dev disposable MySQL 已对 Human rollover
+通过 same-key replay、same-key drift conflict、different-key single-winner 三项真实双连接门禁，并对
+typed recovery race 与 legacy decoder recovery 通过单写/replay、漂移零增量和 durable readback 门禁。
+MySQL JSON 存储归一化由 typed codec canonical readback 后再核对既有 digest/fingerprint；非 MySQL
+严格 canonical 规则不变。P1M-C3h2d 已让 production ADK 的 Factory、Middleware、标准 Subagent
+provider 与 builtin definition 统一通过 `parseADKRuntimeConfig` 忽略顶层
+`requested_policy`/`mode`，builtin/single-agent child writer 也不再写入这两个键；显式 server-owned
+Plan/Subagent/reasoning/model 配置仍保留。`b8d1c21b0` 还让 repository 支持同一 recovery Attempt 的
+B1→B2→B3 rolling Plan、历史 exact replay 以及 rolling checkpoint 作为下一 Attempt 恢复来源，全部
+继续核验 lineage、revision/version、checkpoint/event fingerprint 与 anchor。它尚未把
+`ApplicationADKPlanStore`/`ADKCheckpointStore` 接到同一个受 fence production transaction；不得把
+repository primitive 表述为生产 rolling writer。ordinary non-Journal enrollment、gate-on producer、
+该 Application writer 与真正 server inference policy 仍未闭合；historical runtime compatibility 与
+package-private server-owned subagent seam 继续存在，P1M 未 PASS。P1L 仍 deferred，whole-Thread
 DELETE guard 继续 hard-disabled。
 
 ## 持久化与异步执行
@@ -287,10 +302,12 @@ enrollment/completion 为分母，不新增 metrics emitter；C3f 只停止 publ
 持久化无七字段的 durable child，并由 Factory 对 exact child identity 本地强制关闭 Plan、Subagent 与
 reasoning；C3h1a 只让 Human resume、ordinary non-Journal lease recovery 和 Journal recovery
 的目标 Config 新写删除顶层七字段，保留其余 Config、nested 字段与 Context，来源历史
-Config 不改。builtin/single-agent 内存 child builder 和其余 consumer 不变。真实 MySQL 双连接验收
-仍待显式 disposable DSN/DDL gate，且
-仅 already-enrolled Journal recovery Resume 的 typed source inheritance 已接；Human、ordinary
-non-Journal、legacy runtime、gate-on producer、IDL 与 frontend/UI 仍未接。P2 仍负责完整
+Config 不改。C3h2b/C3h2c 已让 enrolled Human/Journal Resume 使用原子 Attempt rollover、typed
+inheritance 或 source durable exact-miss 时的严格 legacy decoder fallback；dev disposable MySQL 已完成
+Human rollover、typed recovery race 与 legacy recovery 门禁。builtin/single-agent 内存 child writer 与
+production ADK mode/policy consumer 已由 C3h2d 退休；ordinary non-Journal enrollment、historical
+legacy runtime、gate-on producer、Application rolling Plan/Checkpoint writer 与 frontend/UI 的剩余
+范围不变。P2 仍负责完整
 VerificationResult codec、registry、producer、nullable-Plan authority 分支和其余接线，并受上述两个
 blocker 约束。
 
@@ -331,8 +348,10 @@ TaskDetail follow-up、top-level retry 与 Human Resume 都经共享 typed seria
 client 发送版本互斥的 V2 字段；deferred/follow-up 保持 upload-before-run，歧义 follow-up、固定 retry
 key 与 Human semantic attempt 均不自动旋转或重复写。V1 server reader 与第三方兼容调用继续可用。
 C3i2 自身没有增加 repository/runtime 状态机；后续 C3h2b 已补齐 enrolled Human Resume 的原子
-rollover 与 full replay。legacy decoder、ordinary non-Journal enrollment、gate-on producer 和真实
-MySQL typed recovery/rollover race仍未完成；后者为 `NOT_VERIFIED`，P1M 未 PASS。
+rollover 与 full replay，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss fallback；dev disposable
+MySQL 已完成 Human rollover、typed recovery race 与 legacy recovery 门禁。ordinary non-Journal
+enrollment 与 gate-on producer 仍未闭合；production mode/policy consumer 已由 C3h2d 退休，但
+Application rolling Plan/Checkpoint writer 尚未接入，P1M 未 PASS。
 
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error
@@ -531,7 +550,9 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 - Human resume：`ResumeCanonicalRun` -> `ResumeHumanInteraction` 先执行 full aggregate replay；
   replay miss 才验证 source Attempt/checkpoint，再由 Human `CreateRunBundle` 分支原子完成 source
   Attempt `interrupted` 与 pending target Attempt rollover。target lineage 随后由
-  `ADKExecutor.Resume` 在 `buildRuntime` 前消费为 typed bootstrap。
+  `ADKExecutor.Resume` 在 `buildRuntime` 前消费为 typed bootstrap；target replay 优先，source typed
+  facts 优先，只有 source durable exact NotFound 才进入严格 legacy decoder，并把 admission 与
+  baseline decision 在 target fence 下原子提交或回放。
 - Subagent retry：`RetryCanonicalSubagentRun` -> `RetrySubagentRun`，根据失败或取消
   的子 Run 创建幂等顶层 retry command bundle。
 - Checkpoint resume：`ADKCheckpointStore` 保存 Eino bytes 的内部封装；

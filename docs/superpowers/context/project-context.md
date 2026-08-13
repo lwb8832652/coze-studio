@@ -116,7 +116,8 @@ P1M-A 已冻结 canonical 外部执行控制：CreateThread、Create/Wait/Stream
 `requested_policy`、`mode`、`thinking_enabled`、`reasoning_effort`、
 `is_plan_mode`、`subagent_enabled` 和 `max_concurrent_subagents`。第一方前端不再写入
 这些字段，并暂时隐藏“模型推理”控件；`runtime=eino_adk`、模型、Skill、MCP、知识库、
-数据库和资源配置仍是合法输入。该冻结不代表后端 mode、ADK consumer 或恢复继承已经退休。
+数据库和资源配置仍是合法输入。该冻结本身不代表后端 consumer 或恢复继承已经退休；后续
+P1M-C3h2d 已另行完成 production ADK 的 `requested_policy`/`mode` consumer 退休。
 
 P1M-C3i1 已交付 canonical Typed Submission V2 的封闭 IDL 与 Go/TypeScript 生成合同，
 并让服务端 Create Thread、Create/Wait/Stream Run 与 Resume 接受
@@ -128,9 +129,11 @@ idempotency fingerprint；V1 继续可读。P1M-C3i2 已把五个第一方 write
 Human Resume 分别只写 `initial_submission_v2`/`deferred_initial_submission_v2`、
 `submission_v2` 或 `response_v2`，并继续复用唯一 canonical client、upload-before-run 顺序及
 既有语义幂等 attempt。服务端 V1 reader 和第三方兼容调用仍保留。C3i2 自身不包含 Human Attempt
-rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 full replay。legacy decoder、
-ordinary non-Journal enrollment、gate-on producer 和真实 MySQL typed recovery/rollover race仍未完成；
-后者为 `NOT_VERIFIED`，P1M 未 PASS。
+rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 full replay，C3h2c 又补齐
+enrolled Resume 的 legacy exact-miss fallback。dev disposable MySQL 已完成 Human rollover、typed
+recovery race 与 legacy recovery 门禁；production ADK 的旧 mode/policy consumer 也已退休。
+ordinary non-Journal enrollment、gate-on producer 与 Application rolling Plan writer 仍未闭合，P1M 未
+PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -170,8 +173,9 @@ P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment
 package-private trusted child seam 可以持久化 `ParentRunID > 0 && RunKind=subagent` 的 child；该新写
 Config 也不再包含七个退休字段。Factory 对这一 exact durable child identity 在本地强制关闭 Plan、
 Subagent、thinking 与 reasoning，并在 adaptive facts 投影后再次覆盖，因此旧历史 child Config 也保持
-更安全的兼容行为。builtin/single-agent 内存 child builder 暂未清理，且本切片不等于全部 child
-consumer 退休。
+更安全的兼容行为。后续 C3h2d 已让 builtin/single-agent 内存 child writer 停止写入
+`requested_policy`/`mode`，并让 production ADK consumer 统一忽略这两个顶层旧键；C3g 本身仍不等于
+该退休完成。
 继续按交付优先收口的 P1M-C3h1a 只修改三条已有恢复链的目标 Run 新写：Human
 interaction resume、ordinary non-Journal lease recovery 和 Journal recovery 在写入新 Config
 前，仅删除来源 Config 顶层的七个退休字段；`runtime`、模型、资源、Token Usage、
@@ -182,8 +186,15 @@ Resume typed inheritance 与原子 Attempt rollover 取代。
 P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：其 immediate source 必须具有
 有效 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
 `typed_inheritance` snapshot。该 C3h2a 切片当时不包含 Human rollover；后续 C3h2b 已补齐 enrolled
-Human Resume。Legacy fallback、ordinary non-Journal enrollment、gate-on producer 均 deferred。P1M 未 PASS；真实 MySQL typed recovery race 尚未实现并
-明确为 `NOT_VERIFIED`；P1L 与 whole-Thread DELETE hard guard 不变。
+Human Resume。后续 C3h2c 又把同一 enrolled Resume bootstrap 收口为 typed-first、legacy-exact-miss
+fallback：target exact replay 始终优先；只有 immediate source 的 durable bootstrap 精确返回
+`ErrAdaptiveExecutionBootstrapNotFound`，coordinator 才读取 source Run 并用隔离的
+`LegacyAdaptiveAdmissionDecoder` 严格解析已知 root legacy control。损坏、冲突或其它 repository
+错误不会降级到 Config；decoder 只产生携带 source Run/generation/config digest/decoder version 的
+保守 gate-off snapshot，baseline decision 仍由独立 producer 生成，并与 snapshot 在 target
+lease/generation fence 下原子提交或 exact replay。后续 hop 继承该 durable typed snapshot，不再次解码，
+来源 Config 不回写。ordinary non-Journal enrollment 与 gate-on producer 仍 deferred，P1M 未 PASS；
+P1L 与 whole-Thread DELETE hard guard 不变。
 P1M-C3h2b 已用原子 Journal rollover 替换 C3h1b 临时门。canonical Human Resume 先以不可变
 authority 做 full aggregate replay；exact replay 即使 source 生命周期已变化仍返回同一 target，
 损坏或漂移 aggregate fail closed。首次写在同一 Thread-first 事务内追加 source resolved 与 physical
@@ -192,13 +203,24 @@ Attempt/checkpoint lineage 的 pending target Attempt；该 lineage 继续由 C3
 `ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 不进入公共
 RunEvents、total/cursor 或 TaskDetail replay/live。phase-1 compatible-reader build `38ddbaf6f` 是首次
 写入 `interrupted` 后的回滚下限，producer activation 为 `212546bc`。ordinary non-Journal
-enrollment、gate-on producer 与 legacy decoder 仍 deferred；真实 MySQL C3h2b 验收为
-`NOT_VERIFIED`，因此 P1M 仍未 PASS。
-真实 MySQL 双连接验收仍待显式
-disposable DSN/DDL gate；legacy runtime、gate-on producer、runtime selector/handler、IDL
-和 frontend/UI 未接；真正的 server inference policy 仍未实现。
-历史 runtime controls 与 package-private server-owned subagent compatibility
-seam 仍存在；P1M 尚未 PASS。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
+enrollment 与 gate-on producer 仍 deferred。`3c241d012` 已在 dev disposable MySQL 通过
+same-key replay、same-key drift conflict 与 different-key single-winner 三项真实双连接验收；
+`5408b680` 又通过 typed recovery race 与 legacy decoder recovery 的真实 dev MySQL 门禁，覆盖
+原子单写、exact replay、漂移零增量和 durable readback。MySQL JSON 存储归一化在回读时经 typed
+codec 重新 canonicalize 后核对既有 digest/fingerprint，非 MySQL 严格 canonical 检查保持不变。
+P1M-C3h2d 已完成 production ADK 的旧 mode/policy consumer 退休：Factory、Middleware、标准
+Subagent tool provider 与 builtin definition 都经 production-only `parseADKRuntimeConfig` 解析，忽略
+顶层 `requested_policy`/`mode`；builtin/single-agent child writer 不再写入这两个键。显式
+`subagent_enabled`、Plan、thinking、reasoning 与 model/provider server-owned 配置继续保留，历史
+`ParseDeerFlowRuntimeConfig` 也只作为 legacy decoder/兼容 reader，不再驱动 production ADK 分支。
+`b8d1c21b0` 同时交付 same-recovery rolling Plan repository foundation：单一 recovery Attempt 可按
+B1→B2→B3 连续提交 Plan revision、item version、event sequence 与 checkpoint parent，历史 boundary
+exact replay 不改写当前状态，rolling checkpoint 可成为下一 Attempt 的严格恢复来源，漂移均 fail
+closed。该能力目前只有 repository primitive 与测试；`ApplicationADKPlanStore`/`ADKCheckpointStore`
+尚未提供把真实 Plan 变更、Eino checkpoint 与事件一次受 fence 提交的 production writer，这是下一
+硬主线。ordinary non-Journal enrollment、gate-on producer、真正的 server inference policy 与该
+Application writer 仍未完成，P1M 仍未 PASS；historical runtime compatibility 与 package-private
+server-owned subagent seam 仍存在。P1L 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
 统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用
