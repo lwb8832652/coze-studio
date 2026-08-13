@@ -457,8 +457,22 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       均 fail closed。enrolled typed Resume 继承 durable source `PlanScopeRunID`，target checkpoint
       store/coordinator 使用同一 scope，恢复后的 Plan 写不回落 legacy writer。repository/application Go
       测试已通过；本轮 dev disposable MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持
-      `NOT_VERIFIED`。ordinary non-Journal enrollment/typed bootstrap 是下一 hard blocker；gate-on
-      producer 仍未闭合，P1M 仍未 PASS。
+      `NOT_VERIFIED`。后续 ordinary MVP 已补齐 always-on fresh Attempt enrollment、disabled/无 Attempt
+      原子 lease rollover、bare Resume bootstrap 与 bare rolling Plan boundary；ordinary 的真实 dev
+      MySQL gate 仍 `NOT_VERIFIED`，gate-on producer 仍未闭合，P1M 仍未 PASS。
+- [x] P1M-C3h2f 按 MVP 功能交付优先闭合 ordinary Eino 主线：fresh 顶层 Eino Task 无论 projection
+      gate 命中、off、依赖 nil 或判定错误均 enrollment Attempt；命中为 healthy，其余为 disabled 且
+      snapshots off，非 Eino/child 不变。expired lease 对 healthy/non-disabled Attempt 保持既有 Journal
+      recovery；disabled Attempt 或无 Attempt source 经 dedicated `CreateRunBundle` transaction 原子把
+      source Run 标记 `interrupted`、只写 base terminal event，并创建 disabled target Attempt。已有
+      disabled source Attempt 同时终结并释放 active slot，bare source 创建 ordinal 1 target。完整 source
+      checkpoint authority 随请求传递，并在 transaction 锁内逐字段与 JSON 语义复核以阻断 TOCTOU。
+      bare target 的 `BootstrapResume` 先 replay target，miss 后跳过不存在的 source durable bootstrap，
+      由 strict legacy decoder 生成 gate-off facts 并继承 source `PlanScopeRunID`；bare Plan boundary 支持
+      首次 commit、read-first replay 与 rolling。本轮完成 Go/SQLite 语义验证，并新增严格 disposable
+      DB 门控的 ordinary MySQL checkpoint-authority race/exact-retry 测试；因无隔离 DSN 只完成
+      discover/compile/SKIP，ordinary dev MySQL gate 明确 `NOT_VERIFIED`；既有 rolling MySQL gate也保持
+      `NOT_VERIFIED`。gate-on producer 未完成，P1M 仍未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume
       组合回归；不得重新开放七字段、扫描正文字符串、误伤其它领域的同名 `mode`，也不得把未知

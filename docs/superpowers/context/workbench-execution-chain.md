@@ -190,8 +190,9 @@ target durable replay 仍最优先；只有 source durable bootstrap 精确 NotF
 隔离 decoder 严格解析已知 root legacy control，冲突、损坏或其它 repository 错误均 fail closed。
 decoder 只生成保守 gate-off admission；baseline decision 由独立 producer 生成，两者连同 source
 Run/generation/config digest/decoder version 在 target lease/generation fence 下一次提交或 exact replay。
-多跳只继承 durable typed snapshot，不再次解码或回写来源 Config。ordinary non-Journal enrollment 与
-gate-on producer 仍 deferred，P1M 未 PASS；P1L 与 whole-Thread DELETE hard guard 不变。
+多跳只继承 durable typed snapshot，不再次解码或回写来源 Config。后续 ordinary MVP 已把相同
+bootstrap 边界扩到 disabled/无 Attempt 的 bare recovery；gate-on producer 仍 deferred，P1M 未 PASS；
+P1L 与 whole-Thread DELETE hard guard 不变。
 P1M-C3h2b 把 enrolled Human Resume 接入 full replay 与原子 Attempt rollover。Application 在任何
 source status/Attempt/checkpoint 可变读取前查询完整 Run/Message/resolved/source+target
 Attempt/terminal aggregate；exact aggregate 直接回放，漂移或半写 fail closed。首次写复用
@@ -199,8 +200,8 @@ Attempt/terminal aggregate；exact aggregate 直接回放，漂移或半写 fail
 physical terminal、CAS source Attempt 为 `interrupted` 并释放 active slot，最后创建带 source
 Attempt/checkpoint lineage 的 pending target Attempt；随后继续走 C3h2a typed
 bootstrap-before-buildRuntime。physical helper 不改变公共 RunEvent total/cursor 或 TaskDetail
-replay/live。compatible-reader floor 是 `38ddbaf6f`，activation 是 `212546bc`；ordinary
-non-Journal enrollment 与 gate-on producer 仍 deferred。dev disposable MySQL 已对 Human rollover
+replay/live。compatible-reader floor 是 `38ddbaf6f`，activation 是 `212546bc`；后续 ordinary MVP
+已补齐 disabled/无 Attempt rollover，gate-on producer 仍 deferred。dev disposable MySQL 已对 Human rollover
 通过 same-key replay、same-key drift conflict、different-key single-winner 三项真实双连接门禁，并对
 typed recovery race 与 legacy decoder recovery 通过单写/replay、漂移零增量和 durable readback 门禁。
 MySQL JSON 存储归一化由 typed codec canonical readback 后再核对既有 digest/fingerprint；非 MySQL
@@ -219,8 +220,19 @@ B1/B2/B3 rolling 与当前 head read-first crash replay 共用同一 authority�
 decision 继承 source `PlanScopeRunID`，target checkpoint store/coordinator 使用该 scope，恢复后的
 Plan 写仍进入同一 atomic boundary，不回落 legacy writer。repository/application Go 测试已通过；
 本轮 dev disposable MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。
-ordinary non-Journal enrollment/typed bootstrap 是下一硬阻断；gate-on producer 与真正 server
-inference policy 仍未闭合；historical
+ordinary MVP 现在把 fresh 顶层 Eino Task 的 Attempt enrollment 固定为 always-on：projection gate
+命中时为 healthy，gate off、依赖 nil 或判定错误时为 disabled 且 snapshots off；非 Eino/child 不变。
+`recoverExpiredRun` 对 healthy/non-disabled Attempt 继续委托 `RecoverJournal`，对 disabled Attempt 或
+无 Attempt source 读取可恢复 checkpoint 后委托 `CreateRunBundle` 的 dedicated ordinary 分支。该分支
+在同一 Thread-first transaction 锁定 root/source/Attempt/checkpoint，CAS source lease 为
+`interrupted`、只追加 base terminal event，再创建 disabled target Attempt；已有 disabled source
+Attempt 同时终结并释放 active slot，bare source 创建 ordinal 1 target。Application 把完整 checkpoint
+authority 随请求传入，repository 在锁内逐字段及 JSON 语义复核，防止 checkpoint pre-read 后发生
+TOCTOU 漂移。ordinary target 随后进入同一个 `ADKExecutor.Resume -> BootstrapResume` 生产边：bare
+lineage 先 exact replay target，miss 后不读 source durable bootstrap，只用 strict legacy decoder 读
+source Run，并继承 source `PlanScopeRunID`；同一 source scope 的 bare Plan boundary 支持首次 commit、
+read-first replay 与 rolling。ordinary 的真实 dev MySQL gate 本轮未运行，保持 `NOT_VERIFIED`；gate-on
+producer 与真正 server inference policy 仍未闭合；historical
 runtime compatibility 与 package-private server-owned subagent seam 继续存在，P1M 未 PASS。P1L 仍
 deferred，whole-Thread DELETE guard 继续 hard-disabled。
 

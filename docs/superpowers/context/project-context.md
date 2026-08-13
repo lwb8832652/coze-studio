@@ -133,7 +133,10 @@ rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 f
 enrolled Resume 的 legacy exact-miss fallback。dev disposable MySQL 已完成 Human rollover、typed
 recovery race 与 legacy recovery 门禁；production ADK 的旧 mode/policy consumer 也已退休。
 Application rolling Plan writer 后续也已接入 atomic checkpoint boundary；其独立 dev MySQL rolling
-gate 仍 `NOT_VERIFIED`。ordinary non-Journal enrollment 与 gate-on producer 仍未闭合，P1M 未 PASS。
+gate 仍 `NOT_VERIFIED`。本轮 ordinary MVP 又让 fresh 顶层 Eino Run 不再以 Journal projection gate
+作为 Attempt enrollment gate，并闭合 disabled/无 Attempt 的 lease recovery、bare Resume bootstrap 与
+bare rolling Plan boundary；ordinary 的真实 dev MySQL 门禁仍 `NOT_VERIFIED`，gate-on producer 仍未
+闭合，因此 P1M 仍未 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -164,7 +167,8 @@ base provider。P1M-C3d 再把同一 fresh Execute 的旧 `mode`/`thinking_enabl
 影响中和为本地安全请求（thinking false、reasoning effort 空），使 primary/failover model option 与
 provider-capability middleware 不再消费这些旧控制；持久化 Config 不变，也未引入新推理 policy。
 P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment 仅允许明确
-`runtime=eino_adk` 的 fresh 顶层 task，并继续服从既有 rollout/kill-switch；completed 完整性指标
+`runtime=eino_adk` 的 fresh 顶层 task；后续 ordinary MVP 已把 Attempt enrollment 与 projection
+rollout/kill-switch 解耦，projection gate 只决定 healthy/disabled。completed 完整性指标
 只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，也未定义
 新的 server inference policy。P1M-C3f 又把 public `CreateTaskThread`、`CreateRun` 与 top-level retry
 的规范化结果收口为新写合同：server policy 仍先完成校验与合法 config/context 合并，但持久化前只从
@@ -193,7 +197,8 @@ fallback：target exact replay 始终优先；只有 immediate source 的 durabl
 错误不会降级到 Config；decoder 只产生携带 source Run/generation/config digest/decoder version 的
 保守 gate-off snapshot，baseline decision 仍由独立 producer 生成，并与 snapshot 在 target
 lease/generation fence 下原子提交或 exact replay。后续 hop 继承该 durable typed snapshot，不再次解码，
-来源 Config 不回写。ordinary non-Journal enrollment 与 gate-on producer 仍 deferred，P1M 未 PASS；
+来源 Config 不回写。后续 ordinary MVP 已补齐无 Attempt/disabled Attempt 的同类 bare/typed 恢复；
+gate-on producer 仍 deferred，P1M 未 PASS；
 P1L 与 whole-Thread DELETE hard guard 不变。
 P1M-C3h2b 已用原子 Journal rollover 替换 C3h1b 临时门。canonical Human Resume 先以不可变
 authority 做 full aggregate replay；exact replay 即使 source 生命周期已变化仍返回同一 target，
@@ -202,8 +207,8 @@ authority 做 full aggregate replay；exact replay 即使 source 生命周期已
 Attempt/checkpoint lineage 的 pending target Attempt；该 lineage 继续由 C3h2a 在
 `ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 不进入公共
 RunEvents、total/cursor 或 TaskDetail replay/live。phase-1 compatible-reader build `38ddbaf6f` 是首次
-写入 `interrupted` 后的回滚下限，producer activation 为 `212546bc`。ordinary non-Journal
-enrollment 与 gate-on producer 仍 deferred。`3c241d012` 已在 dev disposable MySQL 通过
+写入 `interrupted` 后的回滚下限，producer activation 为 `212546bc`。后续 ordinary MVP 已补齐
+disabled/无 Attempt 的 lease rollover；gate-on producer 仍 deferred。`3c241d012` 已在 dev disposable MySQL 通过
 same-key replay、same-key drift conflict 与 different-key single-winner 三项真实双连接验收；
 `5408b680` 又通过 typed recovery race 与 legacy decoder recovery 的真实 dev MySQL 门禁，覆盖
 原子单写、exact replay、漂移零增量和 durable readback。MySQL JSON 存储归一化在回读时经 typed
@@ -224,9 +229,21 @@ head 在分配新 ID 前 read-first replay，历史 exact replay 不改写当前
 checkpoint boundary 混用会在任何 durable write 前 fail closed。enrolled typed Resume 继承 durable
 source `PlanScopeRunID`，target checkpoint store/coordinator 沿用该 scope，恢复后的 Plan 写仍进入同一
 atomic boundary，不回落 legacy Plan writer。repository/application Go 测试已通过；本轮 dev disposable
-MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。ordinary non-Journal
-enrollment/typed bootstrap 是下一硬阻断；gate-on producer 与真正的 server inference policy 仍未
-完成，P1M 仍未 PASS。historical runtime compatibility 与 package-private server-owned subagent seam 仍存在。P1L
+MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。
+本轮 ordinary MVP 进一步把 fresh 顶层 Eino Task 的 Attempt enrollment 固定为 always-on：projection
+gate 命中时写 healthy Attempt，gate off、依赖 nil 或判定错误时写 disabled Attempt 且强制关闭
+snapshot；非 Eino、child 与其它 Run 保持既有边界。expired lease 对 healthy/non-disabled Attempt
+继续走既有 Journal recovery，对 disabled Attempt 或无 Attempt source 则经 dedicated
+`CreateRunBundle` 分支，在单个 Thread-first transaction 中把 source Run 标记 `interrupted`、仅追加
+base terminal event，并创建 disabled target Attempt；已有 disabled source Attempt 同时 CAS
+`interrupted`、释放 active slot，bare source 则创建 ordinal 1 target。Application 传递完整 source
+checkpoint authority，repository 在事务锁内逐字段并按 JSON 语义重比对，阻断 pre-read 与 write
+之间的 TOCTOU 漂移。bare target 的 Resume bootstrap 先 exact replay target，miss 后跳过不存在的
+source durable bootstrap，只用 strict legacy decoder 读取 source Run，并继承 source
+`PlanScopeRunID`；bare Plan boundary 已支持首次 commit、read-first replay 与 rolling。ordinary 的真实
+dev MySQL gate 本轮未运行，明确保持 `NOT_VERIFIED`；rolling MySQL gate 也仍 `NOT_VERIFIED`。
+gate-on producer 与真正的 server inference policy 仍未完成，P1M 仍未 PASS。historical runtime compatibility
+与 package-private server-owned subagent seam 仍存在。P1L
 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
 整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后

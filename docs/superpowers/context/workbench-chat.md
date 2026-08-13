@@ -54,7 +54,8 @@ Thread
   带附件新任务、追问、top-level retry 与 Human Resume；附件流仍先上传，歧义重试仍复用同一
   idempotency key。服务端 V1 reader 与第三方兼容调用仍存在；C3i2 自身不含 Attempt rollover，
   后续 C3h2b 已补齐 enrolled Human Resume，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss
-  fallback。P1M 仍未 PASS。
+  fallback。后续 ordinary MVP 已补齐 always-on fresh Attempt enrollment 和 disabled/无 Attempt
+  recovery；ordinary 的真实 dev MySQL gate 仍 `NOT_VERIFIED`，P1M 仍未 PASS。
 - C3h2b 已让 enrolled Human Resume 先做不可变 authority 的 full aggregate replay，并在首次写入时
   以单个 Thread-first 事务完成 source resolved、source Attempt `interrupted`/active-slot 释放和
   pending target Attempt 创建。target 继承 source Attempt/checkpoint lineage，继续复用 C3h2a 在
@@ -79,13 +80,25 @@ Thread
   Resume，外部 cancel 不会被误判为内部续跑；Plan 与 side-effect 同 boundary 则在写入前 fail closed。
   enrolled typed Resume 继承 durable source `PlanScopeRunID`，target coordinator 继续写同一 Plan
   scope，不回落 legacy writer。repository/application Go 测试已通过；本轮 dev disposable MySQL
-  rolling gate 因没有满足安全命名约束的隔离 DSN，保持 `NOT_VERIFIED`。ordinary non-Journal
-  enrollment/typed bootstrap 是下一硬阻断；gate-on producer 仍未闭合，P1M 未 PASS。
+  rolling gate 因没有满足安全命名约束的隔离 DSN，保持 `NOT_VERIFIED`。
+- fresh 顶层 Eino Task 无论 projection gate 状态都创建 Attempt：gate 命中为 healthy，gate off、依赖
+  nil 或判定错误为 disabled，disabled 强制关闭 snapshot；非 Eino 和 child 不进入该 enrollment。
+  expired lease 对 healthy/non-disabled Attempt 继续走既有 Journal recovery；disabled Attempt 或没有
+  Attempt 的 source 改走 dedicated ordinary 原子 rollover，同一 Thread-first transaction 只写 base
+  terminal event、把 source Run 标记 `interrupted`，并创建 disabled target Attempt。已有 disabled
+  Attempt 同时终结并释放 active slot；bare source 创建 ordinal 1 target。完整 source checkpoint
+  authority 从 Application 传入，repository 在事务锁内逐字段及 JSON 语义核对，漂移零写入 fail closed。
+- ordinary bare target 的 Resume bootstrap 仍先 exact replay target；首次 miss 不读取不存在的 source
+  durable bootstrap，只严格解码 source Run 的已知 legacy control，并继承 source `PlanScopeRunID`。
+  bare Plan boundary 已支持首次 commit、当前 head read-first replay 与后续 rolling，不回落 legacy Plan
+  writer。本轮未运行 ordinary 的真实 dev MySQL gate，明确保持 `NOT_VERIFIED`；gate-on producer 仍未
+  闭合，P1M 未 PASS。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。
-- Journal 只为通过 feature gate 的顶层 Task Run 建立投影；子任务和
-  Subagent Run 不建立公共 Journal。简单直答只保留生命周期事实，前端不展示
+- Journal projection 只为通过 feature gate 的顶层 Task Run 建立；Attempt enrollment 对 fresh 顶层
+  Eino Task always-on，gate 未命中时保持 disabled/base-only。子任务和 Subagent Run 不建立公共
+  Journal projection。简单直答只保留生命周期事实，前端不展示
   空步骤或 Journal 外壳。
 - `journal.intro` 是任务执行开场语的权威事件，位于第一个可见大步骤之前。后端可接收
   经过脱敏和长度限制的 `metadata.execution_intro`，但不得要求模型为了 Journal 改变

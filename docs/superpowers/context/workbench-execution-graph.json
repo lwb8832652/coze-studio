@@ -486,7 +486,7 @@
         },
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -654,6 +654,16 @@
           "locator": "func (r *threadRepository) GetHumanResumeRolloverReplay("
         },
         {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "symbol": "(*threadRepository).createOrdinaryLeaseRecoveryRunBundle",
+          "locator": "func (r *threadRepository) createOrdinaryLeaseRecoveryRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "symbol": "ordinaryLeaseRecoveryCheckpointMatches",
+          "locator": "func ordinaryLeaseRecoveryCheckpointMatches("
+        },
+        {
           "path": "backend/application/agentthread/journal_recovery.go",
           "symbol": "(*ApplicationService).RecoverJournal",
           "locator": "recoveryConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
@@ -662,6 +672,21 @@
           "path": "backend/application/agentthread/run_lease_recovery.go",
           "symbol": "(*RunLeaseRecoveryProcessor).ensureRecoveryResumeRun",
           "locator": "recoveryConfig, err := stripSubmittedExecutionControls(source.Config)"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).journalEnrollmentForRun",
+          "locator": "func (s *ApplicationService) journalEnrollmentForRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapBareLegacySource",
+          "locator": "func lockAndValidateAdaptiveBootstrapBareLegacySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "lockAndValidateAdaptiveExecutionBareLineage",
+          "locator": "func lockAndValidateAdaptiveExecutionBareLineage("
         }
       ],
       "evidence": [
@@ -831,7 +856,7 @@
         },
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -1246,6 +1271,14 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
           "locator": "func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDeletion"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery_test.go",
+          "locator": "func TestOrdinaryLeaseRecoveryCreatesBareSourceTargetAtomically(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery_test.go",
+          "locator": "func TestOrdinaryLeaseRecoveryRejectsSourceCheckpointPayloadDriftWithoutWrites(t *testing.T) {"
         }
       ]
     },
@@ -1731,12 +1764,21 @@
           "path": "backend/application/agentthread/run_lease_recovery.go",
           "symbol": "(*RunLeaseRecoveryProcessor).RecoverExpiredRunLeases",
           "locator": "func (p *RunLeaseRecoveryProcessor) RecoverExpiredRunLeases("
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "symbol": "(*RunLeaseRecoveryProcessor).recoverExpiredRun",
+          "locator": "func (p *RunLeaseRecoveryProcessor) recoverExpiredRun("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -3735,7 +3777,8 @@
         "run.atomic_create",
         "entry.workbench_canonical_run_http",
         "entry.workbench_canonical_run_stream",
-        "control.human_resume"
+        "control.human_resume",
+        "control.lease_recovery"
       ],
       "confidence": "extracted",
       "evidence": [
@@ -4038,16 +4081,16 @@
       ]
     },
     {
-      "id": "edge.lease_recovery_creates_guarded_run",
+      "id": "edge.lease_recovery_creates_atomic_bundle",
       "from": "runtime.lease_recovery",
-      "to": "domain.create_run_guarded",
+      "to": "domain.create_run_bundle",
       "relation": "delegates_to",
       "chain_ids": ["control.lease_recovery"],
       "confidence": "extracted",
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery.go",
-          "locator": "run, err := p.app.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{"
+          "locator": "bundle, err := p.app.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
         }
       ]
     },
@@ -4061,7 +4104,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -6274,15 +6317,15 @@
         "edge.lease_checkpoint_precedes_resume"
       ],
       "required_side_edge_ids": [
-        "edge.lease_recovery_creates_guarded_run",
-        "edge.guarded_run_persists_with_thread_lock"
+        "edge.lease_recovery_creates_atomic_bundle",
+        "edge.create_run_domain_persists_bundle"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -6856,9 +6899,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "Adaptive capabilities outside the C3a-C3h2e delivery-first slice",
+      "term": "Adaptive capabilities outside the C3a-C3h2f delivery-first slice",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add fenced Execute bootstrap and make durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d retires production ADK requested_policy/mode consumers and adds B1/B2/B3 rolling repository authority. C3h2e connects Plan middleware, ApplicationADKPlanStore and ADKCheckpointStore to the same fenced CommitAdaptiveExecutionBoundary transaction: run-scoped overlay, real Eino v3 checkpoint, initial 0-to-1 Plan, rolling high-watermark, read-first head replay, internal auto-Resume and pre-write mixed side-effect rejection. Enrolled typed Resume inherits the durable source PlanScopeRunID so target Plan writes retain the same atomic boundary. Repository/application Go tests pass, while the independent dev disposable MySQL rolling gate remains NOT_VERIFIED because no safely named isolated DSN was available. Ordinary non-Journal enrollment and typed bootstrap are the next hard blocker; gate-on producer, Adaptive finalizer gate and a true server inference policy also remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add fenced Execute bootstrap and make durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d retires production ADK requested_policy/mode consumers and adds B1/B2/B3 rolling repository authority. C3h2e connects Plan middleware, ApplicationADKPlanStore and ADKCheckpointStore to the same fenced CommitAdaptiveExecutionBoundary transaction. C3h2f makes fresh top-level Eino Attempt enrollment independent of the projection gate and connects disabled or bare expired leases to a dedicated atomic ordinary rollover. It carries complete checkpoint authority into the transaction for locked field and semantic JSON comparison, then supports bare strict-legacy Resume bootstrap with inherited PlanScopeRunID and bare Plan commit, replay and rolling. The ordinary real dev MySQL gate and the independent rolling MySQL gate remain NOT_VERIFIED. Gate-on producer, Adaptive finalizer gate and a true server inference policy also remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -7003,6 +7046,26 @@
         {
           "path": "backend/application/agentthread/journal_metrics_test.go",
           "locator": "func TestJournalMetricsCompletenessDenominatorUsesDurableEnrollmentWithoutRetiredMode(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "func (s *ApplicationService) journalEnrollmentForRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "locator": "func (r *threadRepository) createOrdinaryLeaseRecoveryRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "locator": "func ordinaryLeaseRecoveryCheckpointMatches("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "bareSource := attempt.SourceAttemptID == nil"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func lockAndValidateAdaptiveExecutionBareLineage("
         }
       ]
     },
@@ -7241,8 +7304,8 @@
         "edge.retry_app_creates_bundle",
         "edge.checkpoint_resumes_adk",
         "edge.lease_recovery_reads_checkpoint",
-        "edge.lease_recovery_creates_guarded_run",
-        "edge.guarded_run_persists_with_thread_lock",
+        "edge.lease_recovery_creates_atomic_bundle",
+        "edge.create_run_domain_persists_bundle",
         "edge.multitask_rollback_clears_checkpoint"
       ]
     },
