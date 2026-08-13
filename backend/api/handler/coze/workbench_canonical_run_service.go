@@ -141,6 +141,7 @@ type canonicalTopLevelRetrySubmission struct {
 type canonicalResumeRunRequest struct {
 	InterruptID string                  `json:"interrupt_id"`
 	Response    canonicalResumeResponse `json:"response"`
+	ResponseV2  json.RawMessage         `json:"response_v2,omitempty"`
 }
 
 type canonicalRunCommand struct {
@@ -646,12 +647,33 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
+	typedResponseRaw, typedResponse, public := canonicalResumeV2RootResponse(c.Request.Body())
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
+	var response canonicalResumeResponse
+	if typedResponse {
+		typed, public := decodeCanonicalTypedHumanResponseV2(typedResponseRaw)
+		if public != nil {
+			writeCanonicalError(ctx, c, public.status, *public)
+			return
+		}
+		response, public = validateCanonicalHumanResponseV2(typed)
+		if public != nil {
+			writeCanonicalError(ctx, c, public.status, *public)
+			return
+		}
+	}
 	var req canonicalResumeRunRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
-	submission, public := canonicalResumeSubmissionFromRequest(sourceRunID, req.InterruptID, req.Response)
+	if !typedResponse {
+		response = req.Response
+	}
+	submission, public := canonicalResumeSubmissionFromRequest(sourceRunID, req.InterruptID, response)
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
@@ -1635,6 +1657,53 @@ func canonicalTypedRunV2RootSubmission(raw []byte) (json.RawMessage, bool, *cano
 		return nil, false, canonicalTypedV2Invalid("submission_v2")
 	}
 	return rawRoot["submission_v2"], true, nil
+}
+
+func canonicalResumeV2RootResponse(raw []byte) (json.RawMessage, bool, *canonicalError) {
+	root, err := parseCanonicalExecutionControlOrderedJSON(raw)
+	if err != nil || root == nil || root.kind != canonicalExecutionControlJSONObject {
+		return nil, false, nil
+	}
+	legacy := false
+	typed := false
+	legacyCount := 0
+	typedCount := 0
+	for _, field := range root.fields {
+		switch {
+		case strings.EqualFold(field.name, "response"):
+			if field.name != "response" {
+				return nil, false, canonicalUnsupportedField(canonicalV2SafeKey(field.name))
+			}
+			legacy = true
+			legacyCount++
+		case strings.EqualFold(field.name, "response_v2"):
+			if field.name != "response_v2" {
+				return nil, false, canonicalUnsupportedField(canonicalV2SafeKey(field.name))
+			}
+			typed = true
+			typedCount++
+		}
+	}
+	if legacy && typed {
+		return nil, false, canonicalTypedV2Mixed("response_v2")
+	}
+	if legacyCount > 1 {
+		return nil, false, canonicalInvalidRequest("Request body is not valid JSON", "invalid_json")
+	}
+	if typedCount > 1 {
+		return nil, false, canonicalTypedV2Invalid("response_v2")
+	}
+	if !legacy && !typed {
+		return nil, false, canonicalInvalidRequest("Resume request is invalid", "invalid_resume")
+	}
+	if !typed {
+		return nil, false, nil
+	}
+	rawRoot, ok := canonicalV2RootRawMessages(raw)
+	if !ok || rawRoot["response_v2"] == nil {
+		return nil, false, canonicalTypedV2Invalid("response_v2")
+	}
+	return rawRoot["response_v2"], true, nil
 }
 
 func completeCanonicalTypedRunSubmission(

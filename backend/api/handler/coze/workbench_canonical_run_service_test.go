@@ -987,6 +987,95 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 	assertCanonicalResumePersistence(t, sourceRunID, "canonical-resume-route-1")
 }
 
+func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
+	header := ut.Header{Key: "Idempotency-Key", Value: "typed-resume-shared-1"}
+	typed := `{
+		"interrupt_id":"interrupt-1",
+		"response_v2":{
+			"schema":"coze.human_interaction_response.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"decision":"answered",
+			"answer":"  last 14 days  "
+		}
+	}`
+
+	created := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+		typed, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var first canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &first))
+
+	legacyBody, err := json.Marshal(map[string]any{
+		"assistant_id": "agent",
+		"command": map[string]any{"resume": map[string]any{
+			"source_run_id": strconv.FormatInt(sourceRunID, 10),
+			"interrupt_id":  "interrupt-1",
+			"response": canonicalResumeResponse{
+				Schema: "coze.human_interaction_response.v1", InteractionID: "hi_1",
+				Kind: "clarification", Decision: "answered", Answer: "last 14 days",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	replayed := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads/1/runs", string(legacyBody), header,
+	)
+	require.Equal(t, http.StatusOK, replayed.Code, replayed.Result().Body())
+	var second canonicalRun
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &second))
+	require.Equal(t, first.RunID, second.RunID)
+	require.Len(t, canonicalRunsForThread(t, 1), 2)
+}
+
+func TestResumeCanonicalRunRejectsTypedV2UnionWithoutMutation(t *testing.T) {
+	v1 := `{"schema":"coze.human_interaction_response.v1","interaction_id":"hi_1","kind":"clarification","decision":"answered","answer":"last 7 days"}`
+	v2 := `{"schema":"coze.human_interaction_response.v1","interaction_id":"hi_1","kind":"clarification","decision":"answered","answer":"last 7 days"}`
+	tests := []struct {
+		name, body, code string
+	}{
+		{
+			name: "both versions",
+			body: `{"interrupt_id":"interrupt-1","response":` + v1 + `,"response_v2":` + v2 + `}`,
+			code: "invalid_request",
+		},
+		{
+			name: "typed null counts present",
+			body: `{"interrupt_id":"interrupt-1","response_v2":null}`,
+			code: "invalid_request",
+		},
+		{
+			name: "typed root case variant",
+			body: `{"interrupt_id":"interrupt-1","Response_V2":` + v2 + `}`,
+			code: "unsupported_sdk_field",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			sourceRunID := createInterruptedHumanInteractionRun(t)
+			response := performCanonicalRunJSONRequest(
+				t, canonicalRunTestServerForUserAndSpace(2, 1), http.MethodPost,
+				fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+				test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			runs := canonicalRunsForThread(t, 1)
+			require.Len(t, runs, 1)
+			require.Equal(t, sourceRunID, runs[0].RunID)
+		})
+	}
+}
+
 func TestCanonicalResumeRejectsExecutionControlsBeforeApplication(t *testing.T) {
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
