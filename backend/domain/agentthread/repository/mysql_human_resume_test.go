@@ -488,7 +488,9 @@ func mutateHumanResumeJSON(t *testing.T, raw *string, mutate func(map[string]any
 
 func seedHumanResumeRolloverSource(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	require.NoError(t, db.AutoMigrate(&messagePO{}, &checkpointPO{}))
+	if !db.Migrator().HasTable(&messagePO{}) || !db.Migrator().HasTable(&checkpointPO{}) {
+		require.NoError(t, db.AutoMigrate(&messagePO{}, &checkpointPO{}))
+	}
 	seedJournalThread(t, db, 10)
 	root := newRepositoryTestRun(40, 10, entity.RunStatusInterrupted, 100)
 	root.SpaceID, root.CreatorID, root.RunKind = 10, 20, entity.RunKindTask
