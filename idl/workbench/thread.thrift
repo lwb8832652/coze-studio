@@ -113,6 +113,127 @@ struct CanonicalStreamResponse {
 struct CanonicalEmptyResponse {
 }
 
+struct CanonicalComposerSelectionV2 {
+    1: optional i64 model_type (agw.js_conv="str", api.js_conv="true")
+    2: optional string model_name
+    3: optional list<string> explicit_enable_skills
+    4: required list<string> allowed_skills
+    5: required list<string> enable_mcp
+    6: required list<string> enable_kbs
+    7: required list<string> enable_databases
+    8: required list<string> allowed_mcp_tools
+}
+
+struct CanonicalMemoryRetrievalV2 {
+    1: required i32 limit
+    2: required i32 candidate_limit
+    3: required list<string> scopes
+    4: required double min_confidence
+}
+
+struct CanonicalSkillsV2 {
+    1: required bool enabled
+    2: required string visibility
+}
+
+struct CanonicalMCPToolsV2 {
+    1: required bool enabled
+    2: required string visibility
+}
+
+struct CanonicalWebHTTPV2 {
+    1: required bool enabled
+    2: required list<string> allowed_hosts
+    3: required i64 timeout_ms
+    4: required i64 max_response_bytes
+}
+
+struct CanonicalWebSearchV2 {
+    1: required bool enabled
+    2: required i32 max_results
+}
+
+struct CanonicalWebToolsV2 {
+    1: required bool enabled
+    2: required string visibility
+    3: required CanonicalWebHTTPV2 http
+    4: required CanonicalWebSearchV2 search
+}
+
+struct CanonicalModelRetryV2 {
+    1: required i32 max_retries
+    2: required i64 backoff_ms
+    3: required bool retry_empty_output
+    4: required list<string> retry_finish_reasons
+}
+
+struct CanonicalModelFailoverV2 {
+    1: required list<i64> candidate_model_ids (agw.js_conv="str", api.js_conv="true")
+    2: required i32 max_retries
+    3: required bool failover_empty_output
+    4: required list<string> failover_finish_reasons
+}
+
+struct CanonicalTokenUsageV2 {
+    1: required bool enabled
+}
+
+struct CanonicalRunConfigV2 {
+    1: required string runtime
+    2: required CanonicalMemoryRetrievalV2 memory_retrieval
+    3: required CanonicalSkillsV2 skills
+    4: required CanonicalMCPToolsV2 mcp_tools
+    5: required CanonicalWebToolsV2 web_tools
+    6: optional CanonicalModelRetryV2 model_retry
+    7: optional CanonicalModelFailoverV2 model_failover
+    8: required CanonicalTokenUsageV2 token_usage
+}
+
+struct CanonicalUploadedFileReferenceV2 {
+    1: required i64 file_id (agw.js_conv="str", api.js_conv="true")
+}
+
+struct CanonicalRunInputV2 {
+    1: required string message
+    2: required list<CanonicalUploadedFileReferenceV2> uploaded_files
+}
+
+struct CanonicalRunLineageV2 {
+    1: required i64 source_run_id (agw.js_conv="str", api.js_conv="true")
+}
+
+struct CanonicalRunMetadataV2 {
+    1: required string source
+}
+
+struct CanonicalRunSubmissionV2 {
+    1: required string schema_version
+    2: required string kind
+    3: required CanonicalRunInputV2 input
+    4: required CanonicalComposerSelectionV2 composer
+    5: required CanonicalRunConfigV2 config
+    6: optional CanonicalRunLineageV2 lineage
+    7: optional CanonicalRunMetadataV2 metadata
+}
+
+struct CanonicalInitialRunSubmissionV2 {
+    1: required string schema_version
+    2: required CanonicalRunInputV2 input
+    3: required CanonicalComposerSelectionV2 composer
+    4: required CanonicalRunConfigV2 config
+    5: optional CanonicalRunMetadataV2 metadata
+}
+
+struct CanonicalHumanInteractionResponseV2 {
+    1: required string schema
+    2: required string interaction_id
+    3: required string kind
+    4: required string decision
+    5: optional string answer
+    6: optional string choice_id
+    7: optional string comment
+}
+
 struct CreateCanonicalThreadRequest {
     1: optional string thread_id (api.body="thread_id")
     2: optional string metadata (api.body="metadata", api.value_type="any")
@@ -121,6 +242,8 @@ struct CreateCanonicalThreadRequest {
     5: optional string supersteps (api.body="supersteps", api.value_type="any")
     6: optional string coze (api.body="coze", api.value_type="any")
     7: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    8: optional CanonicalInitialRunSubmissionV2 initial_submission_v2 (api.body="initial_submission_v2")
+    9: optional CanonicalInitialRunSubmissionV2 deferred_initial_submission_v2 (api.body="deferred_initial_submission_v2")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -241,6 +364,7 @@ struct CreateCanonicalRunRequest {
     24: optional string idempotency_key (api.header="Idempotency-Key")
     25: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     26: optional string coze (api.body="coze", api.value_type="any")
+    27: optional CanonicalRunSubmissionV2 submission_v2 (api.body="submission_v2")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -272,6 +396,7 @@ struct WaitCanonicalRunRequest {
     25: optional string idempotency_key (api.header="Idempotency-Key")
     26: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     27: optional string coze (api.body="coze", api.value_type="any")
+    28: optional CanonicalRunSubmissionV2 submission_v2 (api.body="submission_v2")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -310,6 +435,8 @@ struct ResumeCanonicalRunRequest {
     3: optional string interrupt_id (api.body="interrupt_id")
     4: optional string response (api.body="response", api.value_type="any")
     5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
+    6: optional string idempotency_key (api.header="Idempotency-Key")
+    7: optional CanonicalHumanInteractionResponseV2 response_v2 (api.body="response_v2")
     255: optional base.Base Base (api.none="true")
 }
 

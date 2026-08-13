@@ -192,6 +192,132 @@ const canonicalAPIFunctions = [
   'ListCanonicalRunMessages',
 ] as const;
 
+const typedSubmissionV2Types = [
+  'CanonicalComposerSelectionV2',
+  'CanonicalMemoryRetrievalV2',
+  'CanonicalSkillsV2',
+  'CanonicalMCPToolsV2',
+  'CanonicalWebHTTPV2',
+  'CanonicalWebSearchV2',
+  'CanonicalWebToolsV2',
+  'CanonicalModelRetryV2',
+  'CanonicalModelFailoverV2',
+  'CanonicalTokenUsageV2',
+  'CanonicalRunConfigV2',
+  'CanonicalUploadedFileReferenceV2',
+  'CanonicalRunInputV2',
+  'CanonicalRunLineageV2',
+  'CanonicalRunMetadataV2',
+  'CanonicalRunSubmissionV2',
+  'CanonicalInitialRunSubmissionV2',
+  'CanonicalHumanInteractionResponseV2',
+] as const;
+
+const typedSubmissionV2Signatures: Record<
+  (typeof typedSubmissionV2Types)[number],
+  readonly string[]
+> = {
+  CanonicalComposerSelectionV2: [
+    'model_type?: string',
+    'model_name?: string',
+    'explicit_enable_skills?: string[]',
+    'allowed_skills: string[]',
+    'enable_mcp: string[]',
+    'enable_kbs: string[]',
+    'enable_databases: string[]',
+    'allowed_mcp_tools: string[]',
+  ],
+  CanonicalMemoryRetrievalV2: [
+    'limit: number',
+    'candidate_limit: number',
+    'scopes: string[]',
+    'min_confidence: number',
+  ],
+  CanonicalSkillsV2: ['enabled: boolean', 'visibility: string'],
+  CanonicalMCPToolsV2: ['enabled: boolean', 'visibility: string'],
+  CanonicalWebHTTPV2: [
+    'enabled: boolean',
+    'allowed_hosts: string[]',
+    'timeout_ms: number',
+    'max_response_bytes: number',
+  ],
+  CanonicalWebSearchV2: ['enabled: boolean', 'max_results: number'],
+  CanonicalWebToolsV2: [
+    'enabled: boolean',
+    'visibility: string',
+    'http: CanonicalWebHTTPV2',
+    'search: CanonicalWebSearchV2',
+  ],
+  CanonicalModelRetryV2: [
+    'max_retries: number',
+    'backoff_ms: number',
+    'retry_empty_output: boolean',
+    'retry_finish_reasons: string[]',
+  ],
+  CanonicalModelFailoverV2: [
+    'candidate_model_ids: string[]',
+    'max_retries: number',
+    'failover_empty_output: boolean',
+    'failover_finish_reasons: string[]',
+  ],
+  CanonicalTokenUsageV2: ['enabled: boolean'],
+  CanonicalRunConfigV2: [
+    'runtime: string',
+    'memory_retrieval: CanonicalMemoryRetrievalV2',
+    'skills: CanonicalSkillsV2',
+    'mcp_tools: CanonicalMCPToolsV2',
+    'web_tools: CanonicalWebToolsV2',
+    'model_retry?: CanonicalModelRetryV2',
+    'model_failover?: CanonicalModelFailoverV2',
+    'token_usage: CanonicalTokenUsageV2',
+  ],
+  CanonicalUploadedFileReferenceV2: ['file_id: string'],
+  CanonicalRunInputV2: [
+    'message: string',
+    'uploaded_files: CanonicalUploadedFileReferenceV2[]',
+  ],
+  CanonicalRunLineageV2: ['source_run_id: string'],
+  CanonicalRunMetadataV2: ['source: string'],
+  CanonicalRunSubmissionV2: [
+    'schema_version: string',
+    'kind: string',
+    'input: CanonicalRunInputV2',
+    'composer: CanonicalComposerSelectionV2',
+    'config: CanonicalRunConfigV2',
+    'lineage?: CanonicalRunLineageV2',
+    'metadata?: CanonicalRunMetadataV2',
+  ],
+  CanonicalInitialRunSubmissionV2: [
+    'schema_version: string',
+    'input: CanonicalRunInputV2',
+    'composer: CanonicalComposerSelectionV2',
+    'config: CanonicalRunConfigV2',
+    'metadata?: CanonicalRunMetadataV2',
+  ],
+  CanonicalHumanInteractionResponseV2: [
+    'schema: string',
+    'interaction_id: string',
+    'kind: string',
+    'decision: string',
+    'answer?: string',
+    'choice_id?: string',
+    'comment?: string',
+  ],
+};
+
+const typedSubmissionV2RequestSignatures = {
+  CreateCanonicalThreadRequest: [
+    'initial_submission_v2?: CanonicalInitialRunSubmissionV2',
+    'deferred_initial_submission_v2?: CanonicalInitialRunSubmissionV2',
+  ],
+  CreateCanonicalRunRequest: ['submission_v2?: CanonicalRunSubmissionV2'],
+  WaitCanonicalRunRequest: ['submission_v2?: CanonicalRunSubmissionV2'],
+  ResumeCanonicalRunRequest: [
+    '"Idempotency-Key"?: string',
+    'response_v2?: CanonicalHumanInteractionResponseV2',
+  ],
+} as const;
+
 const productMethods = [
   'AppendCanonicalThreadMessage',
   'GenerateCanonicalThreadSuggestions',
@@ -344,7 +470,16 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     url: '/api/workbench/threads',
     method: 'POST',
     reqMapping: {
-      body: ['thread_id', 'metadata', 'if_exists', 'ttl', 'supersteps', 'coze'],
+      body: [
+        'thread_id',
+        'metadata',
+        'if_exists',
+        'ttl',
+        'supersteps',
+        'coze',
+        'initial_submission_v2',
+        'deferred_initial_submission_v2',
+      ],
       header: ['X-Coze-Space-ID'],
     },
   },
@@ -522,8 +657,8 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     method: 'POST',
     reqMapping: {
       path: ['thread_id', 'run_id'],
-      body: ['interrupt_id', 'response'],
-      header: ['X-Coze-Space-ID'],
+      body: ['interrupt_id', 'response', 'response_v2'],
+      header: ['X-Coze-Space-ID', 'Idempotency-Key'],
     },
   },
   {
@@ -947,6 +1082,33 @@ function interfaceSourceFrom(source: string, name: string): string {
   return match?.[1] ?? '';
 }
 
+function interfacePropertySignatures(
+  sourceFile: ts.SourceFile,
+  name: string,
+): string[] {
+  const declaration = sourceFile.statements.find(
+    (statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === name,
+  );
+
+  expect(declaration, `${name} must be generated`).not.toBeUndefined();
+  if (!declaration) {
+    return [];
+  }
+
+  return declaration.members.map(member => {
+    expect(
+      ts.isPropertySignature(member) && Boolean(member.name && member.type),
+      `${name} must contain only typed properties`,
+    ).toBe(true);
+    if (!ts.isPropertySignature(member) || !member.name || !member.type) {
+      return '';
+    }
+
+    return `${member.name.getText(sourceFile)}${member.questionToken ? '?' : ''}: ${member.type.getText(sourceFile)}`;
+  });
+}
+
 function declarationSourceFrom(
   sourceFile: ts.SourceFile,
   source: string,
@@ -1200,6 +1362,30 @@ describe('Scheduled Task generated contract', () => {
 });
 
 describe('canonical Workbench thread generated contract', () => {
+  it('generates the closed canonical typed submission V2 contract', () => {
+    for (const name of typedSubmissionV2Types) {
+      const source = interfaceSourceFrom(generatedSource, name);
+      expect(source, name).not.toMatch(/\bany\b|Record<|\[key:\s*string\]/);
+      expect(interfacePropertySignatures(threadSourceFile, name), name).toEqual(
+        typedSubmissionV2Signatures[name],
+      );
+    }
+
+    for (const [requestName, signatures] of Object.entries(
+      typedSubmissionV2RequestSignatures,
+    )) {
+      const generatedSignatures = interfacePropertySignatures(
+        threadSourceFile,
+        requestName,
+      );
+      for (const signature of signatures) {
+        expect(generatedSignatures, `${requestName}.${signature}`).toContain(
+          signature,
+        );
+      }
+    }
+  });
+
   it('keeps public thread and run IDs as TypeScript strings', () => {
     expect(interfaceSource('CanonicalRouteRequest').trim()).toBe(
       ['thread_id: string,', '"X-Coze-Space-ID": string,'].join('\n  '),
@@ -1292,12 +1478,12 @@ describe('canonical Workbench thread generated contract', () => {
   it('freezes every canonical method, path, and request mapping', () => {
     const runMapping = {
       path: ['thread_id'],
-      body: [...canonicalRunBody, 'coze'],
+      body: [...canonicalRunBody, 'coze', 'submission_v2'],
       header: ['Idempotency-Key', 'X-Coze-Space-ID'],
     };
     const waitMapping = {
       ...runMapping,
-      body: [...canonicalRunBody, 'raise_error', 'coze'],
+      body: [...canonicalRunBody, 'raise_error', 'coze', 'submission_v2'],
     };
 
     const expectedConfigs = [
