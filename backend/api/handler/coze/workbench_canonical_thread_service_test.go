@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bytedance/mockey"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
@@ -463,6 +464,47 @@ func TestCreateCanonicalThreadAcceptsDeferredTypedV2(t *testing.T) {
 	require.Empty(t, runs)
 }
 
+type canonicalCreateThreadMutationSpy struct {
+	createThreadCalls     int
+	createTaskThreadCalls int
+}
+
+func installCanonicalCreateThreadMutationSpy(t *testing.T) *canonicalCreateThreadMutationSpy {
+	t.Helper()
+	spy := &canonicalCreateThreadMutationSpy{}
+	createThreadPatch := mockey.Mock((*appagentthread.ApplicationService).CreateThread).To(
+		func(
+			*appagentthread.ApplicationService,
+			context.Context,
+			*appagentthread.CreateThreadRequest,
+		) (*appagentthread.CreateThreadResponse, error) {
+			spy.createThreadCalls++
+			return nil, fmt.Errorf("unexpected CreateThread mutation")
+		},
+	).Build()
+	createTaskThreadPatch := mockey.Mock((*appagentthread.ApplicationService).CreateTaskThread).To(
+		func(
+			*appagentthread.ApplicationService,
+			context.Context,
+			*appagentthread.CreateTaskThreadRequest,
+		) (*appagentthread.CreateTaskThreadResponse, error) {
+			spy.createTaskThreadCalls++
+			return nil, fmt.Errorf("unexpected CreateTaskThread mutation")
+		},
+	).Build()
+	t.Cleanup(func() {
+		createTaskThreadPatch.UnPatch()
+		createThreadPatch.UnPatch()
+	})
+	return spy
+}
+
+func (s *canonicalCreateThreadMutationSpy) requireZero(t *testing.T) {
+	t.Helper()
+	require.Zero(t, s.createThreadCalls, "CreateThread mutation calls")
+	require.Zero(t, s.createTaskThreadCalls, "CreateTaskThread mutation calls")
+}
+
 func TestCreateCanonicalThreadTypedV2RejectsAllVersionMixesWithoutMutation(t *testing.T) {
 	initial := canonicalTypedInitialThreadSubmissionV2("typed initial")
 	deferred := canonicalTypedInitialThreadSubmissionV2("typed deferred")
@@ -507,6 +549,7 @@ func TestCreateCanonicalThreadTypedV2RejectsAllVersionMixesWithoutMutation(t *te
 			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
 
 			_, _, public := canonicalCreateThreadTypedSubmissionV2([]byte(test.body))
 			require.NotNil(t, public)
@@ -521,6 +564,7 @@ func TestCreateCanonicalThreadTypedV2RejectsAllVersionMixesWithoutMutation(t *te
 			require.NoError(t, json.Unmarshal(response.Result().Body(), &responseError))
 			require.Equal(t, "invalid_request", responseError.Code)
 			require.Contains(t, responseError.Detail, test.path)
+			mutationSpy.requireZero(t)
 			require.Zero(t, canonicalThreadCount(t, 1001, 2))
 		})
 	}
@@ -553,6 +597,7 @@ func TestCreateCanonicalThreadTypedV2RejectsClosedShapeViolationsWithoutMutation
 			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
 
 			response := performCanonicalThreadJSONRequest(
 				t, h, http.MethodPost, "/api/workbench/threads", test.body,
@@ -564,12 +609,15 @@ func TestCreateCanonicalThreadTypedV2RejectsClosedShapeViolationsWithoutMutation
 			require.Contains(t, public.Detail, test.path)
 			require.NotContains(t, public.Detail, "secret-")
 			require.False(t, public.Retryable)
+			mutationSpy.requireZero(t)
 			require.Zero(t, canonicalThreadCount(t, 1001, 2))
 		})
 	}
 }
 
 func TestCreateCanonicalThreadTypedV2RejectsCaseVariantRootWithoutMutation(t *testing.T) {
+	installAgentThreadTestService(t)
+	mutationSpy := installCanonicalCreateThreadMutationSpy(t)
 	legacy := `{"assistant_id":"agent","input":{"messages":[{"role":"user","content":"legacy must not run"}]}}`
 	tests := []string{
 		`{"metadata":{},"Initial_Submission_V2":` + canonicalTypedInitialThreadSubmissionV2("case variant") + `}`,
@@ -578,7 +626,6 @@ func TestCreateCanonicalThreadTypedV2RejectsCaseVariantRootWithoutMutation(t *te
 	for _, body := range tests {
 		h := canonicalAgentThreadTestServer()
 		h.POST("/api/workbench/threads", CreateCanonicalThread)
-		installAgentThreadTestService(t)
 		response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
 		require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
 		var public canonicalError
@@ -586,6 +633,7 @@ func TestCreateCanonicalThreadTypedV2RejectsCaseVariantRootWithoutMutation(t *te
 		require.Equal(t, "unsupported_sdk_field", public.Code)
 		require.Zero(t, canonicalThreadCount(t, 1001, 2))
 	}
+	mutationSpy.requireZero(t)
 }
 
 func TestCreateCanonicalThreadTypedV2RetiredControlWinsBeforeStrictAndMixing(t *testing.T) {
@@ -617,6 +665,7 @@ func TestCreateCanonicalThreadTypedV2RetiredControlWinsBeforeStrictAndMixing(t *
 			h := canonicalAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
 
 			response := performCanonicalThreadJSONRequest(
 				t, h, http.MethodPost, "/api/workbench/threads", test.body,
@@ -626,6 +675,7 @@ func TestCreateCanonicalThreadTypedV2RetiredControlWinsBeforeStrictAndMixing(t *
 			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
 			require.Equal(t, "unsupported_execution_control", public.Code)
 			require.Equal(t, "Unsupported execution control: "+test.path, public.Detail)
+			mutationSpy.requireZero(t)
 			require.Zero(t, canonicalThreadCount(t, 1001, 2))
 		})
 	}
@@ -673,6 +723,7 @@ func TestCreateCanonicalThreadTypedV2AuthorizesBeforeHostileBody(t *testing.T) {
 	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
+	mutationSpy := installCanonicalCreateThreadMutationSpy(t)
 	authorizer := &canonicalRecordingWorkspaceAuthorizer{err: appagentthread.ErrThreadAccessDenied}
 	appagentthread.SVC.WorkspaceAuthorizer = authorizer
 
@@ -688,6 +739,7 @@ func TestCreateCanonicalThreadTypedV2AuthorizesBeforeHostileBody(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
 	require.Equal(t, "workspace_not_found", public.Code)
 	require.Equal(t, 1, authorizer.calls)
+	mutationSpy.requireZero(t)
 	authorizer.err = nil
 	require.Zero(t, canonicalThreadCount(t, 1001, 2))
 }
