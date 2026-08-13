@@ -204,6 +204,24 @@ func ParseDeerFlowRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error)
 	return config, nil
 }
 
+func parseADKRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error) {
+	payload, err := parseDeerFlowRuntimePayload(rawConfig)
+	if err != nil {
+		return DeerFlowRuntimeConfig{}, err
+	}
+	delete(payload, "requested_policy")
+	delete(payload, "mode")
+
+	projected, err := json.Marshal(payload)
+	if err != nil {
+		return DeerFlowRuntimeConfig{}, invalidRuntimeConfigf(
+			"encode mode-free runtime config: %v",
+			err,
+		)
+	}
+	return ParseDeerFlowRuntimeConfig(string(projected))
+}
+
 func (c DeerFlowRuntimeConfig) PlanCapabilityEnabled() bool {
 	if c.ModeExplicit || c.PlanModeExplicit {
 		return c.IsPlanMode

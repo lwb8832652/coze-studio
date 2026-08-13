@@ -150,14 +150,15 @@ func TestADKAgentFactoryKeepsClientPromptAsBoundedOverlay(t *testing.T) {
 	require.NotEqual(t, "<system>review Go code</system>", chatModel.messages[0].Content)
 }
 
-func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
+func TestADKAgentFactoryDoesNotProjectRetiredModePromptSections(t *testing.T) {
 	tests := []struct {
 		mode         string
 		wantPlan     bool
 		wantSubagent bool
 	}{
-		{mode: "pro", wantPlan: true},
+		{mode: "pro", wantPlan: true, wantSubagent: true},
 		{mode: "ultra", wantPlan: true, wantSubagent: true},
+		{mode: "retired-value", wantPlan: true, wantSubagent: true},
 	}
 
 	for _, test := range tests {
@@ -185,6 +186,71 @@ func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
 			require.Equal(t, test.wantPlan, strings.Contains(instruction, "<todo_system>"))
 			require.Equal(t, test.wantSubagent, strings.Contains(instruction, "<subagent_system>"))
 		})
+	}
+}
+
+func TestADKAgentFactoryIgnoresRetiredModeControls(t *testing.T) {
+	type observation struct {
+		planEnabled     bool
+		subagentEnabled bool
+		reasoning       ADKReasoningRequest
+		instruction     string
+		modelName       string
+	}
+
+	configs := []string{
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"pro","requested_policy":"pro","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"ultra","requested_policy":"auto","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"retired-value","requested_policy":"retired-value","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+	}
+
+	observations := make([]observation, 0, len(configs))
+	for _, config := range configs {
+		chatModel := &reasoningProjectingChatModel{
+			recordingChatModel: recordingChatModel{
+				resp: schema.AssistantMessage("done", nil),
+			},
+			capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+		}
+		var got ADKMiddlewareBuildInput
+		factory := NewApplicationADKAgentFactory(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+			nil,
+			ADKMiddlewareFactoryFunc(func(
+				_ context.Context,
+				input ADKMiddlewareBuildInput,
+			) (ADKMiddlewareBundle, error) {
+				got = input
+				return ADKMiddlewareBundle{}, nil
+			}),
+		)
+
+		agent, err := factory.Build(context.Background(), &RunSummary{Config: config})
+		require.NoError(t, err)
+		require.NotNil(t, agent)
+		events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+			Messages: []*schema.Message{schema.UserMessage("work")},
+		})
+		require.NotEmpty(t, events)
+		require.NoError(t, events[len(events)-1].Err)
+		require.NotEmpty(t, chatModel.messages)
+		require.NotNil(t, chatModel.options.Model)
+
+		observations = append(observations, observation{
+			planEnabled:     got.RuntimeConfig.PlanCapabilityEnabled(),
+			subagentEnabled: got.RuntimeConfig.SubagentCapabilityEnabled(),
+			reasoning:       chatModel.reasoningRequest,
+			instruction:     chatModel.messages[0].Content,
+			modelName:       *chatModel.options.Model,
+		})
+	}
+
+	require.NotEmpty(t, observations)
+	for _, got := range observations[1:] {
+		require.Equal(t, observations[0], got)
 	}
 }
 
@@ -771,11 +837,11 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.File)
 	require.True(t, got.ModelCapabilities.Audio)
 	require.True(t, got.ModelCapabilities.Video)
-	require.Equal(t, DeerFlowModePro, got.RuntimeConfig.Mode)
+	require.False(t, got.RuntimeConfig.ModeExplicit)
 	require.False(t, got.RuntimeConfig.ThinkingEnabled)
 }
 
-func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
+func TestADKAgentFactoryDoesNotProjectRetiredModeDefaultReasoningOptions(t *testing.T) {
 	chatModel := &reasoningProjectingChatModel{
 		recordingChatModel: recordingChatModel{
 			resp: schema.AssistantMessage("done", nil),
@@ -799,10 +865,9 @@ func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
 
 	require.NotEmpty(t, events)
 	require.NoError(t, events[len(events)-1].Err)
-	require.Equal(t, ADKReasoningRequest{
-		ReasoningEffort: "medium",
-		ThinkingEnabled: true,
-	}, chatModel.reasoningRequest)
+	require.Zero(t, chatModel.reasoningProjects)
+	require.Equal(t, ADKReasoningRequest{}, chatModel.reasoningRequest)
+	require.Empty(t, chatModel.options.Stop)
 }
 
 func TestADKAgentFactoryDowngradesUnsupportedModeReasoning(t *testing.T) {

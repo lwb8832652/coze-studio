@@ -164,7 +164,7 @@ func TestADKMiddlewareIncludesSubagentLimitOnlyForEnabledKnownTools(t *testing.T
 	t.Run("enabled", func(t *testing.T) {
 		assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
 		bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-			Run:               &RunSummary{RunID: 20, Config: `{"mode":"ultra","max_concurrent_subagents":2}`},
+			Run:               &RunSummary{RunID: 20, Config: `{"subagent_enabled":true,"max_concurrent_subagents":2}`},
 			Model:             &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 			SubagentToolNames: []string{"researcher"},
 		})
@@ -176,7 +176,7 @@ func TestADKMiddlewareIncludesSubagentLimitOnlyForEnabledKnownTools(t *testing.T
 	t.Run("no known tools", func(t *testing.T) {
 		assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
 		bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-			Run:   &RunSummary{RunID: 20, Config: `{"mode":"ultra"}`},
+			Run:   &RunSummary{RunID: 20, Config: `{"subagent_enabled":true}`},
 			Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 		})
 
@@ -187,7 +187,7 @@ func TestADKMiddlewareIncludesSubagentLimitOnlyForEnabledKnownTools(t *testing.T
 	t.Run("capability disabled", func(t *testing.T) {
 		assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
 		bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-			Run:               &RunSummary{RunID: 20, Config: `{"mode":"pro"}`},
+			Run:               &RunSummary{RunID: 20, Config: `{"subagent_enabled":false}`},
 			Model:             &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 			SubagentToolNames: []string{"researcher"},
 		})

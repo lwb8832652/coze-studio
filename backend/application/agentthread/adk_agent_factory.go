@@ -205,7 +205,7 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig(run.Config)
+	runtimeConfig, err := parseADKRuntimeConfig(run.Config)
 	if err != nil {
 		return nil, err
 	}

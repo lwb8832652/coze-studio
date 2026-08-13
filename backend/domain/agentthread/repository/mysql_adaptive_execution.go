@@ -2429,66 +2429,14 @@ func readAdaptiveExecutionRecoverySource(
 		sourceCheckpoint.RuntimeDeletedAt != 0 {
 		return nil, conflict("source checkpoint identity drift")
 	}
-	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(sourceCheckpoint.Metadata)
+	boundary, err := validateAdaptiveExecutionSourceBoundaryChain(
+		tx, &sourceAttempt, &sourceCheckpoint, req.ThreadID, false,
+	)
 	if err != nil {
-		return nil, conflict("source checkpoint metadata drift: %v", err)
+		return nil, fmt.Errorf("%w: %w", ErrAdaptiveExecutionRecoveryConflict, err)
 	}
-	checkpointFingerprint, err := adaptiveExecutionCheckpointFingerprint(&sourceCheckpoint, metadata)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"%w: %w: source checkpoint fingerprint is invalid: %w",
-			ErrAdaptiveExecutionRecoveryConflict, ErrAdaptiveExecutionCheckpointConflict, err,
-		)
-	}
-	if checkpointFingerprint != metadata.CheckpointFingerprint {
-		return nil, fmt.Errorf(
-			"%w: %w: source checkpoint fingerprint drift",
-			ErrAdaptiveExecutionRecoveryConflict, ErrAdaptiveExecutionCheckpointConflict,
-		)
-	}
-	if metadata.JournalRunID != sourceAttempt.JournalRunID ||
-		metadata.AttemptID != sourceAttempt.AttemptID ||
-		metadata.ExecutionRunID != sourceAttempt.ExecutionRunID ||
-		metadata.EventSequence > sourceAttempt.LastCommittedSequence ||
-		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, sourceAttempt.SourceAttemptID) ||
-		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, sourceAttempt.SourceCheckpointID) {
-		return nil, conflict("source attempt authority drift")
-	}
-	if metadata.SourceAttemptID == nil {
-		if sourceCheckpoint.ParentCheckpointID != 0 {
-			return nil, conflict("initial source checkpoint parent drift")
-		}
-	} else if *metadata.SourceAttemptID == metadata.AttemptID ||
-		*metadata.SourceCheckpointID == sourceCheckpoint.ID ||
-		sourceCheckpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
-		return nil, conflict("recovery source checkpoint parent drift")
-	}
-
-	var sourceEvent runEventPO
-	if err := readRow(tx.Where(
-		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
-		metadata.JournalRunID, metadata.AttemptID, metadata.EventIdempotencyKey,
-	).First(&sourceEvent).Error, "source event"); err != nil {
-		return nil, err
-	}
-	if sourceEvent.ID != metadata.EventID || sourceEvent.ThreadID != req.ThreadID ||
-		sourceEvent.RunID != sourceAttempt.ExecutionRunID ||
-		sourceEvent.JournalRunID == nil || *sourceEvent.JournalRunID != metadata.JournalRunID ||
-		sourceEvent.AttemptID == nil || *sourceEvent.AttemptID != metadata.AttemptID ||
-		sourceEvent.Sequence == nil || *sourceEvent.Sequence != metadata.EventSequence ||
-		sourceEvent.IdempotencyKey == nil || *sourceEvent.IdempotencyKey != metadata.EventIdempotencyKey {
-		return nil, conflict("source event tuple drift")
-	}
-	if !adaptiveExecutionEventAnchorsCheckpoint(&sourceEvent, metadata.CheckpointFingerprint) {
-		return nil, fmt.Errorf(
-			"%w: %w: source checkpoint event anchor drift",
-			ErrAdaptiveExecutionRecoveryConflict, ErrAdaptiveExecutionCheckpointConflict,
-		)
-	}
-	eventFingerprint, err := adaptiveExecutionEventFingerprint(&sourceEvent)
-	if err != nil || eventFingerprint != metadata.EventFingerprint {
-		return nil, conflict("source event fingerprint drift")
-	}
+	metadata := boundary.metadata
+	sourceEvent := boundary.event
 
 	var sourceRun runPO
 	if err := readRow(tx.Where("id = ?", sourceAttempt.ExecutionRunID).
@@ -2677,8 +2625,10 @@ func loadAdaptiveExecutionBoundaryResult(
 		if checkpoint.ParentCheckpointID != 0 {
 			return nil, conflict("initial checkpoint parent drift")
 		}
-	} else if checkpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
-		return nil, conflict("recovery checkpoint parent drift")
+	} else if metadata.EventSequence == 1 && checkpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
+		return nil, conflict("first recovery checkpoint parent drift")
+	} else if metadata.EventSequence > 1 && checkpoint.ParentCheckpointID == *metadata.SourceCheckpointID {
+		return nil, conflict("rolling recovery checkpoint parent drift")
 	}
 	eventFingerprint, err := adaptiveExecutionEventFingerprint(event)
 	if err != nil || eventFingerprint != metadata.EventFingerprint {
@@ -2699,6 +2649,7 @@ func loadAdaptiveExecutionBoundaryResult(
 		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, currentAttempt.SourceCheckpointID) {
 		return nil, conflict("attempt authority drift")
 	}
+	historicalReplay := metadata.EventSequence < currentAttempt.LastCommittedSequence
 
 	scopeRun := run
 	if metadata.PlanScopeRunID != run.ID {
@@ -2718,11 +2669,14 @@ func loadAdaptiveExecutionBoundaryResult(
 		}
 		return nil, err
 	}
-	if plan.RunID != metadata.PlanScopeRunID || plan.Revision != metadata.PlanRevision ||
-		plan.UpdatedAt != req.Now || plan.ThreadID != scopeRun.ThreadID ||
+	if plan.RunID != metadata.PlanScopeRunID || plan.ThreadID != scopeRun.ThreadID ||
 		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
 		scopeRun.ThreadID != run.ThreadID || scopeRun.SpaceID != run.SpaceID ||
 		scopeRun.CreatorID != run.CreatorID {
+		return nil, conflict("plan authority drift")
+	}
+	if (!historicalReplay && (plan.Revision != metadata.PlanRevision || plan.UpdatedAt != req.Now)) ||
+		(historicalReplay && plan.Revision < metadata.PlanRevision) {
 		return nil, conflict("plan authority drift")
 	}
 
@@ -2742,14 +2696,12 @@ func loadAdaptiveExecutionBoundaryResult(
 		row := &itemRows[index]
 		ref := metadata.ItemRefs[index]
 		if row.ID != ref.ID || row.RunID != metadata.PlanScopeRunID ||
-			row.TaskID != ref.TaskID || row.Version != ref.Version {
+			row.TaskID != ref.TaskID ||
+			(!historicalReplay && row.Version != ref.Version) ||
+			(historicalReplay && row.Version < ref.Version) {
 			return nil, conflict("plan item ref drift")
 		}
 		items = append(items, row.toEntity())
-	}
-	storedFingerprint, err := adaptiveExecutionPlanItemFingerprint(items)
-	if err != nil || storedFingerprint != metadata.ItemFingerprint {
-		return nil, conflict("plan item fingerprint drift")
 	}
 	normalizedRequestItems, err := normalizeAdaptiveExecutionReplayItems(req, items)
 	if err != nil {
@@ -2758,6 +2710,16 @@ func loadAdaptiveExecutionBoundaryResult(
 	requestFingerprint, err := adaptiveExecutionPlanItemFingerprint(normalizedRequestItems)
 	if err != nil || requestFingerprint != metadata.ItemFingerprint {
 		return nil, conflict("request plan item fingerprint drift")
+	}
+	if historicalReplay {
+		items = normalizedRequestItems
+		plan.Revision = metadata.PlanRevision
+		plan.UpdatedAt = event.CreatedAt
+	} else {
+		storedFingerprint, fingerprintErr := adaptiveExecutionPlanItemFingerprint(items)
+		if fingerprintErr != nil || storedFingerprint != metadata.ItemFingerprint {
+			return nil, conflict("plan item fingerprint drift")
+		}
 	}
 
 	return &CommitAdaptiveExecutionBoundaryResult{
@@ -2824,7 +2786,7 @@ func normalizeAdaptiveExecutionReplayItems(
 		}
 		stored, exists := storedByTaskID[candidate.TaskID]
 		if !exists || candidate.ID != stored.ID || candidate.RunID != stored.RunID ||
-			candidate.Version != stored.Version || mutation.ExpectedVersion+1 != stored.Version {
+			candidate.Version != mutation.ExpectedVersion+1 || candidate.Version > stored.Version {
 			return nil, fmt.Errorf("request plan item identity drift")
 		}
 		next := *candidate
@@ -2878,9 +2840,8 @@ func lockAdaptiveExecutionLineage(
 		}
 		return req.ExecutionRunID, nil
 	}
-	if *attempt.SourceAttemptID == attempt.AttemptID || *attempt.SourceCheckpointID == req.Checkpoint.ID ||
-		req.Checkpoint.ParentCheckpointID != *attempt.SourceCheckpointID {
-		return 0, fmt.Errorf("%w: recovery source self-reference or parent drift", ErrAdaptiveExecutionLineageConflict)
+	if *attempt.SourceAttemptID == attempt.AttemptID || *attempt.SourceCheckpointID == req.Checkpoint.ID {
+		return 0, fmt.Errorf("%w: recovery source self-reference", ErrAdaptiveExecutionLineageConflict)
 	}
 
 	discoveredSourceAttempt, err := discoverAdaptiveExecutionSourceAttempt(
@@ -2917,79 +2878,275 @@ func lockAdaptiveExecutionLineage(
 		sourceCheckpoint.RuntimeDeletedAt != 0 {
 		return 0, fmt.Errorf("%w: source checkpoint identity drift", ErrAdaptiveExecutionLineageConflict)
 	}
-	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(sourceCheckpoint.Metadata)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrAdaptiveExecutionLineageConflict, err)
-	}
-	checkpointFingerprint, err := adaptiveExecutionCheckpointFingerprint(sourceCheckpoint, metadata)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"%w: %w: source checkpoint fingerprint is invalid: %w",
-			ErrAdaptiveExecutionLineageConflict, ErrAdaptiveExecutionCheckpointConflict, err,
-		)
-	}
-	if checkpointFingerprint != metadata.CheckpointFingerprint {
-		return 0, fmt.Errorf(
-			"%w: %w: source checkpoint fingerprint drift",
-			ErrAdaptiveExecutionLineageConflict, ErrAdaptiveExecutionCheckpointConflict,
-		)
-	}
-	if metadata.JournalRunID != sourceAttempt.JournalRunID ||
-		metadata.AttemptID != sourceAttempt.AttemptID ||
-		metadata.ExecutionRunID != sourceAttempt.ExecutionRunID ||
-		metadata.EventSequence > sourceAttempt.LastCommittedSequence ||
-		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, sourceAttempt.SourceAttemptID) ||
-		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, sourceAttempt.SourceCheckpointID) ||
-		metadata.PlanScopeRunID != req.PlanMutation.PlanScopeRunID ||
-		metadata.PlanRevision != req.PlanMutation.ExpectedRevision {
-		return 0, fmt.Errorf("%w: source checkpoint metadata drift", ErrAdaptiveExecutionLineageConflict)
-	}
-	if metadata.SourceCheckpointID == nil {
-		if sourceCheckpoint.ParentCheckpointID != 0 {
-			return 0, fmt.Errorf("%w: source checkpoint parent drift", ErrAdaptiveExecutionLineageConflict)
-		}
-	} else if *metadata.SourceAttemptID == metadata.AttemptID ||
-		*metadata.SourceCheckpointID == sourceCheckpoint.ID ||
-		sourceCheckpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
-		return 0, fmt.Errorf("%w: source checkpoint parent drift", ErrAdaptiveExecutionLineageConflict)
-	}
-	sourceEvent, err := lockAdaptiveExecutionBoundaryEventTuple(
-		tx, metadata.JournalRunID, metadata.AttemptID, metadata.EventIdempotencyKey,
+	boundary, err := validateAdaptiveExecutionSourceBoundaryChain(
+		tx, sourceAttempt, sourceCheckpoint, req.ThreadID, true,
 	)
 	if err != nil {
-		if errors.Is(err, errAdaptiveExecutionBoundaryTupleMissing) {
-			return 0, fmt.Errorf("%w: source event not found", ErrAdaptiveExecutionLineageConflict)
-		}
-		return 0, err
+		return 0, fmt.Errorf("%w: %w", ErrAdaptiveExecutionLineageConflict, err)
 	}
-	if sourceEvent.ID != metadata.EventID || sourceEvent.ThreadID != req.ThreadID ||
-		sourceEvent.RunID != sourceAttempt.ExecutionRunID ||
-		sourceEvent.JournalRunID == nil || *sourceEvent.JournalRunID != sourceAttempt.JournalRunID ||
-		sourceEvent.AttemptID == nil || *sourceEvent.AttemptID != sourceAttempt.AttemptID ||
-		sourceEvent.Sequence == nil || *sourceEvent.Sequence != metadata.EventSequence ||
-		sourceEvent.IdempotencyKey == nil || *sourceEvent.IdempotencyKey != metadata.EventIdempotencyKey {
-		return 0, fmt.Errorf("%w: source event identity drift", ErrAdaptiveExecutionLineageConflict)
-	}
-	if !adaptiveExecutionEventAnchorsCheckpoint(sourceEvent, metadata.CheckpointFingerprint) {
-		return 0, fmt.Errorf(
-			"%w: %w: source checkpoint event anchor drift",
-			ErrAdaptiveExecutionLineageConflict, ErrAdaptiveExecutionCheckpointConflict,
-		)
-	}
-	sourceEventFingerprint, err := adaptiveExecutionEventFingerprint(sourceEvent)
-	if err != nil {
-		return 0, fmt.Errorf("%w: source event fingerprint is invalid", ErrAdaptiveExecutionLineageConflict)
-	}
-	if sourceEventFingerprint != metadata.EventFingerprint {
-		return 0, fmt.Errorf("%w: source event fingerprint drift", ErrAdaptiveExecutionLineageConflict)
+	metadata := boundary.metadata
+	sourceEvent := boundary.event
+	if metadata.PlanScopeRunID != req.PlanMutation.PlanScopeRunID {
+		return 0, fmt.Errorf("%w: source checkpoint plan scope drift", ErrAdaptiveExecutionLineageConflict)
 	}
 	if sourceRun.ThreadID != req.ThreadID || sourceRun.ExecutionGeneration != metadata.ExecutionGeneration {
 		return 0, fmt.Errorf("%w: source execution generation drift", ErrAdaptiveExecutionLineageConflict)
 	}
-	if err := lockAndValidateAdaptiveExecutionLineagePlan(tx, sourceRun, sourceEvent, metadata); err != nil {
+	if attempt.LastCommittedSequence == 0 {
+		if err := lockAndValidateAdaptiveExecutionLineagePlan(tx, sourceRun, sourceEvent, metadata); err != nil {
+			return 0, err
+		}
+		if req.Checkpoint.ParentCheckpointID != *attempt.SourceCheckpointID ||
+			metadata.PlanRevision != req.PlanMutation.ExpectedRevision {
+			return 0, fmt.Errorf("%w: recovery source parent or revision drift", ErrAdaptiveExecutionLineageConflict)
+		}
+		return metadata.PlanScopeRunID, nil
+	}
+	if err := lockAndValidateAdaptiveExecutionRollingParent(tx, req, attempt); err != nil {
+		return 0, err
+	}
+	if err := lockAndValidateAdaptiveExecutionLineagePlanIdentity(tx, sourceRun, metadata); err != nil {
 		return 0, err
 	}
 	return metadata.PlanScopeRunID, nil
+}
+
+func lockAndValidateAdaptiveExecutionLineagePlanIdentity(
+	tx *gorm.DB,
+	sourceRun *runPO,
+	metadata *adaptiveExecutionCheckpointMetadata,
+) error {
+	if tx == nil || sourceRun == nil || metadata == nil {
+		return fmt.Errorf("%w: source plan authority is missing", ErrAdaptiveExecutionLineageConflict)
+	}
+	scopeRun, err := lockAdaptiveExecutionScopeRun(tx, metadata.PlanScopeRunID)
+	if err != nil {
+		return fmt.Errorf("%w: source plan scope is unavailable: %v", ErrAdaptiveExecutionPlanScopeConflict, err)
+	}
+	if scopeRun.ID != metadata.PlanScopeRunID || scopeRun.ThreadID != sourceRun.ThreadID ||
+		scopeRun.SpaceID != sourceRun.SpaceID || scopeRun.CreatorID != sourceRun.CreatorID {
+		return fmt.Errorf("%w: source plan scope authority drift", ErrAdaptiveExecutionPlanScopeConflict)
+	}
+	plan, err := lockAdaptiveExecutionPlan(tx, metadata.PlanScopeRunID)
+	if err != nil {
+		return fmt.Errorf("%w: source plan is unavailable: %v", ErrAdaptiveExecutionPlanScopeConflict, err)
+	}
+	if plan.RunID != metadata.PlanScopeRunID || plan.ThreadID != scopeRun.ThreadID ||
+		plan.SpaceID != scopeRun.SpaceID || plan.UserID != scopeRun.CreatorID ||
+		plan.Revision < metadata.PlanRevision {
+		return fmt.Errorf("%w: source plan authority drift", ErrAdaptiveExecutionPlanScopeConflict)
+	}
+	return nil
+}
+
+type adaptiveExecutionSourceBoundary struct {
+	metadata *adaptiveExecutionCheckpointMetadata
+	event    *runEventPO
+}
+
+func validateAdaptiveExecutionSourceBoundaryChain(
+	tx *gorm.DB,
+	attempt *runAttemptPO,
+	checkpoint *checkpointPO,
+	threadID int64,
+	lock bool,
+) (*adaptiveExecutionSourceBoundary, error) {
+	conflict := func(format string, args ...any) error {
+		return fmt.Errorf("source boundary conflict: %s", fmt.Sprintf(format, args...))
+	}
+	if tx == nil || attempt == nil || checkpoint == nil || threadID <= 0 {
+		return nil, conflict("authority is missing")
+	}
+	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(checkpoint.Metadata)
+	if err != nil {
+		return nil, conflict("checkpoint metadata drift: %v", err)
+	}
+	if checkpoint.ThreadID != threadID || checkpoint.RunID != attempt.ExecutionRunID ||
+		checkpoint.RuntimeDeletedAt != 0 || metadata.JournalRunID != attempt.JournalRunID ||
+		metadata.AttemptID != attempt.AttemptID || metadata.ExecutionRunID != attempt.ExecutionRunID ||
+		metadata.EventSequence == 0 || metadata.EventSequence != attempt.LastCommittedSequence ||
+		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
+		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) {
+		return nil, conflict("checkpoint authority drift")
+	}
+	fingerprint, err := adaptiveExecutionCheckpointFingerprint(checkpoint, metadata)
+	if err != nil || fingerprint != metadata.CheckpointFingerprint {
+		return nil, fmt.Errorf("%w: source checkpoint fingerprint drift", ErrAdaptiveExecutionCheckpointConflict)
+	}
+
+	if metadata.SourceCheckpointID == nil {
+		if metadata.EventSequence != 1 || checkpoint.ParentCheckpointID != 0 {
+			return nil, conflict("initial checkpoint lineage drift")
+		}
+	} else if metadata.EventSequence == 1 {
+		if metadata.SourceAttemptID == nil || *metadata.SourceAttemptID == metadata.AttemptID ||
+			*metadata.SourceCheckpointID == checkpoint.ID ||
+			checkpoint.ParentCheckpointID != *metadata.SourceCheckpointID {
+			return nil, conflict("first recovery checkpoint lineage drift")
+		}
+	} else {
+		if checkpoint.ParentCheckpointID <= 0 ||
+			checkpoint.ParentCheckpointID == *metadata.SourceCheckpointID {
+			return nil, conflict("rolling checkpoint parent drift")
+		}
+		parent, parentErr := loadAdaptiveExecutionSourceBoundaryCheckpoint(
+			tx, checkpoint.ParentCheckpointID, lock,
+		)
+		if parentErr != nil {
+			return nil, conflict("rolling parent is unavailable: %v", parentErr)
+		}
+		parentMetadata, parentErr := decodeAdaptiveExecutionCheckpointMetadata(parent.Metadata)
+		if parentErr != nil {
+			return nil, conflict("rolling parent metadata drift")
+		}
+		if parent.ThreadID != checkpoint.ThreadID || parent.RunID != checkpoint.RunID ||
+			parentMetadata.JournalRunID != metadata.JournalRunID ||
+			parentMetadata.AttemptID != metadata.AttemptID ||
+			parentMetadata.ExecutionRunID != metadata.ExecutionRunID ||
+			parentMetadata.ExecutionGeneration != metadata.ExecutionGeneration ||
+			parentMetadata.EventSequence+1 != metadata.EventSequence ||
+			parentMetadata.PlanScopeRunID != metadata.PlanScopeRunID ||
+			parentMetadata.PlanRevision+1 != metadata.PlanRevision ||
+			!adaptiveExecutionStringPointersEqual(parentMetadata.SourceAttemptID, metadata.SourceAttemptID) ||
+			!adaptiveExecutionInt64PointersEqual(parentMetadata.SourceCheckpointID, metadata.SourceCheckpointID) {
+			return nil, conflict("rolling parent authority drift")
+		}
+		parentFingerprint, parentErr := adaptiveExecutionCheckpointFingerprint(parent, parentMetadata)
+		if parentErr != nil || parentFingerprint != parentMetadata.CheckpointFingerprint {
+			return nil, fmt.Errorf("%w: rolling parent checkpoint fingerprint drift", ErrAdaptiveExecutionCheckpointConflict)
+		}
+		parentEvent, parentErr := loadAdaptiveExecutionSourceBoundaryEvent(tx, parentMetadata, lock)
+		if parentErr != nil || !adaptiveExecutionSourceBoundaryEventMatches(parentEvent, parentMetadata, threadID) {
+			return nil, conflict("rolling parent event tuple drift")
+		}
+		if !adaptiveExecutionEventAnchorsCheckpoint(parentEvent, parentMetadata.CheckpointFingerprint) {
+			return nil, fmt.Errorf("%w: rolling parent event anchor drift", ErrAdaptiveExecutionCheckpointConflict)
+		}
+		parentEventFingerprint, parentErr := adaptiveExecutionEventFingerprint(parentEvent)
+		if parentErr != nil || parentEventFingerprint != parentMetadata.EventFingerprint {
+			return nil, conflict("rolling parent event fingerprint drift")
+		}
+	}
+
+	event, err := loadAdaptiveExecutionSourceBoundaryEvent(tx, metadata, lock)
+	if err != nil || !adaptiveExecutionSourceBoundaryEventMatches(event, metadata, threadID) {
+		return nil, conflict("source event tuple drift")
+	}
+	if !adaptiveExecutionEventAnchorsCheckpoint(event, metadata.CheckpointFingerprint) {
+		return nil, fmt.Errorf("%w: source checkpoint event anchor drift", ErrAdaptiveExecutionCheckpointConflict)
+	}
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(event)
+	if err != nil || eventFingerprint != metadata.EventFingerprint {
+		return nil, conflict("source event fingerprint drift")
+	}
+	return &adaptiveExecutionSourceBoundary{metadata: metadata, event: event}, nil
+}
+
+func loadAdaptiveExecutionSourceBoundaryCheckpoint(tx *gorm.DB, id int64, lock bool) (*checkpointPO, error) {
+	query := tx.Where("id = ?", id)
+	if lock && tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var checkpoint checkpointPO
+	if err := query.First(&checkpoint).Error; err != nil {
+		return nil, err
+	}
+	return &checkpoint, nil
+}
+
+func loadAdaptiveExecutionSourceBoundaryEvent(
+	tx *gorm.DB,
+	metadata *adaptiveExecutionCheckpointMetadata,
+	lock bool,
+) (*runEventPO, error) {
+	if lock {
+		return lockAdaptiveExecutionBoundaryEventTuple(
+			tx, metadata.JournalRunID, metadata.AttemptID, metadata.EventIdempotencyKey,
+		)
+	}
+	var event runEventPO
+	err := tx.Where(
+		"journal_run_id = ? AND attempt_id = ? AND idempotency_key = ?",
+		metadata.JournalRunID, metadata.AttemptID, metadata.EventIdempotencyKey,
+	).First(&event).Error
+	return &event, err
+}
+
+func adaptiveExecutionSourceBoundaryEventMatches(
+	event *runEventPO,
+	metadata *adaptiveExecutionCheckpointMetadata,
+	threadID int64,
+) bool {
+	return event != nil && metadata != nil && event.ID == metadata.EventID &&
+		event.ThreadID == threadID && event.RunID == metadata.ExecutionRunID &&
+		event.JournalRunID != nil && *event.JournalRunID == metadata.JournalRunID &&
+		event.AttemptID != nil && *event.AttemptID == metadata.AttemptID &&
+		event.Sequence != nil && *event.Sequence == metadata.EventSequence &&
+		event.IdempotencyKey != nil && *event.IdempotencyKey == metadata.EventIdempotencyKey
+}
+
+func lockAndValidateAdaptiveExecutionRollingParent(
+	tx *gorm.DB,
+	req CommitAdaptiveExecutionBoundaryRequest,
+	attempt *runAttemptPO,
+) error {
+	if req.Checkpoint.ParentCheckpointID <= 0 ||
+		req.Checkpoint.ParentCheckpointID == *attempt.SourceCheckpointID {
+		return fmt.Errorf("%w: rolling parent is invalid", ErrAdaptiveExecutionLineageConflict)
+	}
+	parent, err := lockAdaptiveExecutionSourceCheckpoint(tx, req.Checkpoint.ParentCheckpointID)
+	if err != nil {
+		return err
+	}
+	metadata, err := decodeAdaptiveExecutionCheckpointMetadata(parent.Metadata)
+	if err != nil {
+		return fmt.Errorf("%w: rolling parent metadata drift", ErrAdaptiveExecutionLineageConflict)
+	}
+	if parent.ThreadID != req.ThreadID || parent.RunID != req.ExecutionRunID ||
+		parent.RuntimeDeletedAt != 0 || metadata.JournalRunID != req.JournalRunID ||
+		metadata.AttemptID != req.AttemptID || metadata.ExecutionRunID != req.ExecutionRunID ||
+		metadata.ExecutionGeneration != req.Generation ||
+		metadata.EventSequence != attempt.LastCommittedSequence ||
+		metadata.PlanScopeRunID != req.PlanMutation.PlanScopeRunID ||
+		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
+		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) {
+		return fmt.Errorf("%w: rolling parent authority drift", ErrAdaptiveExecutionLineageConflict)
+	}
+	if metadata.PlanRevision != req.PlanMutation.ExpectedRevision {
+		return fmt.Errorf(
+			"%w: rolling parent revision %d does not match expected %d",
+			ErrAdaptiveExecutionPlanRevisionConflict, metadata.PlanRevision, req.PlanMutation.ExpectedRevision,
+		)
+	}
+	fingerprint, err := adaptiveExecutionCheckpointFingerprint(parent, metadata)
+	if err != nil || fingerprint != metadata.CheckpointFingerprint {
+		return fmt.Errorf(
+			"%w: %w: rolling parent checkpoint fingerprint drift",
+			ErrAdaptiveExecutionLineageConflict, ErrAdaptiveExecutionCheckpointConflict,
+		)
+	}
+	parentEvent, err := lockAdaptiveExecutionBoundaryEventTuple(
+		tx, metadata.JournalRunID, metadata.AttemptID, metadata.EventIdempotencyKey,
+	)
+	if err != nil {
+		return fmt.Errorf("%w: rolling parent event is unavailable", ErrAdaptiveExecutionLineageConflict)
+	}
+	if parentEvent.ID != metadata.EventID || parentEvent.ThreadID != req.ThreadID ||
+		parentEvent.RunID != req.ExecutionRunID || parentEvent.Sequence == nil ||
+		*parentEvent.Sequence != metadata.EventSequence {
+		return fmt.Errorf("%w: rolling parent event authority drift", ErrAdaptiveExecutionLineageConflict)
+	}
+	if !adaptiveExecutionEventAnchorsCheckpoint(parentEvent, metadata.CheckpointFingerprint) {
+		return fmt.Errorf(
+			"%w: %w: rolling parent event anchor drift",
+			ErrAdaptiveExecutionLineageConflict, ErrAdaptiveExecutionCheckpointConflict,
+		)
+	}
+	eventFingerprint, err := adaptiveExecutionEventFingerprint(parentEvent)
+	if err != nil || eventFingerprint != metadata.EventFingerprint {
+		return fmt.Errorf("%w: rolling parent event fingerprint drift", ErrAdaptiveExecutionLineageConflict)
+	}
+	return nil
 }
 
 func lockAndValidateAdaptiveExecutionLineagePlan(

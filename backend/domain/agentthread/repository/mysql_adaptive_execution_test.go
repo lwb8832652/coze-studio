@@ -4467,6 +4467,263 @@ func TestAdaptiveExecutionBoundaryRecoversCanonicalPlanScopeAcrossMultipleHops(t
 	require.Equal(t, int64(20), c.Plan.RunID)
 }
 
+func TestAdaptiveExecutionBoundaryRollsPlanAcrossSameRecoveryAttemptAndReplaysHistory(t *testing.T) {
+	db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+	repo := NewAdaptiveExecutionRepository(db)
+
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+	require.NoError(t, err)
+	secondRequest := adaptiveNextBoundaryForSameRecoveryTest(
+		t, firstRequest, first, 7003, 8003, 1200,
+	)
+	second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), secondRequest)
+	require.NoError(t, err)
+	thirdRequest := adaptiveNextBoundaryForSameRecoveryTest(
+		t, secondRequest, second, 7004, 8004, 1300,
+	)
+	third, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), thirdRequest)
+	require.NoError(t, err)
+
+	for index, result := range []*CommitAdaptiveExecutionBoundaryResult{first, second, third} {
+		require.Equal(t, uint64(index+1), result.Authority.EventSequence)
+		require.Equal(t, int64(index+3), result.Authority.PlanRevision)
+		require.Equal(t, "attempt-1", requireStringPointerForTest(t, result.Authority.SourceAttemptID))
+		require.Equal(t, int64(8001), requireInt64PointerForTest(t, result.Authority.SourceCheckpointID))
+		metadata := decodeAdaptiveExecutionMetadataForTest(t, []byte(result.Checkpoint.Metadata))
+		require.Equal(t, "attempt-1", requireStringPointerForTest(t, metadata.SourceAttemptID))
+		require.Equal(t, int64(8001), requireInt64PointerForTest(t, metadata.SourceCheckpointID))
+	}
+	require.Equal(t, int64(8001), first.Checkpoint.ParentCheckpointID)
+	require.Equal(t, first.Checkpoint.ID, second.Checkpoint.ParentCheckpointID)
+	require.Equal(t, second.Checkpoint.ID, third.Checkpoint.ParentCheckpointID)
+	require.Equal(t, int64(5), third.Plan.Revision)
+	require.Equal(t, int64(5), third.Items[0].Version)
+
+	beforeReplay := snapshotAdaptiveExecutionDBForTest(t, db)
+	replayed, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+	require.NoError(t, err)
+	expected := *first
+	expected.Replayed = true
+	require.Equal(t, &expected, replayed)
+	require.Equal(t, beforeReplay, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {
+	db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+	repo := NewAdaptiveExecutionRepository(db)
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+	require.NoError(t, err)
+	secondRequest := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+	second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), secondRequest)
+	require.NoError(t, err)
+	terminalizeAdaptiveAttemptForTest(t, db, 101)
+	cRequest := seedAdaptiveRecoveryTargetForTest(t, db, adaptiveRecoveryTargetForTest{
+		RunID: 22, AttemptRowID: 102, AttemptID: "attempt-3", Generation: 5,
+		SourceAttemptID: "attempt-2", SourceCheckpointID: second.Checkpoint.ID,
+		EventID: 7004, CheckpointID: 8004, ExpectedRevision: second.Plan.Revision,
+		ExpectedItemVersion: second.Items[0].Version, Now: 1300,
+	})
+
+	recovered, err := repo.ReadAdaptiveExecutionRecoverySource(
+		context.Background(), ReadAdaptiveExecutionRecoverySourceRequest{
+			ThreadID: 10, JournalRunID: 30, TargetAttemptID: cRequest.AttemptID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, second.Checkpoint.ID, recovered.Checkpoint.ID)
+	require.Equal(t, second.Authority, recovered.Authority)
+
+	committed, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), cRequest)
+	require.NoError(t, err)
+	require.Equal(t, second.Checkpoint.ID, committed.Checkpoint.ParentCheckpointID)
+	require.Equal(t, int64(5), committed.Plan.Revision)
+}
+
+func TestAdaptiveExecutionRollingRecoverySourceRejectsBrokenPreviousBoundaryChain(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, *CommitAdaptiveExecutionBoundaryResult)
+	}{
+		{name: "parent sequence", mutate: func(t *testing.T, db *gorm.DB, first *CommitAdaptiveExecutionBoundaryResult) {
+			metadata := rewriteAdaptiveExecutionCheckpointMetadataForTest(
+				t, []byte(first.Checkpoint.Metadata), func(fields map[string]json.RawMessage) {
+					fields["event_sequence"] = json.RawMessage(`9`)
+				},
+			)
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", first.Checkpoint.ID).
+				Update("metadata", metadata).Error)
+		}},
+		{name: "parent event anchor", mutate: func(t *testing.T, db *gorm.DB, first *CommitAdaptiveExecutionBoundaryResult) {
+			require.NoError(t, db.Model(&runEventPO{}).Where("id = ?", first.Event.ID).
+				Update("snapshot_id", strings.Repeat("f", 64)).Error)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+			repo := NewAdaptiveExecutionRepository(db)
+			first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+			require.NoError(t, err)
+			secondRequest := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+			second, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), secondRequest)
+			require.NoError(t, err)
+			terminalizeAdaptiveAttemptForTest(t, db, 101)
+			target := seedAdaptiveRecoveryTargetForTest(t, db, adaptiveRecoveryTargetForTest{
+				RunID: 22, AttemptRowID: 102, AttemptID: "attempt-3", Generation: 5,
+				SourceAttemptID: "attempt-2", SourceCheckpointID: second.Checkpoint.ID,
+				EventID: 7004, CheckpointID: 8004, ExpectedRevision: second.Plan.Revision,
+				ExpectedItemVersion: second.Items[0].Version, Now: 1300,
+			})
+			tt.mutate(t, db, first)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, err := repo.ReadAdaptiveExecutionRecoverySource(
+				context.Background(), ReadAdaptiveExecutionRecoverySourceRequest{
+					ThreadID: 10, JournalRunID: 30, TargetAttemptID: target.AttemptID,
+				},
+			)
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionRecoveryConflict)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestAdaptiveExecutionBoundarySameRecoveryRejectsOldRevisionAndInvalidParentWithoutWrites(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*CommitAdaptiveExecutionBoundaryRequest, *CommitAdaptiveExecutionBoundaryResult)
+		expectedErr error
+	}{
+		{
+			name: "old revision",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest, _ *CommitAdaptiveExecutionBoundaryResult) {
+				req.PlanMutation.ExpectedRevision--
+				req.PlanMutation.NextRevision--
+			},
+			expectedErr: ErrAdaptiveExecutionPlanRevisionConflict,
+		},
+		{
+			name: "immutable source is not rolling head",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest, _ *CommitAdaptiveExecutionBoundaryResult) {
+				req.Checkpoint.ParentCheckpointID = 8001
+			},
+			expectedErr: ErrAdaptiveExecutionLineageConflict,
+		},
+		{
+			name: "checkpoint from another attempt",
+			mutate: func(req *CommitAdaptiveExecutionBoundaryRequest, _ *CommitAdaptiveExecutionBoundaryResult) {
+				req.Checkpoint.ParentCheckpointID = 8998
+			},
+			expectedErr: ErrAdaptiveExecutionLineageConflict,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+			repo := NewAdaptiveExecutionRepository(db)
+			first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+			require.NoError(t, err)
+			if tt.name == "checkpoint from another attempt" {
+				seedAdaptiveExecutionOtherAttemptBoundaryForTest(t, db, first)
+			}
+			req := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+			tt.mutate(&req, first)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+			result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+			require.Nil(t, result)
+			require.ErrorIs(t, err, tt.expectedErr)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestAdaptiveExecutionBoundaryHistoricalReplayRejectsDriftWithoutWrites(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*CommitAdaptiveExecutionBoundaryRequest)
+	}{
+		{name: "payload", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.Event.Payload = `{"recovery":"drift"}` }},
+		{name: "parent", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) { req.Checkpoint.ParentCheckpointID = 8999 }},
+		{name: "revision", mutate: func(req *CommitAdaptiveExecutionBoundaryRequest) {
+			req.PlanMutation.ExpectedRevision++
+			req.PlanMutation.NextRevision++
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+			repo := NewAdaptiveExecutionRepository(db)
+			first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+			require.NoError(t, err)
+			secondRequest := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+			_, err = repo.CommitAdaptiveExecutionBoundary(context.Background(), secondRequest)
+			require.NoError(t, err)
+			replay := cloneAdaptiveExecutionBoundaryRequestForReplayTest(firstRequest)
+			tt.mutate(&replay)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+			result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), replay)
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionReplayConflict)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestAdaptiveExecutionBoundaryHistoricalReplayRejectsTamperedHistoricalFactWithoutWrites(t *testing.T) {
+	db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+	repo := NewAdaptiveExecutionRepository(db)
+	first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+	require.NoError(t, err)
+	secondRequest := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+	_, err = repo.CommitAdaptiveExecutionBoundary(context.Background(), secondRequest)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", first.Checkpoint.ID).
+		Update("channel_values", []byte(`{"tampered":true}`)).Error)
+	replay := cloneAdaptiveExecutionBoundaryRequestForReplayTest(firstRequest)
+	replay.Checkpoint.ChannelValues = `{"tampered":true}`
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), replay)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionReplayConflict)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionCheckpointConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBoundarySameRecoveryRejectsTamperedRollingParentWithoutWrites(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, *CommitAdaptiveExecutionBoundaryResult)
+	}{
+		{name: "checkpoint fingerprint", mutate: func(t *testing.T, db *gorm.DB, first *CommitAdaptiveExecutionBoundaryResult) {
+			require.NoError(t, db.Model(&checkpointPO{}).Where("id = ?", first.Checkpoint.ID).
+				Update("channel_values", []byte(`{"tampered":true}`)).Error)
+		}},
+		{name: "event anchor", mutate: func(t *testing.T, db *gorm.DB, first *CommitAdaptiveExecutionBoundaryResult) {
+			require.NoError(t, db.Model(&runEventPO{}).Where("id = ?", first.Event.ID).
+				Update("snapshot_id", strings.Repeat("f", 64)).Error)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, firstRequest := prepareAdaptiveRecoveryTestForTest(t)
+			repo := NewAdaptiveExecutionRepository(db)
+			first, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), firstRequest)
+			require.NoError(t, err)
+			req := adaptiveNextBoundaryForSameRecoveryTest(t, firstRequest, first, 7003, 8003, 1200)
+			tt.mutate(t, db, first)
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			result, err := repo.CommitAdaptiveExecutionBoundary(context.Background(), req)
+			require.Nil(t, result)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionLineageConflict)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionCheckpointConflict)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
 func TestAdaptiveExecutionRecoveryReadUsesExactSourceCheckpoint(t *testing.T) {
 	db := newAdaptiveExecutionRepositoryTestDB(t)
 	seedAdaptiveExecutionInitialState(t, db)
@@ -5314,6 +5571,60 @@ func seedAdaptiveRecoveryTargetForTest(
 		}},
 	}
 	return req
+}
+
+func adaptiveNextBoundaryForSameRecoveryTest(
+	t *testing.T,
+	previousRequest CommitAdaptiveExecutionBoundaryRequest,
+	previous *CommitAdaptiveExecutionBoundaryResult,
+	eventID int64,
+	checkpointID int64,
+	now int64,
+) CommitAdaptiveExecutionBoundaryRequest {
+	t.Helper()
+	require.NotNil(t, previous)
+	require.Len(t, previous.Items, 1)
+	next := cloneAdaptiveExecutionBoundaryRequestForReplayTest(previousRequest)
+	next.Now = now
+	next.IdempotencyKey = fmt.Sprintf("boundary-%s-%d", next.AttemptID, previous.Authority.EventSequence+1)
+	next.Event.ID = eventID
+	next.Event.Payload = fmt.Sprintf(`{"recovery":true,"step":%d}`, previous.Authority.EventSequence+1)
+	next.Event.CreatedAt = now
+	next.Checkpoint.ID = checkpointID
+	next.Checkpoint.ParentCheckpointID = previous.Checkpoint.ID
+	next.Checkpoint.CreatedAt = now
+	next.PlanMutation.ExpectedRevision = previous.Plan.Revision
+	next.PlanMutation.NextRevision = previous.Plan.Revision + 1
+	item := *previous.Items[0]
+	next.PlanMutation.Items[0].ExpectedVersion = item.Version
+	item.Subject = fmt.Sprintf("recovered step %d", item.Version+1)
+	item.Version++
+	next.PlanMutation.Items[0].NextItem = &item
+	return next
+}
+
+func seedAdaptiveExecutionOtherAttemptBoundaryForTest(
+	t *testing.T,
+	db *gorm.DB,
+	first *CommitAdaptiveExecutionBoundaryResult,
+) {
+	t.Helper()
+	require.NotNil(t, first)
+	otherAttemptID := "attempt-other"
+	otherCheckpoint := checkpointPO{
+		ID: 8998, ThreadID: 10, RunID: 21, ParentCheckpointID: 8001,
+		CheckpointNS: "adaptive", RuntimeType: "eino_adk", RuntimeKey: "other",
+		EnvelopeVersion: 1, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+		PendingSends: []byte(`[]`), Metadata: []byte(first.Checkpoint.Metadata), CreatedAt: 1150,
+	}
+	otherCheckpoint.Metadata = rewriteAdaptiveExecutionCheckpointMetadataForTest(
+		t, otherCheckpoint.Metadata, func(metadata map[string]json.RawMessage) {
+			metadata["attempt_id"] = json.RawMessage(fmt.Sprintf("%q", otherAttemptID))
+			metadata["event_id"] = json.RawMessage(`7998`)
+			metadata["event_idempotency_key"] = json.RawMessage(`"other-boundary"`)
+		},
+	)
+	require.NoError(t, db.Create(&otherCheckpoint).Error)
 }
 
 func terminalizeAdaptiveAttemptForTest(t *testing.T, db *gorm.DB, id int64) {

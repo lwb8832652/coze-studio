@@ -159,7 +159,7 @@ func (a *ADKMiddlewareAssembler) Build(
 		return ADKMiddlewareBundle{}, fmt.Errorf("run is required")
 	}
 	if !input.RuntimeConfig.resolved {
-		runtimeConfig, err := ParseDeerFlowRuntimeConfig(input.Run.Config)
+		runtimeConfig, err := parseADKRuntimeConfig(input.Run.Config)
 		if err != nil {
 			return ADKMiddlewareBundle{}, err
 		}

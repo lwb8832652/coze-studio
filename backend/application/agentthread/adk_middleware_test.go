@@ -158,7 +158,9 @@ func TestADKMiddlewareWiresProviderCapabilityDowngradeEventSink(t *testing.T) {
 		EventSink: events,
 	})
 	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-		Run:   &RunSummary{RunID: 20, ThreadID: 10, Config: `{"mode":"pro"}`},
+		Run: &RunSummary{
+			RunID: 20, ThreadID: 10, Config: `{"reasoning_effort":"high"}`,
+		},
 		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 	})
 	require.NoError(t, err)
