@@ -41,6 +41,7 @@ var (
 	ErrJournalInvalidStateTransition       = errors.New("invalid journal attempt state transition")
 	ErrJournalSequenceAllocation           = errors.New("journal sequence allocation failed")
 	ErrUnsupportedJournalEnrollmentVersion = errors.New("unsupported journal enrollment version")
+	ErrHumanResumeRolloverConflict         = errors.New("human resume journal attempt rollover conflict")
 )
 
 type ThreadRepository interface {
@@ -144,9 +145,16 @@ type CreateRunBundleRequest struct {
 	EventJournalProjectionFailed bool
 	Attempt                      *entity.RunAttempt
 	RecoverySourceLease          *ReconcileExpiredRunLeaseRequest
+	HumanResumeRollover          *HumanResumeRolloverRequest
 	SkipTopLevelAdmission        bool
 	ValidateIdempotencyReplay    bool
 	AllocateInterruptedEventIDs  func(count int) ([]int64, error)
+}
+
+type HumanResumeRolloverRequest struct {
+	SourceRunID     int64
+	TerminalBase    *entity.RunEvent
+	TerminalJournal *entity.JournalEvent
 }
 
 type CreateRunBundleResult struct {

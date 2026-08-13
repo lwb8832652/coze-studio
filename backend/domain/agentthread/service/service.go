@@ -131,6 +131,15 @@ type JournalEnrollmentOptions struct {
 	SnapshotsEnabled  bool
 	TraceID           string
 	Recovery          *JournalRecoveryEnrollmentOptions
+	HumanResume       *JournalHumanResumeEnrollmentOptions
+}
+
+type JournalHumanResumeEnrollmentOptions struct {
+	JournalRunID       int64
+	SourceRunID        int64
+	SourceAttemptID    string
+	SourceCheckpointID int64
+	IdempotencyKey     string
 }
 
 type JournalRecoveryEnrollmentOptions struct {

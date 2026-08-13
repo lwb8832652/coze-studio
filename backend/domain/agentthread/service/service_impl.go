@@ -580,7 +580,14 @@ func (s *threadService) CreateRunBundle(
 		if req.JournalEnrollment == nil {
 			return nil, InvalidArgumentErrorf("journal enrollment options are required")
 		}
-		if req.JournalEnrollment.Recovery == nil {
+		if req.JournalEnrollment.Recovery != nil && req.JournalEnrollment.HumanResume != nil {
+			return nil, InvalidArgumentErrorf("journal recovery and human resume enrollment cannot both be set")
+		}
+		if human := req.JournalEnrollment.HumanResume; human != nil {
+			if err := validateJournalHumanResumeEnrollment(req, human); err != nil {
+				return nil, err
+			}
+		} else if req.JournalEnrollment.Recovery == nil {
 			if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) == "" {
 				return nil, InvalidArgumentErrorf("journal enrollment version is required")
 			}
@@ -675,6 +682,9 @@ func (s *threadService) CreateRunBundle(
 			req.JournalEnrollment.Recovery.ExpiredLease != nil {
 			entityCount++
 		}
+		if req.JournalEnrollment.HumanResume != nil {
+			entityCount++
+		}
 	}
 	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
 	if err != nil {
@@ -738,6 +748,7 @@ func (s *threadService) CreateRunBundle(
 	}
 	var attempt *entity.RunAttempt
 	var recoverySourceLease *repository.ReconcileExpiredRunLeaseRequest
+	var humanResumeRollover *repository.HumanResumeRolloverRequest
 	if req.EnrollJournal {
 		if recovery := req.JournalEnrollment.Recovery; recovery != nil && recovery.ExpiredLease != nil {
 			lease := recovery.ExpiredLease
@@ -781,6 +792,7 @@ func (s *threadService) CreateRunBundle(
 			return nil, err
 		}
 		attemptID := ids[nextID]
+		nextID++
 		traceID := strings.TrimSpace(req.JournalEnrollment.TraceID)
 		attempt = &entity.RunAttempt{
 			ID: attemptID, ThreadID: run.ThreadID,
@@ -806,6 +818,34 @@ func (s *threadService) CreateRunBundle(
 			attempt.SourceCheckpointID = &sourceCheckpointID
 			attempt.SourceAttemptID = &sourceAttemptID
 			attempt.RecoveryIdempotencyKey = &recoveryKey
+		} else if human := req.JournalEnrollment.HumanResume; human != nil {
+			reentryKey := strings.TrimSpace(human.IdempotencyKey)
+			sourceAttemptID := strings.TrimSpace(human.SourceAttemptID)
+			sourceCheckpointID := human.SourceCheckpointID
+			attempt.JournalRunID = human.JournalRunID
+			attempt.Ordinal = 0
+			attempt.EnrollmentVersion = ""
+			attempt.SnapshotsEnabled = false
+			attempt.SourceCheckpointID = &sourceCheckpointID
+			attempt.SourceAttemptID = &sourceAttemptID
+			attempt.RecoveryIdempotencyKey = &reentryKey
+
+			terminalID := ids[nextID]
+			nextID++
+			terminalBase, terminalJournal, err := newHumanResumeInterruptedTerminal(
+				terminalID,
+				run.ThreadID,
+				human.SourceRunID,
+				run.ID,
+				event.ID,
+				now,
+			)
+			if err != nil {
+				return nil, err
+			}
+			humanResumeRollover = &repository.HumanResumeRolloverRequest{
+				SourceRunID: human.SourceRunID, TerminalBase: terminalBase, TerminalJournal: terminalJournal,
+			}
 		} else {
 			activeSlot := uint8(1)
 			attempt.ActiveSlot = &activeSlot
@@ -822,6 +862,7 @@ func (s *threadService) CreateRunBundle(
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event, Attempt: attempt,
 		RecoverySourceLease:          recoverySourceLease,
+		HumanResumeRollover:          humanResumeRollover,
 		EventJournalSourceRunID:      eventJournalSourceRunID,
 		EventJournal:                 eventJournal,
 		EventJournalProjectionFailed: eventJournalProjectionFailed,
@@ -848,6 +889,81 @@ func (s *threadService) CreateRunBundle(
 		InterruptedRuns: result.InterruptedRuns, InterruptedEvents: result.InterruptedEvents,
 		Created: result.Created,
 	}, nil
+}
+
+func validateJournalHumanResumeEnrollment(
+	req *CreateRunBundleRequest,
+	human *JournalHumanResumeEnrollmentOptions,
+) error {
+	if req == nil || human == nil {
+		return InvalidArgumentErrorf("journal human resume enrollment is required")
+	}
+	reentryKey := strings.TrimSpace(human.IdempotencyKey)
+	if human.JournalRunID <= 0 || human.SourceRunID <= 0 || human.SourceCheckpointID <= 0 ||
+		strings.TrimSpace(human.SourceAttemptID) == "" || reentryKey == "" {
+		return InvalidArgumentErrorf("journal human resume enrollment source is required")
+	}
+	if strings.TrimSpace(req.Run.IdempotencyKey) != reentryKey {
+		return InvalidArgumentErrorf("journal human resume run idempotency key must match enrollment")
+	}
+	if req.Run.Status != entity.RunStatusQueued || req.Run.ParentRunID != 0 ||
+		(req.Run.RunKind != "" && req.Run.RunKind != entity.RunKindTask) ||
+		strings.TrimSpace(req.Run.MultitaskStrategy) != "reject" {
+		return InvalidArgumentErrorf("journal human resume run must be a queued root task with reject admission")
+	}
+	if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) != "" ||
+		req.JournalEnrollment.SnapshotsEnabled || strings.TrimSpace(req.JournalEnrollment.TraceID) != "" {
+		return InvalidArgumentErrorf("journal human resume enrollment lifecycle is repository assigned")
+	}
+	if req.Message == nil || req.Message.Role != entity.MessageRoleUser {
+		return InvalidArgumentErrorf("journal human resume requires a user message")
+	}
+	if req.Event == nil || strings.TrimSpace(req.Event.EventType) != "human.interaction.resolved" ||
+		req.Event.JournalSourceRunID != human.SourceRunID || req.Event.Journal == nil ||
+		req.Event.JournalProjectionFailed {
+		return InvalidArgumentErrorf("journal human resume requires a healthy resolved projection")
+	}
+	projection := req.Event.Journal
+	if strings.TrimSpace(projection.EventType) != "confirmation.resolved" ||
+		strings.TrimSpace(projection.Status) != "completed" ||
+		projection.Visibility != entity.JournalVisibilityUser ||
+		projection.JournalRunID != 0 || strings.TrimSpace(projection.AttemptID) != "" ||
+		strings.TrimSpace(projection.IdempotencyKey) == "" ||
+		strings.TrimSpace(projection.SchemaVersion) != entity.JournalSchemaVersion ||
+		strings.TrimSpace(projection.PayloadVersion) != entity.JournalPayloadVersion {
+		return InvalidArgumentErrorf("journal human resume requires a healthy resolved projection")
+	}
+	return nil
+}
+
+func newHumanResumeInterruptedTerminal(
+	id int64,
+	threadID int64,
+	sourceRunID int64,
+	resumeRunID int64,
+	parentEventID int64,
+	createdAt int64,
+) (*entity.RunEvent, *entity.JournalEvent, error) {
+	payload := fmt.Sprintf(
+		`{"schema":"coze.journal_attempt_interrupted.v1","status":"interrupted","resume_run_id":%d}`,
+		resumeRunID,
+	)
+	journalPayload := `{"type":"terminal","data":{"status":"interrupted"}}`
+	base := &entity.RunEvent{
+		ID: id, ThreadID: threadID, RunID: sourceRunID,
+		EventType: entity.JournalAttemptInterruptedRunEventType,
+		Payload:   payload, CreatedAt: createdAt,
+	}
+	journal := &entity.JournalEvent{
+		ID: id, ThreadID: threadID, RunID: sourceRunID,
+		IdempotencyKey: fmt.Sprintf("journal:run:%d:terminal:interrupted", sourceRunID),
+		ParentEventID:  parentEventID, SchemaVersion: entity.JournalSchemaVersion,
+		Status:             string(entity.RunAttemptStatusInterrupted),
+		OccurredAtUnixNano: createdAt * int64(1_000_000),
+		Visibility:         entity.JournalVisibilityUser, PayloadVersion: entity.JournalPayloadVersion,
+		EventType: "run.lifecycle", Payload: journalPayload, CreatedAt: createdAt,
+	}
+	return base, journal, nil
 }
 
 func newRunEntity(
