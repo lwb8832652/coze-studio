@@ -18,9 +18,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -56,6 +58,19 @@ type cancellationClient interface {
 }
 
 type cleanupClient interface {
+	Cleanup(context.Context, string) error
+}
+
+type workspaceProbeClient interface {
+	Create(context.Context, *sandboxapi.ShellCreateSessionRequest) (*sandboxapi.ResponseShellCreateSessionResponse, error)
+	Exec(context.Context, *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error)
+	Read(context.Context, *sandboxapi.FileReadRequest) (*sandboxapi.ResponseFileReadResult, error)
+	Write(context.Context, *sandboxapi.FileWriteRequest) (*sandboxapi.ResponseFileWriteResult, error)
+	List(context.Context, *sandboxapi.FileListRequest) (*sandboxapi.ResponseFileListResult, error)
+	Glob(context.Context, *sandboxapi.FileGlobRequest) (*sandboxapi.ResponseFileGlobResult, error)
+	Grep(context.Context, *sandboxapi.FileGrepRequest) (*sandboxapi.ResponseFileGrepResult, error)
+	Replace(context.Context, *sandboxapi.FileReplaceRequest) (*sandboxapi.ResponseFileReplaceResult, error)
+	Download(context.Context, string) (io.Reader, error)
 	Cleanup(context.Context, string) error
 }
 
@@ -103,6 +118,9 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	started := time.Now()
+	if err = probeWorkspaceContract(ctx, client); err != nil {
+		return err
+	}
 	for _, sessionID := range []string{"newx-probe-a", "newx-probe-b"} {
 		defer func(id string) { _ = client.Cleanup(context.Background(), id) }(sessionID)
 		if _, err = client.Create(ctx, &sandboxapi.ShellCreateSessionRequest{Id: &sessionID, ExecDir: stringPointer("/tmp")}); err != nil {
@@ -178,7 +196,7 @@ func run() error {
 		AIOVersion:      observedAIOVersion(),
 		GoSDK:           "github.com/agent-infra/sandbox-sdk-go@v0.0.5",
 		NativeUIDGID:    false,
-		Capabilities:    []string{"shell_create", "shell_exec", "shell_view", "shell_wait", "shell_kill", "shell_cleanup", "file_read", "file_write", "file_list", "file_glob", "file_grep", "file_replace"},
+		Capabilities:    []string{"shell_create", "shell_exec", "shell_view", "shell_wait", "shell_kill", "shell_cleanup", "file_read", "file_write", "file_list", "file_glob", "file_grep", "file_replace", "file_download"},
 		DurationMillis:  time.Since(started).Milliseconds(),
 		ContainerMemory: strings.TrimSpace(os.Getenv("NEWX_AIO_CONTAINER_MEMORY")),
 		ContainerCPU:    strings.TrimSpace(os.Getenv("NEWX_AIO_CONTAINER_CPU")),
@@ -187,6 +205,166 @@ func run() error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(true)
 	return encoder.Encode(report)
+}
+
+func probeWorkspaceContract(ctx context.Context, client workspaceProbeClient) error {
+	suffix, err := randomProbeSuffix()
+	if err != nil {
+		return newProbeFailure("workspace_fixture_identity", err)
+	}
+	controlSessionID := "newx-workspace-control-" + suffix
+	fixtures := []struct {
+		spaceID  string
+		userID   string
+		threadID string
+	}{
+		{spaceID: "42001", userID: "43001", threadID: "probe-" + suffix + "-a"},
+		{spaceID: "42002", userID: "43002", threadID: "probe-" + suffix + "-b"},
+	}
+	sudoFalse := false
+	utf8 := sandboxapi.FileContentEncodingUtf8
+	preserveSymlinks := false
+	controlRoot := "/mnt/user-data"
+	fixtureRoots := make([]string, 0, len(fixtures))
+	for _, fixture := range fixtures {
+		fixtureRoots = append(fixtureRoots, "/mnt/user-data/"+fixture.spaceID+"/"+fixture.userID+"/"+fixture.threadID)
+	}
+	if _, err := client.Create(ctx, &sandboxapi.ShellCreateSessionRequest{
+		Id: &controlSessionID, ExecDir: &controlRoot, PreserveSymlinks: &preserveSymlinks,
+	}); err != nil {
+		return newProbeFailure("workspace_prepare_shell_create", err)
+	}
+	defer func() { _ = client.Cleanup(context.Background(), controlSessionID) }()
+	prepareCommand := "test ! -e " + shellQuoteProbe(fixtureRoots[0]) + " && test ! -e " + shellQuoteProbe(fixtureRoots[1]) +
+		" && mkdir -p -- " + shellQuoteProbe(fixtureRoots[0]+"/workspace") + " " + shellQuoteProbe(fixtureRoots[0]+"/uploads") + " " + shellQuoteProbe(fixtureRoots[0]+"/outputs") +
+		" " + shellQuoteProbe(fixtureRoots[1]+"/workspace") + " " + shellQuoteProbe(fixtureRoots[1]+"/uploads") + " " + shellQuoteProbe(fixtureRoots[1]+"/outputs")
+	if err := execWorkspaceCommand(ctx, client, controlSessionID, controlRoot, prepareCommand); err != nil {
+		return newProbeFailure("workspace_prepare", err)
+	}
+	for _, fixture := range fixtures {
+		workspace := "/mnt/user-data/" + fixture.spaceID + "/" + fixture.userID + "/" + fixture.threadID + "/workspace"
+		sessionID := "newx-workspace-" + suffix + "-" + fixture.threadID[len(fixture.threadID)-1:]
+		if _, err := client.Create(ctx, &sandboxapi.ShellCreateSessionRequest{
+			Id: &sessionID, ExecDir: &workspace, PreserveSymlinks: &preserveSymlinks,
+		}); err != nil {
+			return newProbeFailure("workspace_shell_create", err)
+		}
+		defer func(id string) { _ = client.Cleanup(context.Background(), id) }(sessionID)
+		if err := execWorkspaceCommand(ctx, client, sessionID, workspace,
+			"test \"$(pwd -P)\" = "+shellQuoteProbe(workspace)+" && printf marker > marker.txt && test -f marker.txt"); err != nil {
+			return newProbeFailure("workspace_shell_exec", err)
+		}
+		marker, err := client.Read(ctx, &sandboxapi.FileReadRequest{File: workspace + "/marker.txt", Sudo: &sudoFalse})
+		if err != nil || marker == nil || marker.Data == nil || marker.Data.File != workspace+"/marker.txt" || marker.Data.Content != "marker" {
+			return newProbeFailure("workspace_shell_marker", err)
+		}
+		file := workspace + "/file-api.txt"
+		write, err := client.Write(ctx, &sandboxapi.FileWriteRequest{
+			File: file, Content: "needle-old", Encoding: &utf8, Sudo: &sudoFalse,
+		})
+		if err != nil || write == nil || write.Data == nil || write.Data.File != file {
+			return newProbeFailure("workspace_file_write", err)
+		}
+		read, err := client.Read(ctx, &sandboxapi.FileReadRequest{File: file, Sudo: &sudoFalse})
+		if err != nil || read == nil || read.Data == nil || read.Data.File != file || read.Data.Content != "needle-old" {
+			return newProbeFailure("workspace_file_read", err)
+		}
+		listed, err := client.List(ctx, &sandboxapi.FileListRequest{Path: workspace})
+		if err != nil || listed == nil || listed.Data == nil || listed.Data.Path != workspace || !fileListContains(listed.Data.Files, file) {
+			return newProbeFailure("workspace_file_list", err)
+		}
+		globbed, err := client.Glob(ctx, &sandboxapi.FileGlobRequest{Path: workspace, Pattern: "*.txt"})
+		if err != nil || globbed == nil || globbed.Data == nil || globbed.Data.Path != workspace || !globContains(globbed.Data.Files, file) {
+			return newProbeFailure("workspace_file_glob", err)
+		}
+		grepped, err := client.Grep(ctx, &sandboxapi.FileGrepRequest{Path: workspace, Pattern: "needle-old"})
+		if err != nil || grepped == nil || grepped.Data == nil || grepped.Data.Path != workspace || !grepContains(grepped.Data.Matches, file) {
+			return newProbeFailure("workspace_file_grep", err)
+		}
+		replaced, err := client.Replace(ctx, &sandboxapi.FileReplaceRequest{
+			File: file, OldStr: "needle-old", NewStr: "needle-new", Sudo: &sudoFalse,
+		})
+		if err != nil || replaced == nil || replaced.Data == nil || replaced.Data.File != file {
+			return newProbeFailure("workspace_file_replace", err)
+		}
+		download, err := client.Download(ctx, file)
+		if err != nil || download == nil {
+			return newProbeFailure("workspace_file_download", err)
+		}
+		downloaded, err := io.ReadAll(io.LimitReader(download, 64))
+		if err != nil || string(downloaded) != "needle-new" {
+			return newProbeFailure("workspace_file_download", err)
+		}
+		if err = client.Cleanup(ctx, sessionID); err != nil {
+			return newProbeFailure("workspace_shell_cleanup", err)
+		}
+		read, err = client.Read(ctx, &sandboxapi.FileReadRequest{File: file, Sudo: &sudoFalse})
+		if err != nil || read == nil || read.Data == nil || read.Data.File != file || read.Data.Content != "needle-new" {
+			return newProbeFailure("workspace_persistence_after_cleanup", err)
+		}
+	}
+	if err := execWorkspaceCommand(ctx, client, controlSessionID, controlRoot,
+		"rm -rf -- "+shellQuoteProbe(fixtureRoots[0])+" "+shellQuoteProbe(fixtureRoots[1])); err != nil {
+		return newProbeFailure("workspace_fixture_cleanup", err)
+	}
+	return nil
+}
+
+func randomProbeSuffix() (string, error) {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", buffer), nil
+}
+
+func shellQuoteProbe(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func execWorkspaceCommand(ctx context.Context, client workspaceProbeClient, sessionID, execDir, command string) error {
+	strict := true
+	hardTimeout := float64(15)
+	preserveSymlinks := false
+	result, err := client.Exec(ctx, &sandboxapi.ShellExecRequest{
+		Id: &sessionID, ExecDir: &execDir, Command: command,
+		Strict: &strict, HardTimeout: &hardTimeout, PreserveSymlinks: &preserveSymlinks,
+	})
+	if err != nil {
+		return err
+	}
+	if result == nil || result.Data == nil || result.Data.Status != sandboxapi.BashCommandStatusCompleted ||
+		result.Data.ExitCode == nil || *result.Data.ExitCode != 0 {
+		return errors.New("unexpected shell result")
+	}
+	return nil
+}
+
+func fileListContains(files []*sandboxapi.FileInfo, path string) bool {
+	for _, file := range files {
+		if file != nil && file.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func globContains(files []*sandboxapi.GlobFileInfo, path string) bool {
+	for _, file := range files {
+		if file != nil && file.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func grepContains(matches []*sandboxapi.GrepMatch, path string) bool {
+	for _, match := range matches {
+		if match != nil && match.File == path {
+			return true
+		}
+	}
+	return false
 }
 
 func probeCancellation(ctx context.Context, client cancellationClient) error {

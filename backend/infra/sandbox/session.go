@@ -82,7 +82,7 @@ func NormalizeExecRequest(input ExecRequest, now time.Time, allowedEnvNames []st
 	if now.IsZero() || !validSessionIdentifier(input.OperationID) ||
 		(len(input.Argv) == 0) == (input.Command == "") || len(input.Argv) > MaxArgs ||
 		len(input.Env) > MaxEnvVars || len(allowedEnvNames) > MaxEnvVars ||
-		!validSessionPath(input.CWD, true) || input.Deadline.IsZero() ||
+		!validSessionExecCWD(input.CWD) || input.Deadline.IsZero() ||
 		!input.Deadline.After(now) || input.Deadline.After(now.Add(MaxSessionDeadlineAhead)) ||
 		input.MaxOutputBytes <= 0 || input.MaxOutputBytes > MaxSessionOutputBytes {
 		return ExecRequest{}, domainsandbox.ErrInvalidInput
@@ -340,6 +340,11 @@ var sessionPathRoots = []string{
 	"/mnt/user-data/uploads",
 	"/mnt/user-data/outputs",
 	"/mnt/skills",
+}
+
+func validSessionExecCWD(value string) bool {
+	const workspaceRoot = "/mnt/user-data/workspace"
+	return validSessionPath(value, false) && (value == workspaceRoot || strings.HasPrefix(value, workspaceRoot+"/"))
 }
 
 func validSessionPath(value string, allowSkills bool) bool {

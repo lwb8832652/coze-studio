@@ -64,6 +64,7 @@ func TestUpstreamSDKRequestFieldsRemainV005(t *testing.T) {
 		{sandboxapi.FileGlobRequest{}, []string{"path", "pattern", "exclude", "include_hidden", "files_only", "include_metadata", "max_results", "sort_by", "sort_desc"}},
 		{sandboxapi.FileGrepRequest{}, []string{"path", "pattern", "include", "exclude", "case_insensitive", "fixed_strings", "context_before", "context_after", "max_results", "max_file_size", "multiline", "offset", "type", "recursive"}},
 		{sandboxapi.FileReplaceRequest{}, []string{"file", "old_str", "new_str", "sudo"}},
+		{sandboxapi.FileDownloadFileRequest{}, []string{"-"}},
 	}
 	for _, test := range tests {
 		t.Run(reflect.TypeOf(test.request).Name(), func(t *testing.T) {
@@ -219,6 +220,10 @@ func TestUpstreamClientUsesConfiguredOriginBearerAndV005Routes(t *testing.T) {
 			_, err := client.Replace(ctx, &sandboxapi.FileReplaceRequest{File: "/tmp/probe.txt", OldStr: "marker", NewStr: "replaced"})
 			return err
 		}},
+		{http.MethodGet, "/v1/file/download", map[string]any{}, func() error {
+			_, err := client.Download(ctx, "/tmp/probe.txt")
+			return err
+		}},
 	}
 	for _, call := range calls {
 		require.NoError(t, call.call())
@@ -231,6 +236,9 @@ func TestUpstreamClientUsesConfiguredOriginBearerAndV005Routes(t *testing.T) {
 		require.NotContains(t, observed[index].path, "temporary-jwt")
 		require.NotContains(t, observed[index].query, "temporary-jwt")
 		require.Equal(t, expected.body, observed[index].body)
+		if expected.path == "/v1/file/download" {
+			require.Equal(t, "path=%2Ftmp%2Fprobe.txt", observed[index].query)
+		}
 	}
 }
 

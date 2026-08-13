@@ -22,11 +22,19 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
 image_ref="ghcr.io/agent-infra/sandbox:latest"
 container_name="newx-aio-contract-$$-${RANDOM}"
+volume_name="newx-aio-contract-data-$$-${RANDOM}"
 container_created=false
+volume_created=false
 
 cleanup() {
   if [[ "$container_created" == "true" ]]; then
     docker rm --force "$container_name" >/dev/null 2>&1 || true
+  fi
+  if [[ "$volume_created" == "true" ]]; then
+    if ! docker volume rm "$volume_name" >/dev/null 2>&1; then
+      echo "failed to remove probe volume: $volume_name" >&2
+      return 1
+    fi
   fi
 }
 trap cleanup EXIT INT TERM
@@ -37,11 +45,19 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
   echo "refusing to reuse existing probe container" >&2
   exit 1
 fi
+if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+  echo "refusing to reuse existing probe volume" >&2
+  exit 1
+fi
+docker volume create "$volume_name" >/dev/null
+volume_created=true
 
 docker run --detach --rm --name "$container_name" \
   --security-opt seccomp=unconfined \
   -e OPENSSL_armcap=0 \
+  -e WORKSPACE=/mnt/user-data \
   -p 127.0.0.1::8080 \
+  --mount "type=volume,src=$volume_name,dst=/mnt/user-data" \
   "$image_ref" >/dev/null
 container_created=true
 
@@ -62,8 +78,12 @@ assert set(bindings) == {"8080/tcp"}
 assert len(bindings["8080/tcp"]) == 1
 assert bindings["8080/tcp"][0]["HostIp"] == "127.0.0.1"
 assert host.get("SecurityOpt") == ["seccomp=unconfined"]
-assert not container.get("Mounts")
+mounts = container.get("Mounts") or []
+assert len(mounts) == 1
+assert mounts[0]["Type"] == "volume"
+assert mounts[0]["Destination"] == "/mnt/user-data"
 assert "OPENSSL_armcap=0" in environment
+assert "WORKSPACE=/mnt/user-data" in environment
 PY
 
 host_binding="$(docker port "$container_name" 8080/tcp)"

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,7 +53,8 @@ type UpstreamClientConfig struct {
 }
 
 type UpstreamClient struct {
-	sdk *sandboxclient.Client
+	sdk          *sandboxclient.Client
+	lockIdentity string
 }
 
 func NewUpstreamClient(config UpstreamClientConfig) (*UpstreamClient, error) {
@@ -75,8 +77,10 @@ func NewUpstreamClient(config UpstreamClientConfig) (*UpstreamClient, error) {
 		option.WithHTTPHeader(headers),
 		option.WithMaxAttempts(1),
 	)
-	return &UpstreamClient{sdk: sdk}, nil
+	return &UpstreamClient{sdk: sdk, lockIdentity: baseURL}, nil
 }
+
+func (client *UpstreamClient) ShellLockIdentity() string { return client.lockIdentity }
 
 func (client *UpstreamClient) Create(ctx context.Context, request *sandboxapi.ShellCreateSessionRequest) (*sandboxapi.ResponseShellCreateSessionResponse, error) {
 	response, err := client.sdk.Shell.CreateSession(ctx, request)
@@ -135,6 +139,11 @@ func (client *UpstreamClient) Grep(ctx context.Context, request *sandboxapi.File
 
 func (client *UpstreamClient) Replace(ctx context.Context, request *sandboxapi.FileReplaceRequest) (*sandboxapi.ResponseFileReplaceResult, error) {
 	response, err := client.sdk.File.ReplaceInFile(ctx, request)
+	return response, sanitizeUpstreamError(ctx, err)
+}
+
+func (client *UpstreamClient) Download(ctx context.Context, path string) (io.Reader, error) {
+	response, err := client.sdk.File.DownloadFile(ctx, &sandboxapi.FileDownloadFileRequest{Path: path})
 	return response, sanitizeUpstreamError(ctx, err)
 }
 

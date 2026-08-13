@@ -102,6 +102,133 @@ func TestCleanupProbeDoesNotAcceptLiveSessionNotFound(t *testing.T) {
 	require.Equal(t, "AIO compatibility probe failed: stage=shell_session_cleanup reason=AIO_UPSTREAM_NOT_FOUND", safeProbeFailure(err))
 }
 
+func TestWorkspaceContractUsesSpaceUserThreadHierarchyAndSudoFalse(t *testing.T) {
+	client := &recordingWorkspaceClient{}
+
+	err := probeWorkspaceContract(context.Background(), client)
+
+	require.NoError(t, err)
+	require.Len(t, client.createDirs, 3)
+	require.Equal(t, "/mnt/user-data", client.createDirs[0])
+	require.Regexp(t, `^/mnt/user-data/42001/43001/probe-[0-9a-f]{32}-a/workspace$`, client.createDirs[1])
+	require.Regexp(t, `^/mnt/user-data/42002/43002/probe-[0-9a-f]{32}-b/workspace$`, client.createDirs[2])
+	require.NotEqual(t, client.sessionIDs[1], client.sessionIDs[2])
+	require.Equal(t, 10, client.sudoFalseCalls)
+	require.Contains(t, client.execCommands, "mkdir -p --")
+	require.Contains(t, client.execCommands, "pwd -P")
+	require.Contains(t, client.execCommands, "test -f marker.txt")
+	require.Contains(t, client.execCommands, "rm -rf --")
+	require.ElementsMatch(t, client.createDirs, client.persistedDirs)
+	require.Equal(t, 2, client.listCalls)
+	require.Equal(t, 2, client.globCalls)
+	require.Equal(t, 2, client.grepCalls)
+	require.Equal(t, 2, client.replaceCalls)
+	require.Equal(t, 2, client.downloadCalls)
+}
+
+type recordingWorkspaceClient struct {
+	createDirs     []string
+	sessionIDs     []string
+	execCommands   string
+	sudoFalseCalls int
+	persistedDirs  []string
+	listCalls      int
+	globCalls      int
+	grepCalls      int
+	replaceCalls   int
+	downloadCalls  int
+	fileContents   map[string]string
+	cleaned        map[string]bool
+}
+
+func (client *recordingWorkspaceClient) Create(_ context.Context, request *sandboxapi.ShellCreateSessionRequest) (*sandboxapi.ResponseShellCreateSessionResponse, error) {
+	client.createDirs = append(client.createDirs, *request.ExecDir)
+	client.sessionIDs = append(client.sessionIDs, *request.Id)
+	return &sandboxapi.ResponseShellCreateSessionResponse{Data: &sandboxapi.ShellCreateSessionResponse{}}, nil
+}
+
+func (client *recordingWorkspaceClient) Exec(_ context.Context, request *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
+	client.execCommands += request.Command + "\n"
+	exit := 0
+	return &sandboxapi.ResponseShellCommandResult{Data: &sandboxapi.ShellCommandResult{Status: sandboxapi.BashCommandStatusCompleted, ExitCode: &exit}}, nil
+}
+
+func (client *recordingWorkspaceClient) Read(_ context.Context, request *sandboxapi.FileReadRequest) (*sandboxapi.ResponseFileReadResult, error) {
+	if request.Sudo != nil && !*request.Sudo {
+		client.sudoFalseCalls++
+	}
+	content := client.fileContents[request.File]
+	if strings.HasSuffix(request.File, "/marker.txt") {
+		content = "marker"
+	}
+	return &sandboxapi.ResponseFileReadResult{Data: &sandboxapi.FileReadResult{File: request.File, Content: content}}, nil
+}
+
+func (client *recordingWorkspaceClient) Write(_ context.Context, request *sandboxapi.FileWriteRequest) (*sandboxapi.ResponseFileWriteResult, error) {
+	if request.Sudo != nil && !*request.Sudo {
+		client.sudoFalseCalls++
+	}
+	if client.fileContents == nil {
+		client.fileContents = make(map[string]string)
+	}
+	client.fileContents[request.File] = request.Content
+	return &sandboxapi.ResponseFileWriteResult{Data: &sandboxapi.FileWriteResult{File: request.File}}, nil
+}
+
+func (client *recordingWorkspaceClient) List(_ context.Context, request *sandboxapi.FileListRequest) (*sandboxapi.ResponseFileListResult, error) {
+	client.listCalls++
+	return &sandboxapi.ResponseFileListResult{Data: &sandboxapi.FileListResult{
+		Path:  request.Path,
+		Files: []*sandboxapi.FileInfo{{Path: request.Path + "/file-api.txt"}},
+	}}, nil
+}
+
+func (client *recordingWorkspaceClient) Glob(_ context.Context, request *sandboxapi.FileGlobRequest) (*sandboxapi.ResponseFileGlobResult, error) {
+	client.globCalls++
+	return &sandboxapi.ResponseFileGlobResult{Data: &sandboxapi.FileGlobResult{
+		Path:  request.Path,
+		Files: []*sandboxapi.GlobFileInfo{{Path: request.Path + "/file-api.txt"}},
+	}}, nil
+}
+
+func (client *recordingWorkspaceClient) Grep(_ context.Context, request *sandboxapi.FileGrepRequest) (*sandboxapi.ResponseFileGrepResult, error) {
+	client.grepCalls++
+	return &sandboxapi.ResponseFileGrepResult{Data: &sandboxapi.FileGrepResult{
+		Path:    request.Path,
+		Matches: []*sandboxapi.GrepMatch{{File: request.Path + "/file-api.txt"}},
+	}}, nil
+}
+
+func (client *recordingWorkspaceClient) Replace(_ context.Context, request *sandboxapi.FileReplaceRequest) (*sandboxapi.ResponseFileReplaceResult, error) {
+	client.replaceCalls++
+	if request.Sudo != nil && !*request.Sudo {
+		client.sudoFalseCalls++
+	}
+	client.fileContents[request.File] = strings.ReplaceAll(client.fileContents[request.File], request.OldStr, request.NewStr)
+	return &sandboxapi.ResponseFileReplaceResult{Data: &sandboxapi.FileReplaceResult{File: request.File}}, nil
+}
+
+func (client *recordingWorkspaceClient) Download(_ context.Context, path string) (io.Reader, error) {
+	client.downloadCalls++
+	return strings.NewReader(client.fileContents[path]), nil
+}
+
+func (client *recordingWorkspaceClient) Cleanup(_ context.Context, sessionID string) error {
+	if client.cleaned == nil {
+		client.cleaned = make(map[string]bool)
+	}
+	if client.cleaned[sessionID] {
+		return nil
+	}
+	client.cleaned[sessionID] = true
+	for index, id := range client.sessionIDs {
+		if id == sessionID {
+			client.persistedDirs = append(client.persistedDirs, client.createDirs[index])
+		}
+	}
+	return nil
+}
+
 type recordingCancellationClient struct {
 	calls []string
 }
