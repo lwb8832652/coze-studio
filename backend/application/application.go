@@ -417,10 +417,11 @@ func Init(ctx context.Context) (err error) {
 		agentthread.WithADKAdaptiveBootstrapCoordinator(
 			agentthread.NewAdaptiveBootstrapCoordinator(
 				agentthread.AdaptiveBootstrapCoordinatorOptions{
-					AttemptReader: primaryServices.agentThreadSVC.JournalRecoveryRepository,
-					Repository:    threadrepository.NewAdaptiveExecutionRepository(infra.DB),
-					IDGen:         infra.IDGenSVC,
-					Now:           func() int64 { return time.Now().UnixMilli() },
+					AttemptReader:   primaryServices.agentThreadSVC.JournalRecoveryRepository,
+					Repository:      threadrepository.NewAdaptiveExecutionRepository(infra.DB),
+					SourceRunReader: primaryServices.agentThreadSVC.ThreadSVC,
+					IDGen:           infra.IDGenSVC,
+					Now:             func() int64 { return time.Now().UnixMilli() },
 				},
 			),
 		),

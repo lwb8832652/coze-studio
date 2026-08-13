@@ -29,6 +29,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -187,6 +188,7 @@ func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {
 	for _, sourceKind := range []entity.AdaptiveAdmissionSource{
 		entity.AdaptiveAdmissionSourceFresh,
 		entity.AdaptiveAdmissionSourceTypedInheritance,
+		entity.AdaptiveAdmissionSourceLegacyDecoder,
 	} {
 		t.Run(string(sourceKind), func(t *testing.T) {
 			run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
@@ -229,6 +231,98 @@ func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {
 			require.Equal(t, req.Decision, facts.Decision)
 		})
 	}
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	source := &entity.Run{
+		ID: input.SourceRunID, ThreadID: run.ThreadID, ExecutionGeneration: 3,
+		Config: `{"runtime":"eino_adk","requested_policy":"pro"}`,
+	}
+	originalConfig := source.Config
+	runReader := &adaptiveBootstrapSourceRunReaderStub{run: source}
+	repo := &adaptiveBootstrapRepositoryStub{
+		readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, nil},
+		readErrs: []error{
+			repository.ErrAdaptiveExecutionBootstrapNotFound,
+			repository.ErrAdaptiveExecutionBootstrapNotFound,
+		},
+	}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:      repo,
+		SourceRunReader: runReader,
+		IDGen:           &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}},
+		Now:             func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{input.SourceRunID}, runReader.runIDs)
+	require.Len(t, repo.commitRequests, 1)
+	req := repo.commitRequests[0]
+	require.Equal(t, entity.AdaptiveAdmissionSourceLegacyDecoder, req.Admission.Source)
+	require.Equal(t, input.SourceRunID, requireInt64PointerForAdaptiveBootstrapTest(t, req.Admission.SourceRunID))
+	require.Equal(t, source.ExecutionGeneration, requireUint64PointerForAdaptiveBootstrapTest(t, req.Admission.SourceExecutionGeneration))
+	require.Equal(t, entity.AdaptiveLegacyDecoderVersionV1, req.Admission.DecoderVersion)
+	require.Len(t, req.Admission.SourceConfigDigest, 64)
+	require.False(t, req.Admission.FeatureGateEnabled)
+	require.Equal(t, run.RunID, req.Decision.ExecutionRunID)
+	require.Equal(t, run.ExecutionGeneration, req.Decision.ExecutionGeneration)
+	require.Equal(t, entity.AdaptiveAdmissionSourceLegacyDecoder, facts.Admission.Source)
+	require.Equal(t, req.Admission, facts.Admission)
+	require.Equal(t, req.Decision, facts.Decision)
+	require.Equal(t, originalConfig, source.Config)
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeReplaysLegacyTargetWithoutReadingSource(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	target := adaptiveBootstrapLegacyTargetResultForTest(t, run, input, attempt)
+	runReader := &adaptiveBootstrapSourceRunReaderStub{run: &entity.Run{ID: input.SourceRunID}}
+	repo := &adaptiveBootstrapRepositoryStub{readResult: target}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:      repo,
+		SourceRunReader: runReader,
+		IDGen:           &adaptiveBootstrapIDGeneratorStub{},
+		Now:             func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Equal(t, target.Admission, facts.Admission)
+	require.Equal(t, target.Decision, facts.Decision)
+	require.Empty(t, runReader.runIDs)
+	require.Empty(t, repo.commitRequests)
+}
+
+func TestAdaptiveBootstrapCoordinatorResumeDoesNotReadLegacyRunOnSourceDurableFailure(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	sentinel := errors.New("source durable read failed")
+	runReader := &adaptiveBootstrapSourceRunReaderStub{run: &entity.Run{ID: input.SourceRunID}}
+	repo := &adaptiveBootstrapRepositoryStub{
+		readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, nil},
+		readErrs: []error{
+			repository.ErrAdaptiveExecutionBootstrapNotFound,
+			sentinel,
+		},
+	}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader:   &adaptiveBootstrapAttemptReaderStub{attempt: attempt},
+		Repository:      repo,
+		SourceRunReader: runReader,
+		IDGen:           &adaptiveBootstrapIDGeneratorStub{},
+		Now:             func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.ErrorIs(t, err, sentinel)
+	require.Nil(t, facts)
+	require.Empty(t, runReader.runIDs)
+	require.Empty(t, repo.commitRequests)
 }
 
 func TestAdaptiveBootstrapHumanResumeConsumesTypedLineageBeforeADKBuild(t *testing.T) {
@@ -542,6 +636,35 @@ func adaptiveBootstrapTypedResultForTest(
 	}
 }
 
+func adaptiveBootstrapLegacyTargetResultForTest(
+	t *testing.T,
+	run *RunSummary,
+	input *HarnessResumeInput,
+	attempt *entity.RunAttempt,
+) *repository.CommitAdaptiveExecutionBootstrapResult {
+	t.Helper()
+	admission, err := NewLegacyAdaptiveAdmissionDecoder().Decode(&entity.Run{
+		ID: input.SourceRunID, ThreadID: run.ThreadID, ExecutionGeneration: 3,
+		Config: `{"requested_policy":"pro"}`,
+	})
+	require.NoError(t, err)
+	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
+		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
+		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+	})
+	require.NoError(t, err)
+	return &repository.CommitAdaptiveExecutionBootstrapResult{
+		Admission: admission,
+		Decision:  decision,
+		Authority: repository.AdaptiveExecutionBootstrapAuthority{
+			ThreadID: run.ThreadID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+			AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		},
+	}
+}
+
 func adaptiveBootstrapSourceResultForTest(
 	t *testing.T,
 	source entity.AdaptiveAdmissionSource,
@@ -552,10 +675,14 @@ func adaptiveBootstrapSourceResultForTest(
 	attempt := freshAdaptiveBootstrapAttemptForTest()
 	admission := baselineAdaptiveAdmission()
 	admission.Source = source
-	if source == entity.AdaptiveAdmissionSourceTypedInheritance {
+	if source == entity.AdaptiveAdmissionSourceTypedInheritance || source == entity.AdaptiveAdmissionSourceLegacyDecoder {
 		sourceRunID, sourceGeneration := int64(19), uint64(2)
 		admission.SourceRunID = &sourceRunID
 		admission.SourceExecutionGeneration = &sourceGeneration
+	}
+	if source == entity.AdaptiveAdmissionSourceLegacyDecoder {
+		admission.SourceConfigDigest = strings.Repeat("a", 64)
+		admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
 	}
 	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
 		Admission: admission, DecisionID: adaptiveBootstrapStableKeyForTest("decision", run, attempt),
@@ -723,6 +850,22 @@ type adaptiveBootstrapAttemptReaderStub struct {
 	calls   int
 	runIDs  []int64
 	order   *[]string
+}
+
+type adaptiveBootstrapSourceRunReaderStub struct {
+	run    *entity.Run
+	err    error
+	runIDs []int64
+}
+
+func (s *adaptiveBootstrapSourceRunReaderStub) GetRun(
+	_ context.Context,
+	req *domainservice.GetRunRequest,
+) (*entity.Run, error) {
+	if req != nil {
+		s.runIDs = append(s.runIDs, req.RunID)
+	}
+	return s.run, s.err
 }
 
 func (s *adaptiveBootstrapAttemptReaderStub) GetActiveJournalAttempt(

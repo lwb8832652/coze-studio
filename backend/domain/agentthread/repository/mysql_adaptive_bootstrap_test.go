@@ -18,9 +18,10 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"math"
-	"strings"
 	"testing"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/adaptivecontract"
@@ -401,6 +402,58 @@ func TestAdaptiveExecutionBootstrapPersistsEventFingerprintsAndRejectsTimestampO
 	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
 }
 
+func TestValidateAdaptiveBootstrapStoredEventAllowsMySQLJSONNormalization(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	committed, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(
+		context.Background(), newAdaptiveExecutionBootstrapRequestForTest(),
+	)
+	require.NoError(t, err)
+	var checkpoint checkpointPO
+	require.NoError(t, db.Where("id = ?", committed.Authority.CheckpointID).First(&checkpoint).Error)
+	metadata, err := decodeAdaptiveBootstrapMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	req := ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
+	}
+
+	for _, test := range []struct {
+		name, eventType, eventKey, digest, fingerprint string
+		eventID                                        int64
+	}{
+		{
+			name: "admission", eventID: committed.Authority.AdmissionEventID,
+			eventType: adaptiveBootstrapAdmissionEventType, eventKey: metadata.AdmissionEventKey,
+			digest: metadata.AdmissionDigest, fingerprint: metadata.AdmissionEventFingerprint,
+		},
+		{
+			name: "decision", eventID: committed.Authority.DecisionEventID,
+			eventType: adaptiveBootstrapDecisionEventType, eventKey: metadata.DecisionEventKey,
+			digest: metadata.DecisionDigest, fingerprint: metadata.DecisionEventFingerprint,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var event runEventPO
+			require.NoError(t, db.Where("id = ?", test.eventID).First(&event).Error)
+			var decoded any
+			require.NoError(t, json.Unmarshal(event.Payload, &decoded))
+			normalized, err := json.MarshalIndent(decoded, "", " ")
+			require.NoError(t, err)
+			require.NotEqual(t, string(event.Payload), string(normalized))
+			event.Payload = normalized
+
+			err = validateAdaptiveBootstrapEvent(
+				&event, req, metadata, test.eventType, test.eventKey, test.digest, test.fingerprint,
+			)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+			require.NoError(t, validateAdaptiveBootstrapStoredEvent(
+				"mysql", &event, req, metadata,
+				test.eventType, test.eventKey, test.digest, test.fingerprint,
+			))
+		})
+	}
+}
+
 func TestAdaptiveExecutionBootstrapReaderRejectsEventKeysNotDerivedFromOperationDigest(t *testing.T) {
 	db := newAdaptiveExecutionRepositoryTestDB(t)
 	seedAdaptiveExecutionInitialState(t, db)
@@ -466,6 +519,35 @@ func TestAdaptiveExecutionBootstrapReaderRejectsNonCanonicalMetadata(t *testing.
 		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
 	})
 	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+}
+
+func TestDecodeAdaptiveBootstrapStoredMetadataAllowsMySQLJSONNormalization(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	committed, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(
+		context.Background(), newAdaptiveExecutionBootstrapRequestForTest(),
+	)
+	require.NoError(t, err)
+	var checkpoint checkpointPO
+	require.NoError(t, db.Where("id = ?", committed.Authority.CheckpointID).First(&checkpoint).Error)
+	metadata, err := decodeAdaptiveBootstrapMetadata(checkpoint.Metadata)
+	require.NoError(t, err)
+	normalized := []byte(fmt.Sprintf(`{ "adaptive_bootstrap" : %s }`, mustJSONForTest(t, metadata)))
+
+	_, err = decodeAdaptiveBootstrapMetadata(normalized)
+	require.ErrorContains(t, err, "not canonical")
+	decoded, err := decodeAdaptiveBootstrapStoredMetadata("mysql", normalized)
+	require.NoError(t, err)
+	require.Equal(t, metadata, decoded)
+	_, err = decodeAdaptiveBootstrapStoredMetadata("sqlite", normalized)
+	require.ErrorContains(t, err, "not canonical")
+}
+
+func mustJSONForTest(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	return encoded
 }
 
 func newAdaptiveExecutionBootstrapRequestForTest() CommitAdaptiveExecutionBootstrapRequest {
@@ -843,39 +925,198 @@ func TestAdaptiveExecutionBootstrapCandidateCheckpointCollisionRollsBackFactEven
 	require.Zero(t, factCount)
 }
 
-func TestAdaptiveExecutionBootstrapRejectsLegacyAdmissionWithoutWrites(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*CommitAdaptiveExecutionBootstrapRequest)
-	}{
-		{
-			name: "legacy decoder",
-			mutate: func(req *CommitAdaptiveExecutionBootstrapRequest) {
-				sourceRunID, sourceGeneration := int64(9), uint64(2)
-				req.Admission.Source = entity.AdaptiveAdmissionSourceLegacyDecoder
-				req.Admission.FeatureGateEnabled = false
-				req.Admission.SourceRunID = &sourceRunID
-				req.Admission.SourceExecutionGeneration = &sourceGeneration
-				req.Admission.SourceConfigDigest = strings.Repeat("a", 64)
-				req.Admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
-			},
-		},
-	}
+func TestAdaptiveExecutionBootstrapCommitsLegacyDecoderAndReadsBack(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	fixture := seedAdaptiveBootstrapLegacyTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
 
-	for _, test := range tests {
-		test := test
+	committed, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), fixture.TargetRequest)
+	require.NoError(t, err)
+	require.False(t, committed.Replayed)
+	require.Equal(t, entity.AdaptiveAdmissionSourceLegacyDecoder, committed.Admission.Source)
+	require.Equal(t, fixture.TargetRequest.Admission.SourceConfigDigest, committed.Admission.SourceConfigDigest)
+
+	read, err := repo.ReadAdaptiveExecutionBootstrap(context.Background(), ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: 10, ExecutionRunID: 21, JournalRunID: 30, AttemptID: "attempt-2",
+	})
+	require.NoError(t, err)
+	require.Equal(t, committed.Admission, read.Admission)
+	require.Equal(t, committed.Decision, read.Decision)
+	require.Equal(t, committed.Authority, read.Authority)
+}
+
+func TestAdaptiveExecutionBootstrapRejectsLegacyDecoderSourceDriftWithoutWrites(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB)
+	}{
+		{name: "config", mutate: func(t *testing.T, db *gorm.DB) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(20)).Update("config", []byte(`{"mode":"drift"}`)).Error)
+		}},
+		{name: "generation", mutate: func(t *testing.T, db *gorm.DB) {
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(20)).Update("execution_generation", uint64(4)).Error)
+		}},
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := newAdaptiveExecutionRepositoryTestDB(t)
-			seedAdaptiveExecutionInitialState(t, db)
-			req := newAdaptiveExecutionBootstrapRequestForTest()
-			test.mutate(&req)
+			fixture := seedAdaptiveBootstrapLegacyTargetForTest(t, db)
+			test.mutate(t, db)
 			before := snapshotAdaptiveExecutionDBForTest(t, db)
 
-			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(context.Background(), req)
-			require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapInvalid)
+			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(context.Background(), fixture.TargetRequest)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
 			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
 		})
 	}
+}
+
+func TestAdaptiveExecutionBootstrapRejectsLegacyDecoderWhenSourceHasBootstrapFacts(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%t", partial), func(t *testing.T) {
+			db := newAdaptiveExecutionRepositoryTestDB(t)
+			seedAdaptiveExecutionInitialState(t, db)
+			fixture := seedAdaptiveBootstrapRecoveryTargetForTest(t, db)
+			config := []byte(`{"mode":"legacy"}`)
+			require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(20)).Update("config", config).Error)
+			fixture.TargetRequest.Admission.Source = entity.AdaptiveAdmissionSourceLegacyDecoder
+			fixture.TargetRequest.Admission.SourceConfigDigest = fmt.Sprintf("%x", sha256.Sum256(config))
+			fixture.TargetRequest.Admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
+			if partial {
+				require.NoError(t, db.Where("id = ?", int64(7002)).Delete(&runEventPO{}).Error)
+				require.NoError(t, db.Where("id = ?", int64(8001)).Delete(&checkpointPO{}).Error)
+			}
+			before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+			_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(context.Background(), fixture.TargetRequest)
+			require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+			require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+		})
+	}
+}
+
+func TestAdaptiveExecutionBootstrapTypedInheritanceAcceptsDurableLegacySource(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	fixture := seedAdaptiveBootstrapLegacyTargetForTest(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	legacy, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), fixture.TargetRequest)
+	require.NoError(t, err)
+
+	typed := seedAdaptiveBootstrapThirdHopForTest(t, db, fixture.TargetRequest, legacy)
+	require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(21)).Update("config", []byte(`{"untrusted":"changed"}`)).Error)
+	committed, err := repo.CommitAdaptiveExecutionBootstrap(context.Background(), typed)
+	require.NoError(t, err)
+	require.Equal(t, entity.AdaptiveAdmissionSourceTypedInheritance, committed.Admission.Source)
+	require.Equal(t, legacy.Admission.Capabilities, committed.Admission.Capabilities)
+	require.Equal(t, legacy.Admission.Limits, committed.Admission.Limits)
+}
+
+func seedAdaptiveBootstrapLegacyTargetForTest(t *testing.T, db *gorm.DB) adaptiveBootstrapRecoveryFixture {
+	t.Helper()
+	seedAdaptiveExecutionInitialState(t, db)
+	config := []byte(`{"mode":"legacy","max_steps":7}`)
+	require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(20)).Updates(map[string]any{
+		"config": config, "status": string(entity.RunStatusSucceeded), "ended_at": int64(750),
+	}).Error)
+	require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-1").Updates(map[string]any{
+		"status": string(entity.RunAttemptStatusCompleted), "active_slot": nil, "ended_at": int64(750),
+	}).Error)
+
+	sourceCheckpointID := int64(9001)
+	require.NoError(t, db.Create(&checkpointPO{
+		ID: sourceCheckpointID, ThreadID: 10, RunID: 20,
+		CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "coze-run-20",
+		EnvelopeVersion: 2, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+		PendingSends: []byte(`[]`), Metadata: []byte(`{"runtime":"eino_adk"}`), CreatedAt: 740,
+	}).Error)
+
+	leaseOwner, leaseToken, recoveryKey := "worker-2", "lease-2", "recover-2"
+	leaseExpiresAt := int64(3000)
+	require.NoError(t, db.Create(&runPO{
+		ID: 21, ThreadID: 10, SpaceID: 10, CreatorID: 20, RunKind: string(entity.RunKindTask),
+		Status: string(entity.RunStatusRunning), ExecutionGeneration: 4,
+		LeaseOwner: &leaseOwner, LeaseToken: &leaseToken, LeaseExpiresAt: &leaseExpiresAt,
+		CreatedAt: 800, UpdatedAt: 800,
+	}).Error)
+	active := uint8(1)
+	sourceAttemptID := "attempt-1"
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 102, ThreadID: 10, JournalRunID: 30, ExecutionRunID: 21,
+		AttemptID: "attempt-2", Ordinal: 2, Status: string(entity.RunAttemptStatusRunning),
+		ActiveSlot: &active, NextSequence: 1, LastCommittedSequence: 0,
+		SourceAttemptID: &sourceAttemptID, SourceCheckpointID: &sourceCheckpointID,
+		RecoveryIdempotencyKey: &recoveryKey, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: string(entity.JournalProjectionStateHealthy), CreatedAt: 800, UpdatedAt: 800,
+	}).Error)
+
+	target := newAdaptiveExecutionBootstrapRequestForTest()
+	target.ExecutionRunID, target.AttemptID, target.Generation = 21, "attempt-2", 4
+	target.LeaseOwner, target.LeaseToken = leaseOwner, leaseToken
+	target.OperationKey = "adaptive-operation:legacy-target"
+	target.FactCreatedAt, target.Now = 800, 900
+	target.AdmissionEventID, target.DecisionEventID, target.CheckpointID = 7101, 7102, 8101
+	sourceRunID, sourceGeneration := int64(20), uint64(3)
+	target.Admission.Source = entity.AdaptiveAdmissionSourceLegacyDecoder
+	target.Admission.SourceRunID = &sourceRunID
+	target.Admission.SourceExecutionGeneration = &sourceGeneration
+	target.Admission.SourceConfigDigest = fmt.Sprintf("%x", sha256.Sum256(config))
+	target.Admission.DecoderVersion = entity.AdaptiveLegacyDecoderVersionV1
+	planScope := int64(21)
+	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-legacy", 21, 30, "attempt-2", 4, planScope, 800)
+	return adaptiveBootstrapRecoveryFixture{TargetRequest: target, SourceAttemptID: sourceAttemptID, SourceCheckpoint: sourceCheckpointID, RecoveryKey: recoveryKey}
+}
+
+func seedAdaptiveBootstrapThirdHopForTest(
+	t *testing.T,
+	db *gorm.DB,
+	previous CommitAdaptiveExecutionBootstrapRequest,
+	source *CommitAdaptiveExecutionBootstrapResult,
+) CommitAdaptiveExecutionBootstrapRequest {
+	t.Helper()
+	require.NoError(t, db.Model(&runAttemptPO{}).Where("attempt_id = ?", "attempt-2").Updates(map[string]any{
+		"status": string(entity.RunAttemptStatusCompleted), "active_slot": nil, "ended_at": int64(950),
+	}).Error)
+	require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(21)).Updates(map[string]any{
+		"status": string(entity.RunStatusSucceeded), "ended_at": int64(950),
+	}).Error)
+	sourceCheckpointID := int64(9002)
+	require.NoError(t, db.Create(&checkpointPO{
+		ID: sourceCheckpointID, ThreadID: 10, RunID: 21,
+		CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "coze-run-21",
+		EnvelopeVersion: 2, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+		PendingSends: []byte(`[]`), Metadata: []byte(`{"runtime":"eino_adk"}`), CreatedAt: 940,
+	}).Error)
+	leaseOwner, leaseToken, recoveryKey := "worker-3", "lease-3", "recover-3"
+	leaseExpiresAt := int64(4000)
+	require.NoError(t, db.Create(&runPO{
+		ID: 22, ThreadID: 10, SpaceID: 10, CreatorID: 20, RunKind: string(entity.RunKindTask),
+		Status: string(entity.RunStatusRunning), ExecutionGeneration: 5,
+		LeaseOwner: &leaseOwner, LeaseToken: &leaseToken, LeaseExpiresAt: &leaseExpiresAt,
+		CreatedAt: 1000, UpdatedAt: 1000,
+	}).Error)
+	active := uint8(1)
+	sourceAttemptID := "attempt-2"
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 103, ThreadID: 10, JournalRunID: 30, ExecutionRunID: 22,
+		AttemptID: "attempt-3", Ordinal: 3, Status: string(entity.RunAttemptStatusRunning), ActiveSlot: &active,
+		NextSequence: 1, SourceAttemptID: &sourceAttemptID, SourceCheckpointID: &sourceCheckpointID,
+		RecoveryIdempotencyKey: &recoveryKey, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: string(entity.JournalProjectionStateHealthy), CreatedAt: 1000, UpdatedAt: 1000,
+	}).Error)
+	target := previous
+	target.ExecutionRunID, target.AttemptID, target.Generation = 22, "attempt-3", 5
+	target.LeaseOwner, target.LeaseToken = leaseOwner, leaseToken
+	target.OperationKey = "adaptive-operation:typed-after-legacy"
+	target.FactCreatedAt, target.Now = 1000, 1100
+	target.AdmissionEventID, target.DecisionEventID, target.CheckpointID = 7201, 7202, 8201
+	sourceRunID, sourceGeneration := int64(21), source.Authority.ExecutionGeneration
+	target.Admission = source.Admission
+	target.Admission.Source = entity.AdaptiveAdmissionSourceTypedInheritance
+	target.Admission.SourceRunID = &sourceRunID
+	target.Admission.SourceExecutionGeneration = &sourceGeneration
+	target.Admission.SourceConfigDigest, target.Admission.DecoderVersion = "", ""
+	planScope := int64(22)
+	target.Decision = newAdaptiveBootstrapDecisionForTest(t, target.Admission, "decision-typed-after-legacy", 22, 30, "attempt-3", 5, planScope, 1000)
+	return target
 }
 
 func TestAdaptiveExecutionBootstrapRejectsCrossIdentityWithoutWrites(t *testing.T) {

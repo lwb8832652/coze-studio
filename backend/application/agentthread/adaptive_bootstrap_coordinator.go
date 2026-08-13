@@ -28,6 +28,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/adaptivecontract"
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 const adaptiveBootstrapIdentitySchema = "workbench-adaptive-bootstrap.v1"
@@ -108,26 +109,33 @@ type AdaptiveBootstrapIDGenerator interface {
 	GenMultiIDs(context.Context, int) ([]int64, error)
 }
 
+type AdaptiveBootstrapSourceRunReader interface {
+	GetRun(context.Context, *domainservice.GetRunRequest) (*domainentity.Run, error)
+}
+
 type AdaptiveBootstrapCoordinatorOptions struct {
-	AttemptReader AdaptiveBootstrapAttemptReader
-	Repository    AdaptiveBootstrapRepository
-	IDGen         AdaptiveBootstrapIDGenerator
-	Now           func() int64
+	AttemptReader   AdaptiveBootstrapAttemptReader
+	Repository      AdaptiveBootstrapRepository
+	SourceRunReader AdaptiveBootstrapSourceRunReader
+	IDGen           AdaptiveBootstrapIDGenerator
+	Now             func() int64
 }
 
 type adaptiveBootstrapCoordinator struct {
-	attemptReader AdaptiveBootstrapAttemptReader
-	repository    AdaptiveBootstrapRepository
-	idGen         AdaptiveBootstrapIDGenerator
-	now           func() int64
+	attemptReader   AdaptiveBootstrapAttemptReader
+	repository      AdaptiveBootstrapRepository
+	sourceRunReader AdaptiveBootstrapSourceRunReader
+	idGen           AdaptiveBootstrapIDGenerator
+	now             func() int64
 }
 
 func NewAdaptiveBootstrapCoordinator(options AdaptiveBootstrapCoordinatorOptions) AdaptiveBootstrapCoordinator {
 	return &adaptiveBootstrapCoordinator{
-		attemptReader: options.AttemptReader,
-		repository:    options.Repository,
-		idGen:         options.IDGen,
-		now:           options.Now,
+		attemptReader:   options.AttemptReader,
+		repository:      options.Repository,
+		sourceRunReader: options.SourceRunReader,
+		idGen:           options.IDGen,
+		now:             options.Now,
 	}
 }
 
@@ -275,18 +283,25 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		JournalRunID:   attempt.JournalRunID,
 		AttemptID:      *attempt.SourceAttemptID,
 	})
-	if err != nil {
+	var admission domainentity.AdaptiveAdmissionSnapshot
+	if err == nil {
+		admission, err = typedAdaptiveAdmissionFromSource(
+			run.ThreadID,
+			attempt.JournalRunID,
+			input.SourceRunID,
+			*attempt.SourceAttemptID,
+			source,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else if errors.Is(err, domainrepo.ErrAdaptiveExecutionBootstrapNotFound) {
+		admission, err = c.legacyAdaptiveAdmissionFromSourceRun(ctx, run, input.SourceRunID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
 		return nil, fmt.Errorf("read source adaptive execution bootstrap: %w", err)
-	}
-	admission, err := typedAdaptiveAdmissionFromSource(
-		run.ThreadID,
-		attempt.JournalRunID,
-		input.SourceRunID,
-		*attempt.SourceAttemptID,
-		source,
-	)
-	if err != nil {
-		return nil, err
 	}
 	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
 		Admission: admission, DecisionID: adaptiveBootstrapStableKey("decision", run, attempt),
@@ -320,6 +335,28 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		return nil, fmt.Errorf("commit recovery adaptive bootstrap: %w", err)
 	}
 	return adaptiveBootstrapRecoveryFactsFromDurableResult(run, input, attempt, committed)
+}
+
+func (c *adaptiveBootstrapCoordinator) legacyAdaptiveAdmissionFromSourceRun(
+	ctx context.Context,
+	target *RunSummary,
+	sourceRunID int64,
+) (domainentity.AdaptiveAdmissionSnapshot, error) {
+	if c == nil || c.sourceRunReader == nil {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("legacy adaptive bootstrap source run reader is required")
+	}
+	source, err := c.sourceRunReader.GetRun(ctx, &domainservice.GetRunRequest{RunID: sourceRunID})
+	if err != nil {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("read legacy adaptive bootstrap source run: %w", err)
+	}
+	if source == nil || target == nil || source.ID != sourceRunID || source.ThreadID != target.ThreadID {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("legacy adaptive bootstrap source run identity is invalid")
+	}
+	admission, err := NewLegacyAdaptiveAdmissionDecoder().Decode(source)
+	if err != nil {
+		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("decode legacy adaptive bootstrap source run: %w", err)
+	}
+	return admission, nil
 }
 
 func validateAdaptiveBootstrapRecoveryResume(
@@ -357,7 +394,8 @@ func typedAdaptiveAdmissionFromSource(
 		source.Authority.AttemptID != expectedSourceAttemptID ||
 		source.Authority.ExecutionGeneration == 0 || source.Admission.FeatureGateEnabled ||
 		(source.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh &&
-			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance) {
+			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
+			source.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) {
 		return domainentity.AdaptiveAdmissionSnapshot{}, fmt.Errorf("adaptive recovery source facts are invalid")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
@@ -391,7 +429,8 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 	result *domainrepo.CommitAdaptiveExecutionBootstrapResult,
 ) (*AdaptiveBootstrapFacts, error) {
 	if result == nil || run == nil || input == nil || attempt == nil ||
-		result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance ||
+		(result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
+			result.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) ||
 		result.Admission.FeatureGateEnabled || result.Admission.SourceRunID == nil ||
 		*result.Admission.SourceRunID != input.SourceRunID ||
 		result.Authority.ThreadID != run.ThreadID || result.Authority.ExecutionRunID != run.RunID ||

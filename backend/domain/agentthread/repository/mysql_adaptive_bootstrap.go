@@ -208,7 +208,8 @@ func normalizeAdaptiveExecutionBootstrapRequest(
 		return nil, bootstrapInvalidf("required bootstrap identity is invalid")
 	}
 	switch req.Admission.Source {
-	case entity.AdaptiveAdmissionSourceFresh, entity.AdaptiveAdmissionSourceTypedInheritance:
+	case entity.AdaptiveAdmissionSourceFresh, entity.AdaptiveAdmissionSourceTypedInheritance,
+		entity.AdaptiveAdmissionSourceLegacyDecoder:
 	default:
 		return nil, bootstrapInvalidf("bootstrap admission source is unsupported")
 	}
@@ -270,6 +271,12 @@ func commitAdaptiveExecutionBootstrap(
 		ThreadID: req.ThreadID, ExecutionRunID: req.ExecutionRunID, JournalRunID: req.JournalRunID,
 		AttemptID: req.AttemptID, Generation: req.Generation, LeaseOwner: req.LeaseOwner,
 		LeaseToken: req.LeaseToken, Now: req.Now,
+	}
+	if _, err := lockThreadForUpdate(tx, req.ThreadID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: thread identity drift", ErrAdaptiveExecutionLineageConflict)
+		}
+		return err
 	}
 	journalRun, err := lockAdaptiveExecutionJournalRunIdentity(tx, boundary)
 	if err != nil {
@@ -339,6 +346,10 @@ func commitAdaptiveExecutionBootstrap(
 		}
 	case entity.AdaptiveAdmissionSourceTypedInheritance:
 		if err := lockAndValidateAdaptiveBootstrapTypedSource(tx, normalized, attempt); err != nil {
+			return err
+		}
+	case entity.AdaptiveAdmissionSourceLegacyDecoder:
+		if err := lockAndValidateAdaptiveBootstrapLegacySource(tx, normalized, attempt); err != nil {
 			return err
 		}
 	}
@@ -493,7 +504,8 @@ func lockAndValidateAdaptiveBootstrapTypedSource(
 	if source == nil || source.Authority.ExecutionGeneration != sourceRun.ExecutionGeneration ||
 		source.Admission.FeatureGateEnabled ||
 		(source.Admission.Source != entity.AdaptiveAdmissionSourceFresh &&
-			source.Admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance) ||
+			source.Admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance &&
+			source.Admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder) ||
 		req.Admission.SourceRunID == nil || *req.Admission.SourceRunID != sourceAttempt.ExecutionRunID ||
 		req.Admission.SourceExecutionGeneration == nil ||
 		*req.Admission.SourceExecutionGeneration != source.Authority.ExecutionGeneration ||
@@ -502,6 +514,65 @@ func lockAndValidateAdaptiveBootstrapTypedSource(
 		return bootstrapConflictf("typed bootstrap inherited policy drift")
 	}
 	return nil
+}
+
+func lockAndValidateAdaptiveBootstrapLegacySource(
+	tx *gorm.DB,
+	normalized *adaptiveExecutionBootstrapNormalizedRequest,
+	target *runAttemptPO,
+) error {
+	if tx == nil || normalized == nil || target == nil {
+		return bootstrapInvalidf("legacy bootstrap validation is missing")
+	}
+	req := normalized.request
+	if target.SourceAttemptID == nil || target.SourceCheckpointID == nil || target.RecoveryIdempotencyKey == nil {
+		return bootstrapConflictf("legacy bootstrap lineage is incomplete")
+	}
+	discovered, err := discoverAdaptiveExecutionSourceAttempt(tx, req.JournalRunID, *target.SourceAttemptID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("legacy source attempt discovery", err)
+	}
+	sourceRun, err := lockAdaptiveExecutionSourceRun(tx, discovered.ExecutionRunID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("legacy source run", err)
+	}
+	sourceAttempt, err := lockAdaptiveExecutionSourceAttempt(tx, req.JournalRunID, *target.SourceAttemptID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("legacy source attempt lock", err)
+	}
+	if sourceAttempt.ID != discovered.ID || sourceAttempt.ThreadID != discovered.ThreadID ||
+		sourceAttempt.JournalRunID != discovered.JournalRunID || sourceAttempt.ExecutionRunID != discovered.ExecutionRunID ||
+		sourceAttempt.AttemptID != discovered.AttemptID || sourceAttempt.ThreadID != req.ThreadID ||
+		sourceAttempt.JournalRunID != req.JournalRunID || sourceAttempt.Ordinal == 0 || target.Ordinal == 0 ||
+		sourceAttempt.Ordinal >= target.Ordinal || sourceAttempt.ExecutionRunID == req.ExecutionRunID ||
+		sourceRun.ID != sourceAttempt.ExecutionRunID || sourceRun.ThreadID != req.ThreadID || !isJournalRootRun(sourceRun) ||
+		req.Admission.SourceRunID == nil || *req.Admission.SourceRunID != sourceRun.ID ||
+		req.Admission.SourceExecutionGeneration == nil ||
+		*req.Admission.SourceExecutionGeneration != sourceRun.ExecutionGeneration ||
+		adaptiveBootstrapDigestBytes(sourceRun.Config) != req.Admission.SourceConfigDigest {
+		return bootstrapConflictf("legacy bootstrap source identity drift")
+	}
+	sourceCheckpoint, err := lockAdaptiveExecutionSourceCheckpoint(tx, *target.SourceCheckpointID)
+	if err != nil {
+		return adaptiveBootstrapTypedSourceError("legacy source checkpoint", err)
+	}
+	if sourceCheckpoint.ThreadID != req.ThreadID || sourceCheckpoint.RunID != sourceAttempt.ExecutionRunID ||
+		sourceCheckpoint.CheckpointNS != "eino.adk" || sourceCheckpoint.RuntimeType != "eino_adk" ||
+		sourceCheckpoint.RuntimeDeletedAt != 0 {
+		return bootstrapConflictf("legacy bootstrap source checkpoint drift")
+	}
+	_, err = loadAdaptiveExecutionBootstrapResult(tx, ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: req.ThreadID, ExecutionRunID: sourceAttempt.ExecutionRunID,
+		JournalRunID: req.JournalRunID, AttemptID: sourceAttempt.AttemptID,
+	}, nil)
+	if errors.Is(err, ErrAdaptiveExecutionBootstrapNotFound) {
+		return nil
+	}
+	if err == nil || errors.Is(err, ErrAdaptiveExecutionBootstrapInvalid) ||
+		errors.Is(err, ErrAdaptiveExecutionBootstrapConflict) {
+		return bootstrapConflictf("legacy bootstrap source already has bootstrap authority")
+	}
+	return fmt.Errorf("legacy bootstrap source facts: %w", err)
 }
 
 func adaptiveBootstrapTypedSourceError(scope string, err error) error {
@@ -538,7 +609,8 @@ func validateAdaptiveBootstrapStoredLineage(
 		}
 		return nil
 	}
-	if admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance ||
+	if (admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance &&
+		admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder) ||
 		!adaptiveExecutionStringPointersEqual(metadata.SourceAttemptID, attempt.SourceAttemptID) ||
 		!adaptiveExecutionInt64PointersEqual(metadata.SourceCheckpointID, attempt.SourceCheckpointID) ||
 		!adaptiveExecutionStringPointersEqual(metadata.RecoveryIdempotencyKey, attempt.RecoveryIdempotencyKey) {
@@ -691,7 +763,8 @@ func loadAdaptiveExecutionBootstrapResult(
 		return nil, bootstrapConflictf("control checkpoint tuple is ambiguous")
 	}
 	checkpoint := &checkpoints[0]
-	metadata, err := decodeAdaptiveBootstrapMetadata(checkpoint.Metadata)
+	dialect := tx.Dialector.Name()
+	metadata, err := decodeAdaptiveBootstrapStoredMetadata(dialect, checkpoint.Metadata)
 	if err != nil {
 		return nil, bootstrapConflictf("control checkpoint metadata drift")
 	}
@@ -732,27 +805,31 @@ func loadAdaptiveExecutionBootstrapResult(
 	}
 	admissionEvent := byID[metadata.AdmissionEventID]
 	decisionEvent := byID[metadata.DecisionEventID]
-	if err := validateAdaptiveBootstrapEvent(
+	if err := validateAdaptiveBootstrapStoredEvent(
+		dialect,
 		admissionEvent, req, metadata, adaptiveBootstrapAdmissionEventType, metadata.AdmissionEventKey, metadata.AdmissionDigest,
 		metadata.AdmissionEventFingerprint,
 	); err != nil {
 		return nil, err
 	}
-	if err := validateAdaptiveBootstrapEvent(
+	if err := validateAdaptiveBootstrapStoredEvent(
+		dialect,
 		decisionEvent, req, metadata, adaptiveBootstrapDecisionEventType, metadata.DecisionEventKey, metadata.DecisionDigest,
 		metadata.DecisionEventFingerprint,
 	); err != nil {
 		return nil, err
 	}
 	admission, admissionCanonical, admissionDigest, err := adaptivecontract.DecodeAdaptiveAdmission(admissionEvent.Payload)
-	if err != nil || admissionDigest != metadata.AdmissionDigest || string(admissionCanonical) != string(admissionEvent.Payload) {
+	if err != nil || admissionDigest != metadata.AdmissionDigest ||
+		!adaptiveBootstrapStoredPayloadMatches(dialect, admissionCanonical, admissionEvent.Payload) {
 		return nil, bootstrapConflictf("admission payload drift")
 	}
 	if err := validateAdaptiveBootstrapStoredLineage(&attempt, metadata, admission); err != nil {
 		return nil, err
 	}
 	decision, decisionCanonical, decisionDigest, err := adaptivecontract.DecodeExecutionDecision(decisionEvent.Payload)
-	if err != nil || decisionDigest != metadata.DecisionDigest || string(decisionCanonical) != string(decisionEvent.Payload) {
+	if err != nil || decisionDigest != metadata.DecisionDigest ||
+		!adaptiveBootstrapStoredPayloadMatches(dialect, decisionCanonical, decisionEvent.Payload) {
 		return nil, bootstrapConflictf("decision payload drift")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(admission, decision, adaptivecontract.BootstrapIdentity{
@@ -765,8 +842,8 @@ func loadAdaptiveExecutionBootstrapResult(
 		if expected.admissionDigest != metadata.AdmissionDigest || expected.decisionDigest != metadata.DecisionDigest ||
 			expected.operationDigest != metadata.OperationKeyDigest || expected.admissionEventKey != metadata.AdmissionEventKey ||
 			expected.decisionEventKey != metadata.DecisionEventKey || expected.checkpointKey != checkpoint.RuntimeKey ||
-			string(expected.admissionCanonical) != string(admissionEvent.Payload) ||
-			string(expected.decisionCanonical) != string(decisionEvent.Payload) {
+			string(expected.admissionCanonical) != string(admissionCanonical) ||
+			string(expected.decisionCanonical) != string(decisionCanonical) {
 			return nil, bootstrapConflictf("bootstrap replay payload drift")
 		}
 	}
@@ -819,7 +896,57 @@ func validateAdaptiveBootstrapEvent(
 	return nil
 }
 
+func validateAdaptiveBootstrapStoredEvent(
+	dialect string,
+	event *runEventPO,
+	req ReadAdaptiveExecutionBootstrapRequest,
+	metadata adaptiveBootstrapMetadata,
+	eventType, eventKey, digest, fingerprint string,
+) error {
+	if dialect != "mysql" {
+		return validateAdaptiveBootstrapEvent(event, req, metadata, eventType, eventKey, digest, fingerprint)
+	}
+	if event == nil {
+		return validateAdaptiveBootstrapEvent(event, req, metadata, eventType, eventKey, digest, fingerprint)
+	}
+	canonical, canonicalDigest, err := adaptiveBootstrapCanonicalEventPayload(eventType, event.Payload)
+	if err != nil || canonicalDigest != digest {
+		return bootstrapConflictf("bootstrap event payload drift")
+	}
+	stored := *event
+	stored.Payload = append([]byte(nil), canonical...)
+	return validateAdaptiveBootstrapEvent(&stored, req, metadata, eventType, eventKey, digest, fingerprint)
+}
+
+func adaptiveBootstrapCanonicalEventPayload(eventType string, raw []byte) ([]byte, string, error) {
+	switch eventType {
+	case adaptiveBootstrapAdmissionEventType:
+		_, canonical, digest, err := adaptivecontract.DecodeAdaptiveAdmission(raw)
+		return canonical, digest, err
+	case adaptiveBootstrapDecisionEventType:
+		_, canonical, digest, err := adaptivecontract.DecodeExecutionDecision(raw)
+		return canonical, digest, err
+	default:
+		return nil, "", errors.New("bootstrap event type is unsupported")
+	}
+}
+
+func adaptiveBootstrapStoredPayloadMatches(dialect string, canonical, stored []byte) bool {
+	return dialect == "mysql" || string(canonical) == string(stored)
+}
+
 func decodeAdaptiveBootstrapMetadata(raw []byte) (adaptiveBootstrapMetadata, error) {
+	return decodeAdaptiveBootstrapMetadataWithCanonicality(raw, true)
+}
+
+func decodeAdaptiveBootstrapStoredMetadata(dialect string, raw []byte) (adaptiveBootstrapMetadata, error) {
+	return decodeAdaptiveBootstrapMetadataWithCanonicality(raw, dialect != "mysql")
+}
+
+func decodeAdaptiveBootstrapMetadataWithCanonicality(
+	raw []byte,
+	requireCanonical bool,
+) (adaptiveBootstrapMetadata, error) {
 	if len(raw) == 0 || len(raw) > adaptiveBootstrapMetadataMaxBytes {
 		return adaptiveBootstrapMetadata{}, errors.New("metadata size is invalid")
 	}
@@ -849,9 +976,11 @@ func decodeAdaptiveBootstrapMetadata(raw []byte) (adaptiveBootstrapMetadata, err
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return adaptiveBootstrapMetadata{}, err
 	}
-	canonical, err := json.Marshal(envelope)
-	if err != nil || string(canonical) != string(raw) {
-		return adaptiveBootstrapMetadata{}, errors.New("metadata is not canonical")
+	if requireCanonical {
+		canonical, err := json.Marshal(envelope)
+		if err != nil || string(canonical) != string(raw) {
+			return adaptiveBootstrapMetadata{}, errors.New("metadata is not canonical")
+		}
 	}
 	return envelope.AdaptiveBootstrap, nil
 }
