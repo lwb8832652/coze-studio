@@ -197,6 +197,63 @@ func TestJournalFinalizeRejectsInterruptedOutsideHumanRollover(t *testing.T) {
 	require.Nil(t, attempt.TerminalEventID)
 }
 
+func TestJournalFinalizeRejectsLegacyTerminalReplayFromInterruptedAttempt(t *testing.T) {
+	statuses := []entity.RunAttemptStatus{
+		entity.RunAttemptStatusCompleted,
+		entity.RunAttemptStatusFailed,
+		entity.RunAttemptStatusCancelled,
+		entity.RunAttemptStatusTimedOut,
+	}
+	for index, status := range statuses {
+		status := status
+		t.Run(string(status), func(t *testing.T) {
+			db := newJournalRepositoryTestDB(t)
+			repo := NewThreadRepository(db)
+			seedJournalRun(t, db, 10, 1)
+			seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusInterrupted, 1)
+			require.NoError(t, db.Model(&runAttemptPO{}).Where("id = ?", 100).
+				Update("next_sequence", 2).Error)
+			journalRunID := int64(10)
+			attemptID := "att_100"
+			require.NoError(t, db.Create(&runEventPO{
+				ID: 9100, ThreadID: 1, RunID: 10, JournalRunID: &journalRunID, AttemptID: &attemptID,
+				Sequence:       uint64Pointer(1),
+				IdempotencyKey: stringPointer("journal:run:10:terminal:interrupted"),
+				EventType:      "run.lifecycle",
+				Status:         stringPointer(string(entity.RunAttemptStatusInterrupted)),
+				Payload:        []byte(`{"type":"terminal","data":{"status":"interrupted"}}`),
+				CreatedAt:      2,
+			}).Error)
+
+			var before runAttemptPO
+			require.NoError(t, db.Where("id = ?", 100).First(&before).Error)
+
+			event, won, err := repo.FinalizeJournalAttempt(context.Background(), FinalizeJournalAttemptRequest{
+				RunID: 10, Status: status,
+				Event: &entity.JournalEvent{
+					ID: int64(9200 + index), ThreadID: 1, RunID: 10,
+					IdempotencyKey: "terminal-" + string(status), EventType: "run.lifecycle",
+					Status: string(status), Payload: journalTerminalTestPayload,
+				},
+				EndedAt: 3,
+			})
+
+			require.ErrorIs(t, err, ErrJournalInvalidStateTransition)
+			require.Nil(t, event)
+			require.False(t, won)
+			var after runAttemptPO
+			require.NoError(t, db.Where("id = ?", 100).First(&after).Error)
+			require.Equal(t, before, after)
+			require.Equal(t, uint64(2), after.NextSequence)
+			var events []runEventPO
+			require.NoError(t, db.Order("id ASC").Find(&events).Error)
+			require.Len(t, events, 1)
+			require.Equal(t, int64(9100), events[0].ID)
+			require.Equal(t, uint64(1), *events[0].Sequence)
+		})
+	}
+}
+
 func TestJournalAttemptFrozenFieldsRoundTrip(t *testing.T) {
 	db := newJournalRepositoryTestDB(t)
 	sourceCheckpointID := int64(44)

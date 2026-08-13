@@ -971,7 +971,11 @@ func (r *threadRepository) FinalizeJournalAttempt(
 		normalized.JournalRunID = attempt.JournalRunID
 		normalized.AttemptID = attempt.AttemptID
 
-		if entity.RunAttemptStatus(attempt.Status).IsTerminal() {
+		attemptStatus := entity.RunAttemptStatus(attempt.Status)
+		if attemptStatus.IsTerminal() {
+			if !entity.IsLegacyFinalizableRunAttemptStatus(attemptStatus) {
+				return ErrJournalInvalidStateTransition
+			}
 			if attempt.TerminalEventID == nil {
 				return ErrJournalInvalidStateTransition
 			}
@@ -982,7 +986,7 @@ func (r *threadRepository) FinalizeJournalAttempt(
 			terminal = journalEventFromPO(&committed)
 			return nil
 		}
-		if !entity.RunAttemptStatus(attempt.Status).IsActive() {
+		if !attemptStatus.IsActive() {
 			return ErrJournalInvalidStateTransition
 		}
 

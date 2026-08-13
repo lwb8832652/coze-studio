@@ -426,6 +426,37 @@ func TestJournalRecoveryRunBundleCommitsRunAndAttemptAndReplays(t *testing.T) {
 	require.Equal(t, int64(2), attemptCount)
 }
 
+func TestJournalRecoveryRunBundleRejectsInterruptedSourceWithoutOrphans(t *testing.T) {
+	db := newJournalBoundaryTestDB(t)
+	repo := NewThreadRepository(db)
+	seedJournalRunWithStatus(t, db, 10, 1, entity.RunStatusInterrupted)
+	seedJournalAttempt(t, db, 100, 10, entity.RunAttemptStatusInterrupted, 1)
+	require.NoError(t, db.Create(&checkpointPO{
+		ID: 700, ThreadID: 1, RunID: 10, CheckpointNS: "eino.adk",
+		RuntimeType: "eino_adk", RuntimeKey: "run-10", EnvelopeVersion: 3,
+		ChannelValues:   []byte(`{"schema_version":"coze.adk.checkpoint.v3"}`),
+		ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`),
+		CreatedAt: 2,
+	}).Error)
+
+	request := recoveryRunBundle(20, 200, "recover-interrupted")
+	require.Nil(t, request.RecoverySourceLease)
+	result, err := repo.CreateRunBundle(context.Background(), request)
+
+	require.ErrorIs(t, err, ErrJournalInvalidStateTransition)
+	require.Nil(t, result)
+	var runCount, attemptCount int64
+	require.NoError(t, db.Model(&runPO{}).Where("id = ?", 20).Count(&runCount).Error)
+	require.NoError(t, db.Model(&runAttemptPO{}).Where("id = ?", 200).Count(&attemptCount).Error)
+	require.Zero(t, runCount)
+	require.Zero(t, attemptCount)
+	var source runAttemptPO
+	require.NoError(t, db.Where("id = ?", 100).First(&source).Error)
+	require.Equal(t, string(entity.RunAttemptStatusInterrupted), source.Status)
+	require.Nil(t, source.ActiveSlot)
+	require.Equal(t, uint64(1), source.NextSequence)
+}
+
 func TestJournalRecoveryRunBundleRejectsDifferentKeyWithoutOrphans(t *testing.T) {
 	db := newJournalBoundaryTestDB(t)
 	repo := NewThreadRepository(db)
