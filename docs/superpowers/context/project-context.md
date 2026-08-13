@@ -123,9 +123,13 @@ P1M-C3i1 已交付 canonical Typed Submission V2 的封闭 IDL 与 Go/TypeScript
 `initial_submission_v2`、`deferred_initial_submission_v2`、`submission_v2` 和
 `response_v2`。handler 在任何 application mutation 前完成 raw JSON 重复键、字段、presence、
 `null`、预算、union 和 V1/V2 混用校验，再把 V2 确定性映射到既有 application command 与
-idempotency fingerprint；V1 继续可读。五个第一方 writer 仍写 V1，C3i2 保持 locked；该接受层
-不实现 writer cutover、legacy decoder、Human Attempt rollover、ordinary non-Journal enrollment、
-gate-on producer 或真实 MySQL typed recovery race。后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
+idempotency fingerprint；V1 继续可读。P1M-C3i2 已把五个第一方 writer 切到该合同：Workbench
+无附件 atomic create、带附件 deferred create + turn、TaskDetail follow-up、top-level retry 与
+Human Resume 分别只写 `initial_submission_v2`/`deferred_initial_submission_v2`、
+`submission_v2` 或 `response_v2`，并继续复用唯一 canonical client、upload-before-run 顺序及
+既有语义幂等 attempt。服务端 V1 reader 和第三方兼容调用仍保留；这不代表 Human Resume 已全局
+闭环，也不实现 legacy decoder、Human Attempt rollover、ordinary non-Journal enrollment、gate-on
+producer 或真实 MySQL typed recovery race。后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail

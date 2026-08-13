@@ -26,7 +26,7 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '149b8f417d38005c4cdc792332a671094cee93c2e7730c6676a86528b8d4388d';
+  '72a5a96d932fce8f998c8175913a0b539697934bea6c0e81275e851cfca686e2';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
@@ -79,6 +79,9 @@ const REQUIRED_EXCLUSION_IDS = [
   'exclude.langgraph_thread_routes',
 ];
 const REQUIRED_NODE_IDS = [
+  'frontend.typed_v2_serializer',
+  'frontend.task_detail.retry_top_level',
+  'frontend.task_detail.resume_human',
   'frontend.client.singleton',
   'frontend.api.create_thread',
   'frontend.api.upload_files',
@@ -109,6 +112,12 @@ const REQUIRED_NODE_IDS = [
   'historical.legacy_runtime',
 ];
 const REQUIRED_EDGE_IDS = [
+  'edge.workbench_serializes_typed_v2',
+  'edge.typed_v2_serializer_uses_thread_client',
+  'edge.followup_serializes_typed_turn',
+  'edge.task_retry_serializes_typed_retry',
+  'edge.human_resume_serializes_typed_response',
+  'edge.human_resume_routes_canonical_client',
   'edge.create_thread_uses_singleton',
   'edge.create_run_uses_singleton',
   'edge.run_subscription_uses_singleton',

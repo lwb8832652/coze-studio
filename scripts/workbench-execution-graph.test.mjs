@@ -47,6 +47,7 @@ import {
   computeBuilderDigest,
   DERIVED_MANAGED_MARKER,
   graphifyExtractArgs,
+  graphifyQueryArgs,
   installCompletedBuild,
   mergeExplicitGraph,
   readGitProvenance,
@@ -1496,6 +1497,20 @@ test('Graphify extraction includes ignored whitelist corpus files', () => {
   );
   assert.doesNotThrow(() =>
     assertNonEmptyASTGraph({ nodes: [], links: [] }, ['contract-ledger.md']),
+  );
+});
+
+test('Graphify query arguments use the 16k intent regression budget', () => {
+  assert.deepEqual(
+    graphifyQueryArgs('/tmp/query-graph.json', 'canonical workbench intent'),
+    [
+      'query',
+      'canonical workbench intent',
+      '--graph',
+      '/tmp/query-graph.json',
+      '--budget',
+      '16000',
+    ],
   );
 });
 

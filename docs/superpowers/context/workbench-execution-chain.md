@@ -321,10 +321,14 @@ Create/Wait/Stream Run 的 `submission_v2` 以及 Resume 的 `response_v2` 提�
 handler 的有向顺序固定为 raw typed validation → deterministic mapping → 既有
 application command/idempotency fingerprint。raw 阶段先处理 body budget、重复键、未知字段、
 presence/`null`、union、V1/V2 混用和退休执行控制，映射阶段保持附件顺序、composer/resource
-选择、retry source lineage、Human response union 与 fingerprint namespace。V1 继续可读；五个
-第一方 writer 仍为 V1，C3i2 locked。该链没有增加 repository/runtime 状态机，也没有完成 legacy
-decoder、Human rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed
-recovery race；后者仍为 `NOT_VERIFIED`，P1M 未 PASS。
+选择、retry source lineage、Human response union 与 fingerprint namespace。P1M-C3i2 又把五个
+第一方 writer 接到该接受层：Workbench atomic/deferred 创建、deferred upload 后的首轮 turn、
+TaskDetail follow-up、top-level retry 与 Human Resume 都经共享 typed serializer 和唯一 canonical
+client 发送版本互斥的 V2 字段；deferred/follow-up 保持 upload-before-run，歧义 follow-up、固定 retry
+key 与 Human semantic attempt 均不自动旋转或重复写。V1 server reader 与第三方兼容调用继续可用。
+该链没有增加 repository/runtime 状态机，也没有完成全局 Human Resume、legacy decoder、Human
+rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race；后者
+仍为 `NOT_VERIFIED`，P1M 未 PASS。
 
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error

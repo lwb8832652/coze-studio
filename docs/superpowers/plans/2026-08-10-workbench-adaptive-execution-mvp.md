@@ -407,8 +407,16 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
       Create/Wait/Stream Run 的 turn/retry submission 和 Resume human response；raw strict validator
       在 mutation 前拒绝 duplicate/unknown/null/presence/union/V1-V2 mix，并确定性映射到既有
       application command、附件顺序和 idempotency fingerprint。V1 继续可读，五个第一方 writer
-      仍写 V1，C3i2 保持 `locked`。本包不实现 writer cutover、legacy decoder、Human Attempt
+      在本切片结束时仍写 V1。本包不实现 writer cutover、legacy decoder、Human Attempt
       rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race；
+      后者仍 `NOT_VERIFIED`，P1M 未 PASS。
+- [x] P1M-C3i2 只切换五个第一方 writer：Workbench 无附件 atomic create、带附件 deferred
+      create + turn、TaskDetail follow-up、top-level retry 与 Human Resume 通过共享 typed serializer
+      和唯一 canonical client 分别写 `initial_submission_v2`/`deferred_initial_submission_v2`、
+      `submission_v2` 或 `response_v2`；upload-before-run、附件顺序、歧义 key 复用、固定 retry key、
+      Human semantic attempt 与 409 authoritative refresh 均保持。V1 server reader 和第三方兼容
+      调用仍保留；本包不宣称 Human Resume 全局闭环，也不实现 legacy decoder、Human Attempt
+      rollover、ordinary non-Journal enrollment、gate-on producer 或真实 MySQL typed recovery race。
       后者仍 `NOT_VERIFIED`，P1M 未 PASS。
 - [ ] 引入 typed adaptive envelope/decision 时继续复用 P1M-A/B1 已完成的 raw ingress、
       Application admission 与 422 合同，补齐 typed payload 的 root、附件、follow-up、retry、resume

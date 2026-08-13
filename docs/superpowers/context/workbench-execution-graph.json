@@ -81,6 +81,90 @@
       ]
     },
     {
+      "id": "frontend.typed_v2_serializer",
+      "label": "First-party Typed Submission V2 serializer",
+      "layer": "frontend_transport",
+      "kind": "transport_adapter",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createInitialSubmissionV2",
+          "locator": "export const createInitialSubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createTurnSubmissionV2",
+          "locator": "export const createTurnSubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createRetrySubmissionV2",
+          "locator": "export const createRetrySubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "normalizeHumanResponseV2",
+          "locator": "export const normalizeHumanResponseV2 = ("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/__tests__/canonical-submission-v2.test.ts",
+          "locator": "it('keeps file order for turns and typed lineage only for retries'"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('retains a 409 Resume attempt and refreshes without automatic resubmit'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.task_detail.retry_top_level",
+      "label": "TaskDetail top-level typed retry writer",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts",
+          "symbol": "handleRetryTaskRun",
+          "locator": "const handleRetryTaskRun = async (sourceRunId: string) =>"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-run-actions-hook.test.tsx",
+          "locator": "it('treats a retry 409 as authoritative refresh without rotating or resending the key'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.task_detail.resume_human",
+      "label": "TaskDetail typed Human Resume writer",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "symbol": "handleHumanInteractionSubmit",
+          "locator": "const handleHumanInteractionSubmit = async ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.resumeRun",
+          "locator": "async resumeRun(request: ResumeWorkbenchRunRequest) {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('commits a resumed top-level Run before refresh and does not repeat the successful write'"
+        }
+      ]
+    },
+    {
       "id": "frontend.api.create_thread",
       "label": "canonicalThreadClient.createThread",
       "layer": "frontend_transport",
@@ -3173,6 +3257,47 @@
       ]
     },
     {
+      "id": "edge.workbench_serializes_typed_v2",
+      "from": "frontend.workbench.handle_send",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_immediate", "entry.workbench_deferred"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const initialSubmissionV2 = createInitialSubmissionV2(submitPayload);"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "submission_v2: createTurnSubmissionV2("
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_serializer_uses_thread_client",
+      "from": "frontend.typed_v2_serializer",
+      "to": "frontend.client.singleton",
+      "relation": "implemented_with",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "entry.task_detail_followup",
+        "control.human_resume"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "if ('submission_v2' in request && request.submission_v2) {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "? { interrupt_id: interruptID, response_v2: request.response_v2 }"
+        }
+      ]
+    },
+    {
       "id": "edge.create_thread_app_delegates_domain",
       "from": "application.create_task_thread",
       "to": "domain.create_thread_atomic",
@@ -3239,6 +3364,62 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
           "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        }
+      ]
+    },
+    {
+      "id": "edge.followup_serializes_typed_turn",
+      "from": "frontend.task_detail.send_follow_up",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "submission_v2: createTurnSubmissionV2("
+        }
+      ]
+    },
+    {
+      "id": "edge.task_retry_serializes_typed_retry",
+      "from": "frontend.task_detail.retry_top_level",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts",
+          "locator": "submission_v2: createRetrySubmissionV2(retryPayload, sourceRunId)"
+        }
+      ]
+    },
+    {
+      "id": "edge.human_resume_serializes_typed_response",
+      "from": "frontend.task_detail.resume_human",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "locator": "const responseV2 = normalizeHumanResponseV2(response);"
+        }
+      ]
+    },
+    {
+      "id": "edge.human_resume_routes_canonical_client",
+      "from": "frontend.task_detail.resume_human",
+      "to": "frontend.client.singleton",
+      "relation": "implemented_with",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "locator": "const resumeResult = await resumeTaskThreadRun({"
         }
       ]
     },
@@ -5380,7 +5561,11 @@
           "locator": "it('navigates to the task execution page after send returns a task'"
         }
       ],
-      "required_side_edge_ids": ["edge.create_thread_uses_singleton"]
+      "required_side_edge_ids": [
+        "edge.create_thread_uses_singleton",
+        "edge.workbench_serializes_typed_v2",
+        "edge.typed_v2_serializer_uses_thread_client"
+      ]
     },
     {
       "id": "entry.workbench_deferred",
@@ -5429,7 +5614,9 @@
       "required_side_edge_ids": [
         "edge.create_thread_uses_singleton",
         "edge.upload_uses_singleton",
-        "edge.create_run_uses_singleton"
+        "edge.create_run_uses_singleton",
+        "edge.workbench_serializes_typed_v2",
+        "edge.typed_v2_serializer_uses_thread_client"
       ]
     },
     {
@@ -5468,7 +5655,10 @@
       ],
       "required_side_edge_ids": [
         "edge.upload_uses_singleton",
-        "edge.create_run_uses_singleton"
+        "edge.create_run_uses_singleton",
+        "edge.followup_serializes_typed_turn",
+        "edge.task_retry_serializes_typed_retry",
+        "edge.typed_v2_serializer_uses_thread_client"
       ]
     },
     {
@@ -5695,7 +5885,16 @@
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('commits a resumed top-level Run before refresh and does not repeat the successful write'"
         }
+      ],
+      "required_side_edge_ids": [
+        "edge.human_resume_serializes_typed_response",
+        "edge.human_resume_routes_canonical_client",
+        "edge.typed_v2_serializer_uses_thread_client"
       ]
     },
     {
