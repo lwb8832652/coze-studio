@@ -20,7 +20,8 @@ export type WorkbenchJournalExecutionStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'timed_out';
+  | 'timed_out'
+  | 'interrupted';
 
 export type WorkbenchJournalContentStatus =
   | 'empty'

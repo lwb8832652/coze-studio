@@ -1912,6 +1912,7 @@ const journalExecutionStatuses = [
   'failed',
   'cancelled',
   'timed_out',
+  'interrupted',
 ] as const;
 const journalContentStatuses = [
   'empty',

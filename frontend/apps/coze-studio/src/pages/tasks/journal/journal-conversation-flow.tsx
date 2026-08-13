@@ -36,6 +36,7 @@ import {
   IconCozImage,
   IconCozLightbulb,
   IconCozLoading,
+  IconCozMinusCircle,
   IconCozShell,
   IconCozVerifyFailed,
 } from '@coze-arch/coze-design/icons';
@@ -77,6 +78,9 @@ const statusIcon = (status: JournalMilestoneItem['status']): ReactNode => {
   }
   if (status === 'running') {
     return <IconCozLoading />;
+  }
+  if (status === 'interrupted') {
+    return <IconCozMinusCircle />;
   }
   return null;
 };

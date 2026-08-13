@@ -180,6 +180,34 @@ afterEach(() => {
 });
 
 describe('Journal stream controller', () => {
+  it('ends an interrupted Attempt without opening or reconnecting a stream', async () => {
+    const interruptedAttempt = {
+      ...attempt,
+      status: 'interrupted' as const,
+      ended_at: 1_100,
+    };
+    const { client } = createClient({
+      journal: {
+        ...bootstrap(),
+        attempts: [interruptedAttempt],
+        default_attempt: interruptedAttempt,
+      },
+    });
+    const owner = createStateOwner();
+    const controller = createJournalStreamController({
+      client,
+      scope,
+      reduce: action => owner.reduce(action),
+    });
+
+    await controller.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(owner.state.execution.status).toBe('interrupted');
+    expect(owner.state.transport.status).toBe('ended');
+    expect(client.subscribeJournalEvents).not.toHaveBeenCalled();
+  });
+
   it('loads the explicitly selected historical Attempt without opening a live stream', async () => {
     const historicalAttempt = {
       ...attempt,
