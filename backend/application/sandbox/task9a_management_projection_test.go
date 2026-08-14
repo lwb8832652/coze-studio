@@ -70,17 +70,21 @@ func TestTask9ACapabilitiesUseExactSafeGates(t *testing.T) {
 		controlPlane bool
 		localDebug   bool
 		localReason  string
+		hostShell    bool
+		hostReason   string
 	}{
-		{"all exact", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "true"}, true, true, CapabilityReasonAvailable},
-		{"control plane case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "TRUE", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "true"}, false, false, CapabilityReasonControlPlaneDisabled},
-		{"app env case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "DEBUG", "APP_DEV_HOST_RUNTIME_ENABLED": "true"}, true, false, CapabilityReasonLocalDebugUnavailable},
-		{"host gate case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "TRUE"}, true, false, CapabilityReasonLocalDebugUnavailable},
+		{"legacy exact", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "true"}, true, true, CapabilityReasonAvailable, false, CapabilityReasonHostShellUnavailable},
+		{"host exact independent of legacy", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "false", "SANDBOX_HOST_SHELL_SESSION_ENABLED": "true", "SANDBOX_HOST_SHELL_GATEWAY_ADDR": "127.0.0.1:8099"}, true, false, CapabilityReasonLocalDebugUnavailable, true, CapabilityReasonAvailable},
+		{"control plane case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "TRUE", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "true", "SANDBOX_HOST_SHELL_SESSION_ENABLED": "true", "SANDBOX_HOST_SHELL_GATEWAY_ADDR": "127.0.0.1:8099"}, false, false, CapabilityReasonControlPlaneDisabled, false, CapabilityReasonControlPlaneDisabled},
+		{"app env case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "DEBUG", "APP_DEV_HOST_RUNTIME_ENABLED": "true", "SANDBOX_HOST_SHELL_SESSION_ENABLED": "true", "SANDBOX_HOST_SHELL_GATEWAY_ADDR": "127.0.0.1:8099"}, true, false, CapabilityReasonLocalDebugUnavailable, false, CapabilityReasonHostShellUnavailable},
+		{"host gate case mismatch", map[string]string{"SANDBOX_CONTROL_PLANE_ENABLED": "true", "APP_ENV": "debug", "APP_DEV_HOST_RUNTIME_ENABLED": "true", "SANDBOX_HOST_SHELL_SESSION_ENABLED": "TRUE", "SANDBOX_HOST_SHELL_GATEWAY_ADDR": "localhost:8099"}, true, true, CapabilityReasonAvailable, false, CapabilityReasonHostShellUnavailable},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			test.env["APP_DEV_RUNNER_TOKEN"] = "secret-token-must-not-leak"
 			projection := ProjectCapabilities(func(key string) string { return test.env[key] })
-			if projection.ControlPlane.Available != test.controlPlane || projection.LocalDebug.Available != test.localDebug || projection.LocalDebug.ReasonCode != test.localReason {
+			if projection.ControlPlane.Available != test.controlPlane || projection.LocalDebug.Available != test.localDebug || projection.LocalDebug.ReasonCode != test.localReason ||
+				projection.HostShell.Available != test.hostShell || projection.HostShell.ReasonCode != test.hostReason {
 				t.Fatalf("projection = %#v", projection)
 			}
 			encoded, err := json.Marshal(projection)
@@ -88,12 +92,31 @@ func TestTask9ACapabilitiesUseExactSafeGates(t *testing.T) {
 				t.Fatalf("marshal capabilities: %v", err)
 			}
 			text := string(encoded)
-			for _, prohibited := range []string{"secret-token-must-not-leak", "APP_ENV", "APP_DEV_HOST_RUNTIME_ENABLED", "SANDBOX_CONTROL_PLANE_ENABLED", "endpoint", "credential"} {
+			for _, prohibited := range []string{"secret-token-must-not-leak", "APP_ENV", "APP_DEV_HOST_RUNTIME_ENABLED", "SANDBOX_HOST_SHELL_SESSION_ENABLED", "SANDBOX_HOST_SHELL_GATEWAY_ADDR", "SANDBOX_CONTROL_PLANE_ENABLED", "endpoint", "credential"} {
 				if strings.Contains(text, prohibited) {
 					t.Fatalf("capability projection leaked %q: %s", prohibited, text)
 				}
 			}
 		})
+	}
+}
+
+func TestHostShellCapabilityAdmitsLocalProviderWithoutOpeningLegacyOneShot(t *testing.T) {
+	environment := map[string]string{
+		"SANDBOX_CONTROL_PLANE_ENABLED":      "true",
+		"APP_ENV":                            "debug",
+		"APP_DEV_HOST_RUNTIME_ENABLED":       "false",
+		"SANDBOX_HOST_SHELL_SESSION_ENABLED": "true",
+		"SANDBOX_HOST_SHELL_GATEWAY_ADDR":    "[::1]:8099",
+	}
+	service := &Service{capabilities: NewEnvironmentCapabilityPolicy(func(key string) string {
+		return environment[key]
+	})}
+	if err := service.requireLocalDebugCapability(domainsandbox.ProviderTypeLocalDebug); err != nil {
+		t.Fatalf("Host Shell-only local provider admission error = %v", err)
+	}
+	if ProjectCapabilities(func(key string) string { return environment[key] }).LocalDebug.Available {
+		t.Fatal("Host Shell gate unexpectedly opened legacy one-shot local debug")
 	}
 }
 

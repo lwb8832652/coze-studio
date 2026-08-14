@@ -6,6 +6,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,90 @@ func TestLocalDebugProviderRequiresBothExactGatesAtConstruction(t *testing.T) {
 	}
 	if _, err := newLocalDebugProvider(&fakeLocalDelegate{}, mapGetenv(validLocalEnvironment())); err != nil {
 		t.Fatalf("valid debug environment: %v", err)
+	}
+}
+
+func TestHostShellSessionGateRequiresThreeExactIndependentValues(t *testing.T) {
+	t.Parallel()
+
+	for _, environment := range []map[string]string{
+		{},
+		{AppEnvName: "debug"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "true"},
+		{AppEnvName: "debug", HostShellGatewayAddrEnvName: "127.0.0.1:8099"},
+		{AppEnvName: "DEBUG", HostShellSessionEnabledEnvName: "true", HostShellGatewayAddrEnvName: "127.0.0.1:8099"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "TRUE", HostShellGatewayAddrEnvName: "127.0.0.1:8099"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "true", HostShellGatewayAddrEnvName: "localhost:8099"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "true", HostShellGatewayAddrEnvName: "0.0.0.0:8099"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "true", HostShellGatewayAddrEnvName: "127.0.0.1:8100"},
+		{AppEnvName: "debug", HostShellSessionEnabledEnvName: "true", HostShellGatewayAddrEnvName: " 127.0.0.1:8099"},
+		{AppEnvName: "debug", AppDevHostRuntimeEnabledEnvName: "true"},
+	} {
+		if HostShellSessionAllowed(mapGetenv(environment)) {
+			t.Fatalf("environment %#v must not enable Host Shell", environment)
+		}
+	}
+
+	for _, gateway := range []string{"127.0.0.1:8099", "[::1]:8099"} {
+		environment := map[string]string{
+			AppEnvName:                      "debug",
+			HostShellSessionEnabledEnvName:  "true",
+			HostShellGatewayAddrEnvName:     gateway,
+			AppDevHostRuntimeEnabledEnvName: "false",
+		}
+		if !HostShellSessionAllowed(mapGetenv(environment)) {
+			t.Fatalf("exact Host Shell environment with gateway %q was rejected", gateway)
+		}
+	}
+}
+
+func TestLocalDebugHealthProviderAdvertisesHostSessionWithoutLegacyOneShotGate(t *testing.T) {
+	t.Parallel()
+
+	environment := map[string]string{
+		AppEnvName:                      "debug",
+		HostShellSessionEnabledEnvName:  "true",
+		HostShellGatewayAddrEnvName:     "127.0.0.1:8099",
+		AppDevHostRuntimeEnabledEnvName: "false",
+	}
+	provider, err := newLocalDebugHealthProvider(
+		nil,
+		[]domainsandbox.Scope{domainsandbox.ScopeAgent},
+		mapGetenv(environment),
+	)
+	if err != nil {
+		t.Fatalf("newLocalDebugHealthProvider() error = %v", err)
+	}
+	result, err := provider.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if result.Status != domainsandbox.HealthStatusHealthy ||
+		!reflect.DeepEqual(result.Capabilities, []domainsandbox.Scope{domainsandbox.ScopeAgent}) ||
+		!reflect.DeepEqual(result.Features, []domainsandbox.ProviderFeature{
+			domainsandbox.ProviderFeatureSandboxSessionV1,
+			domainsandbox.ProviderFeatureSignedSessionContextV2,
+		}) {
+		t.Fatalf("Host health = %#v", result)
+	}
+	if err := provider.CloseContext(context.Background()); err != nil {
+		t.Fatalf("CloseContext() error = %v", err)
+	}
+
+	environment[HostShellSessionEnabledEnvName] = "false"
+	if _, err := provider.Health(context.Background()); !errors.Is(err, domainsandbox.ErrExecutionForbidden) {
+		t.Fatalf("Health() after hot gate close error = %v", err)
+	}
+}
+
+func TestLocalDebugHealthProviderDoesNotFakeLegacyHealthWithoutDelegate(t *testing.T) {
+	t.Parallel()
+	if _, err := newLocalDebugHealthProvider(
+		nil,
+		[]domainsandbox.Scope{domainsandbox.ScopeAgent},
+		mapGetenv(validLocalEnvironment()),
+	); !errors.Is(err, domainsandbox.ErrInvalidInput) {
+		t.Fatalf("legacy-only health without delegate error = %v", err)
 	}
 }
 

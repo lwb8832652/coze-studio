@@ -880,6 +880,71 @@ func TestProviderRouterResolveSessionReadsPersistedCoreGateBeforeFactory(t *test
 	}
 }
 
+func TestProviderRouterResolveSessionUsesProviderSpecificDesiredGateAndSkipsOneShotValidation(t *testing.T) {
+	now := time.Unix(2_000_001_075, 0).UTC()
+	tests := []struct {
+		name          string
+		providerType  domainsandbox.ProviderType
+		coreEnabled   bool
+		hostEnabled   bool
+		wantForbidden bool
+	}{
+		{name: "remote uses core gate", providerType: domainsandbox.ProviderTypeRemoteHTTP, coreEnabled: true},
+		{name: "remote never falls back to host gate", providerType: domainsandbox.ProviderTypeRemoteHTTP, hostEnabled: true, wantForbidden: true},
+		{name: "local uses host gate", providerType: domainsandbox.ProviderTypeLocalDebug, hostEnabled: true},
+		{name: "local never falls back to core gate", providerType: domainsandbox.ProviderTypeLocalDebug, coreEnabled: true, wantForbidden: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := healthyRouterProvider(now)
+			provider.Type = test.providerType
+			provider.Health.Features = []domainsandbox.ProviderFeature{
+				domainsandbox.ProviderFeatureSandboxSessionV1,
+				domainsandbox.ProviderFeatureSignedSessionContextV2,
+			}
+			settings := domainsandbox.DefaultSessionRuntimeSettings()
+			settings.Version = domainsandbox.InitialVersion
+			settings.CoreEnabled = test.coreEnabled
+			settings.HostShellEnabled = test.hostEnabled
+			repository := &sessionSettingsRepositoryFake{settings: settings}
+			oneShotValidateCalls, sessionValidateCalls, buildCalls := 0, 0, 0
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+				validate: func(context.Context, ProviderDescriptor) error {
+					oneShotValidateCalls++
+					return domainsandbox.ErrExecutionForbidden
+				},
+				validateSession: func(context.Context, ProviderDescriptor) error {
+					sessionValidateCalls++
+					return nil
+				},
+				buildSession: func(context.Context, domainsandbox.Provider, ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error) {
+					buildCalls++
+					return &sessionRuntimeProviderStub{}, nil
+				},
+			}, &capacityLimiterFuncs{})
+			router.SetSessionSettingsRepository(repository)
+
+			selection, err := router.ResolveSession(context.Background(), testRouterRequest())
+			if test.wantForbidden {
+				if !errors.Is(err, domainsandbox.ErrExecutionForbidden) || selection != nil ||
+					sessionValidateCalls != 0 || buildCalls != 0 {
+					t.Fatalf("ResolveSession() = %#v, %v; session validate/build=%d/%d", selection, err, sessionValidateCalls, buildCalls)
+				}
+			} else {
+				if err != nil || selection == nil || sessionValidateCalls != 1 || buildCalls != 1 {
+					t.Fatalf("ResolveSession() = %#v, %v; session validate/build=%d/%d", selection, err, sessionValidateCalls, buildCalls)
+				}
+				if closeErr := selection.CloseContext(context.Background()); closeErr != nil {
+					t.Fatalf("CloseContext() error = %v", closeErr)
+				}
+			}
+			if oneShotValidateCalls != 0 {
+				t.Fatalf("Session resolution called one-shot ValidateConfig %d times", oneShotValidateCalls)
+			}
+		})
+	}
+}
+
 func TestProviderRouterResolveSessionFailsClosedForHealthFactoryAndRequestState(t *testing.T) {
 	now := time.Unix(2_000_001_100, 0).UTC()
 	tests := []struct {

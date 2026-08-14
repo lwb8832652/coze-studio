@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,22 @@ func TestSandboxWiringAllowsManagementBeforeRuntimeRouting(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestSandboxWiringInjectsLiveHostShellStatusIntoSessionManagement(t *testing.T) {
+	t.Setenv(sandboxControlPlaneEnabledEnv, "true")
+	t.Setenv(infrasandbox.AppEnvName, "debug")
+	t.Setenv(infrasandbox.HostShellSessionEnabledEnvName, "true")
+	t.Setenv(infrasandbox.HostShellGatewayAddrEnvName, "127.0.0.1:8099")
+	capture := &sandboxWiringCapture{}
+	installSandboxWiringTestConstructors(t, capture)
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.NotNil(t, capture.hostShellStatus)
+	require.True(t, capture.hostShellStatus.HostShellAvailable(context.Background()))
+
+	t.Setenv(infrasandbox.HostShellSessionEnabledEnvName, "false")
+	require.False(t, capture.hostShellStatus.HostShellAvailable(context.Background()))
+}
+
 func TestSandboxWiringUsesSignedRunnerOnlyWhenSigningKeyringIsConfigured(t *testing.T) {
 	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
 	capture := &sandboxWiringCapture{}
@@ -336,6 +353,80 @@ func TestSandboxWiringProductionNeverFallsBackToLocalDebug(t *testing.T) {
 	require.Nil(t, capture.localDelegate)
 	require.NotNil(t, SandboxSVC)
 	require.NotNil(t, SandboxRouter)
+}
+
+func TestSandboxHealthFactoryAdvertisesHostSessionsWithoutOpeningLegacyOneShot(t *testing.T) {
+	t.Setenv(infrasandbox.AppEnvName, "debug")
+	t.Setenv(infrasandbox.AppDevHostRuntimeEnabledEnvName, "false")
+	t.Setenv(infrasandbox.HostShellSessionEnabledEnvName, "true")
+	t.Setenv(infrasandbox.HostShellGatewayAddrEnvName, "127.0.0.1:8099")
+	configured := &configuredSandboxProviderFactory{codec: &infrasandbox.CredentialCodec{}}
+	healthFactory := sandboxHealthProviderFactory{factory: configured}
+	provider := &domainsandbox.Provider{
+		Type:   domainsandbox.ProviderTypeLocalDebug,
+		Scopes: []domainsandbox.Scope{domainsandbox.ScopeAgent},
+	}
+
+	health, err := healthFactory.Build(context.Background(), provider)
+	require.NoError(t, err)
+	result, err := health.Health(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, domainsandbox.HealthStatusHealthy, result.Status)
+	require.Equal(t, []domainsandbox.Scope{domainsandbox.ScopeAgent}, result.Capabilities)
+	require.Equal(t, []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureSandboxSessionV1,
+		domainsandbox.ProviderFeatureSignedSessionContextV2,
+	}, result.Features)
+	require.NoError(t, health.CloseContext(context.Background()))
+
+	_, err = configured.build(context.Background(), provider)
+	require.ErrorIs(t, err, domainsandbox.ErrUnavailable)
+}
+
+func TestSandboxSessionFactoryBuildsHostOnlyBehindExactIndependentGate(t *testing.T) {
+	environment := map[string]string{
+		infrasandbox.AppEnvName:                      "debug",
+		infrasandbox.AppDevHostRuntimeEnabledEnvName: "true",
+	}
+	factory := sandboxRuntimeProviderFactory{factory: &configuredSandboxProviderFactory{
+		getenv:        func(key string) string { return environment[key] },
+		hostRootDir:   t.TempDir(),
+		hostSkillsDir: filepath.Join(t.TempDir(), "skills-created-on-first-use"),
+	}}
+	provider := domainsandbox.Provider{
+		ID: 41, ProviderKey: "local-host", Type: domainsandbox.ProviderTypeLocalDebug,
+		Scopes: []domainsandbox.Scope{domainsandbox.ScopeAgent},
+		Policy: domainsandbox.RuntimePolicy{AllowedEnvNames: []string{"LANG"}},
+	}
+	descriptor := appsandbox.ProviderDescriptor{
+		ProviderKey: provider.ProviderKey, ProviderType: provider.Type,
+		Scope: domainsandbox.ScopeAgent, Policy: provider.Policy,
+	}
+
+	_, err := factory.BuildSession(context.Background(), provider, descriptor)
+	require.ErrorIs(t, err, domainsandbox.ErrExecutionForbidden)
+
+	environment[infrasandbox.AppDevHostRuntimeEnabledEnvName] = "false"
+	environment[infrasandbox.HostShellSessionEnabledEnvName] = "true"
+	environment[infrasandbox.HostShellGatewayAddrEnvName] = "[::1]:8099"
+	runtime, err := factory.BuildSession(context.Background(), provider, descriptor)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	session, err := runtime.Acquire(context.Background(), infrasandbox.AcquireSessionRequest{Key: domainsandbox.SessionKey{
+		DeploymentID: "local-debug", ProviderID: provider.ID, SpaceID: 11, UserID: 22,
+		ThreadID: "thread-host", Profile: domainsandbox.SessionProfileCore,
+	}})
+	require.NoError(t, err)
+
+	closer, ok := runtime.(interface{ CloseContext(context.Context) error })
+	require.True(t, ok)
+	require.NoError(t, closer.CloseContext(context.Background()))
+	_, err = runtime.Get(context.Background(), session.Ref())
+	require.NoError(t, err, "selection cleanup must not destroy the persistent Host Session")
+
+	environment[infrasandbox.HostShellSessionEnabledEnvName] = "false"
+	_, err = runtime.Get(context.Background(), session.Ref())
+	require.ErrorIs(t, err, domainsandbox.ErrUnavailable)
 }
 
 func TestSandboxWiringProductionDoesNotRequireHostRunnerOrLegacyRunnerEnvironment(t *testing.T) {
@@ -516,6 +607,7 @@ type sandboxWiringCapture struct {
 	schedulerRunner appsandbox.NativeSchedulerRunner
 	sessionRunner   appsandbox.NativeSessionRunner
 	sessionStore    domainsandbox.SessionSettingsAuditRepository
+	hostShellStatus appsandbox.HostShellRuntimeStatusSource
 	serviceErr      error
 	identitySigner  sandboxidentity.Signer
 }
@@ -571,6 +663,7 @@ func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCa
 		newSessionService: func(options appsandbox.SessionSettingsServiceOptions) (*appsandbox.SessionSettingsService, error) {
 			capture.sessionStore = options.Store
 			capture.sessionRunner = options.Runner
+			capture.hostShellStatus = options.HostShellStatus
 			return appsandbox.NewSessionSettingsService(options)
 		},
 	}

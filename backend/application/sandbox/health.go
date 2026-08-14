@@ -171,6 +171,7 @@ func boundedHealthSnapshot(result infrasandbox.HealthResult, probeErr error, pro
 	}
 	snapshot := domainsandbox.HealthSnapshot{
 		Status: result.Status, Capabilities: append([]domainsandbox.Scope(nil), result.Capabilities...),
+		Features:      append([]domainsandbox.ProviderFeature(nil), result.Features...),
 		LatencyMillis: latencyMillis, CheckedAt: checkedAt,
 	}
 	succeeded := true

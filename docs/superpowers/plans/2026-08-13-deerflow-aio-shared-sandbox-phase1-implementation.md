@@ -1362,13 +1362,32 @@ git commit -m "feat: manage sandbox session runtime settings"
 - Create: `backend/infra/sandbox/host_shell_session_test.go`
 - Modify: `backend/infra/sandbox/local_debug_provider.go`
 - Modify: `backend/infra/sandbox/local_debug_provider_test.go`
+- Modify: `backend/application/sandbox/health.go`
+- Modify: `backend/application/sandbox/health_test.go`
+- Modify: `backend/application/sandbox/management_projection.go`
+- Modify: `backend/application/sandbox/task9a_management_projection_test.go`
+- Modify: `backend/application/sandbox/router.go`
+- Modify: `backend/application/sandbox/router_test.go`
+- Modify: `backend/application/sandbox/session_default_runner.go`
+- Modify: `backend/application/sandbox/session_default_runner_test.go`
+- Modify: `backend/application/sandbox/session_settings_service.go`
+- Modify: `backend/application/sandbox/session_settings_service_test.go`
 - Modify: `backend/application/sandbox_wiring.go`
 - Modify: `backend/application/sandbox_wiring_test.go`
 - Modify: `backend/application/sandbox/types.go`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-service.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-service.test.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-session-card.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-session-card.module.less`
+- Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-session-card.test.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-view-model.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-view-model.test.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-provider-form.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-provider-form.test.tsx`
 
 Host Shell 是独立 local-debug adapter，不是 raw AIO fallback。
 
-- [ ] **Step 1: 写三重门禁 RED tests**
+- [x] **Step 1: 写三重门禁 RED tests**
 
 必须同时满足：
 
@@ -1382,7 +1401,7 @@ SANDBOX_HOST_SHELL_GATEWAY_ADDR=127.0.0.1:8099 或 [::1]:8099
 unavailable 与热更新误开启均 unavailable。不得复用 `APP_DEV_HOST_RUNTIME_ENABLED`，
 不得在 Remote/Core unavailable 时 fallback。
 
-- [ ] **Step 2: 写本机风险边界 RED tests**
+- [x] **Step 2: 写本机风险边界 RED tests**
 
 服务端从可信 space/user/thread 派生 debug physical root；public logical root 与 AIO 相同。
 客户端不能提交 physical root。Exec 使用新 process group、deadline、bounded output、最小
@@ -1393,7 +1412,7 @@ status 固定 `isolation_level=host_debug_unisolated`，明确没有容器、网
 恶意命令隔离。错误/public DTO 不含物理绝对路径、环境、PID 或 command body。应用重启
 后内存 Session 消失，running command 不恢复/不重放，workspace 文件可保留。
 
-- [ ] **Step 3: 运行 RED、实现 adapter 并接入 Router**
+- [x] **Step 3: 运行 RED、实现 adapter 并接入 Router**
 
 ```bash
 cd backend
@@ -1405,20 +1424,47 @@ bounded memory map。门禁变化使新 acquire fail closed；已有进程按 sh
 不切换 AIO。factory 只在 local_debug Provider + 三重门禁 + Session feature 同时满足时
 返回 manager；远程 health 永不声明此 feature，UI 持续显示未隔离风险。
 
-- [ ] **Step 4: 运行 GREEN 与 fail-closed 回归**
+- [x] **Step 4: 运行 GREEN 与 fail-closed 回归**
 
 ```bash
 cd backend
 GOCACHE=/private/tmp/coze-go-build go test ./infra/sandbox ./application/sandbox -run 'HostShellSession|LocalDebug|ResolveSession|RemoteSession' -count=1
 ```
 
-- [ ] **Step 5: 完成唯一一次 Task 10 主线审核并提交**
+- [x] **Step 5: 完成唯一一次 Task 10 主线审核并提交**
 
 综合审核只检查三重门禁、无 fallback、process-group cancel、路径/输出脱敏、debug-only
 投影和风险文案。修复后重跑全部验证，不发起第二轮审核。
 
 ```bash
-git add backend/infra/sandbox/host_shell_session.go backend/infra/sandbox/host_shell_session_test.go backend/infra/sandbox/local_debug_provider.go backend/infra/sandbox/local_debug_provider_test.go backend/application/sandbox_wiring.go backend/application/sandbox_wiring_test.go backend/application/sandbox/types.go
+git add \
+  backend/infra/sandbox/host_shell_session.go \
+  backend/infra/sandbox/host_shell_session_test.go \
+  backend/infra/sandbox/local_debug_provider.go \
+  backend/infra/sandbox/local_debug_provider_test.go \
+  backend/application/sandbox/health.go \
+  backend/application/sandbox/health_test.go \
+  backend/application/sandbox/management_projection.go \
+  backend/application/sandbox/task9a_management_projection_test.go \
+  backend/application/sandbox/router.go \
+  backend/application/sandbox/router_test.go \
+  backend/application/sandbox/session_default_runner.go \
+  backend/application/sandbox/session_default_runner_test.go \
+  backend/application/sandbox/session_settings_service.go \
+  backend/application/sandbox/session_settings_service_test.go \
+  backend/application/sandbox/types.go \
+  backend/application/sandbox_wiring.go \
+  backend/application/sandbox_wiring_test.go \
+  frontend/apps/coze-studio/src/pages/system/sandbox-service.ts \
+  frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-service.test.ts \
+  frontend/apps/coze-studio/src/pages/system/sandbox-session-card.tsx \
+  frontend/apps/coze-studio/src/pages/system/sandbox-session-card.module.less \
+  frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-session-card.test.tsx \
+  frontend/apps/coze-studio/src/pages/system/sandbox-view-model.ts \
+  frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-view-model.test.ts \
+  frontend/apps/coze-studio/src/pages/system/sandbox-provider-form.tsx \
+  frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-provider-form.test.tsx \
+  docs/superpowers/plans/2026-08-13-deerflow-aio-shared-sandbox-phase1-implementation.md
 git commit -m "feat: add gated debug host shell sessions"
 ```
 

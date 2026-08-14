@@ -388,7 +388,8 @@ export const SandboxProviderForm = ({
             }
             role="status"
           >
-            {localDebug.reason}。local-debug 可用性只以服务端 capability 为准。
+            {localDebug.reason}。本地 Provider 管理入口以服务端 local-debug 或
+            Host Shell capability 为准；Host Shell 不会启用 legacy one-shot。
           </p>
 
           {type === 'remote_http' ? (

@@ -131,7 +131,10 @@ export const SandboxSessionCard = () => {
       setRuntimeMessage('');
     } else {
       setRuntimeMessage(
-        safeRequestMessage(runtimeResult.reason, 'Session 运行状态加载失败'),
+        safeRequestMessage(
+          runtimeResult.reason,
+          'Remote Runner/Core 运行状态加载失败',
+        ),
       );
     }
     setLoading(false);
@@ -180,8 +183,8 @@ export const SandboxSessionCard = () => {
       setAppliedVersion(result.applied_version);
       setMessage(
         result.applied
-          ? 'Session 配置已保存并应用'
-          : `Session 配置已保存，Runner 尚未应用${
+          ? '期望配置已保存，Remote Runner 已应用 Core 配置版本'
+          : `期望配置已保存，Remote Runner 尚未应用 Core 配置版本${
               result.reason_code ? ` · ${result.reason_code}` : ''
             }`,
       );
@@ -198,7 +201,7 @@ export const SandboxSessionCard = () => {
       } catch (error) {
         if (!controller.signal.aborted) {
           setRuntimeMessage(
-            safeRequestMessage(error, 'Session 运行状态加载失败'),
+            safeRequestMessage(error, 'Remote Runner/Core 运行状态加载失败'),
           );
         }
       } finally {
@@ -232,14 +235,15 @@ export const SandboxSessionCard = () => {
   return (
     <section
       aria-busy={loading || runtimeLoading || saving}
-      aria-label="Core Session 配置"
+      aria-label="Remote Runner/Core 与 Host Shell 配置"
       className={styles.card}
     >
       <header className={styles.header}>
         <div>
-          <h3>Core Session</h3>
+          <h3>Remote Runner/Core</h3>
           <p>
-            期望配置 v{version || '-'} · 已应用 v{appliedVersion || '-'}
+            期望配置 v{version || '-'} · Remote Runner 已应用 v
+            {appliedVersion || '-'}
           </p>
         </div>
         <Button
@@ -265,7 +269,7 @@ export const SandboxSessionCard = () => {
 
       {runtime ? (
         <div
-          aria-label="Session 运行聚合"
+          aria-label="Remote Runner/Core 运行聚合"
           className={
             runtime.available ? styles.runtime : styles.runtimeUnavailable
           }
@@ -274,8 +278,8 @@ export const SandboxSessionCard = () => {
             <div>
               <strong>
                 {runtime.available
-                  ? 'Session 运行状态可用'
-                  : 'Session 运行状态不可用'}
+                  ? 'Remote Runner/Core 运行状态可用'
+                  : 'Remote Runner/Core 运行状态不可用'}
               </strong>
               {runtime.reason_code ? <span>{runtime.reason_code}</span> : null}
             </div>
@@ -321,13 +325,6 @@ export const SandboxSessionCard = () => {
                 Shell 活跃 {runtime.active_shells} · 空闲 {runtime.idle_shells}
               </dd>
             </div>
-            <div>
-              <dt>Host Shell</dt>
-              <dd>
-                期望{runtime.host_shell_enabled ? '开启' : '关闭'} ·{' '}
-                {runtime.host_shell_available ? '可用' : '不可用'}
-              </dd>
-            </div>
           </dl>
           <div
             className={
@@ -341,23 +338,50 @@ export const SandboxSessionCard = () => {
           >
             <strong>
               {!runtime.transport_known
-                ? '传输状态未知'
+                ? 'Remote Runner 传输状态未知'
                 : runtime.transport_encrypted
-                  ? '传输已加密'
-                  : '传输未加密'}
+                  ? 'Remote Runner 传输已加密'
+                  : 'Remote Runner 传输未加密'}
             </strong>
             <span>
               {!runtime.transport_known
-                ? '尚未从 Runner exact-origin 连接确认传输方式。'
+                ? '尚未从 Remote Runner exact-origin 连接确认传输方式。'
                 : runtime.transport_encrypted
-                  ? 'HTTPS Provider 管理链路已加密。'
-                  : 'HTTP Provider 管理链路未加密，请仅在受控网络中使用。'}
+                  ? 'Remote Runner HTTPS 管理链路已加密。'
+                  : 'Remote Runner HTTP 管理链路未加密，请仅在受控网络中使用。'}
             </span>
           </div>
         </div>
       ) : runtimeLoading ? (
         <div className={styles.loading} role="status">
-          正在加载 Session 运行状态…
+          正在加载 Remote Runner/Core 运行状态…
+        </div>
+      ) : null}
+
+      {settings || runtime ? (
+        <div
+          aria-label="Host Shell 本机 Debug 状态"
+          className={styles.hostShellStatus}
+          role="status"
+        >
+          <div className={styles.hostShellHeader}>
+            <strong>Host Shell 本机 Debug</strong>
+            <span>{runtime?.isolation_level || 'host_debug_unisolated'}</span>
+          </div>
+          <p>
+            期望
+            {(runtime?.host_shell_enabled ?? settings?.host_shell_enabled)
+              ? '开启'
+              : '关闭'}{' '}
+            ·{' '}
+            {runtime
+              ? `本机门禁${runtime.host_shell_available ? '可用' : '不可用'}`
+              : '本机门禁状态未知'}
+          </p>
+          <p className={styles.hostShellWarning}>
+            宿主机直接执行，不提供容器、网络、credential
+            或恶意命令隔离，仅限可信本机 Debug。
+          </p>
         </div>
       ) : null}
 

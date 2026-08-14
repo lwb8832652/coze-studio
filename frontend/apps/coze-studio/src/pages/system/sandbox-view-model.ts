@@ -69,12 +69,22 @@ export const getProviderTypeLabel = (type: SandboxProvider['type']) =>
 
 export const getLocalDebugAvailability = (
   capabilities?: SandboxCapabilities,
-) => ({
-  enabled: Boolean(capabilities?.local_debug.available),
-  reason:
-    capabilities?.local_debug.message ||
-    '服务端未声明本地调试能力，无法创建 local-debug Provider',
-});
+) => {
+  const localDebug = capabilities?.local_debug;
+  const hostShell = capabilities?.host_shell;
+  const selected = localDebug?.available
+    ? localDebug
+    : hostShell?.available
+      ? hostShell
+      : localDebug || hostShell;
+  return {
+    enabled: Boolean(localDebug?.available || hostShell?.available),
+    reason:
+      selected?.message ||
+      selected?.reason_code ||
+      '服务端未声明本地调试能力，无法创建 local-debug Provider',
+  };
+};
 
 export const getHealthFreshness = (
   health: SandboxHealthProjection,

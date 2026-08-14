@@ -66,6 +66,11 @@ describe('sandbox view model', () => {
           reason_code: 'AVAILABLE',
           message: 'local enabled',
         },
+        host_shell: {
+          available: false,
+          reason_code: 'HOST_SHELL_UNAVAILABLE',
+          message: 'host disabled',
+        },
       }),
     ).toEqual({ enabled: true, reason: 'local enabled' });
     expect(
@@ -80,8 +85,39 @@ describe('sandbox view model', () => {
           reason_code: 'LOCAL_DEBUG_UNAVAILABLE',
           message: 'local disabled',
         },
+        host_shell: {
+          available: false,
+          reason_code: 'HOST_SHELL_UNAVAILABLE',
+          message: 'host disabled',
+        },
       }),
     ).toEqual({ enabled: false, reason: 'local disabled' });
+  });
+
+  it('opens local Provider management from Host Shell without opening legacy one-shot', () => {
+    const capabilities = {
+      control_plane: {
+        available: true,
+        reason_code: 'AVAILABLE',
+        message: 'available',
+      },
+      local_debug: {
+        available: false,
+        reason_code: 'LOCAL_DEBUG_UNAVAILABLE',
+        message: 'legacy one-shot disabled',
+      },
+      host_shell: {
+        available: true,
+        reason_code: 'AVAILABLE',
+        message: 'host shell ready',
+      },
+    };
+
+    expect(getLocalDebugAvailability(capabilities)).toEqual({
+      enabled: true,
+      reason: 'host shell ready',
+    });
+    expect(capabilities.local_debug.available).toBe(false);
   });
 
   it('uses the five-minute runtime health threshold for stale warnings', () => {

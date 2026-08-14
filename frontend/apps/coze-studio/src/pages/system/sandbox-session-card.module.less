@@ -131,6 +131,40 @@
   background: #fff0bd;
 }
 
+.hostShellStatus {
+  display: grid;
+  gap: 6px;
+
+  margin-top: 12px;
+  padding: 10px 12px;
+
+  font-size: 12px;
+  color: #755300;
+
+  background: #fff7dc;
+  border: 1px solid #f1d27a;
+  border-radius: 8px;
+}
+
+.hostShellHeader {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hostShellHeader span {
+  font-family: monospace;
+}
+
+.hostShellStatus p {
+  margin: 0;
+}
+
+.hostShellWarning {
+  font-weight: 600;
+}
+
 .message {
   color: #25653f;
   background: #edf8f0;
@@ -191,7 +225,8 @@
   .runtimeHeader,
   .transportEncrypted,
   .transportUnknown,
-  .transportWarning {
+  .transportWarning,
+  .hostShellHeader {
     flex-direction: column;
     align-items: flex-start;
   }

@@ -108,7 +108,8 @@ func TestDefaultProviderSessionRunnerProjectsOnlyStrictRuntimeAggregate(t *testi
 	}
 	remoteStatus := infrasandbox.SessionRuntimeStatus{
 		Available: true, AppliedConfigVersion: 7, RuntimeGeneration: 9,
-		CoreEnabled: true, RawAIOReady: true, GenerationState: "ready",
+		CoreEnabled: true, HostShellEnabled: true, HostShellAvailable: true,
+		RawAIOReady: true, GenerationState: "ready",
 		QueueDepth: 2, Running: 1, UsedWeight: 1, TotalWeight: 2,
 		ActiveSessions: 1, IdleSessions: 3, ActiveShells: 1, IdleShells: 2,
 		TransportEncrypted: true,

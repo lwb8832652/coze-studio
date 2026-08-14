@@ -46,6 +46,7 @@ const runtime = {
   interactive_enabled: false,
   host_shell_enabled: true,
   host_shell_available: false,
+  isolation_level: 'host_debug_unisolated' as const,
   raw_aio_ready: false,
   generation_state: 'recovering' as const,
   queue_depth: 3,
@@ -64,6 +65,9 @@ const runtime = {
   sentinel_id: 'sentinel-secret',
   upstream_shell_id: 'shell-secret',
   physical_root: '/private/workspaces/secret',
+  env: { SECRET_TOKEN: 'environment-secret' },
+  pid: 7319,
+  command: 'curl https://secret.internal',
   docker_image: 'ghcr.io/private/image:secret',
   credential: 'secret-token',
   raw_error: 'dial tcp 10.0.0.1:8080: credential=secret',
@@ -138,9 +142,9 @@ describe('SandboxSessionCard', () => {
       await flush();
     });
 
-    expect(container.textContent).toContain('Core Session');
+    expect(container.textContent).toContain('Remote Runner/Core');
     expect(container.textContent).toContain('期望配置 v4');
-    expect(container.textContent).toContain('已应用 v3');
+    expect(container.textContent).toContain('Remote Runner 已应用 v3');
     expect(container.textContent).toContain('Generation 12');
     expect(container.textContent).toContain('Raw AIO未知');
     expect(container.textContent).toContain('恢复中');
@@ -149,13 +153,26 @@ describe('SandboxSessionCard', () => {
     expect(container.textContent).toContain('权重 4 / 8');
     expect(container.textContent).toContain('Session 活跃 2 · 空闲 6');
     expect(container.textContent).toContain('Shell 活跃 1 · 空闲 3');
-    expect(container.textContent).toContain('传输未加密');
-    expect(container.textContent).toContain('HTTP Provider');
+    expect(container.textContent).toContain('Remote Runner 传输未加密');
+    expect(container.textContent).toContain('Remote Runner HTTP 管理链路');
+    expect(container.textContent).toContain('Host Shell 本机 Debug');
+    expect(container.textContent).toContain('期望开启');
+    expect(container.textContent).toContain('本机门禁不可用');
+    expect(container.textContent).toContain('host_debug_unisolated');
+    expect(container.textContent).toContain(
+      '宿主机直接执行，不提供容器、网络、credential 或恶意命令隔离，仅限可信本机 Debug。',
+    );
+    expect(
+      container.querySelector('[aria-label="Host Shell 本机 Debug 状态"]'),
+    ).not.toBeNull();
     for (const sensitive of [
       'runner.internal',
       'sentinel-secret',
       'shell-secret',
       '/private/workspaces/secret',
+      'environment-secret',
+      '7319',
+      'curl https://secret.internal',
       'ghcr.io/private/image:secret',
       'secret-token',
       'dial tcp',
@@ -211,12 +228,18 @@ describe('SandboxSessionCard', () => {
       generation_state: 'unknown',
       transport_known: false,
       transport_encrypted: false,
+      host_shell_enabled: false,
+      host_shell_available: true,
       reason_code: 'RUNNER_UNAVAILABLE',
     });
 
     await render();
 
-    expect(container.textContent).toContain('传输状态未知');
+    expect(container.textContent).toContain('Remote Runner 传输状态未知');
+    expect(container.textContent).toContain('本机门禁可用');
+    expect(container.textContent).toContain('期望关闭');
+    expect(container.textContent).toContain('host_debug_unisolated');
+    expect(container.textContent).toContain('仅限可信本机 Debug');
     expect(container.textContent).not.toContain('HTTP Provider');
     expect(container.textContent).not.toContain('HTTPS Provider');
   });
@@ -229,7 +252,13 @@ describe('SandboxSessionCard', () => {
     await render();
 
     expect(container.textContent).toContain('期望配置 v4');
-    expect(container.textContent).toContain('Session 运行状态加载失败');
+    expect(container.textContent).toContain(
+      'Remote Runner/Core 运行状态加载失败',
+    );
+    expect(container.textContent).toContain('Host Shell 本机 Debug');
+    expect(container.textContent).toContain('本机门禁状态未知');
+    expect(container.textContent).toContain('host_debug_unisolated');
+    expect(container.textContent).toContain('仅限可信本机 Debug');
     expect(container.textContent).not.toContain('secret.internal');
     expect(container.textContent).not.toContain('secret-token');
   });
@@ -257,7 +286,8 @@ describe('SandboxSessionCard', () => {
       expect.any(AbortSignal),
     );
     expect(container.textContent).toContain('期望配置 v5');
-    expect(container.textContent).toContain('已应用 v3');
+    expect(container.textContent).toContain('Remote Runner 已应用 v3');
+    expect(container.textContent).toContain('Remote Runner 尚未应用');
     expect(container.textContent).toContain('RUNNER_UNAVAILABLE');
   });
 });

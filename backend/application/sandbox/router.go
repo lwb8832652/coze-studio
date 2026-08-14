@@ -1486,13 +1486,21 @@ func (r *ProviderRouter) ResolveSession(
 	if err != nil || normalizedSettings.Version < domainsandbox.InitialVersion {
 		return nil, domainsandbox.ErrConfigurationInvalid
 	}
-	if !normalizedSettings.CoreEnabled {
-		return nil, domainsandbox.ErrExecutionForbidden
-	}
-
-	descriptor, provider, err := r.prepareRuntime(ctx, request.ProviderKey, request.Scope)
+	descriptor, provider, err := r.prepareHealthyProvider(ctx, request.ProviderKey, request.Scope)
 	if err != nil {
 		return nil, err
+	}
+	switch descriptor.ProviderType {
+	case domainsandbox.ProviderTypeRemoteHTTP:
+		if !normalizedSettings.CoreEnabled {
+			return nil, domainsandbox.ErrExecutionForbidden
+		}
+	case domainsandbox.ProviderTypeLocalDebug:
+		if !normalizedSettings.HostShellEnabled {
+			return nil, domainsandbox.ErrExecutionForbidden
+		}
+	default:
+		return nil, domainsandbox.ErrConfigurationInvalid
 	}
 	if !descriptor.HasFeature(domainsandbox.ProviderFeatureSandboxSessionV1) ||
 		!descriptor.HasFeature(domainsandbox.ProviderFeatureSignedSessionContextV2) {
@@ -1777,6 +1785,21 @@ func (r *ProviderRouter) prepareRuntime(
 	providerKey string,
 	scope domainsandbox.Scope,
 ) (ProviderDescriptor, domainsandbox.Provider, error) {
+	descriptor, provider, err := r.prepareHealthyProvider(ctx, providerKey, scope)
+	if err != nil {
+		return ProviderDescriptor{}, domainsandbox.Provider{}, err
+	}
+	if err := r.factory.ValidateConfig(ctx, descriptor); err != nil {
+		return ProviderDescriptor{}, domainsandbox.Provider{}, normalizeOperationalError(ctx, err)
+	}
+	return descriptor, provider, nil
+}
+
+func (r *ProviderRouter) prepareHealthyProvider(
+	ctx context.Context,
+	providerKey string,
+	scope domainsandbox.Scope,
+) (ProviderDescriptor, domainsandbox.Provider, error) {
 	provider, err := r.providers.GetProviderByKey(ctx, providerKey)
 	if err != nil {
 		return ProviderDescriptor{}, domainsandbox.Provider{}, normalizeOperationalError(ctx, err)
@@ -1812,9 +1835,6 @@ func (r *ProviderRouter) prepareRuntime(
 		ProviderKey: provider.ProviderKey, ProviderType: provider.Type,
 		Scope: scope, Policy: cloneRuntimePolicy(policy),
 		features: append([]domainsandbox.ProviderFeature(nil), provider.Health.Features...),
-	}
-	if err := r.factory.ValidateConfig(ctx, descriptor); err != nil {
-		return ProviderDescriptor{}, domainsandbox.Provider{}, normalizeOperationalError(ctx, err)
 	}
 	return descriptor, cloneProviderForAdapter(*provider, policy), nil
 }

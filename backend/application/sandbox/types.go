@@ -169,6 +169,7 @@ type CapabilityStateDTO struct {
 type SandboxCapabilitiesDTO struct {
 	ControlPlane CapabilityStateDTO `json:"control_plane"`
 	LocalDebug   CapabilityStateDTO `json:"local_debug"`
+	HostShell    CapabilityStateDTO `json:"host_shell"`
 }
 
 type AuditEventDTO struct {
@@ -305,6 +306,8 @@ var ErrInteractiveUnsupported = errors.New("sandbox interactive sessions are not
 
 const SessionReasonRunnerUnavailable = "RUNNER_UNAVAILABLE"
 
+const SessionIsolationLevelHostDebugUnisolated = "host_debug_unisolated"
+
 type SessionSettingsDTO struct {
 	Version  uint64                               `json:"version"`
 	Settings domainsandbox.SessionRuntimeSettings `json:"settings"`
@@ -358,6 +361,7 @@ type SessionRuntimeStatusDTO struct {
 	InteractiveEnabled   bool   `json:"interactive_enabled"`
 	HostShellEnabled     bool   `json:"host_shell_enabled"`
 	HostShellAvailable   bool   `json:"host_shell_available"`
+	IsolationLevel       string `json:"isolation_level"`
 	RawAIOReady          bool   `json:"raw_aio_ready"`
 	GenerationState      string `json:"generation_state"`
 	QueueDepth           int    `json:"queue_depth"`
@@ -380,7 +384,12 @@ type NativeSessionRunner interface {
 	SessionRuntimeStatus(context.Context) (NativeSessionRuntimeStatus, error)
 }
 
+type HostShellRuntimeStatusSource interface {
+	HostShellAvailable(context.Context) bool
+}
+
 type SessionSettingsServiceOptions struct {
-	Store  domainsandbox.SessionSettingsAuditRepository
-	Runner NativeSessionRunner
+	Store           domainsandbox.SessionSettingsAuditRepository
+	Runner          NativeSessionRunner
+	HostShellStatus HostShellRuntimeStatusSource
 }

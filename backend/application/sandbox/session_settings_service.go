@@ -16,15 +16,18 @@ import (
 var sessionRuntimeReasonCodePattern = regexp.MustCompile(`^[A-Z0-9_]{1,64}$`)
 
 type SessionSettingsService struct {
-	store  domainsandbox.SessionSettingsAuditRepository
-	runner NativeSessionRunner
+	store           domainsandbox.SessionSettingsAuditRepository
+	runner          NativeSessionRunner
+	hostShellStatus HostShellRuntimeStatusSource
 }
 
 func NewSessionSettingsService(options SessionSettingsServiceOptions) (*SessionSettingsService, error) {
 	if options.Store == nil {
 		return nil, domainsandbox.ErrConfigurationInvalid
 	}
-	return &SessionSettingsService{store: options.Store, runner: options.Runner}, nil
+	return &SessionSettingsService{
+		store: options.Store, runner: options.Runner, hostShellStatus: options.HostShellStatus,
+	}, nil
 }
 
 func (s *SessionSettingsService) Get(ctx context.Context, actor Actor) (*SessionSettingsDTO, error) {
@@ -108,7 +111,14 @@ func (s *SessionSettingsService) RuntimeStatus(ctx context.Context, actor Actor)
 	if err != nil {
 		return nil, stableControlPlaneError(err)
 	}
-	result := &SessionRuntimeStatusDTO{DesiredConfigVersion: settings.Version}
+	result := &SessionRuntimeStatusDTO{
+		DesiredConfigVersion: settings.Version,
+		HostShellEnabled:     settings.HostShellEnabled,
+		IsolationLevel:       SessionIsolationLevelHostDebugUnisolated,
+	}
+	if s.hostShellStatus != nil {
+		result.HostShellAvailable = s.hostShellStatus.HostShellAvailable(ctx)
+	}
 	if s.runner == nil {
 		result.ReasonCode = SessionReasonRunnerUnavailable
 		return result, nil
@@ -121,8 +131,12 @@ func (s *SessionSettingsService) RuntimeStatus(ctx context.Context, actor Actor)
 	if !validNativeSessionRuntimeStatus(status) {
 		return nil, domainsandbox.ErrUnavailable
 	}
-	result = projectNativeSessionRuntimeStatus(status)
-	result.DesiredConfigVersion = settings.Version
+	remoteResult := projectNativeSessionRuntimeStatus(status)
+	remoteResult.DesiredConfigVersion = result.DesiredConfigVersion
+	remoteResult.HostShellEnabled = result.HostShellEnabled
+	remoteResult.HostShellAvailable = result.HostShellAvailable
+	remoteResult.IsolationLevel = result.IsolationLevel
+	result = remoteResult
 	if !status.Available {
 		result.ReasonCode = stableSessionRuntimeReason(status.ReasonCode)
 		if result.ReasonCode == "" {
@@ -166,8 +180,7 @@ func projectNativeSessionRuntimeStatus(status NativeSessionRuntimeStatus) *Sessi
 	return &SessionRuntimeStatusDTO{
 		Available: status.Available, AppliedConfigVersion: status.AppliedConfigVersion,
 		RuntimeGeneration: status.RuntimeGeneration, CoreEnabled: status.CoreEnabled,
-		InteractiveEnabled: status.InteractiveEnabled, HostShellEnabled: status.HostShellEnabled,
-		HostShellAvailable: status.HostShellAvailable, RawAIOReady: status.RawAIOReady,
+		InteractiveEnabled: status.InteractiveEnabled, RawAIOReady: status.RawAIOReady,
 		GenerationState: status.GenerationState, QueueDepth: status.QueueDepth, Running: status.Running,
 		UsedWeight: status.UsedWeight, TotalWeight: status.TotalWeight,
 		ActiveSessions: status.ActiveSessions, IdleSessions: status.IdleSessions,

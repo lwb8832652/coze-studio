@@ -49,6 +49,7 @@ describe('sandbox service', () => {
       interactive_enabled: false,
       host_shell_enabled: true,
       host_shell_available: false,
+      isolation_level: 'host_debug_unisolated',
       raw_aio_ready: true,
       generation_state: 'ready',
       queue_depth: 3,
@@ -67,6 +68,9 @@ describe('sandbox service', () => {
       sentinel_id: 'sentinel-secret',
       upstream_shell_id: 'shell-secret',
       physical_root: '/private/workspaces/secret',
+      env: { SECRET_TOKEN: 'environment-secret' },
+      pid: 7319,
+      command: 'curl https://secret.internal',
       docker_image: 'ghcr.io/private/image:secret',
       credential: 'secret-token',
       raw_error: 'dial tcp 10.0.0.1:8080: credential=secret',
@@ -85,6 +89,7 @@ describe('sandbox service', () => {
       interactive_enabled: false,
       host_shell_enabled: true,
       host_shell_available: false,
+      isolation_level: 'host_debug_unisolated',
       raw_aio_ready: true,
       generation_state: 'ready',
       queue_depth: 3,
@@ -116,6 +121,7 @@ describe('sandbox service', () => {
         interactive_enabled: true,
         host_shell_enabled: 'true',
         host_shell_available: true,
+        isolation_level: 'containerized-secret-value',
         raw_aio_ready: 'yes',
         generation_state: 'raw-secret-state',
         queue_depth: -3,
@@ -141,6 +147,7 @@ describe('sandbox service', () => {
       interactive_enabled: true,
       host_shell_enabled: false,
       host_shell_available: true,
+      isolation_level: 'host_debug_unisolated',
       raw_aio_ready: false,
       generation_state: 'unknown',
       queue_depth: 0,
@@ -452,6 +459,49 @@ describe('sandbox service', () => {
     });
     expect(summary).toEqual({ total: 12, enabled: 8, unhealthy: 2 });
     expect(capabilities.local_debug.available).toBe(true);
+  });
+
+  it('preserves and sanitizes the independent Host Shell capability', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      ok({
+        control_plane: {
+          available: true,
+          reason_code: 'AVAILABLE',
+          message: 'control ready',
+        },
+        local_debug: {
+          available: false,
+          reason_code: 'LOCAL_DEBUG_UNAVAILABLE',
+          message: 'legacy one-shot disabled',
+        },
+        host_shell: {
+          available: true,
+          reason_code: 'AVAILABLE',
+          message:
+            'host shell ready credential=secret https://host.internal/path',
+          endpoint: 'https://host.internal',
+          command: 'must-not-surface',
+        },
+      }),
+    ) as never;
+
+    await expect(getSandboxCapabilities()).resolves.toEqual({
+      control_plane: {
+        available: true,
+        reason_code: 'AVAILABLE',
+        message: 'control ready',
+      },
+      local_debug: {
+        available: false,
+        reason_code: 'LOCAL_DEBUG_UNAVAILABLE',
+        message: 'legacy one-shot disabled',
+      },
+      host_shell: {
+        available: true,
+        reason_code: 'AVAILABLE',
+        message: 'host shell ready [redacted] [redacted]',
+      },
+    });
   });
 
   it('preserves the plugin scope in filters and provider projections', async () => {

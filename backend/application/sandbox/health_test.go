@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,10 @@ func TestSandboxHealthCheckCallsAdapterAndPersistsBoundedProjection(t *testing.T
 		ProtocolVersion: infrasandbox.HealthProtocolV1,
 		Status:          domainsandbox.HealthStatusHealthy,
 		Capabilities:    []domainsandbox.Scope{domainsandbox.ScopeAgent},
+		Features: []domainsandbox.ProviderFeature{
+			domainsandbox.ProviderFeatureSandboxSessionV1,
+			domainsandbox.ProviderFeatureSignedSessionContextV2,
+		},
 	}}
 	h.factory.provider = adapter
 	checkedAt := time.Date(2026, 7, 15, 5, 0, 0, 12_000_000, time.UTC)
@@ -53,7 +58,8 @@ func TestSandboxHealthCheckCallsAdapterAndPersistsBoundedProjection(t *testing.T
 		t.Fatalf("health projection = %#v", result)
 	}
 	stored := h.providers.providers[provider.ID]
-	if stored.Health.Status != domainsandbox.HealthStatusHealthy || stored.Version != 4 || len(h.audits.events) != 1 {
+	if stored.Health.Status != domainsandbox.HealthStatusHealthy || stored.Version != 4 || len(h.audits.events) != 1 ||
+		!reflect.DeepEqual(stored.Health.Features, adapter.result.Features) {
 		t.Fatalf("stored health/audit = %#v/%#v", stored, h.audits.events)
 	}
 	audit := h.audits.events[0]

@@ -102,6 +102,7 @@ export interface SandboxCapabilityState {
 export interface SandboxCapabilities {
   control_plane: SandboxCapabilityState;
   local_debug: SandboxCapabilityState;
+  host_shell: SandboxCapabilityState;
 }
 
 export interface SandboxProviderMutation {
@@ -176,6 +177,8 @@ export type SandboxSessionGenerationState =
   | 'recovering'
   | 'ready';
 
+export type SandboxSessionIsolationLevel = 'host_debug_unisolated';
+
 export interface SandboxSessionRuntimeStatus {
   available: boolean;
   desired_config_version: number;
@@ -185,6 +188,7 @@ export interface SandboxSessionRuntimeStatus {
   interactive_enabled: boolean;
   host_shell_enabled: boolean;
   host_shell_available: boolean;
+  isolation_level: SandboxSessionIsolationLevel;
   raw_aio_ready: boolean;
   generation_state: SandboxSessionGenerationState;
   queue_depth: number;
@@ -636,6 +640,7 @@ export const getSandboxCapabilities = async (
   return {
     control_plane: sanitizeCapability(result.control_plane),
     local_debug: sanitizeCapability(result.local_debug),
+    host_shell: sanitizeCapability(result.host_shell),
   };
 };
 
@@ -746,6 +751,7 @@ export const getSandboxSessionRuntimeStatus = async (
     interactive_enabled: status.interactive_enabled === true,
     host_shell_enabled: status.host_shell_enabled === true,
     host_shell_available: status.host_shell_available === true,
+    isolation_level: 'host_debug_unisolated',
     raw_aio_ready: status.raw_aio_ready === true,
     generation_state: sanitizeSessionGenerationState(status.generation_state),
     queue_depth: safeUnsignedInteger(status.queue_depth),

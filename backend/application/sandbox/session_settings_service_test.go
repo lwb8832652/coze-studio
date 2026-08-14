@@ -109,7 +109,8 @@ func TestSessionSettingsServiceRuntimeStatusProjectsOnlySafeAggregates(t *testin
 	service, _ := NewSessionSettingsService(SessionSettingsServiceOptions{Store: store, Runner: runner})
 	result, err := service.RuntimeStatus(context.Background(), testActor())
 	if err != nil || !result.Available || result.DesiredConfigVersion != 4 || result.AppliedConfigVersion != 3 || result.RuntimeGeneration != 7 ||
-		result.GenerationState != "ready" || result.QueueDepth != 2 || result.ActiveSessions != 1 || result.IdleShells != 2 || !result.TransportKnown || !result.TransportEncrypted || result.ReasonCode != "" {
+		result.GenerationState != "ready" || result.QueueDepth != 2 || result.ActiveSessions != 1 || result.IdleShells != 2 || !result.TransportKnown || !result.TransportEncrypted ||
+		result.IsolationLevel != "host_debug_unisolated" || result.ReasonCode != "" {
 		t.Fatalf("RuntimeStatus() = %#v, %v", result, err)
 	}
 
@@ -117,6 +118,64 @@ func TestSessionSettingsServiceRuntimeStatusProjectsOnlySafeAggregates(t *testin
 	unavailable, err := service.RuntimeStatus(context.Background(), testActor())
 	if err != nil || unavailable.Available || unavailable.DesiredConfigVersion != 4 || unavailable.TransportKnown || unavailable.TransportEncrypted || unavailable.ReasonCode != SessionReasonRunnerUnavailable {
 		t.Fatalf("unavailable RuntimeStatus() = %#v, %v", unavailable, err)
+	}
+}
+
+func TestSessionSettingsServiceRuntimeStatusOwnsHostShellProjection(t *testing.T) {
+	remoteReady := NativeSessionRuntimeStatus{
+		Available: true, AppliedConfigVersion: 7, RuntimeGeneration: 9,
+		CoreEnabled: true, HostShellEnabled: true, HostShellAvailable: true,
+		GenerationState: "ready", TotalWeight: 2, TransportKnown: true,
+	}
+	remoteUnavailable := NativeSessionRuntimeStatus{
+		HostShellEnabled: true, HostShellAvailable: true,
+		GenerationState: "disabled", ReasonCode: "AIO_UNAVAILABLE",
+	}
+	tests := []struct {
+		name          string
+		desired       bool
+		source        *hostShellRuntimeStatusSourceFake
+		runner        NativeSessionRunner
+		wantAvailable bool
+		wantRemote    bool
+		wantReason    string
+	}{
+		{name: "desired true gate false ignores remote true", desired: true, source: &hostShellRuntimeStatusSourceFake{}, runner: &sessionRunnerFake{status: remoteReady}, wantRemote: true},
+		{name: "desired false gate true stays independently available", source: &hostShellRuntimeStatusSourceFake{available: true}, runner: &sessionRunnerFake{status: remoteReady}, wantAvailable: true, wantRemote: true},
+		{name: "remote unavailable preserves local gate", desired: true, source: &hostShellRuntimeStatusSourceFake{available: true}, runner: &sessionRunnerFake{status: remoteUnavailable}, wantAvailable: true, wantReason: "AIO_UNAVAILABLE"},
+		{name: "runner error preserves local gate", desired: true, source: &hostShellRuntimeStatusSourceFake{available: true}, runner: &sessionRunnerFake{err: errors.New("remote unavailable")}, wantAvailable: true, wantReason: SessionReasonRunnerUnavailable},
+		{name: "runner nil preserves local gate", desired: true, source: &hostShellRuntimeStatusSourceFake{available: true}, wantAvailable: true, wantReason: SessionReasonRunnerUnavailable},
+		{name: "source nil fails closed despite remote true", desired: true, runner: &sessionRunnerFake{status: remoteReady}, wantRemote: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings := domainsandbox.DefaultSessionRuntimeSettings()
+			settings.Version = 8
+			settings.HostShellEnabled = test.desired
+			options := SessionSettingsServiceOptions{
+				Store: &sessionSettingsStoreFake{settings: settings}, Runner: test.runner,
+			}
+			if test.source != nil {
+				options.HostShellStatus = test.source
+			}
+			service, err := NewSessionSettingsService(options)
+			if err != nil {
+				t.Fatalf("NewSessionSettingsService() error = %v", err)
+			}
+			result, err := service.RuntimeStatus(context.Background(), testActor())
+			if err != nil {
+				t.Fatalf("RuntimeStatus() error = %v", err)
+			}
+			if result.HostShellEnabled != test.desired || result.HostShellAvailable != test.wantAvailable || result.IsolationLevel != "host_debug_unisolated" {
+				t.Fatalf("host projection = %#v", result)
+			}
+			if result.Available != test.wantRemote || result.ReasonCode != test.wantReason {
+				t.Fatalf("remote projection = %#v", result)
+			}
+			if test.source != nil && test.source.calls != 1 {
+				t.Fatalf("HostShellAvailable() calls = %d, want 1", test.source.calls)
+			}
+		})
 	}
 }
 
@@ -180,6 +239,16 @@ type sessionRunnerFake struct {
 	status       NativeSessionRuntimeStatus
 	got          domainsandbox.SessionRuntimeSettings
 	calls        int
+}
+
+type hostShellRuntimeStatusSourceFake struct {
+	available bool
+	calls     int
+}
+
+func (f *hostShellRuntimeStatusSourceFake) HostShellAvailable(context.Context) bool {
+	f.calls++
+	return f.available
 }
 
 func (f *sessionRunnerFake) ApplySessionSettings(_ context.Context, settings domainsandbox.SessionRuntimeSettings) (uint64, error) {

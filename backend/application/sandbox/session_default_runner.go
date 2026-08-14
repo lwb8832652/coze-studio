@@ -99,8 +99,7 @@ func (runner *DefaultProviderSessionRunner) SessionRuntimeStatus(ctx context.Con
 	return NativeSessionRuntimeStatus{
 		Available: status.Available, AppliedConfigVersion: status.AppliedConfigVersion,
 		RuntimeGeneration: status.RuntimeGeneration, CoreEnabled: status.CoreEnabled,
-		InteractiveEnabled: status.InteractiveEnabled, HostShellEnabled: status.HostShellEnabled,
-		HostShellAvailable: status.HostShellAvailable, RawAIOReady: status.RawAIOReady,
+		InteractiveEnabled: status.InteractiveEnabled, RawAIOReady: status.RawAIOReady,
 		GenerationState: status.GenerationState, QueueDepth: status.QueueDepth,
 		Running: status.Running, UsedWeight: status.UsedWeight, TotalWeight: status.TotalWeight,
 		ActiveSessions: status.ActiveSessions, IdleSessions: status.IdleSessions,

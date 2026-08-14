@@ -22,7 +22,7 @@ const deferred = <T,>() => {
   return { promise, reject, resolve };
 };
 
-const capabilities = (localDebug: boolean) => ({
+const capabilities = (localDebug: boolean, hostShell = false) => ({
   control_plane: {
     available: true,
     reason_code: 'AVAILABLE',
@@ -34,6 +34,11 @@ const capabilities = (localDebug: boolean) => ({
     message: localDebug
       ? 'local debug ready'
       : 'local debug disabled by server',
+  },
+  host_shell: {
+    available: hostShell,
+    reason_code: hostShell ? 'AVAILABLE' : 'HOST_SHELL_UNAVAILABLE',
+    message: hostShell ? 'host shell ready' : 'host shell disabled by server',
   },
 });
 
@@ -94,6 +99,32 @@ describe('SandboxProviderForm', () => {
       container.querySelector<HTMLOptionElement>('option[value="local_debug"]')
         ?.disabled,
     ).toBe(false);
+  });
+
+  it('enables local Provider management for Host-only capability without relabeling one-shot', () => {
+    act(() =>
+      root.render(
+        <SandboxProviderForm
+          capabilities={capabilities(false, true)}
+          mode="create"
+          open
+          onCancel={vi.fn()}
+          onSubmit={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector<HTMLOptionElement>('option[value="local_debug"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(container.textContent).toContain('host shell ready');
+    expect(container.textContent).not.toContain(
+      'local debug disabled by server',
+    );
+    expect(container.textContent).toContain(
+      'Host Shell 不会启用 legacy one-shot',
+    );
   });
 
   it('submits the complete policy payload without exposing edit secrets', async () => {

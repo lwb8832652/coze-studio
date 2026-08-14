@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -46,12 +47,18 @@ var sandboxRemoteProviderPrivateRanges = []netip.Prefix{
 
 const maxSandboxRemoteProviderAllowedPrivateCIDRs = 16
 
+const (
+	defaultHostShellMaxSessions = 128
+	defaultHostShellCancelGrace = 3 * time.Second
+)
+
 var (
 	SandboxSVC               *appsandbox.Service
 	SandboxSchedulerSVC      *appsandbox.SchedulerService
 	SandboxSessionSVC        *appsandbox.SessionSettingsService
 	SandboxRouter            *appsandbox.ProviderRouter
 	SandboxRuntimeRepository sandboxRepository
+	sandboxProviderFactory   *configuredSandboxProviderFactory
 )
 
 var sandboxMCPRuntimeRegistry struct {
@@ -140,6 +147,12 @@ var sandboxControlPlaneConstructors = sandboxWiringConstructors{
 var errSandboxControlPlaneInitialization = fmt.Errorf("sandbox control plane initialization failed")
 
 func clearSandboxControlPlane() {
+	if sandboxProviderFactory != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		sandboxProviderFactory.shutdownHostShellSessions(shutdownCtx)
+		shutdownCancel()
+		sandboxProviderFactory = nil
+	}
 	clearSandboxMCPRuntimeBinding()
 	SandboxSVC = nil
 	SandboxSchedulerSVC = nil
@@ -213,8 +226,11 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 		codec: codec, identitySigner: identitySigner, sessionSigner: sessionSignerFromIdentitySigner(identitySigner),
 		deploymentID:        strings.TrimSpace(os.Getenv(sandboxRunnerDeploymentIDEnv)),
 		allowedPrivateCIDRs: append([]string(nil), allowedPrivateCIDRs...),
-		localDelegate:       localDelegate, metrics: metrics,
+		localDelegate:       localDelegate, getenv: os.Getenv, metrics: metrics,
+		hostRootDir:   filepath.Join(os.TempDir(), "coze-sandbox-host-shell"),
+		hostSkillsDir: filepath.Join(os.TempDir(), "coze-sandbox-host-shell-skills"),
 	}
+	sandboxProviderFactory = providerFactory
 	service, err := constructors.newService(appsandbox.ServiceOptions{
 		Providers:  repository,
 		UnitOfWork: repository,
@@ -258,6 +274,9 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	}
 	sessionService, err := constructors.newSessionService(appsandbox.SessionSettingsServiceOptions{
 		Store: repository, Runner: sessionRunner,
+		HostShellStatus: hostShellRuntimeStatusSource{
+			getenv: providerFactory.environment(),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create sandbox session settings service: %w", err)
@@ -552,7 +571,91 @@ type configuredSandboxProviderFactory struct {
 	deploymentID        string
 	allowedPrivateCIDRs []string
 	localDelegate       infrasandbox.LocalExecutionDelegate
+	getenv              func(string) string
 	metrics             appsandbox.SandboxMetricsRecorder
+	hostRootDir         string
+	hostSkillsDir       string
+	hostMu              sync.Mutex
+	hostManagers        map[int64]*infrasandbox.HostShellSessionManager
+}
+
+type hostShellRuntimeStatusSource struct {
+	getenv func(string) string
+}
+
+func (s hostShellRuntimeStatusSource) HostShellAvailable(ctx context.Context) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return infrasandbox.HostShellSessionAllowed(s.getenv)
+}
+
+func (f *configuredSandboxProviderFactory) environment() func(string) string {
+	if f != nil && f.getenv != nil {
+		return f.getenv
+	}
+	return os.Getenv
+}
+
+func (f *configuredSandboxProviderFactory) hostSessionManager(
+	provider domainsandbox.Provider,
+) (*infrasandbox.HostShellSessionManager, error) {
+	if f == nil || provider.ID <= 0 || !infrasandbox.HostShellSessionAllowed(f.environment()) ||
+		!filepath.IsAbs(f.hostRootDir) || !filepath.IsAbs(f.hostSkillsDir) {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	f.hostMu.Lock()
+	defer f.hostMu.Unlock()
+	if current := f.hostManagers[provider.ID]; current != nil {
+		if err := current.UpdateAllowedEnvironmentNames(provider.Policy.AllowedEnvNames); err != nil {
+			return nil, err
+		}
+		return current, nil
+	}
+	manager, err := infrasandbox.NewHostShellSessionManager(infrasandbox.HostShellSessionManagerOptions{
+		RootDir: f.hostRootDir, SkillsDir: f.hostSkillsDir, ExpectedProviderID: provider.ID,
+		AllowedEnvironmentNames: append([]string(nil), provider.Policy.AllowedEnvNames...),
+		Gate: func() bool {
+			return infrasandbox.HostShellSessionAllowed(f.environment())
+		},
+		CancelGrace: defaultHostShellCancelGrace,
+		MaxSessions: defaultHostShellMaxSessions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if f.hostManagers == nil {
+		f.hostManagers = make(map[int64]*infrasandbox.HostShellSessionManager)
+	}
+	f.hostManagers[provider.ID] = manager
+	return manager, nil
+}
+
+func (f *configuredSandboxProviderFactory) shutdownHostShellSessions(ctx context.Context) {
+	if f == nil {
+		return
+	}
+	f.hostMu.Lock()
+	managers := make([]*infrasandbox.HostShellSessionManager, 0, len(f.hostManagers))
+	for _, manager := range f.hostManagers {
+		managers = append(managers, manager)
+	}
+	f.hostManagers = nil
+	f.hostMu.Unlock()
+	for _, manager := range managers {
+		_ = manager.Shutdown(ctx)
+	}
+}
+
+type hostShellSessionRuntime struct {
+	*infrasandbox.HostShellSessionManager
+}
+
+func (r *hostShellSessionRuntime) CloseContext(ctx context.Context) error {
+	if r == nil || r.HostShellSessionManager == nil || ctx == nil {
+		return domainsandbox.ErrInvalidInput
+	}
+	return ctx.Err()
 }
 
 func sessionSignerFromIdentitySigner(signer sandboxidentity.Signer) sandboxidentity.SessionSigner {
@@ -635,6 +738,12 @@ type sandboxHealthProviderFactory struct {
 }
 
 func (f sandboxHealthProviderFactory) Build(ctx context.Context, provider *domainsandbox.Provider) (appsandbox.HealthProvider, error) {
+	if f.factory == nil || provider == nil {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	if provider.Type == domainsandbox.ProviderTypeLocalDebug {
+		return infrasandbox.NewLocalDebugHealthProvider(f.factory.localDelegate, provider.Scopes)
+	}
 	return f.factory.build(ctx, provider)
 }
 
@@ -677,11 +786,23 @@ func (f sandboxRuntimeProviderFactory) ValidateSessionConfig(_ context.Context, 
 	if _, err := domainsandbox.NormalizeScopes([]domainsandbox.Scope{descriptor.Scope}); err != nil {
 		return domainsandbox.ErrConfigurationInvalid
 	}
-	if descriptor.ProviderType != domainsandbox.ProviderTypeRemoteHTTP || f.factory == nil ||
-		f.factory.sessionSigner == nil || f.factory.deploymentID == "" {
+	if f.factory == nil {
 		return domainsandbox.ErrConfigurationInvalid
 	}
-	if normalized, err := domainsandbox.NormalizeAIOGenerationDeploymentID(f.factory.deploymentID); err != nil || normalized != f.factory.deploymentID {
+	switch descriptor.ProviderType {
+	case domainsandbox.ProviderTypeRemoteHTTP:
+		if f.factory.sessionSigner == nil || f.factory.deploymentID == "" {
+			return domainsandbox.ErrConfigurationInvalid
+		}
+		if normalized, err := domainsandbox.NormalizeAIOGenerationDeploymentID(f.factory.deploymentID); err != nil || normalized != f.factory.deploymentID {
+			return domainsandbox.ErrConfigurationInvalid
+		}
+	case domainsandbox.ProviderTypeLocalDebug:
+		if !infrasandbox.HostShellSessionAllowed(f.factory.environment()) ||
+			!filepath.IsAbs(f.factory.hostRootDir) || !filepath.IsAbs(f.factory.hostSkillsDir) {
+			return domainsandbox.ErrExecutionForbidden
+		}
+	default:
 		return domainsandbox.ErrConfigurationInvalid
 	}
 	if !descriptor.HasFeature(domainsandbox.ProviderFeatureSandboxSessionV1) ||
@@ -696,9 +817,22 @@ func (f sandboxRuntimeProviderFactory) BuildSession(
 	provider domainsandbox.Provider,
 	descriptor appsandbox.ProviderDescriptor,
 ) (infrasandbox.SessionRuntimeProvider, error) {
-	if f.factory == nil || f.factory.sessionSigner == nil || f.factory.deploymentID == "" || provider.ID <= 0 ||
+	if f.factory == nil || provider.ID <= 0 ||
 		descriptor.ProviderKey != provider.ProviderKey || descriptor.ProviderType != provider.Type ||
 		!scopeIncludedForSandboxWiring(provider.Scopes, descriptor.Scope) {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	if provider.Type == domainsandbox.ProviderTypeLocalDebug {
+		if !infrasandbox.HostShellSessionAllowed(f.factory.environment()) {
+			return nil, domainsandbox.ErrExecutionForbidden
+		}
+		manager, err := f.factory.hostSessionManager(provider)
+		if err != nil {
+			return nil, err
+		}
+		return &hostShellSessionRuntime{HostShellSessionManager: manager}, nil
+	}
+	if provider.Type != domainsandbox.ProviderTypeRemoteHTTP || f.factory.sessionSigner == nil || f.factory.deploymentID == "" {
 		return nil, domainsandbox.ErrConfigurationInvalid
 	}
 	runtime, err := f.factory.build(ctx, &provider)

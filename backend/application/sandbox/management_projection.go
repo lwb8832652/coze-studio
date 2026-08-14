@@ -31,6 +31,7 @@ const (
 	CapabilityReasonAvailable             = "AVAILABLE"
 	CapabilityReasonControlPlaneDisabled  = "CONTROL_PLANE_DISABLED"
 	CapabilityReasonLocalDebugUnavailable = "LOCAL_DEBUG_UNAVAILABLE"
+	CapabilityReasonHostShellUnavailable  = "HOST_SHELL_UNAVAILABLE"
 
 	sandboxControlPlaneEnabledEnvironment = "SANDBOX_CONTROL_PLANE_ENABLED"
 )
@@ -66,7 +67,19 @@ func (p environmentCapabilityPolicy) Evaluate() SandboxCapabilitiesDTO {
 		localDebug.ReasonCode = CapabilityReasonAvailable
 		localDebug.Message = "local debug sandbox is available"
 	}
-	return SandboxCapabilitiesDTO{ControlPlane: controlPlane, LocalDebug: localDebug}
+	hostShell := CapabilityStateDTO{
+		ReasonCode: CapabilityReasonHostShellUnavailable,
+		Message:    "host shell sandbox is unavailable",
+	}
+	if !controlPlaneAvailable {
+		hostShell.ReasonCode = CapabilityReasonControlPlaneDisabled
+		hostShell.Message = "sandbox control plane is disabled"
+	} else if infrasandbox.HostShellSessionAllowed(getenv) {
+		hostShell.Available = true
+		hostShell.ReasonCode = CapabilityReasonAvailable
+		hostShell.Message = "host shell sandbox is available"
+	}
+	return SandboxCapabilitiesDTO{ControlPlane: controlPlane, LocalDebug: localDebug, HostShell: hostShell}
 }
 
 func (s *Service) requireLocalDebugCapability(providerType domainsandbox.ProviderType) error {
@@ -77,7 +90,8 @@ func (s *Service) requireLocalDebugCapability(providerType domainsandbox.Provide
 		return domainsandbox.ErrLocalDebugUnavailable
 	}
 	capabilities := s.capabilities.Evaluate()
-	if !capabilities.ControlPlane.Available || !capabilities.LocalDebug.Available {
+	if !capabilities.ControlPlane.Available ||
+		(!capabilities.LocalDebug.Available && !capabilities.HostShell.Available) {
 		return domainsandbox.ErrLocalDebugUnavailable
 	}
 	return nil
