@@ -47,6 +47,8 @@ const (
 
 	JournalExecutionStatusTimedOut = "timed_out"
 
+	JournalExecutionStatusInterrupted = "interrupted"
+
 	JournalContentStatusEmpty = "empty"
 
 	JournalContentStatusLoading = "loading"

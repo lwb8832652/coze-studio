@@ -1595,6 +1595,84 @@ func TestThreadRepositoryListRunEventsFiltersAfterCursor(t *testing.T) {
 	require.Equal(t, int64(4), got[1].ID)
 }
 
+func TestThreadRepositoryListRunEventsSkipsJournalAttemptInterruptedBeforePagination(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, event := range []*entity.RunEvent{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: `{}`},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 3, ThreadID: 10, RunID: 20, EventType: "message.completed", Payload: `{}`},
+		{ID: 4, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 5, ThreadID: 10, RunID: 20, EventType: "run.completed", Payload: `{}`},
+	} {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	}
+
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Equal(t, []int64{1, 3}, runEventIDs(events))
+}
+
+func TestThreadRepositoryGenericRunEventWriterRejectsReservedAdaptiveFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for index, eventType := range []string{"adaptive.admission", "adaptive.decision"} {
+		err := repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+			ID:        int64(index + 1),
+			ThreadID:  10,
+			RunID:     20,
+			EventType: eventType,
+			Payload:   `{}`,
+			CreatedAt: 100,
+		})
+		require.ErrorIs(t, err, ErrAdaptiveExecutionReservedFact)
+	}
+
+	var count int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestThreadRepositoryGenericRunEventListsHideInternalFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	internal := string(entity.JournalVisibilityInternal)
+	for _, event := range []*runEventPO{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: []byte(`{}`), CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "private.trace", Visibility: &internal, Payload: []byte(`{}`), CreatedAt: 200},
+		{ID: 3, ThreadID: 10, RunID: 21, EventType: "run.started", Payload: []byte(`{}`), CreatedAt: 300},
+	} {
+		require.NoError(t, db.Create(event).Error)
+	}
+	repo := NewThreadRepository(db)
+
+	runEvents, runTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runTotal)
+	require.Equal(t, []int64{1}, runEventIDs(runEvents))
+
+	threadEvents, threadTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), threadTotal)
+	require.Equal(t, []int64{1, 3}, runEventIDs(threadEvents))
+}
+
 func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1679,6 +1757,82 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	require.Equal(t, int64(1), byID.ParentCheckpointID)
 	require.Equal(t, "planner", byID.CheckpointNS)
 	require.Equal(t, `{"messages":["new"],"next":["tools"]}`, byID.ChannelValues)
+}
+
+func TestThreadRepositoryGenericCheckpointSurfaceExcludesControlFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&checkpointPO{}))
+
+	repo := NewThreadRepository(db)
+	control := &entity.Checkpoint{
+		ID:              1,
+		ThreadID:        10,
+		RunID:           20,
+		CheckpointNS:    "workbench.adaptive.bootstrap",
+		RuntimeType:     "workbench_control",
+		RuntimeKey:      "adaptive-bootstrap-control",
+		EnvelopeVersion: 1,
+		ChannelValues:   `{}`,
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{}`,
+		CreatedAt:       300,
+	}
+	require.ErrorIs(t, repo.CreateCheckpoint(context.Background(), control), ErrAdaptiveExecutionReservedFact)
+
+	for _, checkpoint := range []*checkpointPO{
+		{
+			ID: 1, ThreadID: 10, RunID: 20,
+			CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "eino-key",
+			EnvelopeVersion: 1, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+			PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 100,
+		},
+		{
+			ID: 2, ThreadID: 10, RunID: 20,
+			CheckpointNS: "workbench.adaptive.bootstrap", RuntimeType: "workbench_control", RuntimeKey: "adaptive-bootstrap-control",
+			EnvelopeVersion: 1, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`),
+			PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 300,
+		},
+	} {
+		require.NoError(t, db.Create(checkpoint).Error)
+	}
+
+	checkpoints, total, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10, RunID: 20, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, []int64{1}, checkpointIDs(checkpoints))
+
+	controlOnly, controlTotal, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10, RuntimeType: "workbench_control", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Zero(t, controlTotal)
+	require.Empty(t, controlOnly)
+
+	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), latest.ID)
+
+	hidden, err := repo.GetCheckpoint(context.Background(), 2)
+	require.Nil(t, hidden)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	controlRuntime, err := repo.GetLatestRuntimeCheckpoint(
+		context.Background(), 10, 20, "workbench_control", "adaptive-bootstrap-control",
+	)
+	require.NoError(t, err)
+	require.Nil(t, controlRuntime)
+	require.ErrorIs(t, repo.DeleteRuntimeCheckpoint(
+		context.Background(), 10, 20, "workbench_control", "adaptive-bootstrap-control", 500,
+	), ErrAdaptiveExecutionReservedFact)
+
+	einoRuntime, err := repo.GetLatestRuntimeCheckpoint(context.Background(), 10, 20, "eino_adk", "eino-key")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), einoRuntime.ID)
+	require.NoError(t, repo.DeleteRuntimeCheckpoint(context.Background(), 10, 20, "eino_adk", "eino-key", 500))
 }
 
 func TestThreadRepositoryRejectsInvalidCheckpointJSON(t *testing.T) {
@@ -3978,7 +4132,7 @@ func TestThreadRepositoryCreateThreadBundleCommitsAllRecords(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *testing.T) {
+func TestThreadRepositoryCreateThreadBundleCommitsDisabledJournalAttemptAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{}))
@@ -4001,8 +4155,8 @@ func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *te
 		ID: 140, ThreadID: thread.ID, JournalRunID: run.ID, ExecutionRunID: run.ID,
 		AttemptID: "att_140", Ordinal: 1, Status: entity.RunAttemptStatusPending,
 		ActiveSlot: &activeSlot, NextSequence: 1,
-		EnrollmentVersion: entity.JournalSchemaVersion, SnapshotsEnabled: true,
-		ProjectionState: entity.JournalProjectionStateHealthy,
+		EnrollmentVersion: entity.JournalSchemaVersion, SnapshotsEnabled: false,
+		ProjectionState: entity.JournalProjectionStateDisabled,
 		CreatedAt:       100, UpdatedAt: 100,
 	}
 
@@ -4018,7 +4172,57 @@ func TestThreadRepositoryCreateThreadBundleCommitsJournalAttemptAtomically(t *te
 	require.Equal(t, run.ID, stored.JournalRunID)
 	require.Equal(t, run.ID, stored.ExecutionRunID)
 	require.Equal(t, entity.JournalSchemaVersion, stored.EnrollmentVersion)
-	require.True(t, stored.SnapshotsEnabled)
+	require.False(t, stored.SnapshotsEnabled)
+	require.Equal(t, string(entity.JournalProjectionStateDisabled), stored.ProjectionState)
+	require.Nil(t, stored.ProjectionDegradedAt)
+}
+
+func TestThreadRepositoryCreateThreadBundleDisabledAttemptFailureRollsBackAllRecords(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runAttemptPO{}))
+	require.NoError(t, db.Create(&runAttemptPO{
+		ID: 140, ThreadID: 999, JournalRunID: 999, ExecutionRunID: 999,
+		AttemptID: "att_existing", Ordinal: 1, Status: string(entity.RunAttemptStatusPending),
+		NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: string(entity.JournalProjectionStateHealthy), CreatedAt: 90, UpdatedAt: 90,
+	}).Error)
+
+	repo := NewThreadRepository(db)
+	thread := &entity.Thread{
+		ID: 110, SpaceID: 7, CreatorID: 8, Title: "journal rollback",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(120, thread.ID, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	message := &entity.Message{
+		ID: 130, ThreadID: thread.ID, RunID: run.ID, Role: entity.MessageRoleUser,
+		Content: "start", Metadata: `{}`, CreatedAt: 100,
+	}
+	attempt := &entity.RunAttempt{
+		ID: 140, ThreadID: thread.ID, JournalRunID: run.ID, ExecutionRunID: run.ID,
+		AttemptID: "att_140", Ordinal: 1, Status: entity.RunAttemptStatusPending,
+		NextSequence: 1, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: entity.JournalProjectionStateDisabled,
+		CreatedAt:       100, UpdatedAt: 100,
+	}
+
+	result, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: thread, Run: run, Message: message, Attempt: attempt,
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	for _, model := range []any{&threadPO{}, &runPO{}, &messagePO{}} {
+		var count int64
+		require.NoError(t, db.Model(model).Count(&count).Error)
+		require.Zero(t, count)
+	}
+	var attemptCount int64
+	require.NoError(t, db.Model(&runAttemptPO{}).Count(&attemptCount).Error)
+	require.Equal(t, int64(1), attemptCount)
 }
 
 func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.T) {

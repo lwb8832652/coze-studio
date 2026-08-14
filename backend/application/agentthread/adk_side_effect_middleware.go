@@ -683,6 +683,15 @@ func (c *ADKSideEffectBoundaryCoordinator) CommitCheckpoint(
 	return last, true, nil
 }
 
+func (c *ADKSideEffectBoundaryCoordinator) hasPending() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.pending) > 0
+}
+
 func (c *ADKSideEffectBoundaryCoordinator) RememberCheckpoint(
 	input ADKSideEffectCheckpointInput,
 	checkpointID int64,

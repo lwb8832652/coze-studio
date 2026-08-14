@@ -202,6 +202,76 @@ func TestCanonicalSubagentRunRetryContract(t *testing.T) {
 	require.Len(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID), 1)
 }
 
+func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "retry ingress rejection", `{}`)
+	parent := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued,
+	)
+	child := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, parent.RunID, appagentthread.RunKindSubagent, appagentthread.RunStatusRunning,
+	)
+	failCanonicalRunForUsageRetry(t, child.RunID)
+
+	response := performCanonicalUsageRetryRequest(
+		t,
+		canonicalUsageRetryTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(`{"subagent_enabled":true}`),
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	require.Contains(t, string(response.Result().Body()), `"code":"unsupported_execution_control"`)
+	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID))
+}
+
+func TestCanonicalSubagentRunRetryPreservesIngressPriorities(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "retry ingress priority", `{}`)
+	parent := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, 0, appagentthread.RunKindTask, appagentthread.RunStatusQueued,
+	)
+	child := createCanonicalRunForUsageRetry(
+		t, thread.ThreadID, parent.RunID, appagentthread.RunKindSubagent, appagentthread.RunStatusRunning,
+	)
+	failCanonicalRunForUsageRetry(t, child.RunID)
+	h := canonicalUsageRetryTestServer()
+
+	wrongWorkspace := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(`{"mode":"ultra"}`),
+		ut.Header{Key: canonicalSpaceIDHeader, Value: "2002"},
+	)
+	require.Equal(t, http.StatusNotFound, wrongWorkspace.Code, wrongWorkspace.Result().Body())
+	require.Contains(t, string(wrongWorkspace.Result().Body()), `"code":"resource_not_found"`)
+
+	invalidPath := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/not-a-run/retry", thread.ThreadID),
+		canonicalUsageRetryJSONBody(`{"mode":"ultra"}`),
+	)
+	require.Equal(t, http.StatusBadRequest, invalidPath.Code, invalidPath.Result().Body())
+	require.NotContains(t, string(invalidPath.Result().Body()), "unsupported_execution_control")
+
+	oversized := `{"payload":"` + strings.Repeat("x", canonicalMaxRequestBytes) + `"}`
+	tooLarge := performCanonicalUsageRetryRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%d/retry", thread.ThreadID, child.RunID),
+		canonicalUsageRetryJSONBody(oversized),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, tooLarge.Code, tooLarge.Result().Body())
+	require.Contains(t, string(tooLarge.Result().Body()), `"code":"request_too_large"`)
+	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, child.RunID))
+}
+
 func TestCanonicalSubagentRunRetryErrors(t *testing.T) {
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "retry errors", `{}`)
@@ -271,12 +341,13 @@ func TestCanonicalSubagentRunRetryErrors(t *testing.T) {
 	require.Empty(t, canonicalRetryRunsForSource(t, thread.ThreadID, failedChild.RunID))
 
 	foreignKey := "canonical-retry-foreign"
+	foreignThread := createCanonicalTestThread(t, 1001, "retry foreign idempotency", `{}`)
 	createCanonicalRunForUsageRetryWithMetadata(
 		t,
-		thread.ThreadID,
-		parent.RunID,
-		appagentthread.RunKindSubagent,
-		appagentthread.RunStatusRunning,
+		foreignThread.ThreadID,
+		0,
+		appagentthread.RunKindTask,
+		appagentthread.RunStatusPending,
 		canonicalScopedIdempotencyKey(2, foreignKey),
 		fmt.Sprintf(`{"source_run_id":%d}`, failedChild.RunID),
 	)
@@ -391,10 +462,18 @@ func createCanonicalRunForUsageRetryWithMetadata(
 	metadata string,
 ) *appagentthread.RunSummary {
 	t.Helper()
-	assistantID := "lead-agent"
 	if kind == appagentthread.RunKindSubagent {
-		assistantID = "singleagent:1001"
+		require.Equal(t, appagentthread.RunStatusRunning, status)
+		parentResponse, err := appagentthread.SVC.GetRun(
+			context.Background(),
+			&appagentthread.GetRunRequest{RunID: parentRunID},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, parentResponse)
+		require.NotNil(t, parentResponse.Run)
+		return createCanonicalServerOwnedSubagentFixture(t, parentResponse.Run)
 	}
+	assistantID := "lead-agent"
 	resp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
 		ThreadID:       threadID,
 		ParentRunID:    parentRunID,
@@ -411,6 +490,30 @@ func createCanonicalRunForUsageRetryWithMetadata(
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Run)
 	return resp.Run
+}
+
+func createCanonicalServerOwnedSubagentFixture(
+	t *testing.T,
+	parent *appagentthread.RunSummary,
+) *appagentthread.RunSummary {
+	t.Helper()
+	require.NotNil(t, parent)
+	recorder := appagentthread.NewApplicationADKSubagentRunRecorder(appagentthread.SVC)
+	child, err := recorder.StartADKSubagentRun(
+		context.Background(),
+		appagentthread.ADKSubagentRunStartRequest{
+			Parent:          parent,
+			ArgumentsInJSON: `{}`,
+			Definition: appagentthread.ADKSubagentDefinition{
+				Name:        "researcher",
+				Description: "Research test fixture.",
+				AgentID:     1001,
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, child)
+	return child
 }
 
 func failCanonicalRunForUsageRetry(t *testing.T, runID int64) {

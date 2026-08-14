@@ -19,39 +19,11 @@ import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
 import { IconCozSetting } from '@coze-arch/coze-design/icons';
 import { Input } from '@coze-arch/coze-design';
 
-import type {
-  WorkbenchReasoningEffort,
-  WorkbenchRuntimeSettings,
-} from './types';
+import type { WorkbenchRuntimeSettings } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- User-visible memory recall presets.
 const MEMORY_LIMIT_OPTIONS = [3, 5, 8] as const;
 const CANDIDATE_LIMIT_MULTIPLIER = 4;
-const REASONING_OPTIONS: Array<{
-  ariaLabel: string;
-  enabled: boolean;
-  effort: WorkbenchReasoningEffort;
-  label: string;
-}> = [
-  {
-    ariaLabel: '模型推理 关闭',
-    enabled: false,
-    effort: 'medium',
-    label: '关闭',
-  },
-  {
-    ariaLabel: '模型推理 中',
-    enabled: true,
-    effort: 'medium',
-    label: '中',
-  },
-  {
-    ariaLabel: '模型推理 高',
-    enabled: true,
-    effort: 'high',
-    label: '高',
-  },
-];
 type WorkbenchRuntimeSettingsChange = Dispatch<
   SetStateAction<WorkbenchRuntimeSettings>
 >;
@@ -131,46 +103,6 @@ const WorkbenchModelReliabilitySettingsRows = ({
       </button>
     </div>
   </>
-);
-
-const WorkbenchReasoningSettingsRow = ({
-  settings,
-  update,
-}: {
-  settings: WorkbenchRuntimeSettings;
-  update: WorkbenchRuntimeSettingsUpdate;
-}) => (
-  <div className="chat-workbench-runtime-row">
-    <span>模型推理</span>
-    <div className="chat-workbench-runtime-options">
-      {REASONING_OPTIONS.map(option => {
-        const active =
-          settings.reasoning.enabled === option.enabled &&
-          (!option.enabled || settings.reasoning.effort === option.effort);
-
-        return (
-          <button
-            key={option.ariaLabel}
-            type="button"
-            aria-label={option.ariaLabel}
-            aria-pressed={active}
-            data-active={active}
-            onClick={() =>
-              update(current => ({
-                reasoning: {
-                  ...current.reasoning,
-                  enabled: option.enabled,
-                  effort: option.effort,
-                },
-              }))
-            }
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  </div>
 );
 
 const WorkbenchResourceRuntimeSettingsRows = ({
@@ -379,7 +311,6 @@ const WorkbenchRuntimeSettingsPanel = ({
         <span>运行内核</span>
         <strong>Eino ADK</strong>
       </div>
-      <WorkbenchReasoningSettingsRow settings={settings} update={update} />
       <div className="chat-workbench-runtime-row">
         <span>记忆检索</span>
         <div className="chat-workbench-runtime-options">

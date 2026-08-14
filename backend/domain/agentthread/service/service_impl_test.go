@@ -48,6 +48,71 @@ func TestCreateThreadRequiresTitle(t *testing.T) {
 	require.True(t, IsClientError(err))
 }
 
+func TestHumanResumeRolloverReplayServiceDelegatesRepositoryCapability(t *testing.T) {
+	want := &repository.HumanResumeRolloverReplayResult{
+		Run:      &entity.Run{ID: 101},
+		Replayed: true,
+	}
+	repo := &humanResumeRolloverReplayRepo{result: want}
+	svc := NewService(&Components{Repo: repo})
+	replaySvc, ok := svc.(HumanResumeRolloverReplayService)
+	require.True(t, ok)
+	req := repository.HumanResumeRolloverReplayRequest{
+		SpaceID:                1,
+		ThreadID:               2,
+		SourceRunID:            3,
+		IdempotencyKey:         "resume-1",
+		IdempotencyOperation:   "human_resume",
+		IdempotencyFingerprint: "fingerprint-1",
+		ResolvedJournalKey:     "resolved-1",
+		InterruptID:            "interrupt-1",
+	}
+
+	got, err := replaySvc.GetHumanResumeRolloverReplay(context.Background(), req)
+
+	require.NoError(t, err)
+	require.Same(t, want, got)
+	require.Equal(t, req, repo.request)
+}
+
+func TestHumanResumeRolloverReplayServicePreservesMissAndDomainError(t *testing.T) {
+	domainErr := fmt.Errorf("%w: replay authority drift", repository.ErrHumanResumeRolloverConflict)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "miss"},
+		{name: "domain error", err: domainErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &humanResumeRolloverReplayRepo{err: tc.err}
+			svc := NewService(&Components{Repo: repo}).(HumanResumeRolloverReplayService)
+
+			got, err := svc.GetHumanResumeRolloverReplay(
+				context.Background(),
+				repository.HumanResumeRolloverReplayRequest{},
+			)
+
+			require.Nil(t, got)
+			require.Equal(t, tc.err, err)
+		})
+	}
+}
+
+func TestHumanResumeRolloverReplayServiceFailsClosedWithoutRepositoryCapability(t *testing.T) {
+	svc := NewService(&Components{
+		Repo: &threadRepoWithoutHumanResumeRolloverReplay{},
+	}).(HumanResumeRolloverReplayService)
+
+	got, err := svc.GetHumanResumeRolloverReplay(
+		context.Background(),
+		repository.HumanResumeRolloverReplayRequest{},
+	)
+
+	require.Nil(t, got)
+	require.ErrorContains(t, err, "human resume rollover replay repository is unavailable")
+}
+
 func TestCreateThreadDefaultsToIdleWebTask(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 901}})
@@ -167,7 +232,8 @@ func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T)
 			EnrollJournal: true,
 			JournalEnrollment: &JournalEnrollmentOptions{
 				EnrollmentVersion: entity.JournalSchemaVersion,
-				SnapshotsEnabled:  true,
+				SnapshotsEnabled:  false,
+				ProjectionState:   entity.JournalProjectionStateDisabled,
 			},
 		},
 	)
@@ -178,7 +244,8 @@ func TestCreateThreadRunMessageEnrollsJournalInSameAtomicAggregate(t *testing.T)
 	require.Equal(t, result.Run.ID, result.Attempt.JournalRunID)
 	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
 	require.Equal(t, entity.JournalSchemaVersion, result.Attempt.EnrollmentVersion)
-	require.True(t, result.Attempt.SnapshotsEnabled)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
 	require.Len(t, repo.runAttempts[result.Run.ID], 1)
 }
 
@@ -227,7 +294,8 @@ func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
 		EnrollJournal: true,
 		JournalEnrollment: &JournalEnrollmentOptions{
 			EnrollmentVersion: "1.1",
-			SnapshotsEnabled:  true,
+			SnapshotsEnabled:  false,
+			ProjectionState:   entity.JournalProjectionStateDisabled,
 			TraceID:           "trace-enrollment",
 		},
 	})
@@ -245,10 +313,123 @@ func TestCreateRunBundleCanEnrollFirstJournalAttemptAtomically(t *testing.T) {
 	require.Equal(t, uint64(1), result.Attempt.NextSequence)
 	require.Zero(t, result.Attempt.LastCommittedSequence)
 	require.Equal(t, "1.1", result.Attempt.EnrollmentVersion)
-	require.True(t, result.Attempt.SnapshotsEnabled)
-	require.Equal(t, entity.JournalProjectionStateHealthy, result.Attempt.ProjectionState)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
 	require.NotNil(t, result.Attempt.TraceID)
 	require.Equal(t, "trace-enrollment", *result.Attempt.TraceID)
+}
+
+func TestFreshJournalEnrollmentRejectsDegradedProjectionBeforePersistence(t *testing.T) {
+	t.Run("new thread bundle", func(t *testing.T) {
+		repo := newMemoryRepo()
+		svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2151)})
+
+		result, err := svc.CreateThreadRunMessage(
+			context.Background(),
+			&CreateThreadRunMessageRequest{
+				Thread: CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "journal task"},
+				Run: CreateRunRequest{
+					RunKind: entity.RunKindTask,
+					Input:   `{"messages":[{"role":"user","content":"start"}]}`,
+				},
+				Message:       CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+				EnrollJournal: true,
+				JournalEnrollment: &JournalEnrollmentOptions{
+					EnrollmentVersion: entity.JournalSchemaVersion,
+					ProjectionState:   entity.JournalProjectionStateDegraded,
+				},
+			},
+		)
+
+		require.Nil(t, result)
+		require.ErrorContains(t, err, "journal projection state")
+		require.Zero(t, repo.createThreadBundleCalls)
+	})
+
+	t.Run("existing thread bundle", func(t *testing.T) {
+		repo := newMemoryRepo()
+		repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+		svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2161)})
+
+		result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+			Run: CreateRunRequest{
+				ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			},
+			EnrollJournal: true,
+			JournalEnrollment: &JournalEnrollmentOptions{
+				EnrollmentVersion: entity.JournalSchemaVersion,
+				ProjectionState:   entity.JournalProjectionStateDegraded,
+			},
+		})
+
+		require.Nil(t, result)
+		require.ErrorContains(t, err, "journal projection state")
+		require.Zero(t, repo.createRunBundleCalls)
+	})
+}
+
+func TestFreshDisabledJournalEnrollmentForcesSnapshotsOff(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2171)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			EnrollmentVersion: entity.JournalSchemaVersion,
+			SnapshotsEnabled:  true,
+			ProjectionState:   entity.JournalProjectionStateDisabled,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, entity.JournalProjectionStateDisabled, result.Attempt.ProjectionState)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+}
+
+func TestCreateRunBundlePreservesOrdinaryRecoveryCheckpointAuthority(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2181)})
+	checkpoint := &entity.Checkpoint{
+		ID: 700, ThreadID: 10, RunID: 50, ParentCheckpointID: 699,
+		CheckpointNS: "eino.adk", RuntimeType: "eino_adk", RuntimeKey: "run-50",
+		EnvelopeVersion: 3, ChannelValues: `{"runtime_state":{"checkpoint":"AQID"}}`,
+		ChannelVersions: `{"messages":4}`, PendingSends: `[]`,
+		Metadata: `{"runtime":"eino_adk"}`, CreatedAt: 1_500,
+	}
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued, Input: `{"messages":[]}`,
+			IdempotencyKey: "ordinary-recovery-1", MultitaskStrategy: "reject",
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			OrdinaryLeaseRecovery: &JournalOrdinaryLeaseRecoveryEnrollmentOptions{
+				JournalRunID: 50, SourceCheckpointID: checkpoint.ID, SourceCheckpoint: checkpoint,
+				IdempotencyKey: "ordinary-recovery-1",
+				ExpiredLease: &JournalRecoveryExpiredLeaseOptions{
+					RunID: 50, LeaseOwner: "worker-a", LeaseToken: "lease-50",
+					ExecutionGeneration: 3, Now: 2_000,
+					ErrorCode: "run_recovered", ErrorMessage: "recovered",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Attempt)
+	require.NotNil(t, repo.lastCreateRunBundleReq)
+	ordinary := repo.lastCreateRunBundleReq.OrdinaryLeaseRecovery
+	require.NotNil(t, ordinary)
+	require.NotNil(t, ordinary.SourceCheckpoint)
+	require.Equal(t, checkpoint, ordinary.SourceCheckpoint)
+	require.NotSame(t, checkpoint, ordinary.SourceCheckpoint)
 }
 
 func TestCreateRunBundleBuildsAtomicExpiredLeaseRecoveryBoundary(t *testing.T) {
@@ -291,6 +472,175 @@ func TestCreateRunBundleBuildsAtomicExpiredLeaseRecoveryBoundary(t *testing.T) {
 	require.NotNil(t, source.JournalEvent)
 	require.Equal(t, "run.lifecycle", source.JournalEvent.EventType)
 	require.Equal(t, string(entity.RunAttemptStatusFailed), source.JournalEvent.Status)
+}
+
+func TestCreateRunBundleBuildsHumanResumeRolloverBoundary(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.runs[10] = []*entity.Run{
+		{ID: 40, ThreadID: 10, SpaceID: 1, CreatorID: 2, RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted},
+		{ID: 50, ThreadID: 10, SpaceID: 1, CreatorID: 2, RunKind: entity.RunKindTask, Status: entity.RunStatusInterrupted},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2251)})
+
+	result, err := svc.CreateRunBundle(context.Background(), humanResumeRunBundleRequest())
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, int64(2251), result.Run.ID)
+	require.Equal(t, entity.RunStatusQueued, result.Run.Status)
+	require.Zero(t, result.Run.ParentRunID)
+	require.Equal(t, entity.RunKindTask, result.Run.RunKind)
+	require.Equal(t, "reject", result.Run.MultitaskStrategy)
+	require.NotNil(t, result.Message)
+	require.Equal(t, int64(2252), result.Message.ID)
+	require.Equal(t, entity.MessageRoleUser, result.Message.Role)
+	require.NotNil(t, result.Event)
+	require.Equal(t, int64(2253), result.Event.ID)
+	require.Equal(t, "human.interaction.resolved", result.Event.EventType)
+
+	require.NotNil(t, result.Attempt)
+	require.Equal(t, int64(2254), result.Attempt.ID)
+	require.Equal(t, int64(40), result.Attempt.JournalRunID)
+	require.Equal(t, result.Run.ID, result.Attempt.ExecutionRunID)
+	require.Zero(t, result.Attempt.Ordinal)
+	require.Equal(t, entity.RunAttemptStatusPending, result.Attempt.Status)
+	require.Nil(t, result.Attempt.ActiveSlot)
+	require.Empty(t, result.Attempt.EnrollmentVersion)
+	require.False(t, result.Attempt.SnapshotsEnabled)
+	require.NotNil(t, result.Attempt.SourceCheckpointID)
+	require.Equal(t, int64(700), *result.Attempt.SourceCheckpointID)
+	require.NotNil(t, result.Attempt.SourceAttemptID)
+	require.Equal(t, "att_100", *result.Attempt.SourceAttemptID)
+	require.NotNil(t, result.Attempt.RecoveryIdempotencyKey)
+	require.Equal(t, "human-resume-1", *result.Attempt.RecoveryIdempotencyKey)
+
+	require.NotNil(t, repo.lastCreateRunBundleReq)
+	require.Equal(t, int64(50), repo.lastCreateRunBundleReq.EventJournalSourceRunID)
+	require.NotNil(t, repo.lastCreateRunBundleReq.EventJournal)
+	require.Equal(t, "confirmation.resolved", repo.lastCreateRunBundleReq.EventJournal.EventType)
+	require.Equal(t, "completed", repo.lastCreateRunBundleReq.EventJournal.Status)
+	require.Equal(t, entity.JournalVisibilityUser, repo.lastCreateRunBundleReq.EventJournal.Visibility)
+	require.False(t, repo.lastCreateRunBundleReq.EventJournalProjectionFailed)
+	require.Nil(t, repo.lastCreateRunBundleReq.RecoverySourceLease)
+
+	rollover := repo.lastCreateRunBundleReq.HumanResumeRollover
+	require.NotNil(t, rollover)
+	require.Equal(t, int64(50), rollover.SourceRunID)
+	require.NotNil(t, rollover.TerminalBase)
+	require.NotNil(t, rollover.TerminalJournal)
+	require.Equal(t, int64(2255), rollover.TerminalBase.ID)
+	require.Equal(t, rollover.TerminalBase.ID, rollover.TerminalJournal.ID)
+	require.Equal(t, int64(10), rollover.TerminalBase.ThreadID)
+	require.Equal(t, int64(50), rollover.TerminalBase.RunID)
+	require.Equal(t, entity.JournalAttemptInterruptedRunEventType, rollover.TerminalBase.EventType)
+	require.Equal(t,
+		`{"schema":"coze.journal_attempt_interrupted.v1","status":"interrupted","resume_run_id":2251}`,
+		rollover.TerminalBase.Payload,
+	)
+	require.Equal(t, int64(10), rollover.TerminalJournal.ThreadID)
+	require.Equal(t, int64(50), rollover.TerminalJournal.RunID)
+	require.Zero(t, rollover.TerminalJournal.JournalRunID)
+	require.Empty(t, rollover.TerminalJournal.AttemptID)
+	require.Equal(t, result.Event.ID, rollover.TerminalJournal.ParentEventID)
+	require.Equal(t, "journal:run:50:terminal:interrupted", rollover.TerminalJournal.IdempotencyKey)
+	require.Equal(t, entity.JournalSchemaVersion, rollover.TerminalJournal.SchemaVersion)
+	require.Equal(t, string(entity.RunAttemptStatusInterrupted), rollover.TerminalJournal.Status)
+	require.Equal(t, entity.JournalVisibilityUser, rollover.TerminalJournal.Visibility)
+	require.Equal(t, entity.JournalPayloadVersion, rollover.TerminalJournal.PayloadVersion)
+	require.Equal(t, "run.lifecycle", rollover.TerminalJournal.EventType)
+	require.Equal(t, `{"type":"terminal","data":{"status":"interrupted"}}`, rollover.TerminalJournal.Payload)
+}
+
+func TestCreateRunBundleRejectsRecoveryAndHumanResumeTogether(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2251)})
+	req := humanResumeRunBundleRequest()
+	req.JournalEnrollment.Recovery = &JournalRecoveryEnrollmentOptions{
+		JournalRunID: 50, SourceCheckpointID: 700,
+		SourceAttemptID: "att_100", IdempotencyKey: "human-resume-1",
+	}
+
+	result, err := svc.CreateRunBundle(context.Background(), req)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "cannot both be set")
+	require.True(t, IsClientError(err))
+	require.Zero(t, repo.createRunBundleCalls)
+}
+
+func TestCreateRunBundleRejectsHumanResumeWithoutStrictResolvedProjection(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*CreateRunBundleRequest)
+	}{
+		{name: "message missing", mutate: func(req *CreateRunBundleRequest) { req.Message = nil }},
+		{name: "message is not user", mutate: func(req *CreateRunBundleRequest) { req.Message.Role = entity.MessageRoleAssistant }},
+		{name: "base type", mutate: func(req *CreateRunBundleRequest) { req.Event.EventType = "human.interaction.requested" }},
+		{name: "source mismatch", mutate: func(req *CreateRunBundleRequest) { req.Event.JournalSourceRunID = 51 }},
+		{name: "projection missing", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal = nil }},
+		{name: "projection failed", mutate: func(req *CreateRunBundleRequest) { req.Event.JournalProjectionFailed = true }},
+		{name: "projection type", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.EventType = "confirmation.requested" }},
+		{name: "projection status", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.Status = "pending" }},
+		{name: "projection visibility", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.Visibility = entity.JournalVisibilityInternal }},
+		{name: "projection root", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.JournalRunID = 40 }},
+		{name: "projection attempt", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.AttemptID = "att_100" }},
+		{name: "projection key", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.IdempotencyKey = "" }},
+		{name: "projection schema", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.SchemaVersion = "" }},
+		{name: "projection payload version", mutate: func(req *CreateRunBundleRequest) { req.Event.Journal.PayloadVersion = "" }},
+		{name: "idempotency drift", mutate: func(req *CreateRunBundleRequest) { req.Run.IdempotencyKey = "other-key" }},
+		{name: "run is pending", mutate: func(req *CreateRunBundleRequest) { req.Run.Status = entity.RunStatusPending }},
+		{name: "multitask is interrupt", mutate: func(req *CreateRunBundleRequest) { req.Run.MultitaskStrategy = "interrupt" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+			svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2251)})
+			req := humanResumeRunBundleRequest()
+			tt.mutate(req)
+
+			result, err := svc.CreateRunBundle(context.Background(), req)
+
+			require.Nil(t, result)
+			require.Error(t, err)
+			require.True(t, IsClientError(err))
+			require.Zero(t, repo.createRunBundleCalls)
+		})
+	}
+}
+
+func humanResumeRunBundleRequest() *CreateRunBundleRequest {
+	return &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued,
+			Input: `{"messages":[]}`, IdempotencyKey: "human-resume-1", MultitaskStrategy: "reject",
+		},
+		Message: &CreateMessageSpec{Role: entity.MessageRoleUser, Content: "resume"},
+		Event: &CreateRunEventSpec{
+			EventType:          "human.interaction.resolved",
+			JournalSourceRunID: 50,
+			Journal: &AppendJournalEventRequest{
+				RunID: 50, IdempotencyKey: "journal:resolved:1",
+				SchemaVersion: entity.JournalSchemaVersion, Status: "completed",
+				Visibility: entity.JournalVisibilityUser, PayloadVersion: entity.JournalPayloadVersion,
+				EventType: "confirmation.resolved",
+				Payload:   `{"type":"confirmation","data":{"confirmation_id":"interrupt-1","confirmation_type":"confirmation","allowed_action_keys":[]}}`,
+			},
+			PayloadBuilder: func(runID int64) string {
+				return fmt.Sprintf(`{"interrupt_id":"interrupt-1","resume_run_id":%d}`, runID)
+			},
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &JournalEnrollmentOptions{
+			HumanResume: &JournalHumanResumeEnrollmentOptions{
+				JournalRunID: 40, SourceRunID: 50, SourceAttemptID: "att_100",
+				SourceCheckpointID: 700, IdempotencyKey: "human-resume-1",
+			},
+		},
+	}
 }
 
 func TestCreateRunBundleRejectsUnsupportedJournalEnrollmentVersion(t *testing.T) {
@@ -439,6 +789,27 @@ func TestFinalizeJournalAttemptGeneratesEventIDAndDelegatesStatus(t *testing.T) 
 	require.Equal(t, int64(2401), event.ID)
 	require.Equal(t, entity.RunAttemptStatusTimedOut, repo.lastFinalizeJournalReq.Status)
 	require.Equal(t, int64(1234), repo.lastFinalizeJournalReq.EndedAt)
+}
+
+func TestFinalizeJournalAttemptRejectsInterrupted(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask}}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2401)})
+
+	event, won, err := svc.FinalizeJournalAttempt(context.Background(), &FinalizeJournalAttemptRequest{
+		Status: entity.RunAttemptStatusInterrupted,
+		Event: AppendJournalEventRequest{
+			RunID: 20, IdempotencyKey: "interrupted", EventType: "run.lifecycle",
+			Status:  string(entity.RunAttemptStatusInterrupted),
+			Payload: `{"type":"terminal","data":{"status":"interrupted"}}`,
+		},
+		EndedAt: 1234,
+	})
+
+	require.ErrorIs(t, err, ErrInvalidArgument)
+	require.Nil(t, event)
+	require.False(t, won)
+	require.Zero(t, repo.lastFinalizeJournalReq.RunID)
 }
 
 func TestListThreadsNormalizesPaging(t *testing.T) {
@@ -2459,6 +2830,25 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 	require.Equal(t, int64(10), repo.lastTokenUsageListReq.ThreadID)
 	require.Equal(t, int64(25), aggregate.TotalTokens)
 	require.Equal(t, int64(5), aggregate.MiddlewareTokens)
+}
+
+type humanResumeRolloverReplayRepo struct {
+	repository.ThreadRepository
+	request repository.HumanResumeRolloverReplayRequest
+	result  *repository.HumanResumeRolloverReplayResult
+	err     error
+}
+
+func (r *humanResumeRolloverReplayRepo) GetHumanResumeRolloverReplay(
+	_ context.Context,
+	req repository.HumanResumeRolloverReplayRequest,
+) (*repository.HumanResumeRolloverReplayResult, error) {
+	r.request = req
+	return r.result, r.err
+}
+
+type threadRepoWithoutHumanResumeRolloverReplay struct {
+	repository.ThreadRepository
 }
 
 type memoryRepo struct {

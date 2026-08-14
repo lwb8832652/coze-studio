@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/plantask"
@@ -104,6 +105,8 @@ import (
 	sqlparserImpl "github.com/coze-dev/coze-studio/backend/infra/sqlparser/impl/sqlparser"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 )
+
+const adaptiveDecisionModelTimeout = 30 * time.Second
 
 type eventbusImpl struct {
 	resourceEventBus search.ResourceEventBus
@@ -331,6 +334,24 @@ func Init(ctx context.Context) (err error) {
 	adkPlanStore := agentthread.NewApplicationADKPlanStore(
 		primaryServices.agentThreadSVC,
 	)
+	adaptiveExecutionRepository := threadrepository.NewAdaptiveExecutionRepository(infra.DB)
+	adaptiveDecisionUsageCollector := agentthread.NewThreadUsageCollectorWithOptions(
+		primaryServices.agentThreadSVC,
+		agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
+	)
+	adaptiveDecisionModelOperations := threadrepository.NewAdaptiveDecisionModelOperationRepository(
+		infra.DB,
+	)
+	adaptiveDecisionProducer := agentthread.NewModelAdaptiveDecisionProducer(
+		agentthread.ModelAdaptiveDecisionProducerOptions{
+			Provider:            agentthread.NewEnvAdaptiveDecisionModelProvider(),
+			UsageCollector:      adaptiveDecisionUsageCollector,
+			OperationRepository: adaptiveDecisionModelOperations,
+			IDGen:               infra.IDGenSVC,
+			Now:                 func() int64 { return time.Now().UnixMilli() },
+			Timeout:             adaptiveDecisionModelTimeout,
+		},
+	)
 	adkAgentRunExecutor := agentthread.NewADKExecutor(
 		agentthread.NewApplicationADKAgentFactory(
 			nil,
@@ -371,13 +392,16 @@ func Init(ctx context.Context) (err error) {
 				JournalContentProducer: primaryServices.agentThreadSVC,
 				PlanBackendFactory: agentthread.ADKPlanBackendFactoryFunc(
 					func(
-						_ context.Context,
+						ctx context.Context,
 						run *agentthread.RunSummary,
 					) (plantask.Backend, error) {
 						return agentthread.NewADKPlanBackend(
 							run,
 							adkPlanStore,
 							adkEventSink,
+							agentthread.WithADKAdaptivePlanBoundaryCoordinator(
+								agentthread.ADKAdaptivePlanBoundaryCoordinatorFromContext(ctx),
+							),
 						)
 					},
 				),
@@ -401,16 +425,32 @@ func Init(ctx context.Context) (err error) {
 					primaryServices.agentThreadSVC.JournalSideEffectRepository,
 					infra.IDGenSVC,
 				),
+				agentthread.WithADKAdaptivePlanBoundary(
+					adaptiveExecutionRepository,
+					infra.IDGenSVC,
+					adkPlanStore,
+				),
 			)
 		},
-		agentthread.NewThreadUsageCollectorWithOptions(
-			primaryServices.agentThreadSVC,
-			agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
-		),
+		adaptiveDecisionUsageCollector,
 		agentthread.WithADKCancelRegistry(adkCancelRegistry),
 		agentthread.WithADKSubagentRetrySourceResolver(
 			agentthread.NewApplicationADKSubagentRetrySourceResolver(
 				primaryServices.agentThreadSVC,
+			),
+		),
+		agentthread.WithADKAdaptiveBootstrapCoordinator(
+			agentthread.NewAdaptiveBootstrapCoordinator(
+				agentthread.AdaptiveBootstrapCoordinatorOptions{
+					AttemptReader:       primaryServices.agentThreadSVC.JournalRecoveryRepository,
+					Repository:          adaptiveExecutionRepository,
+					SourceRunReader:     primaryServices.agentThreadSVC.ThreadSVC,
+					IDGen:               infra.IDGenSVC,
+					EligibilityResolver: agentthread.NewEnvAdaptiveEligibilityResolver(),
+					BaselineProducer:    agentthread.BaselineAdaptiveDecisionProducer{},
+					AdaptiveProducer:    adaptiveDecisionProducer,
+					Now:                 func() int64 { return time.Now().UnixMilli() },
+				},
 			),
 		),
 	)

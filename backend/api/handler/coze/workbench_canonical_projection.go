@@ -84,18 +84,27 @@ type canonicalRun struct {
 }
 
 type canonicalRunCoze struct {
-	MessageID         *string           `json:"message_id"`
-	SubmissionMessage *canonicalMessage `json:"submission_message,omitempty"`
-	AttemptKind       string            `json:"attempt_kind"`
-	SourceRunID       *string           `json:"source_run_id"`
-	ParentRunID       *string           `json:"parent_run_id"`
-	RunKind           string            `json:"run_kind"`
-	StreamModes       []string          `json:"stream_modes"`
-	OnDisconnect      string            `json:"on_disconnect"`
-	Durability        string            `json:"durability"`
-	TerminalReason    *string           `json:"terminal_reason"`
-	StartedAt         *string           `json:"started_at"`
-	EndedAt           *string           `json:"ended_at"`
+	MessageID         *string                     `json:"message_id"`
+	SubmissionMessage *canonicalMessage           `json:"submission_message,omitempty"`
+	AttemptKind       string                      `json:"attempt_kind"`
+	SourceRunID       *string                     `json:"source_run_id"`
+	ParentRunID       *string                     `json:"parent_run_id"`
+	RunKind           string                      `json:"run_kind"`
+	StreamModes       []string                    `json:"stream_modes"`
+	OnDisconnect      string                      `json:"on_disconnect"`
+	Durability        string                      `json:"durability"`
+	TerminalReason    *string                     `json:"terminal_reason"`
+	StartedAt         *string                     `json:"started_at"`
+	EndedAt           *string                     `json:"ended_at"`
+	AdaptiveExecution *canonicalAdaptiveExecution `json:"adaptive_execution,omitempty"`
+}
+
+type canonicalAdaptiveExecution struct {
+	Schema                string  `json:"schema"`
+	Enabled               bool    `json:"enabled"`
+	Mode                  string  `json:"mode"`
+	SafeSummary           string  `json:"safe_summary"`
+	ClarificationQuestion *string `json:"clarification_question"`
 }
 
 type canonicalMessage struct {
@@ -318,19 +327,41 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 		Metadata:          metadata,
 		MultitaskStrategy: multitaskStrategy,
 		Coze: canonicalRunCoze{
-			MessageID:      messageID,
-			AttemptKind:    canonicalRunAttemptKind(public.RunKind, rawMetadata),
-			SourceRunID:    sourceRunID,
-			ParentRunID:    canonicalOptionalTimeID(public.ParentRunID),
-			RunKind:        runKind,
-			StreamModes:    canonicalRunStreamModes(public.StreamMode),
-			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
-			Durability:     canonicalRunDurability(public.Durability),
-			TerminalReason: terminalReason,
-			StartedAt:      startedAt,
-			EndedAt:        endedAt,
+			MessageID:         messageID,
+			AttemptKind:       canonicalRunAttemptKind(public.RunKind, rawMetadata),
+			SourceRunID:       sourceRunID,
+			ParentRunID:       canonicalOptionalTimeID(public.ParentRunID),
+			RunKind:           runKind,
+			StreamModes:       canonicalRunStreamModes(public.StreamMode),
+			OnDisconnect:      canonicalRunOnDisconnect(public.OnDisconnect),
+			Durability:        canonicalRunDurability(public.Durability),
+			TerminalReason:    terminalReason,
+			StartedAt:         startedAt,
+			EndedAt:           endedAt,
+			AdaptiveExecution: projectCanonicalAdaptiveExecution(public.AdaptiveExecution),
 		},
 	}, nil
+}
+
+func projectCanonicalAdaptiveExecution(
+	input *appagentthread.PublicAdaptiveExecutionSummary,
+) *canonicalAdaptiveExecution {
+	if input == nil {
+		return nil
+	}
+	var question *string
+	if input.ClarificationQuestion != nil {
+		copy := *input.ClarificationQuestion
+		question = &copy
+	}
+
+	return &canonicalAdaptiveExecution{
+		Schema:                input.Schema,
+		Enabled:               input.Enabled,
+		Mode:                  string(input.Mode),
+		SafeSummary:           input.SafeSummary,
+		ClarificationQuestion: question,
+	}
 }
 
 func projectCanonicalMessage(summary *appagentthread.MessageSummary) (*canonicalMessage, error) {
@@ -448,9 +479,10 @@ func loadCanonicalThreadProjectionSnapshot(
 
 	ctx = canonicalThreadAccessContext(ctx, threadID, 0)
 	runs, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
-		ThreadID: threadID,
-		Page:     1,
-		PageSize: 1,
+		ThreadID:                 threadID,
+		IncludeAdaptiveExecution: true,
+		Page:                     1,
+		PageSize:                 1,
 	})
 	if err != nil {
 		return canonicalThreadProjectionSnapshot{}, fmt.Errorf("load latest canonical thread run: %w", err)

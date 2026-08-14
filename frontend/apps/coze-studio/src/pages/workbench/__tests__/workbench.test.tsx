@@ -313,12 +313,29 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
 import WorkbenchPage, { WorkbenchTopbar } from '../index';
+import { WorkbenchRuntimeSettingsControl } from '../components/workbench-runtime-settings-control';
 import { WorkbenchComposer } from '../components/workbench-composer';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
   createWorkbenchRunConfig,
 } from '../components/types';
+
+const clientOwnedExecutionControlFields = [
+  'requested_policy',
+  'mode',
+  'thinking_enabled',
+  'reasoning_effort',
+  'is_plan_mode',
+  'subagent_enabled',
+  'max_concurrent_subagents',
+] as const;
+
+const expectNoClientOwnedExecutionControls = (value: unknown) => {
+  clientOwnedExecutionControlFields.forEach(field =>
+    expect(value).not.toHaveProperty(field),
+  );
+};
 
 const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
   data: {
@@ -384,6 +401,14 @@ const getSendButton = (container: HTMLElement) => {
   expect(sendButton).toBeTruthy();
 
   return sendButton!;
+};
+
+const getCreatedInitialSubmissionV2 = () => {
+  const request = mockCreateTaskThread.mock.calls[0]?.[0];
+
+  return (
+    request?.initial_submission_v2 ?? request?.deferred_initial_submission_v2
+  );
 };
 
 const createDOMRectMock = ({
@@ -795,19 +820,13 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '创建一个项目周报技能',
-      config: expect.any(String),
-    });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      enable_skills: ['skill-creator'],
-      skills: {
-        enabled: true,
+    expect(getCreatedInitialSubmissionV2()).toMatchObject({
+      input: { message: '创建一个项目周报技能' },
+      composer: {
+        explicit_enable_skills: ['skill-creator'],
         allowed_skills: ['skill-creator'],
       },
+      config: { skills: { enabled: true } },
     });
 
     act(() => {
@@ -1424,22 +1443,17 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '/weekly-research collect market changes',
-      config: expect.any(String),
-    });
-    const slashRunConfig = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
-    expect(slashRunConfig).toMatchObject({
-      skills: {
-        enabled: true,
-        allowed_skills: [],
-      },
+    const slashSubmission = getCreatedInitialSubmissionV2();
+    expect(slashSubmission).toMatchObject({
+      input: { message: '/weekly-research collect market changes' },
+      composer: { allowed_skills: [] },
+      config: { skills: { enabled: true } },
     });
     expect(
-      Object.prototype.hasOwnProperty.call(slashRunConfig, 'enable_skills'),
+      Object.prototype.hasOwnProperty.call(
+        slashSubmission.composer,
+        'explicit_enable_skills',
+      ),
     ).toBe(false);
 
     act(() => {
@@ -1448,44 +1462,87 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('serializes only the automatic execution policy', () => {
-    const resourceSelection = createDefaultWorkbenchResourceSelection();
-    const runtimeSettings =
-      createDefaultWorkbenchRuntimeSettings(resourceSelection);
-
-    const runConfig = createWorkbenchRunConfig({
-      message: '验证自动执行策略',
-      runtimeSettings,
-      ...resourceSelection,
-    } as WorkbenchComposerSubmitPayload);
-
-    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
-    expect(runConfig).not.toHaveProperty('mode');
-    expect(runConfig).not.toHaveProperty('thinking_enabled');
-    expect(runConfig).not.toHaveProperty('is_plan_mode');
-    expect(runConfig).not.toHaveProperty('subagent_enabled');
-  });
-
-  it('serializes reasoning effort only when runtime reasoning is explicitly enabled', () => {
-    const resourceSelection = createDefaultWorkbenchResourceSelection();
+  it('omits client-owned execution controls while preserving canonical runtime config', () => {
+    const resourceSelection = {
+      ...createDefaultWorkbenchResourceSelection(),
+      enable_skills: ['skill-a'],
+      enable_mcp: ['tool-a'],
+      enable_kbs: ['kb-a'],
+      enable_databases: ['database-a'],
+    };
     const runtimeSettings =
       createDefaultWorkbenchRuntimeSettings(resourceSelection);
     runtimeSettings.reasoning.enabled = true;
     runtimeSettings.reasoning.effort = 'high';
 
-    expect(
-      createWorkbenchRunConfig({
-        message: '验证显式推理强度',
-        runtimeSettings,
-        ...resourceSelection,
-      } as WorkbenchComposerSubmitPayload),
-    ).toMatchObject({
-      requested_policy: 'auto',
-      reasoning_effort: 'high',
+    const runConfig = createWorkbenchRunConfig({
+      message: '验证服务端执行控制',
+      modelType: 100002,
+      modelName: 'deepseek-v4-pro',
+      runtimeSettings,
+      ...resourceSelection,
+    } as WorkbenchComposerSubmitPayload);
+
+    expect(runConfig).toMatchObject({
+      runtime: 'eino_adk',
+      model_type: 100002,
+      model_name: 'deepseek-v4-pro',
+      enable_skills: ['skill-a'],
+      enable_mcp: ['tool-a'],
+      enable_kbs: ['kb-a'],
+      enable_databases: ['database-a'],
+      skills: {
+        enabled: true,
+        allowed_skills: ['skill-a'],
+      },
+      mcp_tools: {
+        enabled: true,
+        allowed_tools: ['tool-a'],
+      },
+      token_usage: {
+        enabled: true,
+      },
     });
+    expectNoClientOwnedExecutionControls(runConfig);
   });
 
-  it('submits the automatic policy without a mode selector', async () => {
+  it('keeps runtime settings without exposing model reasoning controls', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const settings = createDefaultWorkbenchRuntimeSettings(
+      createDefaultWorkbenchResourceSelection(),
+    );
+
+    act(() => {
+      root.render(
+        <WorkbenchRuntimeSettingsControl
+          failoverCandidateCount={1}
+          settings={settings}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="运行设置"]',
+    );
+    act(() => Simulate.click(trigger as HTMLButtonElement));
+
+    const panel = container.querySelector('.chat-workbench-runtime-panel');
+    expect(panel?.textContent).not.toContain('模型推理');
+    expect(panel?.textContent).toContain('运行内核');
+    expect(panel?.textContent).toContain('记忆检索');
+    expect(panel?.textContent).toContain('Skill');
+    expect(panel?.textContent).toContain('MCP 工具');
+    expect(panel?.textContent).toContain('模型重试');
+    expect(panel?.textContent).toContain('模型切换');
+    expect(panel?.textContent).toContain('Token 用量');
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('submits server-owned execution controls without a mode selector', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -1519,17 +1576,8 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runConfig = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
-    expect(runConfig).toMatchObject({ requested_policy: 'auto' });
-    expect(runConfig).not.toHaveProperty('mode');
-    expect(runConfig).not.toHaveProperty('thinking_enabled');
-    expect(runConfig).not.toHaveProperty('is_plan_mode');
-    expect(runConfig).not.toHaveProperty('subagent_enabled');
-    expect(
-      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
-    ).toBe(false);
+    const runConfig = getCreatedInitialSubmissionV2().config;
+    expectNoClientOwnedExecutionControls(runConfig);
 
     act(() => {
       root?.unmount();
@@ -1569,15 +1617,21 @@ describe('WorkbenchPage', () => {
 
     expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
-      message: '帮我生成周报',
-      config: expect.any(String),
+      initial_submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.initial_run_submission.v2',
+        input: {
+          message: '帮我生成周报',
+          uploaded_files: [],
+        },
+      }),
     });
-    const defaultRunConfig = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
+    const createRequest = mockCreateTaskThread.mock.calls[0]?.[0];
+    expect(createRequest).not.toHaveProperty('idempotency_key');
+    expect(createRequest).not.toHaveProperty('message');
+    expect(createRequest).not.toHaveProperty('config');
+    const defaultRunConfig = createRequest.initial_submission_v2.config;
     expect(defaultRunConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -1596,15 +1650,12 @@ describe('WorkbenchPage', () => {
       },
       skills: {
         enabled: true,
-        allowed_skills: [],
       },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        defaultRunConfig,
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expect(createRequest.initial_submission_v2.composer.allowed_skills).toEqual(
+      [],
+    );
+    expectNoClientOwnedExecutionControls(defaultRunConfig);
     expect(
       Object.prototype.hasOwnProperty.call(defaultRunConfig, 'enable_skills'),
     ).toBe(false);
@@ -1622,6 +1673,9 @@ describe('WorkbenchPage', () => {
     let root: Root | undefined;
     const file = new File(['# Brief'], 'brief.md', {
       type: 'text/markdown',
+    });
+    const appendix = new File(['Appendix'], 'appendix.txt', {
+      type: 'text/plain',
     });
 
     mockCreateTaskThread.mockResolvedValue({
@@ -1646,6 +1700,14 @@ describe('WorkbenchPage', () => {
     mockUploadTaskThreadFiles.mockResolvedValue({
       data: {
         files: [
+          {
+            file_id: 'file-2',
+            file_name: 'appendix.txt',
+            virtual_path: '/mnt/user-data/uploads/appendix.txt',
+            content_type: 'text/plain',
+            size_bytes: 8,
+            created_at: 1717000000,
+          },
           {
             file_id: 'file-1',
             file_name: 'brief.md',
@@ -1688,7 +1750,7 @@ describe('WorkbenchPage', () => {
     ) as HTMLInputElement;
     await act(async () => {
       Simulate.change(fileInput, {
-        target: { files: [file] },
+        target: { files: [file, appendix] },
       } as unknown as Event);
       await Promise.resolve();
     });
@@ -1710,43 +1772,47 @@ describe('WorkbenchPage', () => {
 
     expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
-      message: '请总结附件',
-      config: expect.any(String),
-      defer_start: true,
+      deferred_initial_submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.initial_run_submission.v2',
+        input: {
+          message: '请总结附件',
+          uploaded_files: [],
+        },
+      }),
     });
     expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
       thread_id: 'thread-upload-1',
-      files: [file],
+      files: [file, appendix],
       space_id: 'space-1',
     });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
       thread_id: 'thread-upload-1',
       space_id: 'space-1',
-      input: expect.any(String),
-      config: expect.any(String),
-      metadata: expect.any(String),
-      idempotency_key: expect.any(String),
-      message_content: '请总结附件',
-      message_metadata: expect.any(String),
-    });
-    expect(
-      JSON.parse(mockCreateTaskThreadRun.mock.calls[0]?.[0].input),
-    ).toMatchObject({
-      messages: [
-        {
-          role: 'user',
-          content: '请总结附件',
+      assistant_id: 'agent',
+      submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.run_submission.v2',
+        kind: 'turn',
+        input: {
+          message: '请总结附件',
+          uploaded_files: [{ file_id: 'file-2' }, { file_id: 'file-1' }],
         },
-      ],
-      uploaded_files: [
-        {
-          file_name: 'brief.md',
-          virtual_path: '/mnt/user-data/uploads/brief.md',
-          content_type: 'text/markdown',
-          size_bytes: 7,
-        },
-      ],
+        metadata: { source: 'workbench_new_task' },
+      }),
+      idempotency_key: expect.stringMatching(/^thread-upload-1:.+:new-task$/),
     });
+    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    expect(runRequest).not.toHaveProperty('input');
+    expect(runRequest).not.toHaveProperty('config');
+    expect(runRequest).not.toHaveProperty('metadata');
+    expect(runRequest).not.toHaveProperty('message_content');
+    expect(runRequest).not.toHaveProperty('message_metadata');
+    const runConfig = runRequest.submission_v2.config;
+
+    expect(runConfig).toMatchObject({
+      runtime: 'eino_adk',
+      token_usage: { enabled: true },
+    });
+    expectNoClientOwnedExecutionControls(runConfig);
     expect(mockNavigate).toHaveBeenCalledWith(
       '/space/space-1/tasks/thread-upload-1',
     );
@@ -1754,6 +1820,101 @@ describe('WorkbenchPage', () => {
     act(() => {
       root?.unmount();
     });
+    container.remove();
+  });
+
+  it('does not create a run when attachment upload fails', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const file = new File(['broken'], 'broken.txt', {
+      type: 'text/plain',
+    });
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-upload-failed', '处理附件'),
+    );
+    mockUploadTaskThreadFiles.mockRejectedValue(new Error('上传失败'));
+
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkbenchPage />);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      Simulate.change(fileInput, {
+        target: { files: [file] },
+      } as unknown as Event);
+      await Promise.resolve();
+    });
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '处理附件' },
+      } as unknown as Event);
+    });
+
+    await act(async () => {
+      getSendButton(container).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      deferred_initial_submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.initial_run_submission.v2',
+      }),
+    });
+    expect(mockCreateTaskThreadRun).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('上传失败');
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('does not create a run when an upload response has no file ID', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const file = new File(['broken'], 'broken.txt');
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-upload-no-id', '处理附件'),
+    );
+    mockUploadTaskThreadFiles.mockResolvedValue({
+      data: {
+        files: [{ file_name: 'broken.txt', virtual_path: '/broken.txt' }],
+      },
+      code: 0,
+      msg: '',
+    });
+    const root = createRoot(container);
+    act(() => root.render(<WorkbenchPage />));
+    await act(async () => {
+      Simulate.change(container.querySelector('input[type="file"]')!, {
+        target: { files: [file] },
+      } as unknown as Event);
+    });
+    act(() => {
+      Simulate.change(container.querySelector('textarea')!, {
+        target: { value: '处理附件' },
+      } as unknown as Event);
+    });
+
+    await act(async () => {
+      getSendButton(container).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThreadRun).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('上传文件缺少 ID');
+    act(() => root.unmount());
     container.remove();
   });
 
@@ -1787,10 +1948,8 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '回车发送任务',
-      config: expect.any(String),
+    expect(getCreatedInitialSubmissionV2()).toMatchObject({
+      input: { message: '回车发送任务', uploaded_files: [] },
     });
     expect(mockNavigate).toHaveBeenCalledWith(
       '/space/space-1/tasks/thread-enter-submit',
@@ -2017,29 +2176,17 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '关闭默认技能',
-      config: expect.any(String),
-    });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      requested_policy: 'auto',
-      model_type: 100002,
-      model_name: 'deepseek-v4-pro',
-      enable_skills: [],
-      skills: {
-        enabled: false,
+    const submission = getCreatedInitialSubmissionV2();
+    expect(submission).toMatchObject({
+      composer: {
+        model_type: '100002',
+        model_name: 'deepseek-v4-pro',
+        explicit_enable_skills: [],
         allowed_skills: [],
       },
+      config: { skills: { enabled: false } },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(submission.config);
 
     act(() => {
       root?.unmount();
@@ -2110,20 +2257,13 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '用 GitHub MCP 搜索 Coze 仓库',
-      config: expect.any(String),
-    });
-
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      enable_mcp: ['mcp_7656806170694254592_query'],
-      mcp_tools: {
-        enabled: true,
-        allowed_tools: ['mcp_7656806170694254592_query'],
+    expect(getCreatedInitialSubmissionV2()).toMatchObject({
+      input: { message: '用 GitHub MCP 搜索 Coze 仓库' },
+      composer: {
+        enable_mcp: ['mcp_7656806170694254592_query'],
+        allowed_mcp_tools: ['mcp_7656806170694254592_query'],
       },
+      config: { mcp_tools: { enabled: true } },
     });
 
     act(() => {
@@ -2199,14 +2339,12 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeSettings = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
-    expect(runtimeSettings).toMatchObject({
-      mcp_tools: {
-        enabled: true,
-        allowed_tools: ['mcp_7656806170694254592_query'],
+    const submission = getCreatedInitialSubmissionV2();
+    expect(submission).toMatchObject({
+      composer: {
+        allowed_mcp_tools: ['mcp_7656806170694254592_query'],
       },
+      config: { mcp_tools: { enabled: true } },
     });
 
     act(() => {
@@ -2248,19 +2386,15 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeSettings = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
-    expect(runtimeSettings).toMatchObject({
-      enable_mcp: [],
-      mcp_tools: {
-        enabled: true,
-      },
+    const submission = getCreatedInitialSubmissionV2();
+    expect(submission).toMatchObject({
+      composer: { enable_mcp: [], allowed_mcp_tools: [] },
+      config: { mcp_tools: { enabled: true } },
     });
     expect(
       Object.prototype.hasOwnProperty.call(
-        runtimeSettings.mcp_tools,
-        'allowed_tools',
+        submission.config.mcp_tools,
+        'allowed_mcp_tools',
       ),
     ).toBe(false);
 
@@ -2331,19 +2465,13 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '用选择的技能创建总结能力 @Research Skill',
-      config: expect.any(String),
-    });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      enable_skills: ['skill-101'],
-      skills: {
-        enabled: true,
+    expect(getCreatedInitialSubmissionV2()).toMatchObject({
+      input: { message: '用选择的技能创建总结能力 @Research Skill' },
+      composer: {
+        explicit_enable_skills: ['skill-101'],
         allowed_skills: ['skill-101'],
       },
+      config: { skills: { enabled: true } },
     });
 
     act(() => {
@@ -2404,24 +2532,12 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '指定模型回答',
-      config: expect.any(String),
+    const submission = getCreatedInitialSubmissionV2();
+    expect(submission).toMatchObject({
+      input: { message: '指定模型回答' },
+      composer: { model_type: '100003', model_name: 'gpt-4.1' },
     });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
-      requested_policy: 'auto',
-      model_type: 100003,
-      model_name: 'gpt-4.1',
-    });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(submission.config);
 
     act(() => {
       root?.unmount();
@@ -2462,9 +2578,7 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeSettings = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
+    const runtimeSettings = getCreatedInitialSubmissionV2().config;
     expect(runtimeSettings).toMatchObject({
       web_tools: {
         enabled: true,
@@ -2535,20 +2649,12 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateTaskThread).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      message: '聚合运行设置',
-      config: expect.any(String),
-    });
-
-    const runtimeSettings = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
+    const submission = getCreatedInitialSubmissionV2();
+    expect(submission.input.message).toBe('聚合运行设置');
+    const runtimeSettings = submission.config;
     expect(runtimeSettings).toMatchObject({
-      requested_policy: 'auto',
       skills: {
         enabled: true,
-        allowed_skills: [],
       },
       mcp_tools: {
         enabled: true,
@@ -2560,9 +2666,7 @@ describe('WorkbenchPage', () => {
         'allowed_tools',
       ),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(runtimeSettings, 'reasoning_effort'),
-    ).toBe(false);
+    expectNoClientOwnedExecutionControls(runtimeSettings);
 
     act(() => {
       root?.unmount();
@@ -2607,9 +2711,7 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeSettings = JSON.parse(
-      mockCreateTaskThread.mock.calls[0]?.[0].config,
-    );
+    const runtimeSettings = getCreatedInitialSubmissionV2().config;
     expect(runtimeSettings).toMatchObject({
       web_tools: {
         enabled: true,

@@ -49,6 +49,20 @@ export interface WorkbenchMessage {
   created_at: number;
 }
 
+export type WorkbenchAdaptiveExecutionMode =
+  | 'direct'
+  | 'single_step'
+  | 'multi_step'
+  | 'clarification';
+
+export interface WorkbenchAdaptiveExecution {
+  schema: 'coze.adaptive_execution_public.v1';
+  enabled: boolean;
+  mode: WorkbenchAdaptiveExecutionMode;
+  safe_summary: string;
+  clarification_question: string | null;
+}
+
 export interface WorkbenchSuggestionMessage {
   role: string;
   content: string;
@@ -75,6 +89,7 @@ export interface WorkbenchRun {
   ended_at?: number;
   created_at: number;
   updated_at: number;
+  adaptive_execution?: WorkbenchAdaptiveExecution;
 }
 
 export interface WorkbenchRunEvent {

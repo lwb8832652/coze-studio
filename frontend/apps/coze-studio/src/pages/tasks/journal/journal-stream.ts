@@ -59,6 +59,7 @@ const terminalStatuses = new Set([
   'failed',
   'cancelled',
   'timed_out',
+  'interrupted',
 ]);
 
 class DefaultJournalStreamController implements JournalStreamController {

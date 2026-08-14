@@ -14,7 +14,7 @@ import (
 
 const (
 	requiredMigrationVersion     = "20260814000100"
-	requiredMigrationDescription = "sandbox_shared_aio_core"
+	requiredMigrationDescription = "expand_sandbox_shared_aio_core"
 	requiredMigrationQuery       = "SELECT description, applied, total, error FROM atlas_schema_revisions WHERE version = ?"
 	requiredMigrationSchemaQuery = `SELECT COUNT(*) FROM information_schema.columns
 WHERE table_schema = ? AND (

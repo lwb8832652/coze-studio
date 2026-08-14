@@ -360,6 +360,59 @@ describe('canonical client equivalence', () => {
     }
   });
 
+  it('strictly decodes the optional public adaptive execution decision', () => {
+    const canonical = cloneRecord(runTransportFixture.canonical);
+    const coze = canonical.coze as Record<string, unknown>;
+    coze.adaptive_execution = {
+      schema: 'coze.adaptive_execution_public.v1',
+      enabled: true,
+      mode: 'direct',
+      safe_summary: '直接回答，无需调用工具。',
+      clarification_question: null,
+      internal_decision_id: 'must-not-be-visible',
+    };
+
+    expect(adaptCanonicalRun(canonical, scope).adaptive_execution).toEqual({
+      schema: 'coze.adaptive_execution_public.v1',
+      enabled: true,
+      mode: 'direct',
+      safe_summary: '直接回答，无需调用工具。',
+      clarification_question: null,
+    });
+
+    for (const invalidDecision of [
+      {
+        schema: 'coze.adaptive_execution_public.v2',
+        enabled: true,
+        mode: 'direct',
+        safe_summary: '',
+        clarification_question: null,
+      },
+      {
+        schema: 'coze.adaptive_execution_public.v1',
+        enabled: true,
+        mode: 'unreviewed-mode',
+        safe_summary: '',
+        clarification_question: null,
+      },
+      {
+        schema: 'coze.adaptive_execution_public.v1',
+        enabled: 'yes',
+        mode: 'single_step',
+        safe_summary: '',
+        clarification_question: null,
+      },
+    ]) {
+      const invalidCanonical = cloneRecord(runTransportFixture.canonical);
+      (invalidCanonical.coze as Record<string, unknown>).adaptive_execution =
+        invalidDecision;
+
+      expect(() => adaptCanonicalRun(invalidCanonical, scope)).toThrow(
+        'adaptive_execution',
+      );
+    }
+  });
+
   it('keeps visible errors and AbortError ownership stable', async () => {
     const errorMessage = 'Run is active';
     const canonicalError = new CanonicalThreadCoreClient({

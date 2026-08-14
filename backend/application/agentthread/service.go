@@ -122,6 +122,7 @@ type ApplicationService struct {
 	JournalRecoveryRepository               JournalRecoveryRepository
 	JournalRecoveryIDGenerator              idgen.IDGenerator
 	JournalSideEffectRepository             ADKSideEffectRepository
+	AdaptiveBootstrapByRunReader            domainrepo.AdaptiveExecutionBootstrapByRunRepository
 }
 
 type ArtifactObjectStorage interface {
@@ -266,7 +267,14 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if message == "" {
 		return nil, fmt.Errorf("task thread message is required")
 	}
-	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
+		return nil, err
+	}
+	runConfig, err := s.normalizeNewRunRuntimeConfig(
+		req.Config,
+		req.Context,
+		createRunSubmitted,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +348,9 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}
 	if bundle == nil || bundle.Thread == nil || bundle.Run == nil || bundle.Message == nil {
 		return nil, fmt.Errorf("agent thread service returned incomplete task thread bundle")
+	}
+	if err := validateFreshRunJournalAttempt(enrollJournal, bundle.Attempt); err != nil {
+		return nil, err
 	}
 
 	return &CreateTaskThreadResponse{
@@ -869,7 +880,25 @@ func (s *ApplicationService) ListRecentPublicMessages(
 	return resp, nil
 }
 
-func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest) (*CreateRunResponse, error) {
+type createRunProvenance uint8
+
+const (
+	createRunSubmitted createRunProvenance = iota
+	createRunServerOwnedSubagent
+)
+
+func (s *ApplicationService) CreateRun(
+	ctx context.Context,
+	req *CreateRunRequest,
+) (*CreateRunResponse, error) {
+	return s.createRun(ctx, req, createRunSubmitted)
+}
+
+func (s *ApplicationService) createRun(
+	ctx context.Context,
+	req *CreateRunRequest,
+	provenance createRunProvenance,
+) (*CreateRunResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
 	}
@@ -884,7 +913,22 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}); err != nil {
 		return nil, err
 	}
-	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	switch provenance {
+	case createRunSubmitted:
+		if req.ParentRunID != 0 || req.RunKind == RunKindSubagent {
+			return nil, fmt.Errorf("child runs are server-owned")
+		}
+		if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {
+			return nil, err
+		}
+	case createRunServerOwnedSubagent:
+		if req.ParentRunID <= 0 || req.RunKind != RunKindSubagent {
+			return nil, fmt.Errorf("server-owned subagent run requires a parent and subagent run kind")
+		}
+	default:
+		return nil, fmt.Errorf("create run provenance is invalid")
+	}
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context, provenance)
 	if err != nil {
 		return nil, err
 	}
@@ -896,13 +940,16 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		return nil, fmt.Errorf("run message content is required when message metadata is set")
 	}
 	if messageContent != "" {
-		enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+		enrollJournal, journalEnrollment, err := s.journalEnrollmentForExistingThreadRun(
 			ctx,
 			req.ThreadID,
 			domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID),
 			req.ParentRunID,
 			runConfig,
 		)
+		if err != nil {
+			return nil, err
+		}
 		authoritativeInput, err := s.buildAuthoritativeRunInput(
 			ctx,
 			req.ThreadID,
@@ -938,19 +985,25 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		if bundle == nil || bundle.Run == nil || bundle.Message == nil {
 			return nil, fmt.Errorf("agent thread service returned incomplete run bundle")
 		}
+		if err := validateFreshRunJournalAttempt(enrollJournal, bundle.Attempt); err != nil {
+			return nil, err
+		}
 		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 		return &CreateRunResponse{
 			Run: DomainRunToSummary(bundle.Run), Message: DomainMessageToSummary(bundle.Message),
 		}, nil
 	}
 	if domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID) == domainentity.RunKindTask {
-		enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+		enrollJournal, journalEnrollment, err := s.journalEnrollmentForExistingThreadRun(
 			ctx,
 			req.ThreadID,
 			domainentity.RunKindTask,
 			req.ParentRunID,
 			runConfig,
 		)
+		if err != nil {
+			return nil, err
+		}
 		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 			Run: domainservice.CreateRunRequest{
 				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
@@ -971,6 +1024,9 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		}
 		if bundle == nil || bundle.Run == nil {
 			return nil, fmt.Errorf("agent thread service returned empty run bundle")
+		}
+		if err := validateFreshRunJournalAttempt(enrollJournal, bundle.Attempt); err != nil {
+			return nil, err
 		}
 		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 		return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
@@ -1043,13 +1099,16 @@ func (s *ApplicationService) createTopLevelRetryRun(
 	if err != nil {
 		return nil, err
 	}
-	enrollJournal, journalEnrollment := s.journalEnrollmentForExistingThreadRun(
+	enrollJournal, journalEnrollment, err := s.journalEnrollmentForExistingThreadRun(
 		ctx,
 		req.ThreadID,
 		domainentity.RunKindTask,
 		0,
 		runConfig,
 	)
+	if err != nil {
+		return nil, err
+	}
 	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 		Run: domainservice.CreateRunRequest{
 			ThreadID: req.ThreadID, AssistantID: req.AssistantID,
@@ -1072,6 +1131,9 @@ func (s *ApplicationService) createTopLevelRetryRun(
 		bundle.Run.RunKind != domainentity.RunKindTask {
 		return nil, fmt.Errorf("agent thread service returned invalid top-level retry bundle")
 	}
+	if err := validateFreshRunJournalAttempt(enrollJournal, bundle.Attempt); err != nil {
+		return nil, err
+	}
 	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 	return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }
@@ -1082,17 +1144,34 @@ func (s *ApplicationService) journalEnrollmentForExistingThreadRun(
 	runKind domainentity.RunKind,
 	parentRunID int64,
 	runConfig string,
-) (bool, *domainservice.JournalEnrollmentOptions) {
-	if s == nil || s.JournalFeatureGate == nil || threadID <= 0 ||
+) (bool, *domainservice.JournalEnrollmentOptions, error) {
+	if s == nil || threadID <= 0 ||
 		parentRunID != 0 || runKind != domainentity.RunKindTask {
-		return false, nil
+		return false, nil, nil
+	}
+	runtime, err := journalEnrollmentRuntime(runConfig)
+	if err != nil {
+		return false, nil, err
+	}
+	if runtime != RuntimeModeEinoADK {
+		return false, nil, nil
 	}
 	thread, err := s.ThreadSVC.GetThread(ctx, threadID)
-	if err != nil || thread == nil {
-		logs.CtxWarnf(ctx, "journal enrollment skipped: resolve thread %d: %v", threadID, err)
-		return false, nil
+	if err != nil {
+		return false, nil, fmt.Errorf("resolve thread %d for journal enrollment: %w", threadID, err)
 	}
-	return s.journalEnrollmentForRun(ctx, thread.SpaceID, runKind, parentRunID, runConfig)
+	if thread == nil {
+		return false, nil, fmt.Errorf("resolve thread %d for journal enrollment: empty thread", threadID)
+	}
+	enroll, options := s.journalEnrollmentForRun(ctx, thread.SpaceID, runKind, parentRunID, runConfig)
+	return enroll, options, nil
+}
+
+func validateFreshRunJournalAttempt(enroll bool, attempt *domainentity.RunAttempt) error {
+	if enroll && attempt == nil {
+		return fmt.Errorf("agent thread service returned bundle missing journal attempt")
+	}
+	return nil
 }
 
 func (s *ApplicationService) journalEnrollmentForRun(
@@ -1102,22 +1181,37 @@ func (s *ApplicationService) journalEnrollmentForRun(
 	parentRunID int64,
 	runConfig string,
 ) (bool, *domainservice.JournalEnrollmentOptions) {
-	if s == nil || s.JournalFeatureGate == nil {
+	if s == nil || spaceID <= 0 || parentRunID != 0 || runKind != domainentity.RunKindTask {
 		return false, nil
+	}
+	runtime, err := journalEnrollmentRuntime(runConfig)
+	if err != nil || runtime != RuntimeModeEinoADK {
+		if err != nil {
+			logs.CtxWarnf(ctx, "journal enrollment skipped for space %d: %v", spaceID, err)
+		}
+		return false, nil
+	}
+	options := &domainservice.JournalEnrollmentOptions{
+		EnrollmentVersion: domainentity.JournalSchemaVersion,
+		ProjectionState:   domainentity.JournalProjectionStateDisabled,
+	}
+	if s.JournalFeatureGate == nil {
+		return true, options
 	}
 	decision, err := s.JournalFeatureGate.DecideEnrollment(ctx, JournalEnrollmentInput{
 		SpaceID: spaceID, RunKind: runKind, ParentRunID: parentRunID, RunConfig: runConfig,
 	})
 	if err != nil {
-		logs.CtxWarnf(ctx, "journal enrollment skipped for space %d: %v", spaceID, err)
-		return false, nil
+		logs.CtxWarnf(ctx, "journal projection disabled for space %d: %v", spaceID, err)
+		return true, options
 	}
 	if !decision.Enrolled {
-		return false, nil
+		return true, options
 	}
 	return true, &domainservice.JournalEnrollmentOptions{
 		EnrollmentVersion: decision.EnrollmentVersion,
 		SnapshotsEnabled:  decision.SnapshotsEnabled,
+		ProjectionState:   domainentity.JournalProjectionStateHealthy,
 	}
 }
 
@@ -1354,12 +1448,45 @@ func legacyAppendedMessageID(metadata string) int64 {
 	return 0
 }
 
-func (s *ApplicationService) normalizeNewRunRuntimeConfig(config, runContext string) (string, error) {
-	if s.RuntimePolicy == nil {
+func (s *ApplicationService) normalizeNewRunRuntimeConfig(
+	config string,
+	runContext string,
+	provenance createRunProvenance,
+) (string, error) {
+	if s.RuntimePolicy == nil && provenance == createRunSubmitted {
 		return config, nil
 	}
-	normalized, _, err := normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
-	return normalized, err
+	normalized := config
+	if s.RuntimePolicy != nil {
+		var err error
+		normalized, _, err = normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	switch provenance {
+	case createRunSubmitted, createRunServerOwnedSubagent:
+		return stripSubmittedExecutionControls(normalized)
+	default:
+		return "", fmt.Errorf("create run provenance is invalid")
+	}
+}
+
+func stripSubmittedExecutionControls(normalized string) (string, error) {
+	payload, err := parseDeerFlowRuntimePayload(normalized)
+	if err != nil {
+		return "", err
+	}
+	for _, field := range submittedExecutionControlFields {
+		delete(payload, field)
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", invalidRuntimeConfigf("encode normalized run config: %v", err)
+	}
+	return string(encoded), nil
 }
 
 func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {
@@ -1383,7 +1510,14 @@ func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*G
 		return nil, fmt.Errorf("agent thread service returned empty run")
 	}
 
-	return &GetRunResponse{Run: DomainRunToSummary(run)}, nil
+	summary := DomainRunToSummary(run)
+	if req.IncludeAdaptiveExecution {
+		if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+			return nil, err
+		}
+	}
+
+	return &GetRunResponse{Run: summary}, nil
 }
 
 // GetRunByIdempotencyKey performs an authorized, read-only lookup for API
@@ -1428,7 +1562,13 @@ func (s *ApplicationService) GetRunByIdempotencyKey(
 	); err != nil {
 		return nil, err
 	}
-	return &GetRunByIdempotencyKeyResponse{Run: DomainRunToSummary(run)}, nil
+	summary := DomainRunToSummary(run)
+	if req.IncludeAdaptiveExecution {
+		if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+			return nil, err
+		}
+	}
+	return &GetRunByIdempotencyKeyResponse{Run: summary}, nil
 }
 
 func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
@@ -1467,7 +1607,13 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 		Total: total,
 	}
 	for _, run := range runs {
-		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+		summary := DomainRunToSummary(run)
+		if req.IncludeAdaptiveExecution {
+			if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+				return nil, err
+			}
+		}
+		resp.Runs = append(resp.Runs, summary)
 	}
 
 	return resp, nil

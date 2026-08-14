@@ -26,12 +26,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bytedance/mockey"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	projectconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *testing.T) {
@@ -189,7 +192,7 @@ func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
 		"coze":{"initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home"}
 		}}
 	}`
@@ -259,6 +262,46 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 	}
 }
 
+func TestCreateCanonicalThreadRejectsExecutionControlsBeforeMutation(t *testing.T) {
+	tests := map[string]string{
+		"immediate nested mixed case": `{
+			"metadata":{},
+			"coze":{"initial_run":{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"CoNfIg":{"CoNfIgUrAbLe":{"ReQuEsTeD_PoLiCy":"fast"}}
+			}}
+		}`,
+		"deferred": `{
+			"metadata":{},
+			"coze":{"deferred_initial_run":{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"context":{"reasoning_effort":"high"}
+			}}
+		}`,
+	}
+
+	for name, body := range tests {
+		name, body := name, body
+		t.Run(name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", body,
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
 func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t *testing.T) {
 	h := canonicalAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
@@ -304,7 +347,7 @@ func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testi
 		"coze":{"initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"first payload"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home"}
 		}}
 	}`
@@ -353,7 +396,7 @@ func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
 		"coze":{"deferred_initial_run":{
 			"assistant_id":"agent",
 			"input":{"messages":[{"role":"user","content":"分析附件中的销售数据"}]},
-			"config":{"runtime":"eino_adk","mode":"pro"},
+			"config":{"runtime":"eino_adk"},
 			"metadata":{"source":"workbench_home_with_uploads"}
 		}}
 	}`
@@ -372,17 +415,362 @@ func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
 	require.Empty(t, runs)
 }
 
+func TestCreateCanonicalThreadAcceptsAtomicTypedV2(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	submission := canonicalTypedInitialThreadSubmissionV2("hello")
+	body := `{"metadata":{},"initial_submission_v2":` + submission + `}`
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var created canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &created))
+	require.NotNil(t, created.Coze.InitialSubmission)
+	initialJSON, err := json.Marshal(created.Coze.InitialSubmission)
+	require.NoError(t, err)
+	require.Contains(t, string(initialJSON), `"content":"hello"`)
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, created.ThreadID))
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, canonicalPublicAssistantID, runs[0].AssistantID)
+	require.JSONEq(t, `{"source":"workbench_new_task"}`, messages[0].Metadata)
+	typed, public := decodeCanonicalTypedInitialSubmissionV2([]byte(submission), "initial_submission_v2")
+	require.Nil(t, public)
+	mapped, public := mapCanonicalTypedInitialV2(typed, false)
+	require.Nil(t, public)
+	require.JSONEq(t, mapped.Config, runs[0].Config)
+}
+
+func TestCreateCanonicalThreadAcceptsDeferredTypedV2(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	body := canonicalTypedInitialThreadRequestV2(
+		"deferred_initial_submission_v2",
+		"分析附件中的销售数据",
+	)
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var created canonicalThread
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &created))
+	require.Equal(t, "分析附件中的销售数据", created.Metadata["title"])
+	require.Nil(t, created.Coze.InitialSubmission)
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, created.ThreadID))
+	require.Empty(t, messages)
+	require.Empty(t, runs)
+}
+
+type canonicalCreateThreadMutationSpy struct {
+	createThreadCalls     int
+	createTaskThreadCalls int
+}
+
+func installCanonicalCreateThreadMutationSpy(t *testing.T) *canonicalCreateThreadMutationSpy {
+	t.Helper()
+	spy := &canonicalCreateThreadMutationSpy{}
+	createThreadPatch := mockey.Mock((*appagentthread.ApplicationService).CreateThread).To(
+		func(
+			*appagentthread.ApplicationService,
+			context.Context,
+			*appagentthread.CreateThreadRequest,
+		) (*appagentthread.CreateThreadResponse, error) {
+			spy.createThreadCalls++
+			return nil, fmt.Errorf("unexpected CreateThread mutation")
+		},
+	).Build()
+	createTaskThreadPatch := mockey.Mock((*appagentthread.ApplicationService).CreateTaskThread).To(
+		func(
+			*appagentthread.ApplicationService,
+			context.Context,
+			*appagentthread.CreateTaskThreadRequest,
+		) (*appagentthread.CreateTaskThreadResponse, error) {
+			spy.createTaskThreadCalls++
+			return nil, fmt.Errorf("unexpected CreateTaskThread mutation")
+		},
+	).Build()
+	t.Cleanup(func() {
+		createTaskThreadPatch.UnPatch()
+		createThreadPatch.UnPatch()
+	})
+	return spy
+}
+
+func (s *canonicalCreateThreadMutationSpy) requireZero(t *testing.T) {
+	t.Helper()
+	require.Zero(t, s.createThreadCalls, "CreateThread mutation calls")
+	require.Zero(t, s.createTaskThreadCalls, "CreateTaskThread mutation calls")
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsAllVersionMixesWithoutMutation(t *testing.T) {
+	initial := canonicalTypedInitialThreadSubmissionV2("typed initial")
+	deferred := canonicalTypedInitialThreadSubmissionV2("typed deferred")
+	tests := []struct {
+		name string
+		body string
+		path string
+	}{
+		{
+			name: "both typed variants",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"deferred_initial_submission_v2":` + deferred + `}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed initial and legacy initial",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"initial_run":{}}}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed initial and legacy deferred",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"deferred_initial_run":{}}}`,
+			path: "initial_submission_v2",
+		},
+		{
+			name: "typed deferred and legacy initial",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred +
+				`,"coze":{"initial_run":{}}}`,
+			path: "deferred_initial_submission_v2",
+		},
+		{
+			name: "typed deferred and legacy deferred",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred +
+				`,"coze":{"deferred_initial_run":{}}}`,
+			path: "deferred_initial_submission_v2",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
+
+			_, _, public := canonicalCreateThreadTypedSubmissionV2([]byte(test.body))
+			require.NotNil(t, public)
+			require.Equal(t, "mixed_submission_versions", public.errorClass)
+			require.Contains(t, public.Detail, test.path)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var responseError canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &responseError))
+			require.Equal(t, "invalid_request", responseError.Code)
+			require.Contains(t, responseError.Detail, test.path)
+			mutationSpy.requireZero(t)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsClosedShapeViolationsWithoutMutation(t *testing.T) {
+	unknown := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("secret-message-not-in-error"),
+		`"config":{`,
+		`"config":{"foo":"secret-config-value",`,
+	)
+	tests := []struct {
+		name, body, code, path string
+	}{
+		{
+			name: "explicit null",
+			body: `{"metadata":{},"initial_submission_v2":null}`,
+			code: "invalid_request",
+			path: "initial_submission_v2",
+		},
+		{
+			name: "unknown nested field",
+			body: `{"metadata":{},"initial_submission_v2":` + unknown + `}`,
+			code: "unsupported_sdk_field",
+			path: "initial_submission_v2.config.foo",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			require.Contains(t, public.Detail, test.path)
+			require.NotContains(t, public.Detail, "secret-")
+			require.False(t, public.Retryable)
+			mutationSpy.requireZero(t)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2RejectsCaseVariantRootWithoutMutation(t *testing.T) {
+	installAgentThreadTestService(t)
+	mutationSpy := installCanonicalCreateThreadMutationSpy(t)
+	legacy := `{"assistant_id":"agent","input":{"messages":[{"role":"user","content":"legacy must not run"}]}}`
+	tests := []string{
+		`{"metadata":{},"Initial_Submission_V2":` + canonicalTypedInitialThreadSubmissionV2("case variant") + `}`,
+		`{"metadata":{},"DEFERRED_INITIAL_SUBMISSION_V2":` + canonicalTypedInitialThreadSubmissionV2("case variant") + `,"coze":{"initial_run":` + legacy + `}}`,
+	}
+	for _, body := range tests {
+		h := canonicalAgentThreadTestServer()
+		h.POST("/api/workbench/threads", CreateCanonicalThread)
+		response := performCanonicalThreadJSONRequest(t, h, http.MethodPost, "/api/workbench/threads", body)
+		require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+		var public canonicalError
+		require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+		require.Equal(t, "unsupported_sdk_field", public.Code)
+		require.Zero(t, canonicalThreadCount(t, 1001, 2))
+	}
+	mutationSpy.requireZero(t)
+}
+
+func TestCreateCanonicalThreadTypedV2RetiredControlWinsBeforeStrictAndMixing(t *testing.T) {
+	deferred := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("do not persist deferred"),
+		`"config":{`,
+		`"config":{"configurable":{"context":{"reasoning_effort":"high"}},`,
+	)
+	initial := canonicalTypedV2Replace(
+		canonicalTypedInitialThreadSubmissionV2("do not persist mixed"),
+		`"config":{`,
+		`"config":{"mode":"legacy",`,
+	)
+	tests := []struct{ name, body, path string }{
+		{
+			name: "deferred nested before strict unknown",
+			body: `{"metadata":{},"deferred_initial_submission_v2":` + deferred + `}`,
+			path: "deferred_initial_submission_v2.config.configurable.context.reasoning_effort",
+		},
+		{
+			name: "retired before version mix",
+			body: `{"metadata":{},"initial_submission_v2":` + initial +
+				`,"coze":{"initial_run":{}}}`,
+			path: "initial_submission_v2.config.mode",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+			mutationSpy := installCanonicalCreateThreadMutationSpy(t)
+
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Equal(t, "Unsupported execution control: "+test.path, public.Detail)
+			mutationSpy.requireZero(t)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadTypedV2IdempotencyReplayAndConflict(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	firstBody := canonicalTypedInitialThreadRequestV2("initial_submission_v2", "typed idempotent payload")
+	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-typed-initial-thread-1"}
+	first := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, header,
+	)
+	require.Equal(t, http.StatusOK, first.Code, first.Result().Body())
+	var firstThread canonicalThread
+	require.NoError(t, json.Unmarshal(first.Result().Body(), &firstThread))
+
+	replay := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, header,
+	)
+	require.Equal(t, http.StatusOK, replay.Code, replay.Result().Body())
+	var replayedThread canonicalThread
+	require.NoError(t, json.Unmarshal(replay.Result().Body(), &replayedThread))
+	require.Equal(t, firstThread.ThreadID, replayedThread.ThreadID)
+
+	changedBody := canonicalTypedInitialThreadRequestV2("initial_submission_v2", "changed typed payload")
+	conflict := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", changedBody, header,
+	)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(conflict.Result().Body(), &public))
+	require.Equal(t, "idempotency_conflict", public.Code)
+	require.Equal(t, 1, canonicalThreadCount(t, 1001, 2))
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, firstThread.ThreadID))
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, "typed idempotent payload", messages[0].Content)
+	require.Contains(t, runs[0].Metadata, `"_idempotency"`)
+}
+
+func TestCreateCanonicalThreadTypedV2AuthorizesBeforeHostileBody(t *testing.T) {
+	h := canonicalAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+	mutationSpy := installCanonicalCreateThreadMutationSpy(t)
+	authorizer := &canonicalRecordingWorkspaceAuthorizer{err: appagentthread.ErrThreadAccessDenied}
+	appagentthread.SVC.WorkspaceAuthorizer = authorizer
+
+	response := performCanonicalThreadJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads",
+		`{"initial_submission_v2":{"config":{"mode":"hostile-secret"}}}`,
+	)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "workspace_not_found", public.Code)
+	require.Equal(t, 1, authorizer.calls)
+	mutationSpy.requireZero(t)
+	authorizer.err = nil
+	require.Zero(t, canonicalThreadCount(t, 1001, 2))
+}
+
+func canonicalTypedInitialThreadSubmissionV2(message string) string {
+	return canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictInitialV2),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+}
+
+func canonicalTypedInitialThreadRequestV2(field, message string) string {
+	return fmt.Sprintf(
+		`{"metadata":{},%q:%s}`,
+		field,
+		canonicalTypedInitialThreadSubmissionV2(message),
+	)
+}
+
 func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *testing.T) {
 	initial := `{
 		"assistant_id":"agent",
 		"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"metadata":{"source":"workbench_home"}
 	}`
 	deferred := `{
 		"assistant_id":"agent",
 		"input":{"messages":[{"role":"user","content":"分析附件中的销售数据"}]},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"metadata":{"source":"workbench_home_with_uploads"}
 	}`
 	tests := map[string]string{
@@ -504,7 +892,7 @@ func TestSearchCanonicalThreadsSortsByProjectedSDKStatus(t *testing.T) {
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "busy",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 
@@ -688,40 +1076,84 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testing.T) {
-	h := canonicalAgentThreadTestServer()
-	h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
-	installAgentThreadTestService(t)
+type canonicalDeleteThreadIfIdleSpy struct {
+	domainservice.ThreadService
+	deleteCalls int
+}
 
-	idle := createCanonicalTestThread(t, 1001, "idle", `{}`)
-	idlePath := "/api/workbench/threads/" + strconv.FormatInt(idle.ThreadID, 10)
-	idleResponse := ut.PerformRequest(h.Engine, http.MethodDelete, idlePath, nil)
-	require.Equal(t, http.StatusNoContent, idleResponse.Code)
-	require.Empty(t, idleResponse.Result().Body())
+func (s *canonicalDeleteThreadIfIdleSpy) DeleteThreadIfIdle(
+	context.Context,
+	*domainservice.DeleteThreadIfIdleRequest,
+) (bool, error) {
+	s.deleteCalls++
+	return true, nil
+}
 
-	busy, err := appagentthread.SVC.CreateTaskThread(context.Background(), &appagentthread.CreateTaskThreadRequest{
-		SpaceID: 1001,
-		UserID:  2,
-		Message: "keep running",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, busy.Run)
-	busyPath := "/api/workbench/threads/" + strconv.FormatInt(busy.Thread.ThreadID, 10)
-	busyResponse := ut.PerformRequest(h.Engine, http.MethodDelete, busyPath, nil)
-	require.Equal(t, http.StatusConflict, busyResponse.Code)
-	var public canonicalError
-	require.NoError(t, json.Unmarshal(busyResponse.Result().Body(), &public))
-	require.Equal(t, "thread_busy", public.Code)
+func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing bool
+	}{
+		{name: "existing idle thread", existing: true},
+		{name: "valid nonexistent positive thread ID"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			h := canonicalAgentThreadTestServer()
+			h.Use(func(ctx context.Context, c *app.RequestContext) {
+				ctx = context.WithValue(ctx, projectconsts.CtxLogIDKey, "trace-delete")
+				c.Next(ctx)
+			})
+			h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
+			installAgentThreadTestService(t)
 
-	stored, err := appagentthread.SVC.GetThread(context.Background(), &appagentthread.GetThreadRequest{
-		ThreadID: busy.Thread.ThreadID,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, stored.Thread)
-	run, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: busy.Run.RunID})
-	require.NoError(t, err)
-	require.Equal(t, appagentthread.RunStatusPending, run.Run.Status)
+			authorizer := &canonicalRecordingWorkspaceAuthorizer{}
+			appagentthread.SVC.WorkspaceAuthorizer = authorizer
+			realThreadSVC := appagentthread.SVC.ThreadSVC
+			spy := &canonicalDeleteThreadIfIdleSpy{ThreadService: realThreadSVC}
+			appagentthread.SVC.ThreadSVC = spy
+
+			threadID := int64(999)
+			if test.existing {
+				threadID = createCanonicalTestThread(t, 1001, "idle", `{}`).ThreadID
+			}
+
+			path := "/api/workbench/threads/" + strconv.FormatInt(threadID, 10)
+			response := ut.PerformRequest(h.Engine, http.MethodDelete, path, nil)
+			if response.Code != http.StatusServiceUnavailable {
+				t.Errorf("expected exact HTTP status %d, got %d", http.StatusServiceUnavailable, response.Code)
+			}
+			if spy.deleteCalls != 0 {
+				t.Errorf("expected DeleteThreadIfIdle calls 0, got %d", spy.deleteCalls)
+			}
+			if response.Code != http.StatusServiceUnavailable || spy.deleteCalls != 0 {
+				return
+			}
+
+			body := response.Result().Body()
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(body, &public))
+			require.Equal(t, "thread_delete_temporarily_disabled", public.Code)
+			require.Equal(t, "Thread deletion is temporarily unavailable", public.Detail)
+			require.False(t, public.Retryable)
+			require.Equal(t, "trace-delete", public.TraceID)
+			require.NotContains(t, string(body), "error_code")
+			require.Empty(t, response.Result().Header.Get("Retry-After"))
+			require.Equal(t, 1, authorizer.calls)
+			require.Equal(t, appagentthread.WorkspaceAccessRequest{
+				ViewerID: 2,
+				SpaceID:  1001,
+			}, authorizer.req)
+
+			if test.existing {
+				stored, err := realThreadSVC.GetThread(context.Background(), threadID)
+				require.NoError(t, err)
+				require.NotNil(t, stored)
+				require.Equal(t, threadID, stored.ID)
+			}
+		})
+	}
 }
 
 func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *testing.T) {
@@ -848,7 +1280,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "message-000",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 	for index := 1; index <= 125; index++ {
@@ -1263,7 +1695,7 @@ func createCanonicalStateFixture(
 		SpaceID: 1001,
 		UserID:  2,
 		Message: "state fixture",
-		Config:  `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:  `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 	checkpoint, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{

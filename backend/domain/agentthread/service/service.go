@@ -127,10 +127,30 @@ type CreateRunBundleRequest struct {
 }
 
 type JournalEnrollmentOptions struct {
-	EnrollmentVersion string
-	SnapshotsEnabled  bool
-	TraceID           string
-	Recovery          *JournalRecoveryEnrollmentOptions
+	EnrollmentVersion     string
+	SnapshotsEnabled      bool
+	ProjectionState       entity.JournalProjectionState
+	TraceID               string
+	Recovery              *JournalRecoveryEnrollmentOptions
+	HumanResume           *JournalHumanResumeEnrollmentOptions
+	OrdinaryLeaseRecovery *JournalOrdinaryLeaseRecoveryEnrollmentOptions
+}
+
+type JournalOrdinaryLeaseRecoveryEnrollmentOptions struct {
+	JournalRunID       int64
+	SourceCheckpointID int64
+	SourceCheckpoint   *entity.Checkpoint
+	SourceAttemptID    string
+	IdempotencyKey     string
+	ExpiredLease       *JournalRecoveryExpiredLeaseOptions
+}
+
+type JournalHumanResumeEnrollmentOptions struct {
+	JournalRunID       int64
+	SourceRunID        int64
+	SourceAttemptID    string
+	SourceCheckpointID int64
+	IdempotencyKey     string
 }
 
 type JournalRecoveryEnrollmentOptions struct {
@@ -656,6 +676,13 @@ type ThreadService interface {
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
+}
+
+type HumanResumeRolloverReplayService interface {
+	GetHumanResumeRolloverReplay(
+		ctx context.Context,
+		req repository.HumanResumeRolloverReplayRequest,
+	) (*repository.HumanResumeRolloverReplayResult, error)
 }
 
 type JournalService interface {

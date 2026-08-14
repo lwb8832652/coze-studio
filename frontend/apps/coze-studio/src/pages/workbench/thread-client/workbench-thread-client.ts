@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+/* eslint-disable max-lines -- The public Workbench client contract remains one reviewed type-only boundary. */
+
+import type {
+  CanonicalHumanInteractionResponseV2,
+  CanonicalInitialRunSubmissionV2,
+  CanonicalRunSubmissionV2,
+} from '@coze-studio/api-schema/workbench-thread';
+
 import type { WorkbenchJournalClient } from './workbench-journal-client';
 import type {
   HumanInteractionResponse,
@@ -110,7 +118,7 @@ export interface SearchWorkbenchThreadsRequest
   status?: string;
 }
 
-export interface CreateWorkbenchThreadRequest
+export interface LegacyCreateWorkbenchThreadRequest
   extends WorkbenchScopedRequest,
     WorkbenchAbortOptions,
     WorkbenchIdempotencyOptions {
@@ -126,7 +134,40 @@ export interface CreateWorkbenchThreadRequest
   on_disconnect?: string;
   durability?: string;
   defer_start?: boolean;
+  initial_submission_v2?: never;
+  deferred_initial_submission_v2?: never;
 }
+
+type TypedCreateWorkbenchThreadSafeRequest = WorkbenchScopedRequest &
+  WorkbenchAbortOptions &
+  WorkbenchIdempotencyOptions & {
+    title?: string;
+    message?: never;
+    assistant_id?: never;
+    command?: never;
+    config?: never;
+    context?: never;
+    metadata?: never;
+    stream_mode?: never;
+    multitask_strategy?: never;
+    on_disconnect?: never;
+    durability?: never;
+    defer_start?: never;
+  };
+
+export type CreateWorkbenchThreadRequest =
+  | LegacyCreateWorkbenchThreadRequest
+  | (TypedCreateWorkbenchThreadSafeRequest &
+      (
+        | {
+            initial_submission_v2: CanonicalInitialRunSubmissionV2;
+            deferred_initial_submission_v2?: never;
+          }
+        | {
+            initial_submission_v2?: never;
+            deferred_initial_submission_v2: CanonicalInitialRunSubmissionV2;
+          }
+      ));
 
 export interface GetWorkbenchThreadRequest
   extends WorkbenchThreadRequest,
@@ -166,7 +207,7 @@ export interface ListWorkbenchRunsRequest
   status?: string;
 }
 
-export interface CreateWorkbenchRunRequest
+export interface LegacyCreateWorkbenchRunRequest
   extends WorkbenchThreadRequest,
     WorkbenchAbortOptions,
     WorkbenchIdempotencyOptions {
@@ -185,7 +226,30 @@ export interface CreateWorkbenchRunRequest
   // The canonical transport omits coze.attempt_kind for an ordinary turn.
   attempt_kind?: 'turn' | 'retry';
   source_run_id?: string;
+  submission_v2?: never;
 }
+
+export type CreateWorkbenchRunRequest =
+  | LegacyCreateWorkbenchRunRequest
+  | (WorkbenchThreadRequest &
+      WorkbenchAbortOptions &
+      WorkbenchIdempotencyOptions & {
+        assistant_id?: 'agent';
+        submission_v2: CanonicalRunSubmissionV2;
+        stream_mode?: string;
+        multitask_strategy?: string;
+        on_disconnect?: string;
+        durability?: string;
+        input?: never;
+        command?: never;
+        config?: never;
+        context?: never;
+        metadata?: never;
+        message_content?: never;
+        message_metadata?: never;
+        attempt_kind?: never;
+        source_run_id?: never;
+      });
 
 export interface GetWorkbenchRunRequest
   extends WorkbenchRunRequest,
@@ -195,13 +259,24 @@ export interface CancelWorkbenchRunRequest
   extends WorkbenchRunRequest,
     WorkbenchAbortOptions {}
 
-export interface ResumeWorkbenchRunRequest
+export interface LegacyResumeWorkbenchRunRequest
   extends WorkbenchRunRequest,
     WorkbenchAbortOptions,
     WorkbenchIdempotencyOptions {
   interrupt_id: string;
   response: HumanInteractionResponse;
+  response_v2?: never;
 }
+
+export type ResumeWorkbenchRunRequest =
+  | LegacyResumeWorkbenchRunRequest
+  | (WorkbenchRunRequest &
+      WorkbenchAbortOptions &
+      WorkbenchIdempotencyOptions & {
+        interrupt_id: string;
+        response?: never;
+        response_v2: CanonicalHumanInteractionResponseV2;
+      });
 
 export interface RetryWorkbenchSubagentRunRequest
   extends WorkbenchRunRequest,

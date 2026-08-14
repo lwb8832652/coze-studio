@@ -146,7 +146,9 @@ func (r *threadRepository) ListRunEventsByCursor(
 	limit := normalizeCanonicalCursorLimit(req.Limit, 100)
 	query := r.db.WithContext(ctx).
 		Model(&runEventPO{}).
-		Where("thread_id = ?", req.ThreadID)
+		Where("thread_id = ?", req.ThreadID).
+		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal)).
+		Where("event_type <> ?", entity.JournalAttemptInterruptedRunEventType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}
@@ -183,7 +185,8 @@ func (r *threadRepository) ListCheckpointsBefore(
 	limit := normalizeCanonicalCursorLimit(req.Limit, 20)
 	query := r.db.WithContext(ctx).
 		Model(&checkpointPO{}).
-		Where("thread_id = ?", req.ThreadID)
+		Where("thread_id = ?", req.ThreadID).
+		Where("runtime_type <> ?", adaptiveBootstrapRuntimeType)
 	if req.BeforeCheckpointID > 0 {
 		query = query.Where("id < ?", req.BeforeCheckpointID)
 	}

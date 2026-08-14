@@ -111,7 +111,7 @@ unknown 时 fail closed，且不回退本机 Host Shell。
 Runner 直接使用 dev 环境已配置的 MySQL 与 Redis；Compose 不启动数据库容器。
 `deploy.sh` 在启动 AIO 或更新服务前，用已经拉取并校验 revision 的候选 Runner 执行一次
 `migration-status`。该命令从权限为 `600` 的 Runner env 读取既有 `MYSQL_DSN`，在数据库
-只读事务中核验 `atlas_schema_revisions` 的 `20260814000100_sandbox_shared_aio_core` 已完整
+只读事务中核验 `atlas_schema_revisions` 的 `20260814000100_expand_sandbox_shared_aio_core` 已完整
 applied，并再次核对 Shared AIO 所需表和列；它不接收或输出 DSN，不执行 apply，也不启动
 数据库容器。缺表、缺列、缺 revision、description 不符、部分执行、Atlas error 或连接状态
 未知都必须在任何 service `up` 前 fail closed。

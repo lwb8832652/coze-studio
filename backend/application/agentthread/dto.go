@@ -128,6 +128,25 @@ type MessageSummary struct {
 	CreatedAt int64
 }
 
+type PublicAdaptiveExecutionMode string
+
+const (
+	PublicAdaptiveExecutionModeDirect        PublicAdaptiveExecutionMode = "direct"
+	PublicAdaptiveExecutionModeSingleStep    PublicAdaptiveExecutionMode = "single_step"
+	PublicAdaptiveExecutionModeMultiStep     PublicAdaptiveExecutionMode = "multi_step"
+	PublicAdaptiveExecutionModeClarification PublicAdaptiveExecutionMode = "clarification"
+)
+
+const PublicAdaptiveExecutionSchemaV1 = "coze.adaptive_execution_public.v1"
+
+type PublicAdaptiveExecutionSummary struct {
+	Schema                string                      `json:"schema"`
+	Enabled               bool                        `json:"enabled"`
+	Mode                  PublicAdaptiveExecutionMode `json:"mode"`
+	SafeSummary           string                      `json:"safe_summary"`
+	ClarificationQuestion *string                     `json:"clarification_question"`
+}
+
 type RunSummary struct {
 	RunID               int64
 	PlanScopeRunID      int64
@@ -161,6 +180,7 @@ type RunSummary struct {
 	EndedAt             int64
 	CreatedAt           int64
 	UpdatedAt           int64
+	AdaptiveExecution   *PublicAdaptiveExecutionSummary
 }
 
 type RunEventSummary struct {
@@ -624,7 +644,8 @@ type RetrySubagentRunResponse struct {
 }
 
 type GetRunRequest struct {
-	RunID int64
+	RunID                    int64
+	IncludeAdaptiveExecution bool
 }
 
 type GetRunResponse struct {
@@ -635,10 +656,11 @@ type GetRunResponse struct {
 // the already-authorized Thread. Idempotency keys are scoped by the Thread's
 // server-owned SpaceID rather than any caller-supplied ownership field.
 type GetRunByIdempotencyKeyRequest struct {
-	ThreadID               int64
-	IdempotencyKey         string
-	IdempotencyOperation   string
-	IdempotencyFingerprint string
+	ThreadID                 int64
+	IdempotencyKey           string
+	IdempotencyOperation     string
+	IdempotencyFingerprint   string
+	IncludeAdaptiveExecution bool
 }
 
 type GetRunByIdempotencyKeyResponse struct {
@@ -646,12 +668,13 @@ type GetRunByIdempotencyKeyResponse struct {
 }
 
 type ListRunsRequest struct {
-	ThreadID         int64
-	ParentRunID      *int64
-	IncludeChildRuns bool
-	Status           *RunStatus
-	Page             int32
-	PageSize         int32
+	ThreadID                 int64
+	ParentRunID              *int64
+	IncludeChildRuns         bool
+	IncludeAdaptiveExecution bool
+	Status                   *RunStatus
+	Page                     int32
+	PageSize                 int32
 }
 
 type ListRunsResponse struct {

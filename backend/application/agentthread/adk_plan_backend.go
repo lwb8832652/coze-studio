@@ -29,6 +29,7 @@ import (
 
 	adkfilesystem "github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/adk/middlewares/plantask"
+	"github.com/cloudwego/eino/compose"
 )
 
 const (
@@ -48,6 +49,7 @@ type ADKPlanScope struct {
 }
 
 type ADKPlanTask struct {
+	RecordID    int64          `json:"-"`
 	TaskID      int64          `json:"-"`
 	ID          string         `json:"id"`
 	Subject     string         `json:"subject"`
@@ -60,6 +62,7 @@ type ADKPlanTask struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	Active      bool           `json:"-"`
 	Version     int64          `json:"-"`
+	CreatedAt   int64          `json:"-"`
 	UpdatedAt   int64          `json:"-"`
 }
 
@@ -128,6 +131,7 @@ type ADKPlanBackend struct {
 	store         ADKPlanStore
 	eventSink     RunEventSink
 	parityTracker *ADKParityStateTracker
+	planBoundary  *ADKAdaptivePlanBoundaryCoordinator
 }
 
 type ADKPlanBackendOption func(*ADKPlanBackend)
@@ -137,6 +141,14 @@ func WithADKPlanParityStateTracker(
 ) ADKPlanBackendOption {
 	return func(backend *ADKPlanBackend) {
 		backend.parityTracker = tracker
+	}
+}
+
+func WithADKAdaptivePlanBoundaryCoordinator(
+	coordinator *ADKAdaptivePlanBoundaryCoordinator,
+) ADKPlanBackendOption {
+	return func(backend *ADKPlanBackend) {
+		backend.planBoundary = coordinator
 	}
 }
 
@@ -202,7 +214,7 @@ func (b *ADKPlanBackend) syncParityState(ctx context.Context) error {
 	if b == nil || b.parityTracker == nil {
 		return nil
 	}
-	snapshot, err := b.store.OpenPlan(ctx, b.scope)
+	snapshot, err := b.openPlan(ctx)
 	if err != nil {
 		return fmt.Errorf("load eino adk plan for parity state: %w", err)
 	}
@@ -215,6 +227,45 @@ func (b *ADKPlanBackend) syncParityState(ctx context.Context) error {
 	return nil
 }
 
+func (b *ADKPlanBackend) adaptiveBoundary(
+	ctx context.Context,
+) (*ADKAdaptivePlanBoundaryCoordinator, bool) {
+	coordinator := b.planBoundary
+	if coordinator == nil || coordinator.run == nil ||
+		coordinator.run.RunID != b.scope.ActiveRunID ||
+		coordinator.scope() != b.scope {
+		return nil, false
+	}
+	facts, ok := adaptiveBootstrapFactsFromContext(ctx)
+	return coordinator, ok && adkAdaptivePlanFactsApply(coordinator.run, facts)
+}
+
+func (b *ADKPlanBackend) openPlan(ctx context.Context) (*ADKPlanSnapshot, error) {
+	if coordinator, ok := b.adaptiveBoundary(ctx); ok {
+		return coordinator.snapshot(ctx, b.scope)
+	}
+	return b.store.OpenPlan(ctx, b.scope)
+}
+
+func (b *ADKPlanBackend) getPlanTask(
+	ctx context.Context,
+	taskID int64,
+) (*ADKPlanTask, error) {
+	if coordinator, ok := b.adaptiveBoundary(ctx); ok {
+		return coordinator.task(ctx, b.scope, taskID)
+	}
+	return b.store.GetPlanTask(ctx, b.scope, taskID)
+}
+
+func adkPlanToolCallIdentity(ctx context.Context) (string, string, error) {
+	toolCallID := strings.TrimSpace(compose.GetToolCallID(ctx))
+	address := strings.TrimSpace(compose.GetCurrentAddress(ctx).String())
+	if toolCallID == "" || address == "" {
+		return "", "", fmt.Errorf("adaptive plan tool call identity is required")
+	}
+	return toolCallID, address, nil
+}
+
 func (b *ADKPlanBackend) LsInfo(
 	ctx context.Context,
 	req *plantask.LsInfoRequest,
@@ -225,7 +276,7 @@ func (b *ADKPlanBackend) LsInfo(
 	if req == nil || req.Path != adkPlanBaseDir {
 		return nil, fmt.Errorf("eino adk plan list path is invalid")
 	}
-	snapshot, err := b.store.OpenPlan(ctx, b.scope)
+	snapshot, err := b.openPlan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +326,7 @@ func (b *ADKPlanBackend) Read(
 		return nil, err
 	}
 	if kind == adkPlanHighWatermark {
-		snapshot, err := b.store.OpenPlan(ctx, b.scope)
+		snapshot, err := b.openPlan(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +334,7 @@ func (b *ADKPlanBackend) Read(
 			Content: strconv.FormatInt(snapshot.HighWatermark, 10),
 		}, nil
 	}
-	task, err := b.store.GetPlanTask(ctx, b.scope, taskID)
+	task, err := b.getPlanTask(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -317,12 +368,19 @@ func (b *ADKPlanBackend) Write(
 		if err != nil {
 			return fmt.Errorf("eino adk plan high watermark is invalid: %w", err)
 		}
-		if _, err := b.store.ReservePlanTaskID(
-			ctx,
-			b.scope,
-			next-1,
-			next,
-		); err != nil {
+		if coordinator, ok := b.adaptiveBoundary(ctx); ok {
+			toolCallID, address, identityErr := adkPlanToolCallIdentity(ctx)
+			if identityErr != nil {
+				return identityErr
+			}
+			if err := coordinator.stageHighWatermark(
+				ctx, toolCallID, address, next-1, next,
+			); err != nil {
+				return fmt.Errorf("stage eino adk plan task id: %w", err)
+			}
+			return nil
+		}
+		if _, err := b.store.ReservePlanTaskID(ctx, b.scope, next-1, next); err != nil {
 			return fmt.Errorf("reserve eino adk plan task id: %w", err)
 		}
 		return nil
@@ -346,6 +404,18 @@ func (b *ADKPlanBackend) Write(
 	}
 	if err := validateADKPlanTask(&task); err != nil {
 		return err
+	}
+	if coordinator, ok := b.adaptiveBoundary(ctx); ok {
+		toolCallID, address, identityErr := adkPlanToolCallIdentity(ctx)
+		if identityErr != nil {
+			return identityErr
+		}
+		if err := coordinator.stageTaskWithParity(
+			ctx, toolCallID, address, &task, b.parityTracker,
+		); err != nil {
+			return fmt.Errorf("stage eino adk plan task: %w", err)
+		}
+		return nil
 	}
 	mutation, err := b.store.UpsertPlanTask(ctx, b.scope, &task)
 	if err != nil {
@@ -383,6 +453,18 @@ func (b *ADKPlanBackend) Delete(
 	}
 	if kind == adkPlanHighWatermark {
 		return fmt.Errorf("eino adk plan high watermark cannot be deleted")
+	}
+	if coordinator, ok := b.adaptiveBoundary(ctx); ok {
+		toolCallID, address, identityErr := adkPlanToolCallIdentity(ctx)
+		if identityErr != nil {
+			return identityErr
+		}
+		if err := coordinator.stageDelete(
+			ctx, toolCallID, address, taskID, b.parityTracker,
+		); err != nil {
+			return fmt.Errorf("stage eino adk plan task delete: %w", err)
+		}
+		return nil
 	}
 	mutation, err := b.store.ArchivePlanTask(ctx, b.scope, taskID)
 	if err != nil {

@@ -18,11 +18,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { WorkbenchClientError } from '../workbench/thread-client/canonical-fetch';
 import type { WorkbenchRun } from '../workbench/thread-client';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
-  stringifyWorkbenchRunConfig,
+  createRetrySubmissionV2,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import type { TaskThreadDetailModel } from './task-thread-detail-model';
@@ -35,6 +36,9 @@ import {
 } from './service';
 import { getTaskInputText } from './helpers';
 
+const isRetryConflict = (error: unknown): boolean =>
+  error instanceof WorkbenchClientError && error.status === 409;
+
 const getTaskRetryPayload = (
   message: string,
 ): WorkbenchComposerSubmitPayload => {
@@ -46,20 +50,6 @@ const getTaskRetryPayload = (
     ...resourceSelection,
   };
 };
-
-const getTaskRetryMetadata = ({
-  sourceRunId,
-  threadId,
-}: {
-  sourceRunId: string;
-  threadId: string;
-}) =>
-  JSON.stringify({
-    source: 'task_retry',
-    source_run_id: sourceRunId,
-    source_thread_id: threadId,
-    requested_at: Date.now(),
-  });
 
 const isTopLevelRun = (run: WorkbenchRun): boolean =>
   !run.parent_run_id || run.parent_run_id === '0';
@@ -259,22 +249,8 @@ export const useTaskRunActions = <TaskRequestToken>({
           const response = await createTaskThreadRun({
             thread_id: submittedTaskDetailId,
             space_id: submittedSpaceID,
-            attempt_kind: 'retry',
-            message_content: message,
-            source_run_id: sourceRunId,
-            input: JSON.stringify({
-              messages: [
-                {
-                  role: 'user',
-                  content: message,
-                },
-              ],
-            }),
-            config: stringifyWorkbenchRunConfig(retryPayload),
-            metadata: getTaskRetryMetadata({
-              sourceRunId,
-              threadId: task.id,
-            }),
+            assistant_id: 'agent',
+            submission_v2: createRetrySubmissionV2(retryPayload, sourceRunId),
             idempotency_key: `${submittedSpaceID}:${submittedTaskDetailId}:${sourceRunId}:task_retry`,
           });
           if (!isCurrentTaskRequest(request)) {
@@ -284,12 +260,17 @@ export const useTaskRunActions = <TaskRequestToken>({
             commitTopLevelRun?.(response.data);
           }
         } catch (err) {
-          if (isCurrentTaskRequest(request)) {
-            setTaskRunActionError(
-              err instanceof Error ? err.message : '重试任务失败，请稍后再试',
-            );
+          if (!isRetryConflict(err)) {
+            if (isCurrentTaskRequest(request)) {
+              setTaskRunActionError(
+                err instanceof Error ? err.message : '重试任务失败，请稍后再试',
+              );
+            }
+            return;
           }
-          return;
+          if (!isCurrentTaskRequest(request)) {
+            return;
+          }
         }
         if (!isCurrentTaskRequest(request)) {
           return;

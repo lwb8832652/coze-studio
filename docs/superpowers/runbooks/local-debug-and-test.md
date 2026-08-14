@@ -3,6 +3,10 @@
 本手册只记录 Coze Studio 当前项目的本地调试和验收口径。不要写入真实生产
 密钥；历史 Nuwax/DeerFlow 环境只在任务明确要求回归追溯时按对应旧文档使用。
 
+启动模式、配置分层、数据库 migration 和 `dev` 发布的统一口径见
+`docs/superpowers/runbooks/project-operations.md`。涉及上述操作时先完整阅读统一
+手册，本页只补充 Debug 功能开关、测试账号和页面验收细节。
+
 ## 测试账号与地址
 
 Coze Studio 本地功能测试：
@@ -214,7 +218,8 @@ AGENT_JOURNAL_PROMETHEUS_METRICS_ENABLED=true
 (cd frontend/apps/coze-studio && rushx lint)
 (cd frontend/apps/coze-studio && rushx build)
 docker run --rm -v "$PWD/docker/atlas/migrations:/migrations" \
-  arigaio/atlas:0.35.0-community-alpine migrate validate --dir file:///migrations
+  arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e \
+  migrate validate --dir file:///migrations
 ```
 
 页面验收覆盖直接任务、多步骤任务、失败/重试、关闭/恢复、五个固定标签、媒体和
@@ -239,10 +244,14 @@ export no_proxy="localhost,127.0.0.1,::1"
 
 ## Debug MySQL
 
-- 正常 Debug 路径不要拉取或启动本地 MySQL 镜像。
-- 使用 `docker/.env.debug`、`bin/.env.debug` 中配置的外部测试数据库。
-- 数据库密码只放在 ignored env 文件，不在日志、文档或对话中输出解析后的完整
-  Compose 配置。
+- 默认本地开发使用 `docker/.env.debug` 中的共享 dev 地址和独立非 root 应用账号，
+  不启动本地 MySQL。应用账号不保存 `ATLAS_URL` 或 migration 凭据；资源库
+  `table_<id>` 的创建、编辑和删除仍需要目标业务库内的受控 DDL。
+- migration 开发使用统一手册中的隔离本地数据库模式，先运行
+  `make db_local_up`，再运行 `make db_local_migrate`。
+- `bin/.env.debug` 是启动脚本生成的运行副本，不手工维护。
+- 数据库密码只放在 ignored env 或本机密钥管理中，不在日志、文档或对话中输出
+  解析后的完整 Compose 配置。
 
 ## Atlas CLI
 
@@ -267,7 +276,7 @@ unset ATLAS_IMAGE
 ## 分支与集成
 
 - `dev` 是本地与远程集成分支，需求在独立 `codex/` 分支实施。
-- 合入本地 `dev` 前后分别执行一次审计，并在两个阶段各获得用户明确确认。
+- 合入本地 `dev` 前执行一次审计，合并和发布分别获得用户对 exact SHA 的明确确认。
 - 完整命令、证据和停止条件见
   `docs/superpowers/runbooks/dev-integration-audit.md`。
 - 目标分支被其他 worktree 占用时，报告占用路径，不强制 checkout。

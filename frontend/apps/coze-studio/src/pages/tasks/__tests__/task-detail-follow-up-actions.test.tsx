@@ -24,6 +24,7 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import type { PendingHumanInteraction } from '../task-human-interaction';
 import { useTaskDetailActions } from '../task-detail-hooks';
+import { WorkbenchClientError } from '../../workbench/thread-client/canonical-fetch';
 import type {
   HumanInteractionResponse,
   WorkbenchRun,
@@ -114,8 +115,20 @@ const humanResponse: HumanInteractionResponse = {
   schema: 'coze.human_interaction_response.v1',
   interaction_id: 'interaction-1',
   kind: 'confirmation',
-  decision: 'approve',
+  decision: 'approved',
 };
+
+const resumeClientError = (
+  status: number,
+  outcome: 'rejected' | 'failed' | 'unknown',
+) =>
+  new WorkbenchClientError({
+    code: `resume_${status}`,
+    message: `resume ${status}`,
+    outcome,
+    retryable: status >= 500,
+    status,
+  });
 
 const HookHarness = ({
   applyTaskDetail,
@@ -463,8 +476,9 @@ describe('useTaskDetailActions follow-up request scope', () => {
     });
 
     expect(mockResumeTaskThreadRun).toHaveBeenCalledWith({
+      idempotency_key: expect.stringMatching(/^human-resume:/),
       interrupt_id: 'interrupt-1',
-      response: humanResponse,
+      response_v2: humanResponse,
       run_id: 'run-interrupted',
       space_id: 'space-1',
       thread_id: 'task-1',
@@ -482,5 +496,112 @@ describe('useTaskDetailActions follow-up request scope', () => {
     expect(mockResumeTaskThreadRun).toHaveBeenCalledTimes(1);
     expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
     expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['AbortError', Object.assign(new Error('aborted'), { name: 'AbortError' })],
+    ['network ambiguity', new Error('network unavailable')],
+    ['5xx failure', resumeClientError(503, 'failed')],
+  ])('reuses the typed Resume attempt after %s', async (_name, error) => {
+    mockResumeTaskThreadRun
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce({});
+    renderHookHarness(
+      <HookHarness
+        applyTaskDetail={vi.fn()}
+        pendingInteraction={pendingHumanInteraction}
+        taskDetailId="task-1"
+      />,
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    const first = mockResumeTaskThreadRun.mock.calls[0]?.[0];
+    const second = mockResumeTaskThreadRun.mock.calls[1]?.[0];
+    expect(first.idempotency_key).toMatch(/^human-resume:/);
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+    expect(second.response_v2).toEqual(first.response_v2);
+    expect(first).not.toHaveProperty('response');
+  });
+
+  it('rotates the Resume attempt when the normalized response changes', async () => {
+    mockResumeTaskThreadRun
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({});
+    renderHookHarness(
+      <HookHarness
+        applyTaskDetail={vi.fn()}
+        pendingInteraction={pendingHumanInteraction}
+        taskDetailId="task-1"
+      />,
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+      await currentActions.handleHumanInteractionSubmit({
+        ...humanResponse,
+        decision: 'rejected',
+        comment: '需要修改',
+      });
+    });
+
+    expect(mockResumeTaskThreadRun.mock.calls[1]?.[0].idempotency_key).not.toBe(
+      mockResumeTaskThreadRun.mock.calls[0]?.[0].idempotency_key,
+    );
+  });
+
+  it('clears a definitively rejected non-409 Resume attempt', async () => {
+    mockResumeTaskThreadRun
+      .mockRejectedValueOnce(resumeClientError(422, 'rejected'))
+      .mockResolvedValueOnce({});
+    renderHookHarness(
+      <HookHarness
+        applyTaskDetail={vi.fn()}
+        pendingInteraction={pendingHumanInteraction}
+        taskDetailId="task-1"
+      />,
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    expect(mockResumeTaskThreadRun.mock.calls[1]?.[0].idempotency_key).not.toBe(
+      mockResumeTaskThreadRun.mock.calls[0]?.[0].idempotency_key,
+    );
+  });
+
+  it('retains a 409 Resume attempt and refreshes without automatic resubmit', async () => {
+    mockResumeTaskThreadRun.mockRejectedValue(
+      resumeClientError(409, 'rejected'),
+    );
+    renderHookHarness(
+      <HookHarness
+        applyTaskDetail={vi.fn()}
+        pendingInteraction={pendingHumanInteraction}
+        taskDetailId="task-1"
+      />,
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    expect(mockResumeTaskThreadRun).toHaveBeenCalledTimes(1);
+    expect(mockFetchTaskDetail).toHaveBeenCalledTimes(1);
+    const firstKey = mockResumeTaskThreadRun.mock.calls[0]?.[0].idempotency_key;
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    expect(mockResumeTaskThreadRun).toHaveBeenCalledTimes(2);
+    expect(mockResumeTaskThreadRun.mock.calls[1]?.[0].idempotency_key).toBe(
+      firstKey,
+    );
   });
 });

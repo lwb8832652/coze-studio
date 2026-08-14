@@ -236,6 +236,7 @@ func domainPlanTask(
 	var metadata map[string]any
 	_ = json.Unmarshal([]byte(item.Metadata), &metadata)
 	return &ADKPlanTask{
+		RecordID:    item.ID,
 		TaskID:      item.TaskID,
 		ID:          strconv.FormatInt(item.TaskID, 10),
 		Subject:     item.Subject,
@@ -248,6 +249,7 @@ func domainPlanTask(
 		Metadata:    metadata,
 		Active:      item.Active,
 		Version:     item.Version,
+		CreatedAt:   item.CreatedAt,
 		UpdatedAt:   item.UpdatedAt,
 	}
 }

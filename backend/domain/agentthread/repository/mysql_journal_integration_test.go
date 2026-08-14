@@ -160,6 +160,7 @@ func createJournalMySQLIntegrationSchema(db *gorm.DB) error {
 		"docker/atlas/migrations/20260730000100_agent_run_attempts.sql",
 		"docker/atlas/migrations/20260730000200_agent_run_events_journal_columns.sql",
 		"docker/atlas/migrations/20260730000210_agent_run_events_journal_indexes.sql",
+		"docker/atlas/migrations/20260730000220_agent_run_events_journal_projection.sql",
 	}
 	for _, migration := range migrations {
 		contents, err := os.ReadFile(filepath.Join(repositoryRoot, migration))

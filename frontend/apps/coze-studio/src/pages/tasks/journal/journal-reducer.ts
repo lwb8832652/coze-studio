@@ -107,6 +107,7 @@ const terminalStatuses = new Set<WorkbenchJournalExecutionStatus>([
   'failed',
   'cancelled',
   'timed_out',
+  'interrupted',
 ]);
 
 export const createInitialJournalState = (

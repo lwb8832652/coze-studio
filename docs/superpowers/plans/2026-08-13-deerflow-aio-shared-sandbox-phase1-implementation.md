@@ -553,7 +553,7 @@ caac563a1aa28d2be347e3dca25024e438c4051d feat: add sandbox session runtime setti
 
 **Files:**
 
-- Create: `docker/atlas/migrations/20260814000100_sandbox_shared_aio_core.sql`
+- Create: `docker/atlas/migrations/20260814000100_expand_sandbox_shared_aio_core.sql`
 - Modify: `docker/atlas/migrations/atlas.sum`
 - Modify: `docker/atlas/opencoze_latest_schema.hcl`
 - Modify: `backend/domain/sandbox/session.go`
@@ -649,8 +649,11 @@ CREATE TABLE `sandbox_runtime_sessions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-在同一迁移中写入本文“默认 `2C4G` Session 配置”，再把
-`session_settings_json` 改成 `NOT NULL`。不要使用 JSON 默认表达式，以兼容目标 MySQL。
+在同一 expand migration 中写入本文“默认 `2C4G` Session 配置”。
+`session_settings_json` 在 expand 阶段保持 nullable，以兼容旧应用和仓库 migration
+策略；仓储读取 NULL 时必须 fail closed。不得在本迁移使用 `MODIFY` 收窄约束，也不要
+使用 JSON 默认表达式。若未来需要 `NOT NULL`，必须在兼容窗口后另建经审批的 contract
+migration。
 
 - [ ] **Step 5: 实现事务分配和 generation fencing**
 
@@ -711,7 +714,7 @@ Scheduler 列不被 Session 更新污染、dev 数据保护和错误脱敏。修
 不发起第二轮审核。
 
 ```bash
-git add docker/atlas/migrations/20260814000100_sandbox_shared_aio_core.sql docker/atlas/migrations/atlas.sum docker/atlas/opencoze_latest_schema.hcl backend/domain/sandbox/repository.go backend/domain/sandbox/session.go backend/domain/sandbox/session_test.go backend/infra/sandbox/mysql_models.go backend/infra/sandbox/mysql_runtime_session_migration_test.go backend/infra/sandbox/mysql_runtime_session_repository.go backend/infra/sandbox/mysql_runtime_session_repository_test.go backend/infra/sandbox/mysql_runtime_session_integration_test.go
+git add docker/atlas/migrations/20260814000100_expand_sandbox_shared_aio_core.sql docker/atlas/migrations/atlas.sum docker/atlas/opencoze_latest_schema.hcl backend/domain/sandbox/repository.go backend/domain/sandbox/session.go backend/domain/sandbox/session_test.go backend/infra/sandbox/mysql_models.go backend/infra/sandbox/mysql_runtime_session_migration_test.go backend/infra/sandbox/mysql_runtime_session_repository.go backend/infra/sandbox/mysql_runtime_session_repository_test.go backend/infra/sandbox/mysql_runtime_session_integration_test.go
 git commit -m "feat: persist shared AIO runtime sessions"
 ```
 
@@ -1512,7 +1515,7 @@ generation 来源。
 
 - lifecycle 命令只在 deploy/Compose；pull/up AIO -> raw health -> up Runner；
 - migration preflight 由候选 Runner 的 `migration-status` 在数据库只读事务中核验
-  additive `20260814000100_sandbox_shared_aio_core` 已完整 applied 且真实表/列存在，deploy
+  additive `20260814000100_expand_sandbox_shared_aio_core` 已完整 applied 且真实表/列存在，deploy
   不 apply；
 - dev 使用现有 DB，不启动/清空/重建本地 DB，禁止 AutoMigrate/drop/truncate；
 - health 只有 raw 8080、Runner Core projection/sentinel generation；

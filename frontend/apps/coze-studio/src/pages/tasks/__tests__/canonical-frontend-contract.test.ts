@@ -159,6 +159,11 @@ const forbiddenPatterns = [
   /tasks\/:task_id\b/g,
 ];
 
+const clientOwnedExecutionControlPatterns = [
+  /\brequested_policy\b/g,
+  /\breasoning_effort\b/g,
+];
+
 const forbiddenThreadGeneratedPatterns = [
   /\bworkbenchTask\.[A-Za-z0-9_]*TaskThread[A-Za-z0-9_]*\b/g,
   /\bworkbenchThread\b/g,
@@ -265,6 +270,20 @@ describe('canonical Workbench task frontend contract', () => {
       const source = readFileSync(file, 'utf8');
 
       return forbiddenPatterns.flatMap(pattern =>
+        Array.from(source.matchAll(pattern), match =>
+          sourceFinding(file, match[0]),
+        ),
+      );
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it('keeps client-owned execution controls out of production task and workbench sources', () => {
+    const findings = productionFiles.flatMap(file => {
+      const source = readFileSync(file, 'utf8');
+
+      return clientOwnedExecutionControlPatterns.flatMap(pattern =>
         Array.from(source.matchAll(pattern), match =>
           sourceFinding(file, match[0]),
         ),

@@ -17,51 +17,9 @@ services:
     #   - '3306'
     volumes:
       - ./data/mysql:/var/lib/mysql
-      - ./volumes/mysql/schema.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./atlas/opencoze_latest_schema.hcl:/opencoze_latest_schema.hcl:ro
-    entrypoint:
-      - bash
-      - -c
-      - |
-        /usr/local/bin/docker-entrypoint.sh mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci &
-        MYSQL_PID=$$!
-
-        echo 'Waiting for MySQL to start...'
-        until mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent 2>/dev/null; do
-          echo 'MySQL is starting...'
-          sleep 2
-        done
-
-        echo 'Waiting for workflow_version table to exist...'
-        while true; do
-          if mysql -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} $${MYSQL_DATABASE} -e "SHOW TABLES LIKE 'workflow_version';" 2>/dev/null | grep -q "workflow_version"; then
-            echo 'Found workflow_version table, continuing...'
-            break
-          else
-            echo 'workflow_version table not found, retrying in 2 seconds...'
-            sleep 2
-          fi
-        done
-
-        echo 'MySQL is ready, installing Atlas CLI...'
-
-        if ! command -v atlas >/dev/null 2>&1; then
-          echo 'Installing Atlas CLI...'
-          curl -sSf https://atlasgo.sh | sh -s -- -y --community
-          export PATH=$$PATH:/root/.local/bin
-        else
-          echo 'Atlas CLI already installed'
-        fi
-
-        if [ -f '/opencoze_latest_schema.hcl' ]; then
-          echo 'Running Atlas migrations...'
-          ATLAS_URL="mysql://$${MYSQL_USER}:$${MYSQL_PASSWORD}@localhost:3306/$${MYSQL_DATABASE}"
-          atlas schema apply -u "$ATLAS_URL" --to "file:///opencoze_latest_schema.hcl" --exclude "atlas_schema_revisions,table_*" --auto-approve
-          echo 'Atlas migrations completed successfully'
-        else
-          echo 'No migrations found'
-        fi
-        wait $$MYSQL_PID
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     healthcheck:
       test:
         [
@@ -69,7 +27,10 @@ services:
           'mysqladmin',
           'ping',
           '-h',
-          'localhost',
+          '127.0.0.1',
+          '-P',
+          '3306',
+          '--protocol=tcp',
           '-u$${MYSQL_USER}',
           '-p$${MYSQL_PASSWORD}',
         ]
@@ -79,6 +40,25 @@ services:
       start_period: 30s
     networks:
       - coze-network
+
+  mysql-migrate-local:
+    image: arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e
+    profiles: ['local-db-migrate']
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./atlas/migrations:/migrations:ro
+    command:
+      - migrate
+      - apply
+      - --url
+      - mysql://${MYSQL_USER:-coze}:${MYSQL_PASSWORD:-coze123}@mysql:3306/opencoze?charset=utf8mb4&parseTime=True
+      - --dir
+      - file:///migrations
+    networks:
+      - coze-network
+    restart: 'no'
 
   redis:
     image: bitnamilegacy/redis:8.0

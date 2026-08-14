@@ -17,7 +17,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-
 import { Toast } from '@coze-arch/coze-design';
 
 import {
@@ -26,11 +25,11 @@ import {
 } from '../use-journal-experience';
 import { JournalTimeline } from '../journal-timeline';
 import { JournalPanel, JournalRestoreButton } from '../journal-panel';
-import { JournalConversationFlow } from '../journal-conversation-flow';
 import {
   buildJournalTimelineItems,
   journalActionLabel,
 } from '../journal-event-model';
+import { JournalConversationFlow } from '../journal-conversation-flow';
 import { WorkbenchClientError } from '../../../workbench/thread-client/canonical-fetch';
 import type {
   WorkbenchArtifact,
@@ -642,6 +641,54 @@ describe('accepted Journal production UI contract', () => {
         '.journal-action-detail .journal-action-icon',
       ),
     ).not.toBeNull();
+  });
+
+  it('renders interrupted execution with neutral status and no lifecycle card', () => {
+    const interruptedAction = action({
+      actionId: 'action-interrupted',
+      contentType: 'document',
+      eventId: 'event-interrupted',
+      milestoneId: 'milestone-interrupted',
+      sequence: 2,
+      status: 'interrupted',
+      target: '需求文档',
+    });
+    const interruptedMilestone = milestone({
+      eventId: 'milestone-interrupted',
+      milestoneId: 'milestone-interrupted',
+      sequence: 1,
+      status: 'interrupted',
+      title: '读取项目事实',
+    });
+    const lifecycle = baseEvent({
+      eventId: 'lifecycle-interrupted',
+      eventType: 'run.lifecycle',
+      sequence: 3,
+      status: 'interrupted',
+      type: 'generic',
+      data: {},
+    });
+
+    act(() =>
+      root.render(
+        <JournalConversationFlow
+          events={[interruptedMilestone, interruptedAction, lifecycle]}
+          onSelectEvent={vi.fn()}
+        />,
+      ),
+    );
+
+    const milestoneNode = container.querySelector(
+      '[data-milestone-id="milestone-interrupted"]',
+    );
+    expect(milestoneNode?.getAttribute('data-status')).toBe('interrupted');
+    expect(
+      milestoneNode?.querySelector('.journal-state-icon')?.childNodes.length,
+    ).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain('已中断执行');
+    expect(
+      container.querySelector('[data-event-id="lifecycle-interrupted"]'),
+    ).toBeNull();
   });
 
   it('renders the persisted execution intro exactly once before the first milestone', () => {
@@ -1378,6 +1425,54 @@ describe('accepted Journal production UI contract', () => {
       }
     });
     expect(onSelectAttempt).toHaveBeenCalledWith('attempt-1');
+  });
+
+  it('labels an interrupted Attempt neutrally', () => {
+    const interruptedAttempt = {
+      attempt_id: 'attempt-interrupted',
+      run_id: 'run-1',
+      status: 'interrupted' as const,
+      projection_state: 'healthy' as const,
+      latest_sequence: 0,
+      created_at: 1_000,
+      ended_at: 1_100,
+      recovery_capability: {
+        allowed: false,
+        requires_confirmation: false,
+        allowed_actions: [],
+      },
+    };
+
+    act(() =>
+      root.render(
+        <JournalPanel
+          activeTab="document"
+          attempts={[
+            interruptedAttempt,
+            { ...interruptedAttempt, attempt_id: 'attempt-2' },
+          ]}
+          events={events}
+          selectedAttemptId="attempt-interrupted"
+          selectedEventId="event-4"
+          transportStatus="ended"
+          viewMode="historical"
+          onActiveTabChange={vi.fn()}
+          onClose={vi.fn()}
+          onSelectAttempt={vi.fn()}
+          onSelectEvent={vi.fn()}
+          onViewModeChange={vi.fn()}
+        />,
+      ),
+    );
+
+    const selector = container.querySelector<HTMLSelectElement>(
+      '[aria-label="选择执行尝试"]',
+    );
+    expect(
+      selector?.querySelector<HTMLOptionElement>(
+        'option[value="attempt-interrupted"]',
+      )?.textContent,
+    ).toContain('已中断');
   });
 
   it('windows a dense Timeline and never folds milestone or failure nodes into aggregates', () => {

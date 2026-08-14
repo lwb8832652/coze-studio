@@ -17,7 +17,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sendFollowUpMessage } from '../task-follow-up';
-import { createDefaultWorkbenchRuntimeSettings } from '../../workbench/components/types';
+import {
+  createDefaultWorkbenchResourceSelection,
+  createDefaultWorkbenchRuntimeSettings,
+} from '../../workbench/components/types';
 
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
@@ -61,28 +64,55 @@ describe('sendFollowUpMessage', () => {
   });
 
   it('submits only the current turn and lets the server rebuild thread history', async () => {
+    const resourceSelection = {
+      ...createDefaultWorkbenchResourceSelection(),
+      enable_skills: ['skill-a'],
+      enable_mcp: ['tool-a'],
+      enable_kbs: ['kb-a'],
+      enable_databases: ['database-a'],
+    };
     await sendFollowUpMessage({
       payload: {
         message: '继续分析',
-        runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
+        modelType: 100002,
+        modelName: 'deepseek-v4-pro',
+        runtimeSettings:
+          createDefaultWorkbenchRuntimeSettings(resourceSelection),
+        ...resourceSelection,
       },
+      spaceId: 'space-1',
       threadId: 'thread-1',
+      idempotencyKey: 'captured-followup-key',
     });
 
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
-    expect(JSON.parse(runRequest.input)).toMatchObject({
-      messages: [
-        {
-          role: 'user',
-          content: '继续分析',
-        },
-      ],
-    });
     expect(runRequest).toMatchObject({
-      message_content: '继续分析',
-      message_metadata: expect.any(String),
-      idempotency_key: expect.stringMatching(/^thread-1:.+:followup$/),
+      assistant_id: 'agent',
+      idempotency_key: 'captured-followup-key',
+      submission_v2: {
+        schema_version: 'coze.workbench.run_submission.v2',
+        kind: 'turn',
+        input: { message: '继续分析', uploaded_files: [] },
+        composer: {
+          model_type: '100002',
+          model_name: 'deepseek-v4-pro',
+          explicit_enable_skills: ['skill-a'],
+          enable_mcp: ['tool-a'],
+          enable_kbs: ['kb-a'],
+          enable_databases: ['database-a'],
+        },
+        metadata: { source: 'workbench_detail_followup' },
+      },
     });
+    [
+      'input',
+      'config',
+      'context',
+      'metadata',
+      'coze',
+      'message_content',
+      'message_metadata',
+    ].forEach(field => expect(runRequest).not.toHaveProperty(field));
   });
 
   it('uploads files before creating a thread run', async () => {
@@ -97,6 +127,13 @@ describe('sendFollowUpMessage', () => {
             content_type: 'text/markdown',
             size_bytes: 5,
           },
+          {
+            file_id: 'file-2',
+            file_name: 'notes.md',
+            virtual_path: '/uploads/notes.md',
+            content_type: 'text/markdown',
+            size_bytes: 4,
+          },
         ],
         skipped_files: [],
       },
@@ -108,7 +145,9 @@ describe('sendFollowUpMessage', () => {
         files: [file],
         message: '继续分析附件',
         runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
+        ...createDefaultWorkbenchResourceSelection(),
       },
+      spaceId: 'space-1',
       threadId: 'thread-1',
     };
 
@@ -119,19 +158,45 @@ describe('sendFollowUpMessage', () => {
 
     expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
       thread_id: 'thread-1',
+      space_id: 'space-1',
       files: [file],
     });
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
-    expect(JSON.parse(runRequest.input)).toMatchObject({
-      messages: [{ role: 'user', content: '继续分析附件' }],
-      uploaded_files: [
-        {
-          file_id: 'file-1',
-          file_name: 'draft.md',
-          virtual_path: '/uploads/draft.md',
-        },
-      ],
+    expect(runRequest.submission_v2).toMatchObject({
+      kind: 'turn',
+      input: {
+        message: '继续分析附件',
+        uploaded_files: [{ file_id: 'file-1' }, { file_id: 'file-2' }],
+      },
+      metadata: { source: 'workbench_detail_followup' },
     });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledTimes(1);
+    expect(mockUploadTaskThreadFiles.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateTaskThreadRun.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not create a Run when an upload response has no file ID', async () => {
+    mockUploadTaskThreadFiles.mockResolvedValueOnce({
+      data: {
+        files: [{ file_name: 'broken.md', virtual_path: '/broken.md' }],
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await expect(
+      sendFollowUpMessage({
+        payload: {
+          files: [new File(['broken'], 'broken.md')],
+          message: '继续分析附件',
+          runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
+          ...createDefaultWorkbenchResourceSelection(),
+        },
+        spaceId: 'space-1',
+        threadId: 'thread-1',
+      }),
+    ).rejects.toThrow('上传文件缺少 ID');
+    expect(mockCreateTaskThreadRun).not.toHaveBeenCalled();
   });
 });

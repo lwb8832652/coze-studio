@@ -74,8 +74,8 @@ func TestBuiltinSubagentFactoryInheritsModelAndDisablesRecursiveCapabilities(t *
 	var config map[string]any
 	require.NoError(t, json.Unmarshal([]byte(child.Config), &config))
 	require.Equal(t, "eino_adk", config["runtime"])
-	require.Equal(t, "pro", config["requested_policy"])
-	require.Equal(t, "pro", config["mode"])
+	require.NotContains(t, config, "requested_policy")
+	require.NotContains(t, config, "mode")
 	require.Equal(t, false, config["thinking_enabled"])
 	require.Equal(t, false, config["is_plan_mode"])
 	require.Equal(t, false, config["subagent_enabled"])

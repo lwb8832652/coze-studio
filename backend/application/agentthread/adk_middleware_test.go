@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -115,6 +116,92 @@ func TestADKMiddlewareOmitsDisabledOptionalCapabilities(t *testing.T) {
 	}
 }
 
+func TestADKMiddlewareDirectDecisionDisablesEveryToolInjection(t *testing.T) {
+	toolExposingNames := map[ADKMiddlewareName]struct{}{
+		ADKMiddlewareSkill:      {},
+		ADKMiddlewareToolSearch: {},
+		ADKMiddlewarePlanTask:   {},
+		ADKMiddlewareFilesystem: {},
+	}
+	builderCalls := make(map[ADKMiddlewareName]int, len(adkMiddlewareOrder))
+	builders := make(map[ADKMiddlewareName]ADKMiddlewareBuilder, len(adkMiddlewareOrder))
+	for _, name := range adkMiddlewareOrder {
+		name := name
+		builders[name] = func(
+			context.Context,
+			ADKMiddlewareBuildInput,
+		) (adk.ChatModelAgentMiddleware, error) {
+			builderCalls[name]++
+			if _, exposesTools := toolExposingNames[name]; exposesTools {
+				return nil, fmt.Errorf("direct decision must not build %s middleware", name)
+			}
+			return &recordingOrderedMiddleware{name: string(name)}, nil
+		}
+	}
+	offloadBackendCalls := 0
+	planBackendCalls := 0
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		Builders: builders,
+		OffloadBackendFactory: ADKOffloadBackendFactoryFunc(func(
+			context.Context,
+			*RunSummary,
+			ADKOffloadLimits,
+		) (*ADKOffloadBackend, error) {
+			offloadBackendCalls++
+			return nil, errors.New("direct decision must not build an offload backend")
+		}),
+		PlanBackendFactory: ADKPlanBackendFactoryFunc(func(
+			context.Context,
+			*RunSummary,
+		) (plantask.Backend, error) {
+			planBackendCalls++
+			return nil, errors.New("direct decision must not build a plan backend")
+		}),
+	})
+
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID: 20,
+			Config: `{
+				"is_plan_mode":true
+			}`,
+		},
+		Model:               &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
+		DisableToolExposure: true,
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, offloadBackendCalls)
+	require.Zero(t, planBackendCalls)
+	for name := range toolExposingNames {
+		require.Zero(t, builderCalls[name], "tool-exposing middleware %s was built", name)
+		require.NotContains(t, bundle.HandlerNames, name)
+	}
+	require.Contains(t, bundle.HandlerNames, ADKMiddlewareSideEffect)
+}
+
+func TestADKMiddlewareDirectDecisionRejectsPreResolvedTools(t *testing.T) {
+	resolvedTool, err := toolutils.InferTool(
+		"unexpected_tool",
+		"Must not be exposed in direct mode.",
+		func(context.Context, struct{}) (string, error) {
+			return "unexpected", nil
+		},
+	)
+	require.NoError(t, err)
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
+
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run:                 &RunSummary{RunID: 20},
+		Model:               &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
+		DisableToolExposure: true,
+		StaticTools:         []tool.BaseTool{resolvedTool},
+	})
+
+	require.ErrorContains(t, err, "tool exposure is disabled")
+	require.Empty(t, bundle.Handlers)
+}
+
 func TestADKModelProjectionAndAccountingOrder(t *testing.T) {
 	require.NotEmpty(t, adkMiddlewareOrder)
 	require.Less(
@@ -158,7 +245,9 @@ func TestADKMiddlewareWiresProviderCapabilityDowngradeEventSink(t *testing.T) {
 		EventSink: events,
 	})
 	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
-		Run:   &RunSummary{RunID: 20, ThreadID: 10, Config: `{"mode":"pro"}`},
+		Run: &RunSummary{
+			RunID: 20, ThreadID: 10, Config: `{"reasoning_effort":"high"}`,
+		},
 		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 	})
 	require.NoError(t, err)

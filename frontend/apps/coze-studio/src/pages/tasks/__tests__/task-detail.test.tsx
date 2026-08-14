@@ -745,6 +745,22 @@ const expectDeerFlowTaskComposer = (
   );
 };
 
+const clientOwnedExecutionControlFields = [
+  'requested_policy',
+  'mode',
+  'thinking_enabled',
+  'reasoning_effort',
+  'is_plan_mode',
+  'subagent_enabled',
+  'max_concurrent_subagents',
+] as const;
+
+const expectNoClientOwnedExecutionControls = (value: unknown) => {
+  clientOwnedExecutionControlFields.forEach(field =>
+    expect(value).not.toHaveProperty(field),
+  );
+};
+
 describe('TaskDetailPage', () => {
   beforeEach(() => {
     window.localStorage.removeItem('coze.task-detail.token-usage-view-mode');
@@ -1347,6 +1363,17 @@ describe('TaskDetailPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
+    mockTopLevelRun({
+      ...createMockRunningRun('thread-1', 'run-1'),
+      adaptive_execution: {
+        schema: 'coze.adaptive_execution_public.v1',
+        enabled: true,
+        mode: 'direct',
+        safe_summary: '直接回答，无需调用工具。',
+        clarification_question: null,
+      },
+    });
+
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
@@ -1367,6 +1394,10 @@ describe('TaskDetailPage', () => {
       page_size: 100,
     });
     expect(container.textContent).toContain('生成周报');
+    expect(
+      container.querySelector('[data-testid="adaptive-execution-mode"]')
+        ?.textContent,
+    ).toBe('直接回答');
     expect(container.textContent).toContain('NewX AI · Agent');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
@@ -9905,43 +9936,35 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
-      attempt_kind: 'retry',
+      assistant_id: 'agent',
       space_id: 'space-1',
       thread_id: 'thread-retry-1',
-      input: expect.any(String),
-      config: expect.any(String),
-      metadata: expect.any(String),
-      idempotency_key: expect.any(String),
-      message_content: '请分析客户反馈',
-      source_run_id: 'run-failed-1',
+      idempotency_key: 'space-1:thread-retry-1:run-failed-1:task_retry',
+      submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.run_submission.v2',
+        kind: 'retry',
+        input: {
+          message: '请分析客户反馈',
+          uploaded_files: [],
+        },
+        lineage: { source_run_id: 'run-failed-1' },
+        metadata: { source: 'task_retry' },
+      }),
     });
     const retryRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
-    expect(JSON.parse(retryRequest.input)).toMatchObject({
-      messages: [
-        {
-          role: 'user',
-          content: '请分析客户反馈',
-        },
-      ],
-    });
-    expect(JSON.parse(retryRequest.config)).toMatchObject({
+    const retryConfig = retryRequest.submission_v2.config;
+    expect(retryConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
       token_usage: {
         enabled: true,
       },
     });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        JSON.parse(retryRequest.config),
-        'reasoning_effort',
-      ),
-    ).toBe(false);
-    expect(JSON.parse(retryRequest.metadata)).toMatchObject({
+    expectNoClientOwnedExecutionControls(retryConfig);
+    const retryMetadata = retryRequest.submission_v2.metadata;
+    expect(retryMetadata).toEqual({
       source: 'task_retry',
-      source_run_id: 'run-failed-1',
-      source_thread_id: 'thread-retry-1',
     });
+    expectNoClientOwnedExecutionControls(retryMetadata);
     expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
 
     act(() => {
@@ -10049,7 +10072,8 @@ describe('TaskDetailPage', () => {
       thread_id: 'thread-human-1',
       run_id: 'run-source-1',
       interrupt_id: 'interrupt-1',
-      response: {
+      idempotency_key: expect.stringMatching(/^human-resume:.+$/),
+      response_v2: {
         schema: 'coze.human_interaction_response.v1',
         interaction_id: 'hi_1',
         kind: 'clarification',
@@ -10168,7 +10192,8 @@ describe('TaskDetailPage', () => {
       thread_id: 'thread-confirm-1',
       run_id: 'run-source-2',
       interrupt_id: 'interrupt-2',
-      response: {
+      idempotency_key: expect.stringMatching(/^human-resume:.+$/),
+      response_v2: {
         schema: 'coze.human_interaction_response.v1',
         interaction_id: 'hi_2',
         kind: 'confirmation',
@@ -10461,14 +10486,19 @@ describe('TaskDetailPage', () => {
       files: [followUpFile],
     });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      assistant_id: 'agent',
       space_id: 'space-1',
       thread_id: 'thread-only-1',
-      input: expect.any(String),
-      config: expect.any(String),
-      metadata: expect.any(String),
       idempotency_key: expect.any(String),
-      message_content: '请追加行动建议',
-      message_metadata: expect.any(String),
+      submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.run_submission.v2',
+        kind: 'turn',
+        input: {
+          message: '请追加行动建议',
+          uploaded_files: [{ file_id: 'file-followup-1' }],
+        },
+        metadata: { source: 'workbench_detail_followup' },
+      }),
     });
     expect(mockUploadTaskThreadFiles.mock.invocationCallOrder[0]).toBeLessThan(
       mockCreateTaskThreadRun.mock.invocationCallOrder[0],
@@ -10476,48 +10506,23 @@ describe('TaskDetailPage', () => {
     expect(mockAppendTaskThreadMessage).not.toHaveBeenCalled();
 
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
-    const messageMetadata = JSON.parse(runRequest.message_metadata);
+    const messageMetadata = runRequest.submission_v2.composer;
     expect(messageMetadata).toMatchObject({
-      requested_policy: 'auto',
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
-      skills: {
-        enabled: true,
-        allowed_skills: [],
-      },
+      allowed_skills: [],
     });
     expect(
       Object.prototype.hasOwnProperty.call(messageMetadata, 'enable_skills'),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(messageMetadata, 'reasoning_effort'),
-    ).toBe(false);
-    expect(JSON.parse(runRequest.input)).toMatchObject({
-      messages: [
-        {
-          role: 'user',
-          content: '请追加行动建议',
-        },
-      ],
-      uploaded_files: [
-        {
-          file_id: 'file-followup-1',
-          file_name: 'customer-feedback.csv',
-          virtual_path: '/mnt/user-data/uploads/customer-feedback.csv',
-        },
-      ],
-    });
-    const runConfig = JSON.parse(runRequest.config);
+    expectNoClientOwnedExecutionControls(messageMetadata);
+    const runConfig = runRequest.submission_v2.config;
     expect(runConfig).toMatchObject({
       runtime: 'eino_adk',
-      requested_policy: 'auto',
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
       skills: {
         enabled: true,
-        allowed_skills: [],
+        visibility: 'deferred',
       },
       memory_retrieval: {
         limit: 5,
@@ -10535,12 +10540,12 @@ describe('TaskDetailPage', () => {
     expect(
       Object.prototype.hasOwnProperty.call(runConfig, 'enable_skills'),
     ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
-    ).toBe(false);
-    expect(JSON.parse(runRequest.metadata)).toMatchObject({
+    expectNoClientOwnedExecutionControls(runConfig);
+    const runMetadata = runRequest.submission_v2.metadata;
+    expect(runMetadata).toEqual({
       source: 'workbench_detail_followup',
     });
+    expectNoClientOwnedExecutionControls(runMetadata);
     expect(runRequest.idempotency_key).toMatch(
       /^space-1:thread-only-1:.+:followup$/,
     );

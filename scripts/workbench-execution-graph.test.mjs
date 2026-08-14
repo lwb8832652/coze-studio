@@ -47,6 +47,7 @@ import {
   computeBuilderDigest,
   DERIVED_MANAGED_MARKER,
   graphifyExtractArgs,
+  graphifyQueryArgs,
   installCompletedBuild,
   mergeExplicitGraph,
   readGitProvenance,
@@ -593,7 +594,7 @@ test('canonical transport, retired routes, and integration ingress are explicit'
   );
   assert.equal(
     routeSurface?.label,
-    'Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired',
+    'Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired',
   );
   assert.equal(
     contract.nodes.filter(item => item.id === 'frontend.client.singleton')
@@ -1496,6 +1497,20 @@ test('Graphify extraction includes ignored whitelist corpus files', () => {
   );
   assert.doesNotThrow(() =>
     assertNonEmptyASTGraph({ nodes: [], links: [] }, ['contract-ledger.md']),
+  );
+});
+
+test('Graphify query arguments use the 16k intent regression budget', () => {
+  assert.deepEqual(
+    graphifyQueryArgs('/tmp/query-graph.json', 'canonical workbench intent'),
+    [
+      'query',
+      'canonical workbench intent',
+      '--graph',
+      '/tmp/query-graph.json',
+      '--budget',
+      '16000',
+    ],
   );
 });
 

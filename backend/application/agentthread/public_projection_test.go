@@ -186,6 +186,17 @@ func TestPublicRunEventDoesNotDeriveJournalTargetsFromToolArguments(t *testing.T
 	require.NotContains(t, got.Payload, "journal-event-model.ts")
 }
 
+func TestPublicRunEventRejectsJournalAttemptInterruptedPersistenceHelper(t *testing.T) {
+	got := ProjectPublicRunEvent(&RunEventSummary{
+		EventID: 1, ThreadID: 2, RunID: 3,
+		EventType: "journal.attempt.interrupted",
+		Payload:   `{"schema":"coze.journal_attempt_interrupted.v1","status":"interrupted","resume_run_id":4}`,
+		CreatedAt: 5,
+	})
+
+	require.Nil(t, got)
+}
+
 func TestPublicRunInterruptedKeepsOnlyResumableHumanInteractionMetadata(t *testing.T) {
 	prompt := `{
 		"schema":"coze.human_interaction.v1",

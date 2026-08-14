@@ -146,6 +146,23 @@ describe('canonical Journal client', () => {
     ).toMatchObject({ event_id: '101', sequence: 1 });
   });
 
+  it('accepts the additive interrupted Journal execution status', () => {
+    expect(
+      adaptCanonicalJournalEvent(
+        {
+          ...actionEvent,
+          event_type: 'run.lifecycle',
+          status: 'interrupted',
+        },
+        {
+          spaceId: spaceID,
+          threadId: threadID,
+          runId: runID,
+        },
+      ),
+    ).toMatchObject({ event_type: 'run.lifecycle', status: 'interrupted' });
+  });
+
   it('loads a strict v1.1 bootstrap with independent event and sequence cursors', async () => {
     const fetch = vi.fn<CanonicalFetch>(() =>
       Promise.resolve(jsonResponse(bootstrap)),

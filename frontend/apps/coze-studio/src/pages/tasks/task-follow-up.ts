@@ -19,45 +19,17 @@ import type {
   WorkbenchRun,
 } from '../workbench/thread-client';
 import {
-  stringifyWorkbenchRunConfig,
-  WORKBENCH_REQUESTED_POLICY,
+  createTurnSubmissionV2,
+  requireUploadedFileIDs,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
-import {
-  createTaskThreadRun,
-  uploadTaskThreadFiles,
-  type TaskThreadUploadedFile,
-} from './service';
-
-const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
+import { createTaskThreadRun, uploadTaskThreadFiles } from './service';
 
 export interface CanonicalThreadFollowUpResult {
   kind: 'thread';
   message?: WorkbenchMessage;
   run?: WorkbenchRun;
 }
-
-interface ThreadFollowUpRunInputOptions {
-  payload: WorkbenchComposerSubmitPayload;
-  uploadedFiles?: TaskThreadUploadedFile[];
-}
-
-const getThreadFollowUpRunInput = ({
-  payload,
-  uploadedFiles = [],
-}: ThreadFollowUpRunInputOptions) =>
-  JSON.stringify({
-    messages: [{ role: 'user', content: payload.message }],
-    uploaded_files: uploadedFiles,
-  });
-
-const getThreadFollowUpRunMetadata = (
-  payload: WorkbenchComposerSubmitPayload,
-) =>
-  JSON.stringify({
-    source: 'workbench_detail_followup',
-    requested_policy: WORKBENCH_REQUESTED_POLICY,
-  });
 
 export const createFollowUpIdempotencyKey = (threadId: string) => {
   const requestId =
@@ -86,14 +58,12 @@ export const sendFollowUpMessage = async ({
   const runResponse = await createTaskThreadRun({
     thread_id: threadId,
     space_id: spaceId,
-    input: getThreadFollowUpRunInput({
+    assistant_id: 'agent',
+    submission_v2: createTurnSubmissionV2(
       payload,
-      uploadedFiles: uploadResponse.data?.files ?? [],
-    }),
-    config: getThreadFollowUpMetadata(payload),
-    metadata: getThreadFollowUpRunMetadata(payload),
-    message_content: payload.message,
-    message_metadata: getThreadFollowUpMetadata(payload),
+      requireUploadedFileIDs(uploadResponse.data?.files ?? []),
+      'workbench_detail_followup',
+    ),
     idempotency_key: idempotencyKey ?? createFollowUpIdempotencyKey(threadId),
   });
 

@@ -85,6 +85,54 @@ func TestGetJournalBootstrapReauthorizesAndPreservesFrozenBoundary(t *testing.T)
 	}, repository.req)
 }
 
+func TestHumanResumeJournalBootstrapSelectsSuccessorAttempt(t *testing.T) {
+	sourceAttemptID := "attempt-source"
+	sourceCheckpointID := int64(7001)
+	recoveryKey := "human-resume:source:response-1"
+	sourceStartedAt, sourceEndedAt := int64(1_000), int64(2_000)
+	sourceTerminalEventID := int64(102)
+	active := uint8(1)
+	source := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 10,
+		AttemptID: sourceAttemptID, Ordinal: 1,
+		Status: domainentity.RunAttemptStatusInterrupted, NextSequence: 3,
+		ProjectionState: domainentity.JournalProjectionStateHealthy,
+		CreatedAt:       900, StartedAt: &sourceStartedAt, EndedAt: &sourceEndedAt,
+		TerminalEventID: &sourceTerminalEventID,
+	}
+	target := &domainentity.RunAttempt{
+		ThreadID: 1, JournalRunID: 10, ExecutionRunID: 20,
+		AttemptID: "attempt-target", Ordinal: 2,
+		Status: domainentity.RunAttemptStatusPending, ActiveSlot: &active,
+		NextSequence: 1, ProjectionState: domainentity.JournalProjectionStateHealthy,
+		CreatedAt: 2_000, SourceAttemptID: &sourceAttemptID,
+		SourceCheckpointID: &sourceCheckpointID, RecoveryIdempotencyKey: &recoveryKey,
+	}
+	repository := &journalQueryRepositoryStub{result: &domainrepo.GetJournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{source, target}, SelectedAttempt: target,
+	}}
+	service := &ApplicationService{
+		ThreadAuthorizer:       &recordingThreadAuthorizer{},
+		WorkspaceAuthorizer:    &recordingWorkspaceAuthorizer{},
+		JournalQueryRepository: repository,
+	}
+
+	result, err := service.GetJournalBootstrap(context.Background(), GetJournalBootstrapRequest{
+		ViewerID: 2, SpaceID: 3, ThreadID: 1, RunID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Attempts, 2)
+	require.Same(t, target, result.SelectedAttempt)
+	require.Equal(t, domainentity.RunAttemptStatusInterrupted, result.Attempts[0].Status)
+	require.True(t, result.Attempts[0].Status.IsTerminal())
+	require.Equal(t, domainentity.RunAttemptStatusPending, result.SelectedAttempt.Status)
+	require.Equal(t, sourceAttemptID, *result.SelectedAttempt.SourceAttemptID)
+	require.Equal(t, sourceCheckpointID, *result.SelectedAttempt.SourceCheckpointID)
+	require.Equal(t, recoveryKey, *result.SelectedAttempt.RecoveryIdempotencyKey)
+	require.Empty(t, repository.req.AttemptID)
+}
+
 func TestGetJournalBootstrapStopsBeforeRepositoryWhenWorkspaceAccessIsRevoked(t *testing.T) {
 	repository := &journalQueryRepositoryStub{result: journalQueryBootstrap(nil)}
 	service := &ApplicationService{

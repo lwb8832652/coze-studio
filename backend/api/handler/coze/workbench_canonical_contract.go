@@ -599,6 +599,14 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"top_level_retry_source_not_failed",
 			false,
 		)
+	case errors.Is(err, appagentthread.ErrHumanInteractionResumeConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_resumable",
+			"Run is not resumable",
+			"human_interaction_resume_conflict",
+			false,
+		)
 	case errors.Is(err, appagentthread.ErrActiveRunExists):
 		return *newCanonicalError(
 			hertzconsts.StatusConflict,
@@ -623,14 +631,6 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"invalid_human_interaction_resume",
 			false,
 		)
-	case errors.Is(err, appagentthread.ErrHumanInteractionResumeConflict):
-		return *newCanonicalError(
-			hertzconsts.StatusConflict,
-			"run_not_resumable",
-			"Run is not resumable",
-			"human_interaction_resume_conflict",
-			false,
-		)
 	case errors.Is(err, errCanonicalJournalBudgetExceeded):
 		return *newCanonicalError(
 			hertzconsts.StatusUnprocessableEntity,
@@ -645,6 +645,18 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"unsupported_value",
 			"Unsupported request value",
 			"unsupported_multitask_strategy",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrUnsupportedExecutionControl):
+		detail := "Unsupported execution control"
+		if path, ok := appagentthread.UnsupportedExecutionControlPath(err); ok {
+			detail += ": " + path
+		}
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"unsupported_execution_control",
+			detail,
+			"unsupported_execution_control",
 			false,
 		)
 	case errors.Is(err, appagentthread.ErrInvalidRuntimeConfig):

@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const sharedAIOMigrationName = "20260814000100_sandbox_shared_aio_core.sql"
+const sharedAIOMigrationName = "20260814000100_expand_sandbox_shared_aio_core.sql"
 
 func TestSharedAIOMigrationIsAdditiveAndDefinesExactRuntimeContract(t *testing.T) {
 	repoRoot := sharedAIORepoRoot(t)
@@ -47,7 +47,7 @@ func readSharedAIOFile(t *testing.T, path string) string {
 func assertSharedAIOMigrationSafety(t *testing.T, migration string) {
 	t.Helper()
 	upper := strings.ToUpper(migration)
-	for _, forbidden := range []string{"DROP ", "TRUNCATE ", "RENAME ", "DELETE ", "AUTO_INCREMENT ="} {
+	for _, forbidden := range []string{"DROP ", "TRUNCATE ", "RENAME ", "DELETE ", "MODIFY ", "AUTO_INCREMENT ="} {
 		if strings.Contains(upper, forbidden) {
 			t.Fatalf("shared AIO migration contains destructive operation %q", strings.TrimSpace(forbidden))
 		}
@@ -104,7 +104,6 @@ func assertSharedAIOSchedulerColumns(t *testing.T, migration, schema string) {
 		regexp.MustCompile("(?is)`aio_runtime_deployment_id`\\s+VARCHAR\\(128\\).*?NOT\\s+NULL\\s+DEFAULT\\s+''"),
 		regexp.MustCompile("(?is)`aio_runtime_sentinel_id`\\s+VARCHAR\\(128\\).*?NOT\\s+NULL\\s+DEFAULT\\s+''"),
 		regexp.MustCompile("(?is)UPDATE\\s+`sandbox_scheduler_settings`\\s+SET\\s+`session_settings_json`\\s*=\\s*'[^']+'\\s*,\\s*`session_settings_updated_at`\\s*=\\s*UTC_TIMESTAMP\\(3\\)\\s+WHERE\\s+`id`\\s*=\\s*1"),
-		regexp.MustCompile("(?is)ALTER\\s+TABLE\\s+`sandbox_scheduler_settings`\\s+MODIFY\\s+COLUMN\\s+`session_settings_json`\\s+JSON\\s+NOT\\s+NULL"),
 	} {
 		if !pattern.MatchString(migration) {
 			t.Fatalf("shared AIO scheduler migration contract is missing %q", pattern.String())
@@ -132,6 +131,9 @@ func assertSharedAIOSchedulerColumns(t *testing.T, migration, schema string) {
 	}
 
 	schedulerBlock := sharedAIOHCLTableBlock(t, schema, "sandbox_scheduler_settings")
+	if !regexp.MustCompile(`(?s)column "session_settings_json"\s*\{.*?null\s*=\s*true.*?type\s*=\s*json.*?\}`).MatchString(schedulerBlock) {
+		t.Fatal("Atlas scheduler schema must keep session_settings_json nullable during the expand phase")
+	}
 	for _, column := range wantedColumns {
 		if !strings.Contains(schedulerBlock, `column "`+column+`"`) {
 			t.Fatalf("Atlas scheduler schema is missing %s", column)

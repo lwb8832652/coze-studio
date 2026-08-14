@@ -27,6 +27,7 @@
       "backend/api/model/workbench/thread_contract/**",
       "backend/api/model/workbench/thread_product_contract/**",
       "backend/application/application.go",
+      "backend/application/adaptive_execution_wiring_test.go",
       "backend/application/agentthread/**",
       "backend/domain/agentthread/**",
       "backend/application/scheduledtask/**",
@@ -77,6 +78,90 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
           "locator": "it('uploads files before creating a thread run'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.typed_v2_serializer",
+      "label": "First-party Typed Submission V2 serializer",
+      "layer": "frontend_transport",
+      "kind": "transport_adapter",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createInitialSubmissionV2",
+          "locator": "export const createInitialSubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createTurnSubmissionV2",
+          "locator": "export const createTurnSubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "createRetrySubmissionV2",
+          "locator": "export const createRetrySubmissionV2 = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/types.ts",
+          "symbol": "normalizeHumanResponseV2",
+          "locator": "export const normalizeHumanResponseV2 = ("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/components/__tests__/canonical-submission-v2.test.ts",
+          "locator": "it('keeps file order for turns and typed lineage only for retries'"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('retains a 409 Resume attempt and refreshes without automatic resubmit'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.task_detail.retry_top_level",
+      "label": "TaskDetail top-level typed retry writer",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts",
+          "symbol": "handleRetryTaskRun",
+          "locator": "const handleRetryTaskRun = async (sourceRunId: string) =>"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-run-actions-hook.test.tsx",
+          "locator": "it('treats a retry 409 as authoritative refresh without rotating or resending the key'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.task_detail.resume_human",
+      "label": "TaskDetail typed Human Resume writer",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "symbol": "handleHumanInteractionSubmit",
+          "locator": "const handleHumanInteractionSubmit = async ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.resumeRun",
+          "locator": "async resumeRun(request: ResumeWorkbenchRunRequest) {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('commits a resumed top-level Run before refresh and does not repeat the successful write'"
         }
       ]
     },
@@ -312,6 +397,10 @@
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateTaskThreadRejectsSubmittedExecutionControls"
         }
       ]
     },
@@ -325,13 +414,699 @@
         {
           "path": "backend/application/agentthread/service.go",
           "symbol": "(*ApplicationService).CreateRun",
-          "locator": "func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest)"
+          "locator": "func (s *ApplicationService) CreateRun("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
           "locator": "func TestApplicationCreateTopLevelRunUsesAdmissionBundleAndCancelsSupersededADK"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunRejectsSubmittedExecutionControls"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTopLevelRetryRejectsSubmittedExecutionControls"
+        }
+      ]
+    },
+    {
+      "id": "application.submitted_execution_control_admission",
+      "label": "Application admission and historical execution-control compatibility boundary",
+      "layer": "application",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/retired_execution_control.go",
+          "symbol": "validateSubmittedExecutionControls",
+          "locator": "func validateSubmittedExecutionControls(config, runContext string) error"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).createRun",
+          "locator": "func (s *ApplicationService) createRun("
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder.go",
+          "symbol": "(*ApplicationADKSubagentRunRecorder).StartADKSubagentRun",
+          "locator": "func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/retired_execution_control_test.go",
+          "locator": "func TestSubmittedExecutionControlsRejectsRetiredFields"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunProvenanceFailsClosed"
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder_test.go",
+          "locator": "func TestApplicationADKSubagentRunRecorderStartsChildRun"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_contract_test.go",
+          "locator": "func TestCanonicalErrorMapsUnsupportedExecutionControlPath"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun"
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery_test.go",
+          "locator": "func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "application.adaptive_mode_free_contract_boundary",
+      "label": "P1M/P1D mode-free bootstrap, model-backed selection, durable decision consumer, safe public projection, recovery and atomic rolling Plan boundary",
+      "layer": "application",
+      "kind": "conditional_runtime_boundary",
+      "production_status": "current",
+      "runtime_scope": "canonical_runtime",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/entity/adaptive_execution.go",
+          "symbol": "AdaptiveAdmissionSnapshot",
+          "locator": "type AdaptiveAdmissionSnapshot struct {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract.go",
+          "symbol": "ValidateAdaptiveBootstrapPair",
+          "locator": "func ValidateAdaptiveBootstrapPair("
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec.go",
+          "symbol": "EncodeAdaptiveAdmission",
+          "locator": "func EncodeAdaptiveAdmission(snapshot entity.AdaptiveAdmissionSnapshot) ([]byte, string, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission.go",
+          "symbol": "ValidateAdaptiveAdmissionSnapshot",
+          "locator": "func ValidateAdaptiveAdmissionSnapshot(snapshot entity.AdaptiveAdmissionSnapshot) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission.go",
+          "symbol": "validateAdaptiveDecisionRuntimeConsumer",
+          "locator": "func validateAdaptiveDecisionRuntimeConsumer(facts *AdaptiveBootstrapFacts) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_baseline_decision.go",
+          "symbol": "BaselineDecisionProducer.Produce",
+          "locator": "func (BaselineDecisionProducer) Produce(request BaselineDecisionRequest) (entity.ExecutionDecision, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_eligibility.go",
+          "symbol": "envAdaptiveEligibilityResolver.Resolve",
+          "locator": "func (envAdaptiveEligibilityResolver) Resolve("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_contract.go",
+          "symbol": "ProjectAdaptiveDecisionSemanticInput",
+          "locator": "func ProjectAdaptiveDecisionSemanticInput(rawInput string) (AdaptiveDecisionSemanticInput, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).produceDecision",
+          "locator": "func (c *adaptiveBootstrapCoordinator) produceDecision("
+        },
+        {
+          "path": "backend/application/application.go",
+          "symbol": "Init",
+          "locator": "EligibilityResolver: agentthread.NewEnvAdaptiveEligibilityResolver(),"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "(*threadRepository).CommitAdaptiveExecutionBootstrap",
+          "locator": "func (r *threadRepository) CommitAdaptiveExecutionBootstrap("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "(*threadRepository).ReadAdaptiveExecutionBootstrapByRun",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBootstrapByRun("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public.go",
+          "symbol": "ProjectPublicAdaptiveExecution",
+          "locator": "func ProjectPublicAdaptiveExecution("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public.go",
+          "symbol": "(*ApplicationService).hydratePublicAdaptiveExecution",
+          "locator": "func (s *ApplicationService) hydratePublicAdaptiveExecution("
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_projection.go",
+          "symbol": "projectCanonicalAdaptiveExecution",
+          "locator": "func projectCanonicalAdaptiveExecution("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/adapters/canonical-thread-adapter.ts",
+          "symbol": "adaptAdaptiveExecution",
+          "locator": "const adaptAdaptiveExecution = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-loader.ts",
+          "symbol": "mapTaskThreadToDetailModel",
+          "locator": "const mapTaskThreadToDetailModel = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-header.tsx",
+          "symbol": "TaskDetailHeader",
+          "locator": "export const TaskDetailHeader = ({"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "createBaseRunEvent",
+          "locator": "func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).Bootstrap",
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).BootstrapResume",
+          "locator": "func (c *adaptiveBootstrapCoordinator) BootstrapResume("
+        },
+        {
+          "path": "backend/application/agentthread/legacy_adaptive_admission_decoder.go",
+          "symbol": "(*LegacyAdaptiveAdmissionDecoder).Decode",
+          "locator": "func (*LegacyAdaptiveAdmissionDecoder) Decode(source *entity.Run)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapLegacySource",
+          "locator": "func lockAndValidateAdaptiveBootstrapLegacySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapTypedSource",
+          "locator": "func lockAndValidateAdaptiveBootstrapTypedSource("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Execute",
+          "locator": "facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "symbol": "(*ApplicationADKAgentFactory).Build",
+          "locator": "if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "symbol": "adkMiddlewareExposesTools",
+          "locator": "func adkMiddlewareExposesTools(name ADKMiddlewareName) bool {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_decision_guard.go",
+          "symbol": "(*adkDirectDecisionGuard).AfterModelRewriteState",
+          "locator": "func (g *adkDirectDecisionGuard) AfterModelRewriteState("
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_tool_provider.go",
+          "symbol": "(*ADKSubagentToolProvider).ResolveToolSet",
+          "locator": "adaptiveAllowed, hasAdaptivePolicy := adaptiveSubagentsAllowedFromContext(ctx)"
+        },
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "symbol": "parseADKRuntimeConfig",
+          "locator": "func parseADKRuntimeConfig(rawConfig string) (DeerFlowRuntimeConfig, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_builtin_subagent.go",
+          "symbol": "buildADKBuiltinSubagentRunSummary",
+          "locator": "func buildADKBuiltinSubagentRunSummary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_singleagent_subagent_agent_factory.go",
+          "symbol": "buildADKSingleAgentSubagentRunSummary",
+          "locator": "func buildADKSingleAgentSubagentRunSummary("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "(*threadRepository).CommitAdaptiveExecutionBoundary",
+          "locator": "func (r *threadRepository) CommitAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "validateAdaptiveExecutionSourceBoundaryChain",
+          "locator": "func validateAdaptiveExecutionSourceBoundaryChain("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "(*threadRepository).ReadAdaptiveExecutionBoundary",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "symbol": "(*ADKAdaptivePlanBoundaryCoordinator).commitCheckpoint",
+          "locator": "func (c *ADKAdaptivePlanBoundaryCoordinator) commitCheckpoint("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).runWithInternalCheckpointBarriers",
+          "locator": "func (e *ADKExecutor) runWithInternalCheckpointBarriers("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Resume",
+          "locator": "storeRun.PlanScopeRunID = agentRun.PlanScopeRunID"
+        },
+        {
+          "path": "backend/application/agentthread/journal_feature_gate.go",
+          "symbol": "(*JournalFeatureGate).DecideEnrollment",
+          "locator": "runtime, err := journalEnrollmentRuntime(input.RunConfig)"
+        },
+        {
+          "path": "backend/application/agentthread/journal_metrics.go",
+          "symbol": "(*JournalPrometheusMetricsCollector).RecordCompletedTask",
+          "locator": "if c == nil || !observation.Enrolled || !observation.Completed {"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).normalizeNewRunRuntimeConfig",
+          "locator": "func (s *ApplicationService) normalizeNewRunRuntimeConfig("
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).createRun",
+          "locator": "return nil, fmt.Errorf(\"child runs are server-owned\")"
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder.go",
+          "symbol": "adkSubagentRunPayloads",
+          "locator": "func adkSubagentRunPayloads("
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "symbol": "applyADKChildRuntimeSafetyPolicy",
+          "locator": "func applyADKChildRuntimeSafetyPolicy("
+        },
+        {
+          "path": "backend/application/agentthread/human_interaction_resume.go",
+          "symbol": "(*ApplicationService).ResumeHumanInteraction",
+          "locator": "resumeConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).GetHumanResumeRolloverReplay",
+          "locator": "func (r *threadRepository) GetHumanResumeRolloverReplay("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "symbol": "(*threadRepository).createOrdinaryLeaseRecoveryRunBundle",
+          "locator": "func (r *threadRepository) createOrdinaryLeaseRecoveryRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "symbol": "ordinaryLeaseRecoveryCheckpointMatches",
+          "locator": "func ordinaryLeaseRecoveryCheckpointMatches("
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery.go",
+          "symbol": "(*ApplicationService).RecoverJournal",
+          "locator": "recoveryConfig, err := stripSubmittedExecutionControls(sourceRun.Config)"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "symbol": "(*RunLeaseRecoveryProcessor).ensureRecoveryResumeRun",
+          "locator": "recoveryConfig, err := stripSubmittedExecutionControls(source.Config)"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).journalEnrollmentForRun",
+          "locator": "func (s *ApplicationService) journalEnrollmentForRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapBareLegacySource",
+          "locator": "func lockAndValidateAdaptiveBootstrapBareLegacySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "symbol": "lockAndValidateAdaptiveExecutionBareLineage",
+          "locator": "func lockAndValidateAdaptiveExecutionBareLineage("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/entity/adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionContractHasNoTransportTagsOrRetiredControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract_test.go",
+          "locator": "func TestValidateAdaptiveBootstrapPairRequiresC2BootstrapConstraints(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec_test.go",
+          "locator": "func TestAdaptiveCodecsRoundTripAndDoNotAlias(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission_test.go",
+          "locator": "func TestAdaptiveAdmissionValidatorsAliasDomainSentinels(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_baseline_decision_test.go",
+          "locator": "func TestBaselineDecisionProducerProducesFixedMultiStepDecision(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_eligibility_test.go",
+          "locator": "func TestEnvAdaptiveEligibilityResolverUsesStableServerOwnedRollout(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_eligibility_test.go",
+          "locator": "func TestEnvAdaptiveEligibilityResolverRejectsInvalidServerConfiguration(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_producer_test.go",
+          "locator": "func TestAdaptiveDecisionProducerContractCannotObserveDurableAuthority(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapReplaysBeforeMutableFencesAndReadsDurably(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryGenericCheckpointSurfaceExcludesControlFacts(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorUsesGateOnEligibilityAndProducerBeforeIDs(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorMaterializesServerAuthorityAfterCandidate(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeInheritsGateOnWithoutRecomputingEligibility(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeCopiesDecisionWithoutProducer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/legacy_adaptive_admission_decoder_test.go",
+          "locator": "func TestLegacyAdaptiveAdmissionDecoderRejectsAmbiguousOrInvalidLegacyConfig(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapTypedInheritanceAcceptsDurableLegacySource(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryDirectDecisionSkipsEveryToolProvider(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryDirectDecisionRejectsModelToolCall(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryInheritedDirectDecisionKeepsTheSameConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareDirectDecisionDisablesEveryToolInjection(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapByRunReaderReturnsValidatedPair(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapByRunReaderRejectsPartialOrDriftedFacts(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public_test.go",
+          "locator": "func TestGetListAndSearchRunsHydrateDurableAdaptiveExecution(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public_test.go",
+          "locator": "func TestRunHydrationOmitsMissingAndFailsClosedOnConflict(t *testing.T) {"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_projection_test.go",
+          "locator": "func TestCanonicalRunProjectionPublishesOnlySafeAdaptiveExecution(t *testing.T) {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts",
+          "locator": "it('strictly decodes the optional public adaptive execution decision', () => {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-loader.test.ts",
+          "locator": "expect(detail.task?.adaptive_execution).toEqual({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
+          "locator": "data-testid=\"adaptive-execution-mode\""
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryIgnoresRetiredModeControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestRetiredExecutionModeHasNoProductionADKConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestADKChildConfigWritersDoNotWriteRetiredExecutionMode(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryRollsPlanAcrossSameRecoveryAttemptAndReplaysHistory(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryCreatesInitialPlanWithBoundaryAtomically(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestReadAdaptiveExecutionBoundaryReturnsAdvancedCurrentHead(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryReadsCommittedHeadBeforeAllocatingIDs(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryRejectsMixedSideEffectBeforeEitherCommit(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_feature_gate_test.go",
+          "locator": "func TestJournalFeatureGateUsesServerRuntimeInsteadOfRetiredModeForEnrollment(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_feature_gate_test.go",
+          "locator": "func TestJournalFeatureGateRejectsUnknownEnrollmentRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_metrics_test.go",
+          "locator": "func TestJournalMetricsCompletenessDenominatorUsesDurableEnrollmentWithoutRetiredMode(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunTopLevelRetryUsesMessageLessBundle(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_subagent_run_recorder_test.go",
+          "locator": "func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunRejectsCallerOwnedChildShape(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryTreatsDurableChildIdentityAsSafeLocalPurpose(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDeletion(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionPropagatesJournalLookupError(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_recovery_test.go",
+          "locator": "func TestJournalRecoveryCreatesAtomicRecoveryBundleFromSafeCheckpoint(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "application.model_adaptive_decision_producer",
+      "label": "Model-backed adaptive decision producer",
+      "layer": "application",
+      "kind": "conditional_runtime_boundary",
+      "production_status": "current",
+      "runtime_scope": "canonical_runtime",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "symbol": "(*ModelAdaptiveDecisionProducer).Produce",
+          "locator": "func (p *ModelAdaptiveDecisionProducer) Produce("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "symbol": "NewEnvAdaptiveDecisionModelProvider",
+          "locator": "func NewEnvAdaptiveDecisionModelProvider() AdaptiveDecisionModelProvider {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_contract.go",
+          "symbol": "decodeAdaptiveDecisionCandidateWire",
+          "locator": "func decodeAdaptiveDecisionCandidateWire("
+        },
+        {
+          "path": "backend/application/application.go",
+          "symbol": "Init",
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_contract_test.go",
+          "locator": "func TestProjectAdaptiveDecisionSemanticInputProjectsOnlyTypedSemantics(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer_test.go",
+          "locator": "func TestModelAdaptiveDecisionProducerClaimsCallsOnceRecordsUsageAndReplays(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer_test.go",
+          "locator": "func TestModelAdaptiveDecisionProducerCompletesOwnedFailuresWithoutRetry(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/adaptive_execution_wiring_test.go",
+          "locator": "func TestAdaptiveExecutionProductionWiringInstallsGateOnDecisionDependencies(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "repository.adaptive_decision_model_operation",
+      "label": "Adaptive decision model durable operation repository",
+      "layer": "repository",
+      "kind": "durable_operation",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
+          "symbol": "AdaptiveDecisionModelOperationRepository",
+          "locator": "type AdaptiveDecisionModelOperationRepository interface {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model.go",
+          "symbol": "(*threadRepository).PrepareAdaptiveDecisionModelOperation",
+          "locator": "func (r *threadRepository) PrepareAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model.go",
+          "symbol": "(*threadRepository).CompleteAdaptiveDecisionModelOperation",
+          "locator": "func (r *threadRepository) CompleteAdaptiveDecisionModelOperation("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationCompletesAndReplaysExactResult(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationMySQLIntegrationClaimSingleWinnerAndReplay(t *testing.T) {"
         }
       ]
     },
@@ -443,7 +1218,15 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover"
+        },
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionReturnsFullRolloverReplayBeforeMutableState"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLDifferentKeySingleWinner(t *testing.T) {"
         }
       ]
     },
@@ -718,12 +1501,34 @@
           "path": "backend/domain/agentthread/repository/mysql.go",
           "symbol": "(*threadRepository).CreateRunBundle",
           "locator": "func (r *threadRepository) CreateRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).createHumanResumeRunBundle",
+          "locator": "func (r *threadRepository) createHumanResumeRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume.go",
+          "symbol": "(*threadRepository).GetHumanResumeRolloverReplay",
+          "locator": "func (r *threadRepository) GetHumanResumeRolloverReplay("
         }
       ],
       "evidence": [
         {
-          "path": "backend/domain/agentthread/repository/mysql_test.go",
-          "locator": "func TestThreadRepositoryCreateAndGetRun"
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverCommitsExactAggregateAndAdjacentSequences"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverStableReplaySurvivesSourceLifecycleAndCheckpointDeletion"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery_test.go",
+          "locator": "func TestOrdinaryLeaseRecoveryCreatesBareSourceTargetAtomically(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery_test.go",
+          "locator": "func TestOrdinaryLeaseRecoveryRejectsSourceCheckpointPayloadDriftWithoutWrites(t *testing.T) {"
         }
       ]
     },
@@ -749,7 +1554,7 @@
     },
     {
       "id": "repository.create_run_event",
-      "label": "MySQL CreateRunEvent",
+      "label": "MySQL RunEvent persistence",
       "layer": "repository",
       "kind": "function",
       "production_status": "current",
@@ -758,12 +1563,25 @@
           "path": "backend/domain/agentthread/repository/mysql.go",
           "symbol": "(*threadRepository).CreateRunEvent",
           "locator": "func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.RunEvent)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_journal.go",
+          "symbol": "(*threadRepository).CreateRunEventWithJournalProjection",
+          "locator": "func (r *threadRepository) CreateRunEventWithJournalProjection("
         }
       ],
       "evidence": [
         {
-          "path": "backend/domain/agentthread/repository/mysql_test.go",
-          "locator": "func TestThreadRepositoryCreateAndGetRun"
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "if err := s.persistRunEventWithOptionalJournal("
+        },
+        {
+          "path": "backend/domain/agentthread/service/journal.go",
+          "locator": "_, err := projectionRepo.CreateRunEventWithJournalProjection("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_journal_test.go",
+          "locator": "func TestRunEventJournalProjectionKeepsBaseAndJournalViews"
         }
       ]
     },
@@ -1182,7 +2000,7 @@
     },
     {
       "id": "runtime.checkpoint_store",
-      "label": "Workbench ADK Checkpoint Store",
+      "label": "Workbench ADK Checkpoint Store and adaptive Plan commit point",
       "layer": "runtime_state",
       "kind": "capability",
       "production_status": "current",
@@ -1191,12 +2009,21 @@
           "path": "backend/application/agentthread/adk_checkpoint.go",
           "symbol": "(*ADKCheckpointStore).Set",
           "locator": "func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, checkpoint []byte)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_checkpoint.go",
+          "symbol": "WithADKAdaptivePlanBoundary",
+          "locator": "func WithADKAdaptivePlanBoundary("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_checkpoint_test.go",
           "locator": "func TestADKCheckpoint"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
         }
       ]
     },
@@ -1211,12 +2038,21 @@
           "path": "backend/application/agentthread/run_lease_recovery.go",
           "symbol": "(*RunLeaseRecoveryProcessor).RecoverExpiredRunLeases",
           "locator": "func (p *RunLeaseRecoveryProcessor) RecoverExpiredRunLeases("
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "symbol": "(*RunLeaseRecoveryProcessor).recoverExpiredRun",
+          "locator": "func (p *RunLeaseRecoveryProcessor) recoverExpiredRun("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -2102,7 +2938,7 @@
     },
     {
       "id": "middleware.plan_task",
-      "label": "plantask",
+      "label": "plantask run-scoped adaptive overlay",
       "layer": "eino_middleware",
       "kind": "middleware",
       "production_status": "current",
@@ -2110,12 +2946,29 @@
         {
           "path": "backend/application/agentthread/adk_middleware.go",
           "locator": "ADKMiddlewarePlanTask,"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() &&"
+        },
+        {
+          "path": "backend/application/agentthread/adk_plan_backend.go",
+          "symbol": "(*ADKPlanBackend).adaptiveBoundary",
+          "locator": "func (b *ADKPlanBackend) adaptiveBoundary("
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_middleware_test.go",
           "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBackendStagesTaskCreateWritesInOneGeneration(t *testing.T) {"
         }
       ]
     },
@@ -2361,7 +3214,148 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_execution_control_ingress",
+      "label": "Canonical execution-control raw ingress freeze",
+      "layer": "http_handler",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_execution_control_validator.go",
+          "symbol": "validateCanonicalExecutionControlIngress",
+          "locator": "func validateCanonicalExecutionControlIngress("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_execution_control_validator_test.go",
+          "locator": "func TestCanonicalExecutionControlIngressValidator"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestCreateCanonicalThreadRejectsExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go",
+          "locator": "func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_typed_v2_validation",
+      "label": "Canonical Typed Submission V2 raw validation",
+      "layer": "http_handler",
+      "kind": "transport_contract",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "decodeCanonicalTypedRunSubmissionV2",
+          "locator": "func decodeCanonicalTypedRunSubmissionV2(raw []byte)"
+        },
+        {
+          "path": "idl/workbench/thread.thrift",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "struct CanonicalComposerSelectionV2 {"
+        },
+        {
+          "path": "backend/api/model/workbench/thread_contract/thread.go",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "type CanonicalComposerSelectionV2 struct {"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/thread.ts",
+          "symbol": "CanonicalComposerSelectionV2",
+          "locator": "export interface CanonicalComposerSelectionV2 {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2FlowAndCollectionMatrix"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestCreateCanonicalThreadAcceptsAtomicTypedV2"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCreateCanonicalRunTypedV2TurnPersistsMappedMessage"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunTypedV2RejectsBeforeThreadAuthorizationAndSSE"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_typed_v2_mapping",
+      "label": "Canonical Typed Submission V2 deterministic mapping",
+      "layer": "http_handler",
+      "kind": "transport_adapter",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "mapCanonicalTypedRunV2",
+          "locator": "func mapCanonicalTypedRunV2(v *canonicalTypedRunV2)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "symbol": "mapCanonicalTypedInitialV2",
+          "locator": "func mapCanonicalTypedInitialV2(v *canonicalTypedInitialV2, deferred bool)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2PositiveParityFingerprintAndDeepCopy"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.canonical_thread_delete_guard",
+      "label": "Canonical whole-Thread deletion hard guard",
+      "layer": "http_handler",
+      "kind": "security_boundary",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "symbol": "canonicalWholeThreadDeletionTemporarilyDisabled",
+          "locator": "const canonicalWholeThreadDeletionTemporarilyDisabled = true"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "symbol": "DeleteCanonicalThread",
+          "locator": "func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
+          "locator": "func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation"
         }
       ]
     },
@@ -2493,7 +3487,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesPathBeforeReadingSubmission"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
@@ -2670,7 +3664,7 @@
     },
     {
       "id": "contract.workbench.route_surface",
-      "label": "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
+      "label": "Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired",
       "layer": "transport_contract",
       "kind": "route_snapshot",
       "production_status": "current",
@@ -2699,7 +3693,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "func TestWorkbenchCanonicalThreadRoutes"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 54)"
         }
       ]
     },
@@ -2747,6 +3741,47 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
           "locator": "const response = await createTaskThread({"
+        }
+      ]
+    },
+    {
+      "id": "edge.workbench_serializes_typed_v2",
+      "from": "frontend.workbench.handle_send",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_immediate", "entry.workbench_deferred"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const initialSubmissionV2 = createInitialSubmissionV2(submitPayload);"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "submission_v2: createTurnSubmissionV2("
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_serializer_uses_thread_client",
+      "from": "frontend.typed_v2_serializer",
+      "to": "frontend.client.singleton",
+      "relation": "implemented_with",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "entry.task_detail_followup",
+        "control.human_resume"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "if (isTypedRunRequest(request)) {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "json: isTypedResumeRequest(request)"
         }
       ]
     },
@@ -2817,6 +3852,62 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
           "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        }
+      ]
+    },
+    {
+      "id": "edge.followup_serializes_typed_turn",
+      "from": "frontend.task_detail.send_follow_up",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "submission_v2: createTurnSubmissionV2("
+        }
+      ]
+    },
+    {
+      "id": "edge.task_retry_serializes_typed_retry",
+      "from": "frontend.task_detail.retry_top_level",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts",
+          "locator": "submission_v2: createRetrySubmissionV2(retryPayload, sourceRunId)"
+        }
+      ]
+    },
+    {
+      "id": "edge.human_resume_serializes_typed_response",
+      "from": "frontend.task_detail.resume_human",
+      "to": "frontend.typed_v2_serializer",
+      "relation": "calls",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "locator": "const responseV2 = normalizeHumanResponseV2(response);"
+        }
+      ]
+    },
+    {
+      "id": "edge.human_resume_routes_canonical_client",
+      "from": "frontend.task_detail.resume_human",
+      "to": "frontend.client.singleton",
+      "relation": "implemented_with",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts",
+          "locator": "const resumeResult = await resumeTaskThreadRun({"
         }
       ]
     },
@@ -2940,7 +4031,8 @@
       "chain_ids": [
         "run.atomic_create",
         "entry.workbench_canonical_run_http",
-        "entry.workbench_canonical_run_stream"
+        "entry.workbench_canonical_run_stream",
+        "control.human_resume"
       ],
       "confidence": "extracted",
       "evidence": [
@@ -2958,7 +4050,9 @@
       "chain_ids": [
         "run.atomic_create",
         "entry.workbench_canonical_run_http",
-        "entry.workbench_canonical_run_stream"
+        "entry.workbench_canonical_run_stream",
+        "control.human_resume",
+        "control.lease_recovery"
       ],
       "confidence": "extracted",
       "evidence": [
@@ -3153,8 +4247,12 @@
       "confidence": "extracted",
       "evidence": [
         {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "if err := s.persistRunEventWithOptionalJournal("
+        },
+        {
           "path": "backend/domain/agentthread/service/journal.go",
-          "locator": "return s.repo.CreateRunEvent(ctx, event)"
+          "locator": "_, err := projectionRepo.CreateRunEventWithJournalProjection("
         }
       ]
     },
@@ -3257,16 +4355,16 @@
       ]
     },
     {
-      "id": "edge.lease_recovery_creates_guarded_run",
+      "id": "edge.lease_recovery_creates_atomic_bundle",
       "from": "runtime.lease_recovery",
-      "to": "domain.create_run_guarded",
+      "to": "domain.create_run_bundle",
       "relation": "delegates_to",
       "chain_ids": ["control.lease_recovery"],
       "confidence": "extracted",
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery.go",
-          "locator": "run, err := p.app.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{"
+          "locator": "bundle, err := p.app.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
         }
       ]
     },
@@ -3280,7 +4378,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -3705,6 +4803,210 @@
       ]
     },
     {
+      "id": "edge.adk_execute_delegates_adaptive_bootstrap",
+      "from": "runtime.adk_executor.execute",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorUsesGateOnEligibilityAndProducerBeforeIDs(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_resume_delegates_adaptive_bootstrap",
+      "from": "runtime.adk_executor.resume",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk", "control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeInheritsTypedSource(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeInheritsGateOnWithoutRecomputingEligibility(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adaptive_bootstrap_delegates_model_producer",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "application.model_adaptive_decision_producer",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "candidate, err := producer.Produce(ctx, AdaptiveDecisionRequest{"
+        },
+        {
+          "path": "backend/application/application.go",
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        },
+        {
+          "path": "backend/application/adaptive_execution_wiring_test.go",
+          "locator": "func TestAdaptiveExecutionProductionWiringInstallsGateOnDecisionDependencies(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.model_producer_persists_durable_operation",
+      "from": "application.model_adaptive_decision_producer",
+      "to": "repository.adaptive_decision_model_operation",
+      "relation": "persists_via",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "prepared, err := p.options.OperationRepository.PrepareAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "completed, err := p.options.OperationRepository.CompleteAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adaptive_bootstrap_precedes_agent_build",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "runtime.adk_agent_factory.build",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "agent, store, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "require.Equal(t, []string{\"bootstrap\", \"store\", \"factory\"}, order)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "require.Equal(t, []string{\"resume-bootstrap\", \"store\", \"factory\"}, order)"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorMaterializesServerAuthorityAfterCandidate(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.plan_tool_stages_adaptive_overlay",
+      "from": "middleware.plan_task",
+      "to": "application.adaptive_mode_free_contract_boundary",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_plan_backend.go",
+          "locator": "if err := coordinator.stageTaskWithParity("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBackendStagesTaskCreateWritesInOneGeneration(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.adaptive_plan_commits_checkpoint_boundary",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "runtime.checkpoint_store",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_checkpoint.go",
+          "locator": "_, committed, err := s.adaptivePlanBoundary.commitCheckpoint(ctx, boundaryInput, attempt)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "locator": "result, err := c.repository.CommitAdaptiveExecutionBoundary(ctx, *c.pending.frozen)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.checkpoint_barrier_auto_resumes_runner",
+      "from": "runtime.checkpoint_store",
+      "to": "runtime.eino.runner",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk", "control.adaptive_plan_checkpoint"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "return runner.Resume(executionCtx, checkpointKey, options...)"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeBuildsAgentAndCheckpointStoreWithDurablePlanScope(t *testing.T) {"
+        }
+      ]
+    },
+    {
       "id": "edge.factory_builds_chat_agent",
       "from": "runtime.adk_agent_factory.build",
       "to": "runtime.eino.chat_model_agent",
@@ -3742,7 +5044,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_executor.go",
-          "locator": "result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter"
+          "locator": "result, err := e.consumeEvents("
         }
       ]
     },
@@ -3999,6 +5301,48 @@
       ]
     },
     {
+      "id": "edge.create_task_thread_checks_submitted_controls",
+      "from": "application.create_task_thread",
+      "to": "application.submitted_execution_control_admission",
+      "relation": "implemented_with",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "if err := validateSubmittedExecutionControls(req.Config, req.Context); err != nil {"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_checks_submitted_controls",
+      "from": "application.create_run",
+      "to": "application.submitted_execution_control_admission",
+      "relation": "implemented_with",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "case createRunSubmitted:"
+        }
+      ]
+    },
+    {
+      "id": "edge.submitted_controls_precede_new_run_policy",
+      "from": "application.submitted_execution_control_admission",
+      "to": "runtime.new_run_policy",
+      "relation": "precedes",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context, provenance)"
+        }
+      ]
+    },
+    {
       "id": "edge.app_run_calls_new_run_policy",
       "from": "application.create_run",
       "to": "runtime.new_run_policy",
@@ -4008,7 +5352,7 @@
       "evidence": [
         {
           "path": "backend/application/agentthread/service.go",
-          "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)"
+          "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context, provenance)"
         }
       ]
     },
@@ -4107,6 +5451,80 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
           "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_thread_handler_validates_execution_controls",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "canonicalExecutionControlCreateThread"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_thread_validates_typed_v2",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "canonicalTypedThreadV2RootCaseError(raw)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_validation_maps_submission",
+      "from": "http.workbench.canonical_typed_v2_validation",
+      "to": "http.workbench.canonical_typed_v2_mapping",
+      "relation": "precedes",
+      "chain_ids": [
+        "entry.workbench_canonical_thread_http",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2.go",
+          "locator": "func mapCanonicalTypedRunV2(v *canonicalTypedRunV2)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_calls_create_task_thread",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "application.create_task_thread",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_thread_handler_applies_delete_guard",
+      "from": "http.workbench.canonical_thread",
+      "to": "http.workbench.canonical_thread_delete_guard",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_thread_service.go",
+          "locator": "if canonicalWholeThreadDeletionTemporarilyDisabled {"
         }
       ]
     },
@@ -4210,6 +5628,81 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
           "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_handler_validates_execution_controls",
+      "from": "http.workbench.canonical_run",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRunSubmission"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRootOnly"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service.go",
+          "locator": "canonicalExecutionControlRootOnly"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_validates_typed_v2",
+      "from": "http.workbench.canonical_run",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalTypedRunV2RootSubmission(c.Request.Body())"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_calls_create_run",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "application.create_run",
+      "relation": "delegates_to",
+      "chain_ids": [
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalApplicationCreateRunRequest(threadID, submission)"
+        }
+      ]
+    },
+    {
+      "id": "edge.typed_v2_mapping_preserves_fingerprint",
+      "from": "http.workbench.canonical_typed_v2_mapping",
+      "to": "domain.run_idempotency_contract",
+      "relation": "maps_to",
+      "chain_ids": [
+        "entry.workbench_canonical_thread_http",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_typed_submission_v2_test.go",
+          "locator": "func TestCanonicalTypedV2PositiveParityFingerprintAndDeepCopy"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint"
         }
       ]
     },
@@ -4350,6 +5843,38 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
           "locator": "ctx, ok := requireCanonicalSpaceAccess(ctx, c)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_validates_execution_controls",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "http.workbench.canonical_execution_control_ingress",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "submission, public := parseCanonicalRunSubmission(c, false)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "canonicalExecutionControlRunSubmission"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_validates_typed_v2",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "http.workbench.canonical_typed_v2_validation",
+      "relation": "calls",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "submission, public := parseCanonicalRunSubmission(c, false)"
         }
       ]
     },
@@ -4679,7 +6204,11 @@
           "locator": "it('navigates to the task execution page after send returns a task'"
         }
       ],
-      "required_side_edge_ids": ["edge.create_thread_uses_singleton"]
+      "required_side_edge_ids": [
+        "edge.create_thread_uses_singleton",
+        "edge.workbench_serializes_typed_v2",
+        "edge.typed_v2_serializer_uses_thread_client"
+      ]
     },
     {
       "id": "entry.workbench_deferred",
@@ -4728,7 +6257,9 @@
       "required_side_edge_ids": [
         "edge.create_thread_uses_singleton",
         "edge.upload_uses_singleton",
-        "edge.create_run_uses_singleton"
+        "edge.create_run_uses_singleton",
+        "edge.workbench_serializes_typed_v2",
+        "edge.typed_v2_serializer_uses_thread_client"
       ]
     },
     {
@@ -4767,7 +6298,10 @@
       ],
       "required_side_edge_ids": [
         "edge.upload_uses_singleton",
-        "edge.create_run_uses_singleton"
+        "edge.create_run_uses_singleton",
+        "edge.followup_serializes_typed_turn",
+        "edge.task_retry_serializes_typed_retry",
+        "edge.typed_v2_serializer_uses_thread_client"
       ]
     },
     {
@@ -4869,7 +6403,7 @@
       "test_evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationCreateRunMapsDomainRun"
+          "locator": "func TestApplicationCreateRunMessageMetadataUsesAtomicBundle"
         },
         {
           "path": "backend/domain/agentthread/repository/mysql_canonical_integration_test.go",
@@ -4978,23 +6512,67 @@
       "id": "control.human_resume",
       "name": "Human interaction resume bundle",
       "entry": "http.workbench.canonical_run",
-      "terminal": "domain.create_run_bundle",
+      "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
         "http.workbench.canonical_run",
         "application.resume_human",
-        "domain.create_run_bundle"
+        "domain.create_run_bundle",
+        "repository.create_run_bundle"
       ],
       "ordered_edge_ids": [
         "edge.canonical_run_handler_calls_resume",
-        "edge.resume_app_creates_bundle"
+        "edge.resume_app_creates_bundle",
+        "edge.create_run_domain_persists_bundle"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
           "path": "backend/application/agentthread/service_test.go",
-          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+          "locator": "func TestApplicationResumeHumanInteractionCreatesJournalRollover"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_test.go",
+          "locator": "func TestHumanResumeRolloverCommitsExactAggregateAndAdjacentSequences"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLSameKeyReplay(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLSameKeyDriftConflict(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_human_resume_integration_test.go",
+          "locator": "func TestHumanResumeRolloverMySQLDifferentKeySingleWinner(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapHumanResumeConsumesTypedLineageBeforeADKBuild"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx",
+          "locator": "it('commits a resumed top-level Run before refresh and does not repeat the successful write'"
         }
+      ],
+      "required_side_edge_ids": [
+        "edge.human_resume_serializes_typed_response",
+        "edge.human_resume_routes_canonical_client",
+        "edge.typed_v2_serializer_uses_thread_client",
+        "edge.adk_resume_delegates_adaptive_bootstrap"
       ]
     },
     {
@@ -5044,6 +6622,35 @@
       ]
     },
     {
+      "id": "control.adaptive_plan_checkpoint",
+      "name": "Adaptive Plan overlay atomic checkpoint and internal resume",
+      "entry": "middleware.plan_task",
+      "terminal": "runtime.eino.runner",
+      "ordered_node_ids": [
+        "middleware.plan_task",
+        "application.adaptive_mode_free_contract_boundary",
+        "runtime.checkpoint_store",
+        "runtime.eino.runner"
+      ],
+      "ordered_edge_ids": [
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary_test.go",
+          "locator": "func TestADKAdaptivePlanBoundaryCommitsPlanAndRealCheckpointOnce(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorAutoResumesCommittedInternalCheckpointBarrier(t *testing.T) {"
+        }
+      ]
+    },
+    {
       "id": "control.lease_recovery",
       "name": "Expired lease recovery from durable checkpoint",
       "entry": "runtime.lease_recovery",
@@ -5058,15 +6665,15 @@
         "edge.lease_checkpoint_precedes_resume"
       ],
       "required_side_edge_ids": [
-        "edge.lease_recovery_creates_guarded_run",
-        "edge.guarded_run_persists_with_thread_lock"
+        "edge.lease_recovery_creates_atomic_bundle",
+        "edge.create_run_domain_persists_bundle"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
-          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+          "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
         }
       ]
     },
@@ -5265,6 +6872,7 @@
       "terminal": "runtime.event_sink.emit",
       "ordered_node_ids": [
         "runtime.adk_executor.execute",
+        "application.adaptive_mode_free_contract_boundary",
         "runtime.adk_agent_factory.build",
         "runtime.eino.chat_model_agent",
         "runtime.eino.runner",
@@ -5272,13 +6880,21 @@
         "runtime.event_sink.emit"
       ],
       "ordered_edge_ids": [
-        "edge.adk_builds_agent",
+        "edge.adk_execute_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_precedes_agent_build",
         "edge.factory_builds_chat_agent",
         "edge.chat_agent_precedes_runner",
         "edge.runner_emits_adk_events",
         "edge.mapper_emits_sink"
       ],
       "required_side_edge_ids": [
+        "edge.adk_resume_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_delegates_model_producer",
+        "edge.model_producer_persists_durable_operation",
+        "edge.adk_builds_agent",
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner",
         "edge.adk_uses_eino",
         "edge.adk_adapts_mcp_go",
         "edge.factory_configures_ark",
@@ -5403,6 +7019,12 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_thread_handler_validates_space",
+        "edge.canonical_thread_handler_validates_execution_controls",
+        "edge.canonical_thread_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_task_thread",
+        "edge.typed_v2_mapping_preserves_fingerprint",
+        "edge.canonical_thread_handler_applies_delete_guard",
         "edge.canonical_thread_create_calls_create_thread",
         "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.canonical_route_surface_maps_contract"
@@ -5424,7 +7046,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_thread_service_test.go",
-          "locator": "func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling"
+          "locator": "func TestDeleteCanonicalThreadIsTemporarilyDisabledAfterWorkspaceAuthorizationWithoutMutation"
         }
       ]
     },
@@ -5448,6 +7070,11 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_run_handler_validates_space",
+        "edge.canonical_run_handler_validates_execution_controls",
+        "edge.canonical_run_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_run",
+        "edge.typed_v2_mapping_preserves_fingerprint",
         "edge.canonical_run_handler_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_idempotency_race_validates_fingerprint",
@@ -5477,6 +7104,18 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
           "locator": "func TestCanonicalWaitCancellationHonorsEndpointDisconnectMode"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
+          "locator": "func TestCanonicalResumeRejectsExecutionControlsBeforeApplication"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go",
+          "locator": "func TestCanonicalSubagentRunRetryRejectsExecutionControlsBeforeApplication"
         }
       ]
     },
@@ -5500,6 +7139,11 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_run_stream_validates_space",
+        "edge.canonical_run_stream_validates_execution_controls",
+        "edge.canonical_run_stream_validates_typed_v2",
+        "edge.typed_v2_validation_maps_submission",
+        "edge.typed_v2_mapping_calls_create_run",
+        "edge.typed_v2_mapping_preserves_fingerprint",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_idempotency_lookup_validates_fingerprint",
         "edge.canonical_run_stream_calls_app_query",
@@ -5515,7 +7159,7 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
-          "locator": "func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission"
+          "locator": "func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
@@ -5532,6 +7176,10 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
           "locator": "func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE"
         }
       ]
     }
@@ -5598,6 +7246,206 @@
         {
           "path": "backend/application/agentthread/runtime_config_test.go",
           "locator": "legacy runtime is not selectable for new runs"
+        }
+      ]
+    },
+    {
+      "id": "exclude.unwired_adaptive_boundary",
+      "term": "Adaptive capabilities outside the delivered P1D model-producer slice",
+      "status": "partially_wired",
+      "reason": "P0/P1M provide fenced durable admission/decision bootstrap, Execute/Resume recovery, rolling Plan/checkpoint authority, ordinary enrollment/recovery and retired-control boundaries. P1D now installs ModelAdaptiveDecisionProducer for production gate-on: authoritative Run.Input is closed-project to bounded user/assistant content plus attachment bool; an explicit positive-decimal model ID, one forced adaptive_execution_decision tool, strict output validation, a 30-second timeout, shared usage/billing, and a single-attempt provider budget are enforced. A narrow internal/unsequenced claim/result repository elects one owner, stores only key/token digests, replays completed results without provider/billing, and fails closed for claim-only or drift; it does not claim provider exactly-once. Target exact replay remains first and typed Resume copies the durable candidate without a model call. The MySQL single-winner/exact replay test exists but remains NOT_VERIFIED without a compliant disposable DSN; ordinary and rolling MySQL gates also remain NOT_VERIFIED. Holdout, public DTO/TaskDetail, progress/verification and the Adaptive finalizer gate remain unwired, so P1D is in_progress and NOT PASS. P1M remains locked/NOT PASS, P1L remains deferred, and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "evidence": [
+        {
+          "path": "docs/superpowers/context/workbench-execution-chain.md",
+          "locator": "P0A/P0B/P0C/P0D 的事务基础仍是 repository primitive 与 named-path evidence"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "func prepareRecoveryRunBundleAttempt("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "func (r *threadRepository) FinalizeRunSuccess("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) CommitAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionRecoverySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBoundary("
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_plan_boundary.go",
+          "locator": "func (c *ADKAdaptivePlanBoundaryCoordinator) commitCheckpoint("
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "func (e *ADKExecutor) runWithInternalCheckpointBarriers("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func (r *threadRepository) finalizeAdaptiveVerifiedRunSuccess("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessAdaptiveGateLocksJournalRootBeforeExecutionRunAndAttempt("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryFinalizeRunSuccessGateOffLocksThreadBeforeExecutionRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestThreadRepositoryCreateRunBundleRecoveryLocksExecutionRunBeforeSourceAttempt("
+        },
+        {
+          "path": "backend/application/agentthread/retired_execution_mode_contract_test.go",
+          "locator": "func TestRetiredExecutionModeHasNoProductionADKConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionBoundaryRollsPlanAcrossSameRecoveryAttemptAndReplaysHistory(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionRollingCheckpointBecomesNextAttemptRecoverySource(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution_integration_test.go",
+          "locator": "func TestAdaptiveExecutionP0DMySQL("
+        },
+        {
+          "path": "backend/domain/agentthread/entity/adaptive_execution.go",
+          "locator": "type AdaptiveAdmissionSnapshot struct {"
+        },
+        {
+          "path": "backend/domain/agentthread/entity/adaptive_execution_test.go",
+          "locator": "func TestAdaptiveExecutionContractHasNoTransportTagsOrRetiredControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract.go",
+          "locator": "func ValidateAdaptiveBootstrapPair("
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec.go",
+          "locator": "func EncodeAdaptiveAdmission(snapshot entity.AdaptiveAdmissionSnapshot) ([]byte, string, error) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/contract_test.go",
+          "locator": "func TestValidateAdaptiveBootstrapPairRequiresC2BootstrapConstraints(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/adaptivecontract/codec_test.go",
+          "locator": "func TestAdaptiveCodecsRoundTripAndDoNotAlias(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "locator": "func (r *threadRepository) CommitAdaptiveExecutionBootstrap("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapReplaysBeforeMutableFencesAndReadsDurably(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryGenericCheckpointSurfaceExcludesControlFacts(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission.go",
+          "locator": "func ValidateAdaptiveAdmissionSnapshot(snapshot entity.AdaptiveAdmissionSnapshot) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission_test.go",
+          "locator": "func TestAdaptiveAdmissionValidatorsAliasDomainSentinels(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_baseline_decision.go",
+          "locator": "func (BaselineDecisionProducer) Produce(request BaselineDecisionRequest) (entity.ExecutionDecision, error) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_baseline_decision_test.go",
+          "locator": "func TestBaselineDecisionProducerProducesFixedMultiStepDecision(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_eligibility.go",
+          "locator": "func (envAdaptiveEligibilityResolver) Resolve("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "func (p *ModelAdaptiveDecisionProducer) Produce("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "func (c *adaptiveBootstrapCoordinator) produceDecision("
+        },
+        {
+          "path": "backend/application/application.go",
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_feature_gate_test.go",
+          "locator": "func TestJournalFeatureGateUsesServerRuntimeInsteadOfRetiredModeForEnrollment(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_feature_gate_test.go",
+          "locator": "func TestJournalFeatureGateRejectsUnknownEnrollmentRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/journal_metrics_test.go",
+          "locator": "func TestJournalMetricsCompletenessDenominatorUsesDurableEnrollmentWithoutRetiredMode(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "func (s *ApplicationService) journalEnrollmentForRun("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "locator": "func (r *threadRepository) createOrdinaryLeaseRecoveryRunBundle("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_ordinary_lease_recovery.go",
+          "locator": "func ordinaryLeaseRecoveryCheckpointMatches("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "bareSource := attempt.SourceAttemptID == nil"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
+          "locator": "func lockAndValidateAdaptiveExecutionBareLineage("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "locator": "func lockAndValidateAdaptiveBootstrapTypedSource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
         }
       ]
     },
@@ -5745,11 +7593,22 @@
         "tool",
         "MCP",
         "AgentEvent",
-        "EventSink"
+        "EventSink",
+        "server-owned gate-off/on bootstrap",
+        "stable adaptive eligibility",
+        "Model-backed adaptive decision producer",
+        "Adaptive decision model durable operation repository",
+        "forced adaptive_execution_decision tool",
+        "single-winner durable claim and replay",
+        "atomic rolling Plan checkpoint",
+        "read-first crash replay"
       ],
       "smoke_node_ids": ["runtime.adk_executor.execute"],
       "required_node_ids": [
         "runtime.adk_executor.execute",
+        "application.adaptive_mode_free_contract_boundary",
+        "application.model_adaptive_decision_producer",
+        "repository.adaptive_decision_model_operation",
         "runtime.adk_agent_factory.build",
         "runtime.eino.chat_model_agent",
         "runtime.eino.runner",
@@ -5757,7 +7616,13 @@
         "runtime.event_sink.emit"
       ],
       "required_edge_ids": [
-        "edge.adk_builds_agent",
+        "edge.adk_execute_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_delegates_model_producer",
+        "edge.model_producer_persists_durable_operation",
+        "edge.adaptive_bootstrap_precedes_agent_build",
+        "edge.plan_tool_stages_adaptive_overlay",
+        "edge.adaptive_plan_commits_checkpoint_boundary",
+        "edge.checkpoint_barrier_auto_resumes_runner",
         "edge.factory_builds_chat_agent",
         "edge.chat_agent_precedes_runner",
         "edge.runner_emits_adk_events",
@@ -5830,8 +7695,8 @@
         "edge.retry_app_creates_bundle",
         "edge.checkpoint_resumes_adk",
         "edge.lease_recovery_reads_checkpoint",
-        "edge.lease_recovery_creates_guarded_run",
-        "edge.guarded_run_persists_with_thread_lock",
+        "edge.lease_recovery_creates_atomic_bundle",
+        "edge.create_run_domain_persists_bundle",
         "edge.multitask_rollback_clears_checkpoint"
       ]
     },
@@ -5934,14 +7799,16 @@
     },
     {
       "id": "query.canonical_thread_http",
-      "question": "Workbench canonical UI、47 条 HTTP 路由和五组保留/退役边界如何对齐？",
+      "question": "Workbench canonical UI、52 个 `/api/workbench/threads/**` method/path 与 2 个 journal settings（共 54 条 HTTP 路由）和五组保留/退役边界如何对齐？",
       "expanded_terms": [
-        "Workbench route surface: 47 canonical, 11 scheduled; 36/23/10 retired",
+        "Workbench route surface: 52 thread method/path + 2 journal settings = 54 canonical; 11 scheduled; 36/23/10 retired",
         "canonicalThreadClient singleton",
         "Canonical Workbench Thread and product Thrift contract",
         "Always-on canonical Thread HTTP handlers",
         "Always-on canonical Run HTTP handlers",
         "Always-on canonical Run SSE handlers",
+        "Canonical execution-control raw ingress freeze",
+        "Canonical whole-Thread deletion hard guard",
         "delegates_to",
         "persists_via",
         "maps_to"
@@ -5964,6 +7831,8 @@
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
         "http.workbench.canonical_run_stream",
+        "http.workbench.canonical_execution_control_ingress",
+        "http.workbench.canonical_thread_delete_guard",
         "application.canonical_thread_contract",
         "application.create_run",
         "application.cancel_run",
@@ -5980,6 +7849,8 @@
         "edge.canonical_create_thread_routes_handler",
         "edge.canonical_contract_routes_thread",
         "edge.canonical_thread_handler_calls_app_contract",
+        "edge.canonical_thread_handler_validates_execution_controls",
+        "edge.canonical_thread_handler_applies_delete_guard",
         "edge.canonical_app_delegates_domain_contract",
         "edge.canonical_domain_persists_repo_contract",
         "edge.canonical_thread_create_calls_create_thread",
@@ -5988,6 +7859,7 @@
         "edge.canonical_create_run_routes_handler",
         "edge.canonical_contract_routes_run",
         "edge.canonical_run_handler_calls_app_create_run",
+        "edge.canonical_run_handler_validates_execution_controls",
         "edge.create_run_app_delegates_domain",
         "edge.create_run_domain_persists_bundle",
         "edge.canonical_run_handler_calls_app_query",
@@ -5995,6 +7867,7 @@
         "edge.canonical_run_handler_calls_resume",
         "edge.canonical_contract_routes_run_stream",
         "edge.canonical_run_stream_calls_app_create_run",
+        "edge.canonical_run_stream_validates_execution_controls",
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_run_stream_calls_app_query",
         "edge.canonical_run_stream_calls_cancel",

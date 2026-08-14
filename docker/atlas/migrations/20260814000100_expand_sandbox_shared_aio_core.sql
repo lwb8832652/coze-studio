@@ -12,9 +12,6 @@ SET `session_settings_json` = '{"core_enabled":false,"interactive_enabled":false
     `session_settings_updated_at` = UTC_TIMESTAMP(3)
 WHERE `id` = 1;
 
-ALTER TABLE `sandbox_scheduler_settings`
-  MODIFY COLUMN `session_settings_json` JSON NOT NULL;
-
 CREATE TABLE `sandbox_runtime_sessions` (
   `session_id` CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `deployment_id` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

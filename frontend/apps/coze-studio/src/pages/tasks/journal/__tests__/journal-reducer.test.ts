@@ -166,6 +166,29 @@ describe('journalReducer', () => {
     expect(state.has_displayable_journal_content).toBe(false);
   });
 
+  it('treats an interrupted lifecycle fact as terminal and non-displayable', () => {
+    const lifecycle = event({
+      eventId: '101',
+      eventType: 'run.lifecycle',
+      sequence: 1,
+      status: 'interrupted',
+    });
+    let state = journalReducer(createInitialJournalState(), {
+      type: 'bootstrap_succeeded',
+      bootstrap: bootstrap([lifecycle]),
+    });
+    const transportStatus = state.transport.status;
+
+    state = journalReducer(state, {
+      type: 'inactivity_timeout',
+      observed_at: 46_000,
+    });
+
+    expect(state.execution.status).toBe('interrupted');
+    expect(state.has_displayable_journal_content).toBe(false);
+    expect(state.transport.status).toBe(transportStatus);
+  });
+
   it('publishes an intro-only Journal before the first execution step arrives', () => {
     const intro = event({
       eventId: '101',

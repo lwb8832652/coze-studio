@@ -6907,7 +6907,7 @@ table "sandbox_scheduler_settings" {
     type = json
   }
   column "session_settings_json" {
-    null = false
+    null = true
     type = json
   }
   column "session_settings_version" {
