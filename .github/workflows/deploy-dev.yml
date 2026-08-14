@@ -216,6 +216,7 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: true
+          provenance: false
           tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}
           build-args: |
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
@@ -247,6 +248,7 @@ jobs:
           context: .
           file: frontend/Dockerfile
           push: true
+          provenance: false
           tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-web:dev-${{ needs.preflight.outputs.target_sha }}
           build-args: |
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
@@ -278,6 +280,7 @@ jobs:
           context: .
           file: backend/Dockerfile.sandbox-runner
           push: true
+          provenance: false
           tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runner:dev-${{ needs.preflight.outputs.target_sha }}
           build-args: |
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}
@@ -309,6 +312,7 @@ jobs:
           context: .
           file: deploy/sandbox-runner/Dockerfile.runtime
           push: true
+          provenance: false
           tags: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-sandbox-runtime:dev-${{ needs.preflight.outputs.target_sha }}
           build-args: |
             GIT_REVISION=${{ needs.preflight.outputs.target_sha }}

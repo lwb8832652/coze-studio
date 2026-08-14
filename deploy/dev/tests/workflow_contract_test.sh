@@ -166,6 +166,9 @@ assert_contract(preflight_text.include?('git merge-base --is-ancestor'),
   assert_contract(text.include?('docker/login-action@v4'), "#{job_name} must use login-action v4")
   assert_contract(text.include?('docker/setup-buildx-action@v4'), "#{job_name} must use setup-buildx v4")
   assert_contract(text.include?('docker/build-push-action@v7'), "#{job_name} must use build-push v7")
+  build_step = job.fetch('steps').find { |step| step['uses'] == 'docker/build-push-action@v7' }
+  assert_contract(build_step.dig('with', 'provenance') == false,
+                  "#{job_name} must disable registry-incompatible provenance attestations")
   assert_contract(text.include?(dockerfile), "#{job_name} uses the wrong Dockerfile")
   assert_contract(text.include?('GIT_REVISION=') && text.include?('SOURCE_URL='),
                   "#{job_name} must pass revision and source build args")
