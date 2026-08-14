@@ -212,7 +212,7 @@ GOCACHE=/private/tmp/coze-go-build go test ./domain/sandbox ./pkg/sandboxidentit
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-scheduler-card.test.tsx
+rushx test src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-scheduler-card.test.tsx
 ```
 
 Task 0 已完成分支/基线/保护文件和相关 backend/frontend 回归核对；未把历史失败混入
@@ -1311,7 +1311,7 @@ upstream Shell ID、physical path、Docker/image、secret 或 raw error。
 cd backend
 GOCACHE=/private/tmp/coze-go-build go test ./application/sandbox ./api/handler/coze ./api/router/coze -run 'SessionSettings|SessionRuntime' -count=1
 cd ../frontend/apps/coze-studio
-rushx test -- src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-management-section.test.tsx
+rushx test src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-management-section.test.tsx
 ```
 
 Expected: FAIL，因为 admin routes、service 与 card 尚不存在。
@@ -1338,7 +1338,7 @@ endpoint policy 补充 `transport_encrypted`。
 cd backend
 GOCACHE=/private/tmp/coze-go-build go test ./application/sandbox ./api/handler/coze ./api/router/coze -run 'Sandbox|SessionSettings|SessionRuntime' -count=1
 cd ../frontend/apps/coze-studio
-rushx test -- src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages/system/__tests__/sandbox-scheduler-card.test.tsx src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-management-section.test.tsx src/pages/system/__tests__/sandbox-system-page.test.tsx
+rushx test src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages/system/__tests__/sandbox-scheduler-card.test.tsx src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-management-section.test.tsx src/pages/system/__tests__/sandbox-system-page.test.tsx
 ```
 
 - [x] **Step 7: 完成唯一一次 Task 9 主线审核并提交**
@@ -1695,20 +1695,23 @@ git commit -m "test: gate shared AIO core on 2c4g"
 
 ```bash
 cd backend
-GOCACHE=/private/tmp/coze-go-build go test ./domain/sandbox ./pkg/sandboxidentity ./infra/sandbox/... ./internal/sandboxrunner ./application/sandbox ./api/handler/coze ./api/router/coze -count=1
-GOCACHE=/private/tmp/coze-go-build go test -race ./infra/sandbox/... ./internal/sandboxrunner -count=1
-GOCACHE=/private/tmp/coze-go-build go test ./application/plugin ./application/appdev ./application/agentthread ./infra/coderunner/... ./infra/appdev/... -count=1
+GOCACHE=/private/tmp/coze-go-build go test -p 1 ./domain/sandbox ./pkg/sandboxidentity ./infra/sandbox/... ./internal/sandboxrunner ./application/sandbox ./api/router/coze -count=1
+GOCACHE=/private/tmp/coze-go-build go test -p 1 -gcflags="all=-l -N" ./api/handler/coze -count=1
+GOCACHE=/private/tmp/coze-go-build go test -race -p 1 ./infra/sandbox/... ./internal/sandboxrunner -count=1
+GOCACHE=/private/tmp/coze-go-build go test -p 1 -gcflags="all=-l -N" ./application/plugin ./application/appdev ./application/agentthread ./infra/coderunner/... ./infra/appdev/... -count=1
 ```
 
-使用 Mockey 的相关包按仓库方式补 `-gcflags="all=-l -N"`。这些是回归，不授权修改
-`backend/application/agentthread/**`。one-shot Plugin/AppDev/MCP/Agent/Subagent 行为必须
-不变。
+`-p 1` 必须保留为独立 flag 与参数，不能缩写为 `-p1`。Handler 全包依赖仓库既有测试
+数据库；依赖缺失时必须把该门禁记为 blocked。可补跑
+`-run 'Sandbox|SessionSettings|SessionRuntime'` 定位本计划相关结果，但 focused PASS 不能替代
+Handler 全包。上述命令是回归，不授权修改 `backend/application/agentthread/**`。
+one-shot Plugin/AppDev/MCP/Agent/Subagent 行为必须不变。
 
 - [ ] **Step 2: 运行前端、Atlas 与 deploy contracts**
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/system/__tests__
+rushx test src/pages/system/__tests__
 rushx lint
 cd ../../../..
 docker run --rm -v "$PWD/docker/atlas/migrations:/migrations" arigaio/atlas:1.2.3-community-alpine@sha256:f44ca26436e7356832a45d84b8247e16638768b22cd2d97d3e84247ab48d0b1e migrate validate --dir file:///migrations
