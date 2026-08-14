@@ -55,7 +55,8 @@ Thread
   idempotency key。服务端 V1 reader 与第三方兼容调用仍存在；C3i2 自身不含 Attempt rollover，
   后续 C3h2b 已补齐 enrolled Human Resume，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss
   fallback。后续 ordinary MVP 已补齐 always-on fresh Attempt enrollment 和 disabled/无 Attempt
-  recovery；ordinary 的真实 dev MySQL gate 仍 `NOT_VERIFIED`，P1M 仍未 PASS。
+  recovery；ordinary 的真实 dev MySQL gate 仍 `NOT_VERIFIED`。随后 P1D 首个 deterministic packet
+  已接入 server-owned gate-on seam，但 P1D 尚未 PASS。
 - C3h2b 已让 enrolled Human Resume 先做不可变 authority 的 full aggregate replay，并在首次写入时
   以单个 Thread-first 事务完成 source resolved、source Attempt `interrupted`/active-slot 释放和
   pending target Attempt 创建。target 继承 source Attempt/checkpoint lineage，继续复用 C3h2a 在
@@ -91,8 +92,21 @@ Thread
 - ordinary bare target 的 Resume bootstrap 仍先 exact replay target；首次 miss 不读取不存在的 source
   durable bootstrap，只严格解码 source Run 的已知 legacy control，并继承 source `PlanScopeRunID`。
   bare Plan boundary 已支持首次 commit、当前 head read-first replay 与后续 rolling，不回落 legacy Plan
-  writer。本轮未运行 ordinary 的真实 dev MySQL gate，明确保持 `NOT_VERIFIED`；gate-on producer 仍未
-  闭合，P1M 未 PASS。
+  writer。本轮未运行 ordinary 的真实 dev MySQL gate，明确保持 `NOT_VERIFIED`。
+- P1D 首个 deterministic packet 使用独立的服务端 feature gate：
+  `AGENT_THREAD_ADAPTIVE_EXECUTION_ENABLED` 和
+  `AGENT_THREAD_ADAPTIVE_EXECUTION_ROLLOUT_BASIS_POINTS` 默认 `false`/`0`，显式非法配置在 fresh
+  Run 首次 bootstrap 时 fail closed；rollout 以 `SpaceID + workbench_adaptive_execution_mvp` 稳定分桶，
+  不读取客户端 mode，也不与 Journal projection rollout 共用判定。bootstrap 继续 read-first；首次 miss
+  才解析 eligibility 并选择 gate-off baseline 或 gate-on deterministic producer。producer 只返回候选，
+  coordinator 补齐服务端 identity/revision/generation/plan scope/时间戳，严格校验后沿既有原子事务提交
+  typed admission、decision 和 control checkpoint。exact replay 不重算 gate，也不再次调用 producer。
+- typed Resume 继承 durable source 的 gate/capabilities/limits 与 plan scope，不重新计算 rollout；legacy
+  decoder 始终 gate-off。当前 production gate-on producer 不扫描任务正文、不调用模型，只固定生成
+  保守 `execute/multi_step`；Factory 虽已能消费合法 gate-on `direct`、`single_step`、`multi_step` facts，
+  本包并未交付真实任务形态分类或 direct 快速路径。gate-on fresh replay/typed Resume 的真实 dev MySQL
+  测试已存在，但本轮无安全 disposable DSN，因此仍为 `NOT_VERIFIED`。model-backed producer、holdout、
+  公共 DTO/TaskDetail、progress/verification 均待后续，P1D 保持进行中且不得标记 PASS。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

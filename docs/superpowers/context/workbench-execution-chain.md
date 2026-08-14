@@ -191,7 +191,7 @@ target durable replay 仍最优先；只有 source durable bootstrap 精确 NotF
 decoder 只生成保守 gate-off admission；baseline decision 由独立 producer 生成，两者连同 source
 Run/generation/config digest/decoder version 在 target lease/generation fence 下一次提交或 exact replay。
 多跳只继承 durable typed snapshot，不再次解码或回写来源 Config。后续 ordinary MVP 已把相同
-bootstrap 边界扩到 disabled/无 Attempt 的 bare recovery；gate-on producer 仍 deferred，P1M 未 PASS；
+bootstrap 边界扩到 disabled/无 Attempt 的 bare recovery；该阶段 gate-on producer 仍 deferred，P1M 未 PASS；
 P1L 与 whole-Thread DELETE hard guard 不变。
 P1M-C3h2b 把 enrolled Human Resume 接入 full replay 与原子 Attempt rollover。Application 在任何
 source status/Attempt/checkpoint 可变读取前查询完整 Run/Message/resolved/source+target
@@ -201,7 +201,7 @@ physical terminal、CAS source Attempt 为 `interrupted` 并释放 active slot�
 Attempt/checkpoint lineage 的 pending target Attempt；随后继续走 C3h2a typed
 bootstrap-before-buildRuntime。physical helper 不改变公共 RunEvent total/cursor 或 TaskDetail
 replay/live。compatible-reader floor 是 `38ddbaf6f`，activation 是 `212546bc`；后续 ordinary MVP
-已补齐 disabled/无 Attempt rollover，gate-on producer 仍 deferred。dev disposable MySQL 已对 Human rollover
+已补齐 disabled/无 Attempt rollover；该阶段 gate-on producer 仍 deferred。dev disposable MySQL 已对 Human rollover
 通过 same-key replay、same-key drift conflict、different-key single-winner 三项真实双连接门禁，并对
 typed recovery race 与 legacy decoder recovery 通过单写/replay、漂移零增量和 durable readback 门禁。
 MySQL JSON 存储归一化由 typed codec canonical readback 后再核对既有 digest/fingerprint；非 MySQL
@@ -231,9 +231,30 @@ authority 随请求传入，repository 在锁内逐字段及 JSON 语义复核�
 TOCTOU 漂移。ordinary target 随后进入同一个 `ADKExecutor.Resume -> BootstrapResume` 生产边：bare
 lineage 先 exact replay target，miss 后不读 source durable bootstrap，只用 strict legacy decoder 读
 source Run，并继承 source `PlanScopeRunID`；同一 source scope 的 bare Plan boundary 支持首次 commit、
-read-first replay 与 rolling。ordinary 的真实 dev MySQL gate 本轮未运行，保持 `NOT_VERIFIED`；gate-on
-producer 与真正 server inference policy 仍未闭合；historical
-runtime compatibility 与 package-private server-owned subagent seam 继续存在，P1M 未 PASS。P1L 仍
+read-first replay 与 rolling。ordinary 的真实 dev MySQL gate 本轮未运行，保持 `NOT_VERIFIED`。
+
+P1D 首个 deterministic packet 沿用同一 `ADKExecutor.Execute/Resume -> adaptive bootstrap ->
+buildRuntime` 生产边，并在 application composition root 安装独立的 env eligibility、gate-off baseline
+adapter 与 gate-on deterministic producer。fresh Run 仍先 exact read target；只有 miss 才读取
+`AGENT_THREAD_ADAPTIVE_EXECUTION_ENABLED` 与
+`AGENT_THREAD_ADAPTIVE_EXECUTION_ROLLOUT_BASIS_POINTS`，二者默认 `false`/`0`，显式非法值 fail closed。
+开启后以 `SpaceID` 与冻结 key `workbench_adaptive_execution_mvp` 做稳定 basis-point 分桶，与 Journal
+projection enrollment gate 解耦。选中的 producer 只接收 admission，并只返回候选内容/形态；它不能
+设置 schema、decision ID/revision、Run/Journal/Attempt identity、execution generation、plan scope 或
+created-at。coordinator 补齐上述服务端 authority，再以 strict pair validator 校验，随后才沿现有
+`CommitAdaptiveExecutionBootstrap` 一次提交 admission、decision 与 control checkpoint；producer 缺失、
+报错或候选非法均在 ID 分配、事务和 Agent 构建前 fail closed。
+
+target exact replay 不调用 resolver/producer。typed Resume 从 durable immediate source 继承 gate、
+capabilities、limits 与 plan scope，选择相应 producer 生成 target revision-1 decision，不重新计算 rollout；
+legacy decoder 继续只生成 gate-off snapshot。repository 在同一事务中锁定并核对 source gate/policy，
+禁止 gate-on→off 漂移。Factory 已能将合法 gate-on `direct`/`single_step` 映射为无 Plan、将
+`multi_step` 映射为有 Plan；但当前 production deterministic producer 不扫描任务正文、不调用模型，只
+固定生成保守 `execute/multi_step`，因此没有交付真实任务自适应分类或 direct 快速路径。真实 dev MySQL
+gate-on fresh replay/typed Resume 测试已存在，但因缺少安全 disposable DSN 本轮仍 `NOT_VERIFIED`。
+model-backed producer、holdout、公共 DTO/TaskDetail 与 progress/verification 均未完成，P1D 保持进行中
+且不得标记 PASS；historical runtime compatibility 与 package-private server-owned subagent seam 继续
+存在。P1L 仍
 deferred，whole-Thread DELETE guard 继续 hard-disabled。
 
 ## 持久化与异步执行
@@ -341,9 +362,10 @@ Config 不改。C3h2b/C3h2c 已让 enrolled Human/Journal Resume 使用原子 At
 inheritance 或 source durable exact-miss 时的严格 legacy decoder fallback；dev disposable MySQL 已完成
 Human rollover、typed recovery race 与 legacy recovery 门禁。builtin/single-agent 内存 child writer 与
 production ADK mode/policy consumer 已由 C3h2d 退休；Application rolling Plan/Checkpoint writer
-现已接入上述 atomic boundary。ordinary non-Journal enrollment、historical legacy runtime、gate-on
-producer 与 frontend/UI 的剩余范围不变。P2 仍负责完整 VerificationResult codec、registry、producer、
-nullable-Plan authority 分支和其余接线；P1D 仍以前述 P1M hard blocker 闭合为前置。
+现已接入上述 atomic boundary。ordinary enrollment/recovery 随后已闭合，P1D 首个 deterministic packet
+又接入 gate-on eligibility/producer 与 typed Resume inheritance；但其固定 multi-step，不是 task-aware
+producer，frontend/UI 也未改变。P2 仍负责完整 VerificationResult codec、registry、producer、
+nullable-Plan authority 分支和其余接线；P1D 仍在进行中且未 PASS。
 
 ### Canonical Thread HTTP 契约
 
@@ -384,9 +406,10 @@ key 与 Human semantic attempt 均不自动旋转或重复写。V1 server reader
 C3i2 自身没有增加 repository/runtime 状态机；后续 C3h2b 已补齐 enrolled Human Resume 的原子
 rollover 与 full replay，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss fallback；dev disposable
 MySQL 已完成 Human rollover、typed recovery race 与 legacy recovery 门禁。ordinary non-Journal
-enrollment 与 gate-on producer 仍未闭合；production mode/policy consumer 已由 C3h2d 退休，但
+enrollment 后续已闭合；production mode/policy consumer 已由 C3h2d 退休，随后 P1D 首个 deterministic
+packet 已接入 gate-on producer seam，但真实任务分类/direct 与 UI 仍未闭合。
 Application rolling Plan/Checkpoint writer 后续已接入，独立 dev MySQL rolling gate 保持
-`NOT_VERIFIED`。P1M 未 PASS。
+`NOT_VERIFIED`。P1D 未 PASS。
 
 P1M-B1 把同一安全边界下沉到 public Application ingress：`CreateTaskThread` 与
 `CreateRun` 在 normalization、retry source read 和 mutation 前拒绝同一七字段，typed error

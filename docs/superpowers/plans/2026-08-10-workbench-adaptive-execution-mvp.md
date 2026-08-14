@@ -97,7 +97,7 @@ Vitest、Codex in-app browser、Workbench execution graph tooling。
 | --- | --- | --- | --- |
 | P0 分支与原子事务 spike | `ready` | 用户批准规格和本计划 | disposable MySQL 证明 fence、attempt、Plan/Item、event、checkpoint、恢复、幂等及 verified success 单事务成立 |
 | P1M 无模式基础 | `locked` | P0 PASS | 新请求/恢复不写旧 mode；生产 gate-off 持久化 admission+baseline decision，共享边界双 producer 合同测试、legacy snapshot、422 拒绝、等价 smoke 通过 |
-| P1D adaptive decision 纵切 | `locked` | P1M PASS | adaptive direct/multi-step、normal/resume 恢复、最小 TaskDetail 投影通过 |
+| P1D adaptive decision 纵切 | `in_progress` / `NOT PASS` | P1M PASS | adaptive direct/multi-step、normal/resume 恢复、最小 TaskDetail 投影通过；当前只交付 deterministic gate-on seam 首包 |
 | P2 progress/verification 闭环 | `locked` | P1D PASS | gate-on repair/replan/clarify/stop、成功门禁、取消/恢复/安全矩阵通过；gate-off 仍走基础终态 |
 | P3 公共投影与当前页面完成态 | `locked` | P2 PASS | list/SSE 等价、未知版本 fail closed、当前页面 Vitest/browser 通过 |
 | P4 评测与候选冻结 | `locked` | P3 PASS、30 开发集净增至少 3/30 | 同 SHA 80 holdout、安全门和全部工程门通过 |
@@ -561,6 +561,16 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
 
 **加载时必须创建：**
 `docs/superpowers/plans/2026-08-10-workbench-adaptive-execution-mvp-p1d-decision.md`
+
+**当前状态：** `in_progress` / `P1D NOT PASS`。首个 deterministic packet 已安装默认关闭、按
+`SpaceID + workbench_adaptive_execution_mvp` 稳定分桶的 server-owned eligibility，以及与 baseline
+隔离的 gate-on producer seam；fresh read-first、候选无 durable authority、coordinator 补齐并严格校验后
+复用现有 atomic bootstrap，typed Resume 继承 gate/capabilities/limits 且不重算，legacy 始终 gate-off。
+当前 production adaptive producer 只固定生成保守 `execute/multi_step`，不扫描任务正文、不调用模型，
+因此不能视为 task-aware classification、direct/multi-step exit gate 或 P1D PASS。真实模型 producer 的
+timeout、billing/usage、structured output、有限重试、幂等，80 holdout、公共 DTO/TaskDetail 和其它
+既定退出门仍未闭合；真实 dev MySQL gate-on 用例已存在，但本轮无合规 disposable DSN，保持
+`NOT_VERIFIED`。P1M 状态仍 `locked` / `NOT PASS`，本首包不改变该历史阶段结论。
 
 P1D 小步骤索引；每一项在 P1D 文件中继续拆成 RED/最小实现/GREEN/commit：
 

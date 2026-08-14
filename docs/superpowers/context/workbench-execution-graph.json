@@ -492,7 +492,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M mode-free runtime, recovery and atomic rolling Plan boundary",
+      "label": "P1M/P1D mode-free bootstrap, deterministic gate-on selection, recovery and atomic rolling Plan boundary",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -524,6 +524,26 @@
           "locator": "func (BaselineDecisionProducer) Produce(request BaselineDecisionRequest) (entity.ExecutionDecision, error) {"
         },
         {
+          "path": "backend/application/agentthread/adaptive_eligibility.go",
+          "symbol": "envAdaptiveEligibilityResolver.Resolve",
+          "locator": "func (envAdaptiveEligibilityResolver) Resolve("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_producer.go",
+          "symbol": "DeterministicAdaptiveDecisionProducer.Produce",
+          "locator": "func (DeterministicAdaptiveDecisionProducer) Produce("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "symbol": "(*adaptiveBootstrapCoordinator).produceDecision",
+          "locator": "func (c *adaptiveBootstrapCoordinator) produceDecision("
+        },
+        {
+          "path": "backend/application/application.go",
+          "symbol": "Init",
+          "locator": "EligibilityResolver: agentthread.NewEnvAdaptiveEligibilityResolver(),"
+        },
+        {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
           "symbol": "(*threadRepository).CommitAdaptiveExecutionBootstrap",
           "locator": "func (r *threadRepository) CommitAdaptiveExecutionBootstrap("
@@ -552,6 +572,11 @@
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
           "symbol": "lockAndValidateAdaptiveBootstrapLegacySource",
           "locator": "func lockAndValidateAdaptiveBootstrapLegacySource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "lockAndValidateAdaptiveBootstrapTypedSource",
+          "locator": "func lockAndValidateAdaptiveBootstrapTypedSource("
         },
         {
           "path": "backend/application/agentthread/adk_executor.go",
@@ -711,6 +736,18 @@
           "locator": "func TestBaselineDecisionProducerProducesFixedMultiStepDecision(t *testing.T) {"
         },
         {
+          "path": "backend/application/agentthread/adaptive_eligibility_test.go",
+          "locator": "func TestEnvAdaptiveEligibilityResolverUsesStableServerOwnedRollout(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_eligibility_test.go",
+          "locator": "func TestEnvAdaptiveEligibilityResolverRejectsInvalidServerConfiguration(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_producer_test.go",
+          "locator": "func TestAdaptiveDecisionProducerContractCannotObserveDurableAuthority(t *testing.T) {"
+        },
+        {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
           "locator": "func TestAdaptiveExecutionBootstrapReplaysBeforeMutableFencesAndReadsDurably(t *testing.T) {"
         },
@@ -721,6 +758,18 @@
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
           "locator": "func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorUsesGateOnEligibilityAndProducerBeforeIDs(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorMaterializesServerAuthorityAfterCandidate(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeInheritsGateOnWithoutRecomputingEligibility(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
@@ -741,6 +790,10 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
           "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
@@ -4529,6 +4582,10 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorUsesGateOnEligibilityAndProducerBeforeIDs(t *testing.T) {"
         }
       ]
     },
@@ -4567,6 +4624,14 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
           "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeInheritsGateOnWithoutRecomputingEligibility(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
         }
       ]
     },
@@ -4593,6 +4658,10 @@
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "require.Equal(t, []string{\"resume-bootstrap\", \"store\", \"factory\"}, order)"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorMaterializesServerAuthorityAfterCandidate(t *testing.T) {"
         }
       ]
     },
@@ -6899,9 +6968,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "Adaptive capabilities outside the C3a-C3h2f delivery-first slice",
+      "term": "Adaptive capabilities outside the deterministic P1D first packet",
       "status": "partially_wired",
-      "reason": "P0A/P0B provide repository primitives and P0C keeps FinalizeRunSuccess AdaptiveGate optional; production finalizers still pass nil. P0D is named-path evidence, not a repository-wide deadlock-free claim. P1M-C1/C2a define mode-free typed contracts and strict codecs; C2b provides private durable bootstrap commit/readback plus generic reserved-fact isolation. C3a-C3d add fenced Execute bootstrap and make durable facts authoritative for local Plan/Subagent capability while neutralizing retired reasoning controls. C3e-C3h1a retire Journal mode consumers and stop public, child and recovery target new writes from persisting the seven retired controls. C3h2a-C3h2c add typed Resume inheritance, atomic Human rollover and legacy exact-miss fallback; dev disposable MySQL verifies Human rollover plus typed and legacy recovery races. C3h2d retires production ADK requested_policy/mode consumers and adds B1/B2/B3 rolling repository authority. C3h2e connects Plan middleware, ApplicationADKPlanStore and ADKCheckpointStore to the same fenced CommitAdaptiveExecutionBoundary transaction. C3h2f makes fresh top-level Eino Attempt enrollment independent of the projection gate and connects disabled or bare expired leases to a dedicated atomic ordinary rollover. It carries complete checkpoint authority into the transaction for locked field and semantic JSON comparison, then supports bare strict-legacy Resume bootstrap with inherited PlanScopeRunID and bare Plan commit, replay and rolling. The ordinary real dev MySQL gate and the independent rolling MySQL gate remain NOT_VERIFIED. Gate-on producer, Adaptive finalizer gate and a true server inference policy also remain unwired, so P1M is not PASS. P1L remains deferred and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0/P1M provide fenced durable admission/decision bootstrap, Execute/Resume recovery, rolling Plan/checkpoint authority, ordinary enrollment/recovery and retired-control boundaries. The P1D deterministic first packet now adds an independent server-owned env eligibility resolver, stable SpaceID plus workbench_adaptive_execution_mvp rollout, a candidate-only producer contract, coordinator-owned authority materialization, strict validation before the existing atomic commit, and typed Resume gate inheritance without re-evaluation. Production gate-on currently uses only a conservative deterministic execute/multi_step producer; it does not inspect task text or call a model. The real dev MySQL gate-on fresh replay/typed Resume test exists but remains NOT_VERIFIED without a compliant disposable DSN; the ordinary and rolling MySQL gates also remain NOT_VERIFIED. A model-backed task-aware producer, actual direct/multi-step selection, holdout, public DTO/TaskDetail, progress/verification and the Adaptive finalizer gate remain unwired, so P1D is in_progress and NOT PASS. P1M remains locked/NOT PASS, P1L remains deferred, and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -7024,6 +7093,22 @@
           "locator": "func (c *adaptiveBootstrapCoordinator) Bootstrap("
         },
         {
+          "path": "backend/application/agentthread/adaptive_eligibility.go",
+          "locator": "func (envAdaptiveEligibilityResolver) Resolve("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_producer.go",
+          "locator": "func (DeterministicAdaptiveDecisionProducer) Produce("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "func (c *adaptiveBootstrapCoordinator) produceDecision("
+        },
+        {
+          "path": "backend/application/application.go",
+          "locator": "AdaptiveProducer:    agentthread.DeterministicAdaptiveDecisionProducer{},"
+        },
+        {
           "path": "backend/application/agentthread/adk_executor_test.go",
           "locator": "func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {"
         },
@@ -7066,6 +7151,14 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_adaptive_execution.go",
           "locator": "func lockAndValidateAdaptiveExecutionBareLineage("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "locator": "func lockAndValidateAdaptiveBootstrapTypedSource("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {"
         }
       ]
     },
@@ -7212,7 +7305,9 @@
         "MCP",
         "AgentEvent",
         "EventSink",
-        "gate-off bootstrap",
+        "server-owned gate-off/on bootstrap",
+        "stable adaptive eligibility",
+        "candidate-only decision producer",
         "atomic rolling Plan checkpoint",
         "read-first crash replay"
       ],
