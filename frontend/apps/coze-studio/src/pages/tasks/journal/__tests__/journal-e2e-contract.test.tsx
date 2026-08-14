@@ -18,6 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
+import {
+  useJournalExperience,
+  type JournalExperience,
+} from '../use-journal-experience';
+import { JournalPanel } from '../journal-panel';
+import { JournalConversationFlow } from '../journal-conversation-flow';
 import type {
   JournalEventSubscription,
   SubscribeWorkbenchJournalEventsRequest,
@@ -26,12 +32,6 @@ import type {
   WorkbenchJournalEvent,
   WorkbenchJournalSnapshot,
 } from '../../../workbench/thread-client';
-import {
-  useJournalExperience,
-  type JournalExperience,
-} from '../use-journal-experience';
-import { JournalConversationFlow } from '../journal-conversation-flow';
-import { JournalPanel } from '../journal-panel';
 
 const journalContractMocks = vi.hoisted(() => ({
   auditSnapshotAction: vi.fn(),
@@ -69,7 +69,9 @@ vi.mock(
 
 vi.mock('../../task-markdown-content', () => ({
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Match the mocked module export.
-  TaskMarkdownContent: ({ value }: { value: string }) => <article>{value}</article>,
+  TaskMarkdownContent: ({ value }: { value: string }) => (
+    <article>{value}</article>
+  ),
 }));
 
 const scope = {
@@ -356,6 +358,8 @@ describe('Journal end-to-end frontend contract', () => {
     });
 
     expect(journalContractMocks.subscriptions).toHaveLength(1);
+    act(() => requireExperience().openPanel());
+    await flushReact();
     const liveSubscription = journalContractMocks.subscriptions[0];
     await act(async () => {
       liveSubscription.onMessage({

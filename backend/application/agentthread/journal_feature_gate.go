@@ -20,7 +20,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,11 +148,11 @@ func (g *JournalFeatureGate) DecideEnrollment(
 	if input.SpaceID <= 0 || input.ParentRunID != 0 || input.RunKind != domainentity.RunKindTask {
 		return JournalEnrollmentDecision{}, nil
 	}
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig(input.RunConfig)
+	runtime, err := journalEnrollmentRuntime(input.RunConfig)
 	if err != nil {
 		return JournalEnrollmentDecision{}, err
 	}
-	if runtimeConfig.Mode != DeerFlowModePro && runtimeConfig.Mode != DeerFlowModeUltra {
+	if runtime != RuntimeModeEinoADK {
 		return JournalEnrollmentDecision{}, nil
 	}
 	enrolled, err := g.Enabled(ctx, JournalFeatureProjection, input.SpaceID)
@@ -167,6 +169,25 @@ func (g *JournalFeatureGate) DecideEnrollment(
 		EnrollmentVersion: domainentity.JournalSchemaVersion,
 		RolloutCohort:     "treatment",
 	}, nil
+}
+
+func journalEnrollmentRuntime(rawConfig string) (RuntimeMode, error) {
+	if strings.TrimSpace(rawConfig) == "" {
+		return "", nil
+	}
+	var config struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal([]byte(rawConfig), &config); err != nil {
+		return "", fmt.Errorf("parse journal enrollment runtime: %w", err)
+	}
+	runtime := RuntimeMode(strings.ToLower(strings.TrimSpace(config.Runtime)))
+	switch runtime {
+	case "", RuntimeModeLegacy, RuntimeModeEinoADK:
+		return runtime, nil
+	default:
+		return "", fmt.Errorf("unsupported journal enrollment runtime: %s", runtime)
+	}
 }
 
 func (g *JournalFeatureGate) configuration(

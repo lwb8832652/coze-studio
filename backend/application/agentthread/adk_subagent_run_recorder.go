@@ -82,7 +82,7 @@ func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := r.app.CreateRun(ctx, &CreateRunRequest{
+	resp, err := r.app.createRun(ctx, &CreateRunRequest{
 		ThreadID:    req.Parent.ThreadID,
 		ParentRunID: req.Parent.RunID,
 		AssistantID: adkSubagentAssistantID(definition),
@@ -93,7 +93,7 @@ func (r *ApplicationADKSubagentRunRecorder) StartADKSubagentRun(
 		Metadata:    metadata,
 		StreamMode:  req.Parent.StreamMode,
 		Durability:  req.Parent.Durability,
-	})
+	}, createRunServerOwnedSubagent)
 	if err != nil {
 		return nil, err
 	}
@@ -174,11 +174,6 @@ func adkSubagentRunPayloads(
 ) (string, string, error) {
 	configPayload := map[string]any{
 		"runtime":           string(RuntimeModeEinoADK),
-		"requested_policy":  string(DeerFlowRequestedPolicyPro),
-		"mode":              string(DeerFlowModePro),
-		"thinking_enabled":  false,
-		"is_plan_mode":      false,
-		"subagent_enabled":  false,
 		"agent_name":        definition.Name,
 		"agent_description": definition.Description,
 		"full_chat_history": definition.FullChatHistoryAsInput,

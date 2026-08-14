@@ -29,7 +29,7 @@ import (
 	adminconfig "github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 )
 
-func TestJournalIntegrationEnrollsProjectsAndServesAuthorizedProRun(t *testing.T) {
+func TestJournalIntegrationEnrollsProjectsAndServesAuthorizedDefaultRun(t *testing.T) {
 	app := newJournalIntegrationApplication(t)
 	ctx := context.Background()
 
@@ -41,7 +41,7 @@ func TestJournalIntegrationEnrollsProjectsAndServesAuthorizedProRun(t *testing.T
 		ThreadID: thread.Thread.ThreadID,
 		Status:   RunStatusQueued,
 		Input:    `{"messages":[{"role":"user","content":"核验 Journal"}]}`,
-		Config:   `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:   `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 
@@ -98,7 +98,7 @@ func TestJournalIntegrationKeepsAutomaticRunEmptyBeforePublicEvents(t *testing.T
 		ThreadID: thread.Thread.ThreadID,
 		Status:   RunStatusQueued,
 		Input:    `{"messages":[{"role":"user","content":"直接回答"}]}`,
-		Config:   `{"runtime":"eino_adk","requested_policy":"auto"}`,
+		Config:   `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
 

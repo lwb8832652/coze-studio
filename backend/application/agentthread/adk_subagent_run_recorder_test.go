@@ -35,8 +35,9 @@ func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {
 			Status:      entity.RunStatusRunning,
 		},
 	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
 	recorder := NewApplicationADKSubagentRunRecorder(
-		&ApplicationService{ThreadSVC: domainSVC},
+		&ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy},
 	)
 
 	child, err := recorder.StartADKSubagentRun(
@@ -76,11 +77,6 @@ func TestApplicationADKSubagentRunRecorderStartsChildRun(t *testing.T) {
 	}`, domainSVC.createRunReq.Input)
 	require.JSONEq(t, `{
 		"runtime":"eino_adk",
-		"requested_policy":"pro",
-		"mode":"pro",
-		"thinking_enabled":false,
-		"is_plan_mode":false,
-		"subagent_enabled":false,
 		"agent_name":"researcher",
 		"agent_description":"Research public information.",
 		"single_agent":{"agent_id":1001,"version":"v1","is_draft":false},

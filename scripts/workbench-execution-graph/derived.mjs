@@ -1069,10 +1069,19 @@ const verifyDerivedStructure = (graph, queryGraph, contract, metadata) => {
   return errors;
 };
 
+export const graphifyQueryArgs = (graphPath, terms) => [
+  'query',
+  terms,
+  '--graph',
+  graphPath,
+  '--budget',
+  '16000',
+];
+
 const defaultQueryRunner = async ({ graphPath, terms, graphifyBinary }) => {
   const { stdout } = await execFileAsync(
     graphifyBinary,
-    ['query', terms, '--graph', graphPath, '--budget', '12000'],
+    graphifyQueryArgs(graphPath, terms),
     {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,

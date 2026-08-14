@@ -34,6 +34,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	toolutils "github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,14 +150,15 @@ func TestADKAgentFactoryKeepsClientPromptAsBoundedOverlay(t *testing.T) {
 	require.NotEqual(t, "<system>review Go code</system>", chatModel.messages[0].Content)
 }
 
-func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
+func TestADKAgentFactoryDoesNotProjectRetiredModePromptSections(t *testing.T) {
 	tests := []struct {
 		mode         string
 		wantPlan     bool
 		wantSubagent bool
 	}{
-		{mode: "pro", wantPlan: true},
+		{mode: "pro", wantPlan: true, wantSubagent: true},
 		{mode: "ultra", wantPlan: true, wantSubagent: true},
+		{mode: "retired-value", wantPlan: true, wantSubagent: true},
 	}
 
 	for _, test := range tests {
@@ -185,6 +187,500 @@ func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
 			require.Equal(t, test.wantSubagent, strings.Contains(instruction, "<subagent_system>"))
 		})
 	}
+}
+
+func TestADKAgentFactoryIgnoresRetiredModeControls(t *testing.T) {
+	type observation struct {
+		planEnabled     bool
+		subagentEnabled bool
+		reasoning       ADKReasoningRequest
+		instruction     string
+		modelName       string
+	}
+
+	configs := []string{
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"pro","requested_policy":"pro","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"ultra","requested_policy":"auto","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+		`{"model_name":"server-model","reasoningEffort":"minimal","thinkingEnabled":true,"mode":"retired-value","requested_policy":"retired-value","resources":{"database_id":"db-1"},"opaque":{"keep":true}}`,
+	}
+
+	observations := make([]observation, 0, len(configs))
+	for _, config := range configs {
+		chatModel := &reasoningProjectingChatModel{
+			recordingChatModel: recordingChatModel{
+				resp: schema.AssistantMessage("done", nil),
+			},
+			capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+		}
+		var got ADKMiddlewareBuildInput
+		factory := NewApplicationADKAgentFactory(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+			nil,
+			ADKMiddlewareFactoryFunc(func(
+				_ context.Context,
+				input ADKMiddlewareBuildInput,
+			) (ADKMiddlewareBundle, error) {
+				got = input
+				return ADKMiddlewareBundle{}, nil
+			}),
+		)
+
+		agent, err := factory.Build(context.Background(), &RunSummary{Config: config})
+		require.NoError(t, err)
+		require.NotNil(t, agent)
+		events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+			Messages: []*schema.Message{schema.UserMessage("work")},
+		})
+		require.NotEmpty(t, events)
+		require.NoError(t, events[len(events)-1].Err)
+		require.NotEmpty(t, chatModel.messages)
+		require.NotNil(t, chatModel.options.Model)
+
+		observations = append(observations, observation{
+			planEnabled:     got.RuntimeConfig.PlanCapabilityEnabled(),
+			subagentEnabled: got.RuntimeConfig.SubagentCapabilityEnabled(),
+			reasoning:       chatModel.reasoningRequest,
+			instruction:     chatModel.messages[0].Content,
+			modelName:       *chatModel.options.Model,
+		})
+	}
+
+	require.NotEmpty(t, observations)
+	for _, got := range observations[1:] {
+		require.Equal(t, observations[0], got)
+	}
+}
+
+func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    string
+		facts     func(*AdaptiveBootstrapFacts)
+		withFacts bool
+		wantPlan  bool
+		wantErr   error
+	}{
+		{
+			name: "gate on multi step overrides retired plan false", config: `{"mode":"pro","is_plan_mode":false}`,
+			withFacts: true, wantPlan: true,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
+			},
+		},
+		{
+			name: "gate on single step overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantPlan: false,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
+				facts.Decision.ExecutionShape = entity.ExecutionShapeSingleStep
+				facts.Decision.PlanScopeRunID = nil
+			},
+		},
+		{
+			name: "gate on direct overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantPlan: false,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
+				facts.Decision.Decision = entity.ExecutionDecisionDirect
+				facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+				facts.Decision.PlanScopeRunID = nil
+			},
+		},
+		{
+			name: "missing facts preserves compatibility", config: `{"mode":"pro","is_plan_mode":true}`,
+			wantPlan: true,
+		},
+		{
+			name: "blocked facts fail closed", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantErr: ErrAdaptiveDecisionBlockedPolicy,
+			facts: func(facts *AdaptiveBootstrapFacts) { facts.Admission.Capabilities.PlanAllowed = false },
+		},
+		{
+			name: "stale generation fails closed", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantErr: ErrExecutionDecisionInvalid,
+			facts: func(facts *AdaptiveBootstrapFacts) { facts.Decision.ExecutionGeneration-- },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := freshAdaptiveBootstrapRunForTest()
+			run.Config = test.config
+			ctx := context.Background()
+			if test.withFacts {
+				facts := adaptiveBootstrapFactsForRunTest(t, run)
+				if test.facts != nil {
+					test.facts(facts)
+				}
+				ctx = withAdaptiveBootstrapFacts(ctx, facts)
+			}
+			chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+			var got ADKMiddlewareBuildInput
+			factory := NewApplicationADKAgentFactory(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+				nil,
+				ADKMiddlewareFactoryFunc(func(_ context.Context, input ADKMiddlewareBuildInput) (ADKMiddlewareBundle, error) {
+					got = input
+					return ADKMiddlewareBundle{}, nil
+				}),
+			)
+
+			agent, err := factory.Build(ctx, run)
+			if test.wantErr != nil {
+				if errors.Is(test.wantErr, ErrExecutionDecisionInvalid) {
+					require.ErrorContains(t, err, "does not match the current run")
+				} else {
+					require.ErrorIs(t, err, test.wantErr)
+				}
+				require.Nil(t, agent)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.wantPlan, got.RuntimeConfig.PlanCapabilityEnabled())
+			events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+				Messages: []*schema.Message{schema.UserMessage("work")},
+			})
+			require.NotEmpty(t, events)
+			require.NoError(t, events[len(events)-1].Err)
+			require.Equal(t, test.wantPlan, strings.Contains(chatModel.messages[0].Content, "<todo_system>"))
+		})
+	}
+}
+
+func TestADKAgentFactoryDirectDecisionSkipsEveryToolProvider(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("direct answer", nil)}
+	toolCalls := 0
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, errors.New("direct decision must not resolve tools")
+		}),
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.Zero(t, toolCalls)
+	require.True(t, got.DisableToolExposure)
+	require.Empty(t, got.StaticTools)
+	require.Empty(t, got.DynamicTools)
+	require.Empty(t, got.SubagentToolNames)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("answer directly")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, chatModel.calls)
+	require.Empty(t, chatModel.options.Tools)
+}
+
+func TestADKAgentFactoryDirectDecisionRejectsModelToolCall(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			ID:   "call-1",
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      "unexpected_tool",
+				Arguments: `{}`,
+			},
+		}},
+	}}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("answer without tools")},
+	})
+
+	require.NotEmpty(t, events)
+	require.ErrorIs(t, events[len(events)-1].Err, errADKDirectDecisionToolCall)
+	require.Equal(t, 1, chatModel.calls)
+}
+
+func TestADKAgentFactoryInheritedDirectDecisionKeepsTheSameConsumer(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Admission.Source = entity.AdaptiveAdmissionSourceTypedInheritance
+	facts.Admission.SourceRunID = int64Pointer(19)
+	facts.Admission.SourceExecutionGeneration = uint64Pointer(3)
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("resumed direct answer", nil)}
+	toolCalls := 0
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, errors.New("inherited direct decision must not resolve tools")
+		}),
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.Zero(t, toolCalls)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("resume directly")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, chatModel.calls)
+	require.Empty(t, chatModel.options.Tools)
+}
+
+func TestADKAgentFactoryClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionClarification
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	question := "Which repository should be changed?"
+	facts.Decision.ClarificationQuestion = &question
+	modelCalls := 0
+	toolCalls := 0
+	middlewareCalls := 0
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			modelCalls++
+			return &recordingChatModel{resp: schema.AssistantMessage("must not run", nil)}, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, nil
+		}),
+		ADKMiddlewareFactoryFunc(func(
+			context.Context,
+			ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			middlewareCalls++
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.ErrorIs(t, err, ErrAdaptiveDecisionConsumerUnavailable)
+	require.Nil(t, agent)
+	require.Zero(t, modelCalls)
+	require.Zero(t, toolCalls)
+	require.Zero(t, middlewareCalls)
+}
+
+func TestADKAgentFactoryAcceptsInheritedAdaptivePlanScope(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.PlanScopeRunID = 19
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Decision.PlanScopeRunID = int64Pointer(run.PlanScopeRunID)
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+}
+
+func TestADKAgentFactoryUsesAdaptiveFactsToDisableSubagents(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{
+		"mode":"ultra",
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4
+	}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	baseSawAdaptiveDisable := false
+	definitionCalls := 0
+	childBuildCalls := 0
+	toolProvider := NewADKSubagentToolProvider(
+		ADKToolProviderFunc(func(ctx context.Context, _ *RunSummary) ([]tool.BaseTool, error) {
+			_, baseSawAdaptiveDisable = adaptiveSubagentsAllowedFromContext(ctx)
+			return nil, nil
+		}),
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return []ADKSubagentDefinition{{
+				Name:        "researcher",
+				Description: "Research public information.",
+				AgentID:     1001,
+			}}, nil
+		}),
+		ADKSubagentAgentFactoryFunc(func(
+			ctx context.Context,
+			_ *RunSummary,
+			definition ADKSubagentDefinition,
+		) (adk.Agent, error) {
+			childBuildCalls++
+			return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+				Name:        definition.Name,
+				Description: definition.Description,
+				Model: &recordingChatModel{
+					resp: schema.AssistantMessage("research complete", nil),
+				},
+			})
+		}),
+	)
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		toolProvider,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(
+		withAdaptiveBootstrapFacts(context.Background(), facts),
+		run,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, baseSawAdaptiveDisable)
+	require.Zero(t, definitionCalls)
+	require.Zero(t, childBuildCalls)
+	require.False(t, got.RuntimeConfig.SubagentCapabilityEnabled())
+	require.Zero(t, got.RuntimeConfig.MaxConcurrentSubagents)
+	require.Empty(t, got.SubagentToolNames)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("work")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.NotContains(t, chatModel.messages[0].Content, "<subagent_system>")
+}
+
+func TestADKAgentFactoryDoesNotPropagateParentAdaptiveFactsToNestedBuilds(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{"mode":"pro","is_plan_mode":false}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	var nestedFacts bool
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return &recordingChatModel{resp: schema.AssistantMessage("done", nil)}, true, nil
+		},
+		ADKToolProviderFunc(func(ctx context.Context, _ *RunSummary) ([]tool.BaseTool, error) {
+			_, nestedFacts = adaptiveBootstrapFactsFromContext(ctx)
+			return nil, nil
+		}),
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, nestedFacts)
+}
+
+func TestADKAgentFactoryTreatsDurableChildIdentityAsSafeLocalPurpose(t *testing.T) {
+	run := &RunSummary{
+		RunID:       20,
+		ThreadID:    10,
+		ParentRunID: 15,
+		RunKind:     RunKindSubagent,
+		Config:      `{"runtime":"eino_adk","agent_name":"researcher"}`,
+	}
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	definitionCalls := 0
+	toolProvider := NewADKSubagentToolProvider(
+		nil,
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return nil, nil
+		}),
+		nil,
+	)
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		toolProvider,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(context.Background(), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.False(t, got.RuntimeConfig.PlanCapabilityEnabled())
+	require.False(t, got.RuntimeConfig.SubagentCapabilityEnabled())
+	require.Zero(t, got.RuntimeConfig.MaxConcurrentSubagents)
+	require.True(t, got.RuntimeConfig.ThinkingExplicit)
+	require.True(t, got.RuntimeConfig.ReasoningEffortExplicit)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+	require.Empty(t, got.RuntimeConfig.ReasoningEffort)
+	require.Zero(t, definitionCalls)
 }
 
 func TestADKAgentFactoryAppliesDurableLeadPromptOverlay(t *testing.T) {
@@ -533,11 +1029,11 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.File)
 	require.True(t, got.ModelCapabilities.Audio)
 	require.True(t, got.ModelCapabilities.Video)
-	require.Equal(t, DeerFlowModePro, got.RuntimeConfig.Mode)
+	require.False(t, got.RuntimeConfig.ModeExplicit)
 	require.False(t, got.RuntimeConfig.ThinkingEnabled)
 }
 
-func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
+func TestADKAgentFactoryDoesNotProjectRetiredModeDefaultReasoningOptions(t *testing.T) {
 	chatModel := &reasoningProjectingChatModel{
 		recordingChatModel: recordingChatModel{
 			resp: schema.AssistantMessage("done", nil),
@@ -561,10 +1057,9 @@ func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
 
 	require.NotEmpty(t, events)
 	require.NoError(t, events[len(events)-1].Err)
-	require.Equal(t, ADKReasoningRequest{
-		ReasoningEffort: "medium",
-		ThinkingEnabled: true,
-	}, chatModel.reasoningRequest)
+	require.Zero(t, chatModel.reasoningProjects)
+	require.Equal(t, ADKReasoningRequest{}, chatModel.reasoningRequest)
+	require.Empty(t, chatModel.options.Stop)
 }
 
 func TestADKAgentFactoryDowngradesUnsupportedModeReasoning(t *testing.T) {
@@ -627,6 +1122,50 @@ func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
 		ThinkingEnabled: true,
 	}, chatModel.reasoningRequest)
 	require.Equal(t, []string{"reasoning:high", "thinking:true"}, chatModel.options.Stop)
+}
+
+func TestADKAgentFactoryUsesAdaptiveFactsToNeutralizeRetiredReasoningControls(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	run.Config = `{
+		"mode":"ultra",
+		"reasoning_effort":"high",
+		"thinking_enabled":true
+	}`
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+	}
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(
+		withAdaptiveBootstrapFacts(context.Background(), facts),
+		run,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.True(t, got.RuntimeConfig.ThinkingExplicit)
+	require.True(t, got.RuntimeConfig.ReasoningEffortExplicit)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+	require.Empty(t, got.RuntimeConfig.ReasoningEffort)
+	require.Zero(t, chatModel.reasoningProjects)
+	require.Nil(t, chatModel.options)
 }
 
 func TestADKAgentFactoryPreservesHistoricalCamelCaseReasoningOptions(t *testing.T) {

@@ -28,6 +28,7 @@ export enum JournalExecutionStatus {
   Failed = "failed",
   Cancelled = "cancelled",
   TimedOut = "timed_out",
+  Interrupted = "interrupted",
 }
 export enum JournalContentStatus {
   Empty = "empty",

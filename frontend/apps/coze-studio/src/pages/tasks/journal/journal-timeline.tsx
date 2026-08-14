@@ -67,6 +67,7 @@ const attemptStatusLabel: Record<WorkbenchJournalExecutionStatus, string> = {
   failed: '已失败',
   cancelled: '已取消',
   timed_out: '已超时',
+  interrupted: '已中断',
 };
 
 interface JournalTimelineDisplayItem {

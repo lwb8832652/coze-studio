@@ -311,19 +311,20 @@ type ADKParityCheckpointStore interface {
 }
 
 type ADKCheckpointStore struct {
-	service            ADKCheckpointService
-	run                *RunSummary
-	runtimeVersion     string
-	maxCheckpointBytes int
-	runRevision        int64
-	now                func() int64
-	parityMu           sync.Mutex
-	parityTracker      *ADKParityStateTracker
-	parityParentID     int64
-	journalStateReader ADKJournalCheckpointStateReader
-	sideEffectRepo     ADKSideEffectRepository
-	sideEffectIDGen    ADKSideEffectIDGenerator
-	sideEffectBoundary *ADKSideEffectBoundaryCoordinator
+	service              ADKCheckpointService
+	run                  *RunSummary
+	runtimeVersion       string
+	maxCheckpointBytes   int
+	runRevision          int64
+	now                  func() int64
+	parityMu             sync.Mutex
+	parityTracker        *ADKParityStateTracker
+	parityParentID       int64
+	journalStateReader   ADKJournalCheckpointStateReader
+	sideEffectRepo       ADKSideEffectRepository
+	sideEffectIDGen      ADKSideEffectIDGenerator
+	sideEffectBoundary   *ADKSideEffectBoundaryCoordinator
+	adaptivePlanBoundary *ADKAdaptivePlanBoundaryCoordinator
 }
 
 type ADKJournalCheckpointStateReader interface {
@@ -404,6 +405,23 @@ func WithADKSideEffectBoundary(
 	}
 }
 
+func WithADKAdaptivePlanBoundary(
+	repository ADKAdaptivePlanBoundaryRepository,
+	idGen ADKAdaptivePlanBoundaryIDGenerator,
+	planStore ADKPlanStore,
+) ADKCheckpointStoreOption {
+	return func(store *ADKCheckpointStore) error {
+		coordinator, err := NewADKAdaptivePlanBoundaryCoordinator(
+			store.run, repository, idGen, planStore, store.now,
+		)
+		if err != nil {
+			return err
+		}
+		store.adaptivePlanBoundary = coordinator
+		return nil
+	}
+}
+
 func NewADKCheckpointStore(
 	service ADKCheckpointService,
 	run *RunSummary,
@@ -463,6 +481,20 @@ func (s *ADKCheckpointStore) SideEffectBoundaryCoordinator() *ADKSideEffectBound
 	return s.sideEffectBoundary
 }
 
+func (s *ADKCheckpointStore) ADKInternalCheckpointBarrier() adkInternalCheckpointBarrier {
+	if s == nil {
+		return nil
+	}
+	return s.adaptivePlanBoundary
+}
+
+func (s *ADKCheckpointStore) AdaptivePlanBoundaryCoordinator() *ADKAdaptivePlanBoundaryCoordinator {
+	if s == nil {
+		return nil
+	}
+	return s.adaptivePlanBoundary
+}
+
 func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, checkpoint []byte) error {
 	checkpointID, err := s.normalizeKey(checkpointID)
 	if err != nil {
@@ -501,6 +533,27 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		RuntimeKey: checkpointID, RuntimeState: append([]byte(nil), checkpoint...),
 		ParityState: &parityState, ParentCheckpointID: parentCheckpointID,
 		RunRevision: s.runRevision, RuntimeVersion: s.runtimeVersion,
+	}
+	planPending := s.adaptivePlanBoundary != nil &&
+		s.adaptivePlanBoundary.PendingGeneration() > s.adaptivePlanBoundary.CommittedGeneration()
+	if planPending && s.sideEffectBoundary != nil && s.sideEffectBoundary.hasPending() {
+		return fmt.Errorf("mixed adaptive plan and side effect checkpoint boundary is unsupported")
+	}
+	if planPending {
+		attempt, _, enrolled, err := s.loadJournalCheckpointState(ctx)
+		if err != nil {
+			return err
+		}
+		if !enrolled {
+			return fmt.Errorf("adaptive plan checkpoint requires an active journal attempt")
+		}
+		_, committed, err := s.adaptivePlanBoundary.commitCheckpoint(ctx, boundaryInput, attempt)
+		if err != nil {
+			return fmt.Errorf("commit adaptive plan checkpoint boundary: %w", err)
+		}
+		if committed {
+			return nil
+		}
 	}
 	if s.sideEffectBoundary != nil {
 		_, committed, err := s.sideEffectBoundary.CommitCheckpoint(ctx, boundaryInput)

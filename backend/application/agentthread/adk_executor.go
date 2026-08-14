@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -31,13 +32,69 @@ import (
 
 type ADKCheckpointStoreFactory func(run *RunSummary) (adk.CheckPointStore, error)
 
+const maxADKInternalCheckpointBarriers = 64
+
+type adkInternalCheckpointResumeSignal struct {
+	generation uint64
+}
+
+func (e *adkInternalCheckpointResumeSignal) Error() string {
+	return fmt.Sprintf("resume from internal checkpoint barrier generation %d", e.generation)
+}
+
+type adkRunSegmentState struct {
+	mu                sync.Mutex
+	barrier           adkInternalCheckpointBarrier
+	requested         uint64
+	externalRequested bool
+}
+
+func (s *adkRunSegmentState) requestInternal(cancel adk.AgentCancelFunc) {
+	if s == nil || s.barrier == nil || cancel == nil {
+		return
+	}
+	pending := s.barrier.PendingGeneration()
+	if pending == 0 || pending <= s.barrier.CommittedGeneration() {
+		return
+	}
+
+	s.mu.Lock()
+	if s.externalRequested || s.requested >= pending {
+		s.mu.Unlock()
+		return
+	}
+	s.requested = pending
+	s.mu.Unlock()
+
+	_, _ = cancel(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
+}
+
+func (s *adkRunSegmentState) markExternalRequested() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.externalRequested = true
+	s.mu.Unlock()
+}
+
+func (s *adkRunSegmentState) internalCancellation() (uint64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requested, s.requested > 0 && !s.externalRequested
+}
+
 type ADKExecutor struct {
-	factory                     ADKAgentFactory
-	eventSink                   RunEventSink
-	checkpointStoreFactory      ADKCheckpointStoreFactory
-	usageCollector              UsageCollector
-	cancelRegistry              *ADKCancelRegistry
-	subagentRetrySourceResolver ADKSubagentRetrySourceResolver
+	factory                      ADKAgentFactory
+	eventSink                    RunEventSink
+	checkpointStoreFactory       ADKCheckpointStoreFactory
+	usageCollector               UsageCollector
+	cancelRegistry               *ADKCancelRegistry
+	subagentRetrySourceResolver  ADKSubagentRetrySourceResolver
+	adaptiveBootstrapCoordinator AdaptiveBootstrapCoordinator
 }
 
 type ADKExecutorOption func(*ADKExecutor)
@@ -53,6 +110,14 @@ func WithADKSubagentRetrySourceResolver(
 ) ADKExecutorOption {
 	return func(executor *ADKExecutor) {
 		executor.subagentRetrySourceResolver = resolver
+	}
+}
+
+func WithADKAdaptiveBootstrapCoordinator(
+	coordinator AdaptiveBootstrapCoordinator,
+) ADKExecutorOption {
+	return func(executor *ADKExecutor) {
+		executor.adaptiveBootstrapCoordinator = coordinator
 	}
 }
 
@@ -90,6 +155,16 @@ func (e *ADKExecutor) Execute(
 	if err != nil {
 		return nil, err
 	}
+	if e.adaptiveBootstrapCoordinator != nil {
+		facts, err := e.adaptiveBootstrapCoordinator.Bootstrap(ctx, run)
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap adaptive execution: %w", err)
+		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, fmt.Errorf("select adaptive execution consumer: %w", err)
+		}
+		ctx = withAdaptiveBootstrapFacts(ctx, facts)
+	}
 	executionCtx, cancelExecution := context.WithCancel(ctx)
 	defer cancelExecution()
 	agent, store, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime(
@@ -111,16 +186,15 @@ func (e *ADKExecutor) Execute(
 		EnableStreaming: true,
 		CheckPointStore: store,
 	})
-	runOptions, cleanup, usageBridge := e.runOptions(
-		run,
-		checkpointKey,
-		cancelExecution,
-	)
-	defer cleanup()
-	iter := runner.Run(executionCtx, messages, runOptions...)
+	usageBridge := e.newUsageBridge(run)
+	start := func(options []adk.AgentRunOption) (*adk.AsyncIterator[*adk.AgentEvent], error) {
+		return runner.Run(executionCtx, messages, options...), nil
+	}
 
-	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge, parityTracker, parityParentID)
-	return result, normalizeADKExecutionError(ctx, err)
+	return e.runWithInternalCheckpointBarriers(
+		ctx, executionCtx, run, checkpointKey, store, runner,
+		usageBridge, parityTracker, parityParentID, cancelExecution, start,
+	)
 }
 
 func (e *ADKExecutor) Resume(
@@ -158,6 +232,21 @@ func (e *ADKExecutor) Resume(
 	if err != nil {
 		return nil, err
 	}
+	if e.adaptiveBootstrapCoordinator != nil {
+		facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)
+		if bootstrapErr != nil {
+			return nil, bootstrapErr
+		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, fmt.Errorf("select adaptive execution consumer: %w", err)
+		}
+		if facts != nil && facts.Decision.PlanScopeRunID != nil {
+			agentRun.PlanScopeRunID = *facts.Decision.PlanScopeRunID
+		}
+		executionCtx = withAdaptiveBootstrapFacts(executionCtx, facts)
+	}
+	storeRun := *run
+	storeRun.PlanScopeRunID = agentRun.PlanScopeRunID
 	var paritySeed *ADKParityState
 	if input.ADKCheckpoint.ParityState != nil {
 		copy := cloneADKParityState(*input.ADKCheckpoint.ParityState)
@@ -166,7 +255,7 @@ func (e *ADKExecutor) Resume(
 	agent, currentStore, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime(
 		executionCtx,
 		agentRun,
-		run,
+		&storeRun,
 		nil,
 		paritySeed,
 		input.CheckpointID,
@@ -202,26 +291,20 @@ func (e *ADKExecutor) Resume(
 		targets = adkResumeTargets(input.ADKCheckpoint.Interrupts)
 	}
 
-	var iter *adk.AsyncIterator[*adk.AgentEvent]
-	runOptions, cleanup, usageBridge := e.runOptions(
-		run,
-		checkpointKey,
-		cancelExecution,
-	)
-	defer cleanup()
-	if len(targets) > 0 {
-		iter, err = runner.ResumeWithParams(executionCtx, checkpointKey, &adk.ResumeParams{
-			Targets: targets,
-		}, runOptions...)
-	} else {
-		iter, err = runner.Resume(executionCtx, checkpointKey, runOptions...)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("resume eino adk runner: %w", err)
+	usageBridge := e.newUsageBridge(run)
+	start := func(options []adk.AgentRunOption) (*adk.AsyncIterator[*adk.AgentEvent], error) {
+		if len(targets) > 0 {
+			return runner.ResumeWithParams(executionCtx, checkpointKey, &adk.ResumeParams{
+				Targets: targets,
+			}, options...)
+		}
+		return runner.Resume(executionCtx, checkpointKey, options...)
 	}
 
-	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge, parityTracker, parityParentID)
-	return result, normalizeADKExecutionError(ctx, err)
+	return e.runWithInternalCheckpointBarriers(
+		ctx, executionCtx, run, checkpointKey, store, runner,
+		usageBridge, parityTracker, parityParentID, cancelExecution, start,
+	)
 }
 
 func normalizeADKExecutionError(parent context.Context, err error) error {
@@ -235,29 +318,89 @@ func normalizeADKExecutionError(parent context.Context, err error) error {
 	return &RunCanceledError{EventPersisted: true}
 }
 
-func (e *ADKExecutor) runOptions(
+func (e *ADKExecutor) newUsageBridge(run *RunSummary) *ADKUsageBridge {
+	if e == nil || e.usageCollector == nil {
+		return nil
+	}
+	return NewADKUsageBridge(run, e.usageCollector)
+}
+
+func (e *ADKExecutor) runSegmentOptions(
 	run *RunSummary,
 	checkpointKey string,
 	executionCancel context.CancelFunc,
-) ([]adk.AgentRunOption, func(), *ADKUsageBridge) {
+	usageBridge *ADKUsageBridge,
+	barrier adkInternalCheckpointBarrier,
+) ([]adk.AgentRunOption, func(), *adkRunSegmentState) {
 	options := []adk.AgentRunOption{adk.WithCheckPointID(checkpointKey)}
-	var usageBridge *ADKUsageBridge
-	if e != nil && e.usageCollector != nil {
-		usageBridge = NewADKUsageBridge(run, e.usageCollector)
+	if usageBridge != nil {
 		options = append(options, adk.WithCallbacks(usageBridge.Handler()))
 	}
-	if e == nil || e.cancelRegistry == nil {
-		return options, func() {}, usageBridge
-	}
-
 	cancelOption, cancel := adk.WithCancel()
 	options = append(options, cancelOption)
+	segment := &adkRunSegmentState{barrier: barrier}
+	if barrier != nil {
+		options = append(options, adk.WithAfterToolCallsHook(func(context.Context) error {
+			segment.requestInternal(cancel)
+			return nil
+		}))
+	}
+	if e == nil || e.cancelRegistry == nil {
+		return options, func() {}, segment
+	}
+	externalCancel := func(options ...adk.AgentCancelOption) (*adk.CancelHandle, bool) {
+		segment.markExternalRequested()
+		return cancel(options...)
+	}
 
 	return options, e.cancelRegistry.RegisterWithExecutionCancel(
 		run.RunID,
-		cancel,
+		externalCancel,
 		executionCancel,
-	), usageBridge
+	), segment
+}
+
+func (e *ADKExecutor) runWithInternalCheckpointBarriers( //nolint:revive // argument-limit
+	ctx context.Context,
+	executionCtx context.Context,
+	run *RunSummary,
+	checkpointKey string,
+	store adk.CheckPointStore,
+	runner *adk.Runner,
+	usageBridge *ADKUsageBridge,
+	parityTracker *ADKParityStateTracker,
+	parityParentID int64,
+	executionCancel context.CancelFunc,
+	start func([]adk.AgentRunOption) (*adk.AsyncIterator[*adk.AgentEvent], error),
+) (*RunExecutionResult, error) {
+	barrier, _ := adkInternalCheckpointBarrierFromContext(executionCtx)
+	resumeCount := 0
+	for {
+		options, cleanup, segment := e.runSegmentOptions(
+			run, checkpointKey, executionCancel, usageBridge, barrier,
+		)
+		iter, err := start(options)
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("run eino adk segment: %w", err)
+		}
+		result, err := e.consumeEvents(
+			ctx, run, checkpointKey, store, iter, usageBridge,
+			parityTracker, parityParentID, segment,
+		)
+		cleanup()
+		var signal *adkInternalCheckpointResumeSignal
+		if !errors.As(err, &signal) {
+			return result, normalizeADKExecutionError(ctx, err)
+		}
+		resumeCount++
+		if resumeCount > maxADKInternalCheckpointBarriers {
+			return nil, fmt.Errorf("eino adk internal checkpoint barrier limit exceeded")
+		}
+		start = func(options []adk.AgentRunOption) (*adk.AsyncIterator[*adk.AgentEvent], error) {
+			return runner.Resume(executionCtx, checkpointKey, options...)
+		}
+	}
 }
 
 func (e *ADKExecutor) buildRuntime(
@@ -281,6 +424,20 @@ func (e *ADKExecutor) buildRuntime(
 		ctx = withADKSideEffectBoundaryCoordinator(
 			ctx,
 			provider.SideEffectBoundaryCoordinator(),
+		)
+	}
+	if provider, ok := store.(adkInternalCheckpointBarrierProvider); ok {
+		ctx = withADKInternalCheckpointBarrier(
+			ctx,
+			provider.ADKInternalCheckpointBarrier(),
+		)
+	}
+	if provider, ok := store.(interface {
+		AdaptivePlanBoundaryCoordinator() *ADKAdaptivePlanBoundaryCoordinator
+	}); ok {
+		ctx = withADKAdaptivePlanBoundaryCoordinator(
+			ctx,
+			provider.AdaptivePlanBoundaryCoordinator(),
 		)
 	}
 
@@ -324,6 +481,7 @@ func (e *ADKExecutor) consumeEvents(
 	usageBridge *ADKUsageBridge,
 	parityTracker *ADKParityStateTracker,
 	parityParentCheckpointID int64,
+	segment *adkRunSegmentState,
 ) (*RunExecutionResult, error) {
 	if iter == nil {
 		return nil, fmt.Errorf("eino adk runner returned empty event iterator")
@@ -339,6 +497,17 @@ func (e *ADKExecutor) consumeEvents(
 		event, ok := iter.Next()
 		if !ok {
 			break
+		}
+		if event != nil && event.Err != nil && isADKCancellationError(event.Err) {
+			if generation, internal := segment.internalCancellation(); internal {
+				if segment.barrier.CommittedGeneration() < generation {
+					return nil, fmt.Errorf(
+						"internal checkpoint barrier generation %d was not committed",
+						generation,
+					)
+				}
+				return nil, &adkInternalCheckpointResumeSignal{generation: generation}
+			}
 		}
 		mapped, err := MapADKEvent(mappingCtx, run.ThreadID, run.RunID, event)
 		if err != nil {
@@ -439,6 +608,15 @@ func (e *ADKExecutor) consumeEvents(
 		snapshot := parityTracker.Snapshot()
 		result.ParityState = &snapshot
 		result.ParityParentCheckpointID = parityParentCheckpointID
+	}
+	if segment != nil && segment.barrier != nil {
+		pending := segment.barrier.PendingGeneration()
+		if pending > segment.barrier.CommittedGeneration() {
+			return nil, fmt.Errorf(
+				"internal checkpoint barrier generation %d was not committed",
+				pending,
+			)
+		}
 	}
 	return result, nil
 }

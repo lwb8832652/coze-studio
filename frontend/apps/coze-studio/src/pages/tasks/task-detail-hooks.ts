@@ -26,6 +26,7 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { WorkbenchClientError } from '../workbench/thread-client/canonical-fetch';
 import type {
   HumanInteractionResponse,
   WorkbenchArtifact,
@@ -34,6 +35,7 @@ import type {
   WorkbenchRunEvent,
   WorkbenchTodo,
 } from '../workbench/thread-client';
+import { normalizeHumanResponseV2 } from '../workbench/components/types';
 import type { WorkbenchComposerSubmitPayload } from '../workbench/components/types';
 import { useTaskUsageData } from './task-usage-loader';
 import { useTaskThreadTitleSync } from './task-title-sync';
@@ -107,6 +109,31 @@ const isAmbiguousFollowUpError = (error: unknown) => {
     candidate.name === 'NetworkError' ||
     /timeout|timed out|network|fetch|超时|网络/i.test(message)
   );
+};
+
+const HTTP_BAD_REQUEST_STATUS = 400;
+const HTTP_CONFLICT_STATUS = 409;
+const HTTP_INTERNAL_ERROR_STATUS = 500;
+
+interface HumanResumeAttempt {
+  fingerprint: string;
+  idempotencyKey: string;
+  responseV2: ReturnType<typeof normalizeHumanResponseV2>;
+}
+
+const humanResumeAttemptDisposition = (error: unknown): 'retain' | 'clear' => {
+  if (!(error instanceof WorkbenchClientError)) {
+    return 'retain';
+  }
+  if (error.status === HTTP_CONFLICT_STATUS) {
+    return 'retain';
+  }
+  return error.outcome === 'rejected' &&
+    error.status !== undefined &&
+    error.status >= HTTP_BAD_REQUEST_STATUS &&
+    error.status < HTTP_INTERNAL_ERROR_STATUS
+    ? 'clear'
+    : 'retain';
 };
 
 const shouldPollTaskDetail = (detail: TaskDetail) => {
@@ -983,6 +1010,7 @@ export const useTaskDetailActions = ({
   const followUpRequestGenerationRef = useRef(0);
   const humanInteractionRequestGenerationRef = useRef(0);
   const successfulHumanInteractionKeysRef = useRef(new Set<string>());
+  const humanResumeAttemptRef = useRef<HumanResumeAttempt>();
   const mountedRef = useRef(true);
   const followUpAttemptRef = useRef<{
     fingerprint: string;
@@ -999,6 +1027,7 @@ export const useTaskDetailActions = ({
     followUpRequestGenerationRef.current += 1;
     humanInteractionRequestGenerationRef.current += 1;
     successfulHumanInteractionKeysRef.current.clear();
+    humanResumeAttemptRef.current = undefined;
   }, [taskScopeKey]);
   const taskRunActions = useTaskRunActions({
     applyTaskDetail,
@@ -1027,6 +1056,7 @@ export const useTaskDetailActions = ({
     setHumanInteractionLoading(false);
     setHumanInteractionError('');
     followUpAttemptRef.current = undefined;
+    humanResumeAttemptRef.current = undefined;
   }, [taskScopeKey]);
 
   const getFollowUpFingerprint = (payload: WorkbenchComposerSubmitPayload) =>
@@ -1164,6 +1194,22 @@ export const useTaskDetailActions = ({
     const submittedSpaceID = spaceID;
     const submittedTaskScopeKey = taskScopeKey;
     const mutationKey = `${submittedTaskScopeKey}:${pendingHumanInteraction.sourceRunId}:${pendingHumanInteraction.interruptId}`;
+    const responseV2 = normalizeHumanResponseV2(response);
+    const fingerprint = JSON.stringify([
+      submittedSpaceID,
+      submittedTaskDetailId,
+      pendingHumanInteraction.sourceRunId,
+      pendingHumanInteraction.interruptId,
+      responseV2,
+    ]);
+    if (humanResumeAttemptRef.current?.fingerprint !== fingerprint) {
+      humanResumeAttemptRef.current = {
+        fingerprint,
+        idempotencyKey: `human-resume:${globalThis.crypto.randomUUID()}`,
+        responseV2,
+      };
+    }
+    const resumeAttempt = humanResumeAttemptRef.current;
     const requestGeneration = ++humanInteractionRequestGenerationRef.current;
     const isCurrentRequest = () =>
       mountedRef.current &&
@@ -1177,7 +1223,8 @@ export const useTaskDetailActions = ({
           thread_id: submittedTaskDetailId,
           run_id: pendingHumanInteraction.sourceRunId,
           interrupt_id: pendingHumanInteraction.interruptId,
-          response,
+          response_v2: resumeAttempt.responseV2,
+          idempotency_key: resumeAttempt.idempotencyKey,
           space_id: submittedSpaceID,
         });
         if (!isCurrentRequest()) {
@@ -1187,6 +1234,7 @@ export const useTaskDetailActions = ({
         if (resumeResult.data) {
           commitTopLevelRun?.(resumeResult.data);
         }
+        humanResumeAttemptRef.current = undefined;
       }
       const refreshRequestToken = captureTaskDetailRequestToken?.();
       const detail = await fetchTaskDetail({
@@ -1198,6 +1246,32 @@ export const useTaskDetailActions = ({
       }
     } catch (err) {
       if (isCurrentRequest()) {
+        if (humanResumeAttemptDisposition(err) === 'clear') {
+          humanResumeAttemptRef.current = undefined;
+        }
+        if (
+          err instanceof WorkbenchClientError &&
+          err.status === HTTP_CONFLICT_STATUS
+        ) {
+          try {
+            const refreshRequestToken = captureTaskDetailRequestToken?.();
+            const detail = await fetchTaskDetail({
+              id: submittedTaskDetailId,
+              spaceId: submittedSpaceID,
+            });
+            if (isCurrentRequest()) {
+              applyTaskDetail(
+                detail,
+                submittedTaskDetailId,
+                refreshRequestToken,
+              );
+            }
+          } catch (refreshError) {
+            if (refreshError instanceof Error && isCurrentRequest()) {
+              setHumanInteractionError(refreshError.message);
+            }
+          }
+        }
         setHumanInteractionError(
           err instanceof Error ? err.message : '提交失败，请稍后重试',
         );

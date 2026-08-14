@@ -141,9 +141,11 @@ func (p *RunLeaseRecoveryProcessor) recoverExpiredRun(
 		return runLeaseRecoverySkipped, fmt.Errorf("expired run lease fence is incomplete")
 	}
 
-	if attempt, enrolled, err := p.activeJournalRecoveryAttempt(ctx, run); err != nil {
+	attempt, enrolled, err := p.activeJournalRecoveryAttempt(ctx, run)
+	if err != nil {
 		return runLeaseRecoverySkipped, err
-	} else if enrolled {
+	}
+	if enrolled && attempt.ProjectionState != entity.JournalProjectionStateDisabled {
 		return p.recoverExpiredJournalRun(ctx, run, attempt, now)
 	}
 
@@ -165,20 +167,10 @@ func (p *RunLeaseRecoveryProcessor) recoverExpiredRun(
 		return runLeaseRecoveryAbandoned, err
 	}
 
-	if _, err := p.ensureRecoveryResumeRun(ctx, run, checkpoint); err != nil {
+	if _, err := p.ensureRecoveryResumeRunAt(ctx, run, checkpoint, attempt, now); err != nil {
 		return runLeaseRecoverySkipped, err
 	}
-	_, err = p.app.ReconcileExpiredRunLease(ctx, &ReconcileExpiredRunLeaseRequest{
-		RunID:               run.RunID,
-		LeaseOwner:          run.LeaseOwner,
-		LeaseToken:          run.LeaseToken,
-		ExecutionGeneration: run.ExecutionGeneration,
-		ToStatus:            RunStatusInterrupted,
-		Now:                 now,
-		ErrorCode:           runRecoveredErrorCode,
-		ErrorMessage:        runRecoveredErrorMessage,
-	})
-	return runLeaseRecoveryRecovered, err
+	return runLeaseRecoveryRecovered, nil
 }
 
 func (p *RunLeaseRecoveryProcessor) activeJournalRecoveryAttempt(
@@ -308,51 +300,91 @@ func (p *RunLeaseRecoveryProcessor) ensureRecoveryResumeRun(
 	source *RunSummary,
 	checkpoint *CheckpointSummary,
 ) (*entity.Run, error) {
-	idempotencyKey := fmt.Sprintf("run-recovery:%d:%d", source.RunID, source.ExecutionGeneration)
-	existing, err := p.app.ThreadSVC.GetRunByIdempotencyKey(ctx, source.SpaceID, idempotencyKey)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		return existing, nil
-	}
+	return p.ensureRecoveryResumeRunAt(ctx, source, checkpoint, nil, p.clock.Now().UnixMilli())
+}
 
+func (p *RunLeaseRecoveryProcessor) ensureRecoveryResumeRunAt(
+	ctx context.Context,
+	source *RunSummary,
+	checkpoint *CheckpointSummary,
+	sourceAttempt *entity.RunAttempt,
+	now int64,
+) (*entity.Run, error) {
+	journalRunID := source.RunID
+	sourceAttemptID := ""
+	idempotencyKey := fmt.Sprintf("run-recovery:%d:%d", source.RunID, source.ExecutionGeneration)
+	if sourceAttempt != nil {
+		journalRunID = sourceAttempt.JournalRunID
+		sourceAttemptID = sourceAttempt.AttemptID
+		idempotencyKey = fmt.Sprintf(
+			"run-recovery:%d:%d:%d",
+			journalRunID,
+			source.RunID,
+			source.ExecutionGeneration,
+		)
+	}
 	command, metadata, err := runRecoveryPayloads(source, checkpoint)
 	if err != nil {
 		return nil, err
 	}
-	run, err := p.app.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
-		ThreadID:          source.ThreadID,
-		AssistantID:       source.AssistantID,
-		RunKind:           entity.RunKindTask,
-		Status:            entity.RunStatusQueued,
-		Command:           command,
-		Input:             `{"messages":[]}`,
-		Config:            source.Config,
-		Context:           source.Context,
-		Metadata:          metadata,
-		StreamMode:        source.StreamMode,
-		MultitaskStrategy: "reject",
-		OnDisconnect:      source.OnDisconnect,
-		Durability:        source.Durability,
-		IdempotencyKey:    idempotencyKey,
+	recoveryConfig, err := stripSubmittedExecutionControls(source.Config)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := p.app.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		Run: domainservice.CreateRunRequest{
+			ThreadID:          source.ThreadID,
+			AssistantID:       source.AssistantID,
+			RunKind:           entity.RunKindTask,
+			Status:            entity.RunStatusQueued,
+			Command:           command,
+			Input:             `{"messages":[]}`,
+			Config:            recoveryConfig,
+			Context:           source.Context,
+			Metadata:          metadata,
+			StreamMode:        source.StreamMode,
+			MultitaskStrategy: "reject",
+			OnDisconnect:      source.OnDisconnect,
+			Durability:        source.Durability,
+			IdempotencyKey:    idempotencyKey,
+		},
+		EnrollJournal: true,
+		JournalEnrollment: &domainservice.JournalEnrollmentOptions{
+			OrdinaryLeaseRecovery: &domainservice.JournalOrdinaryLeaseRecoveryEnrollmentOptions{
+				JournalRunID: journalRunID, SourceCheckpointID: checkpoint.CheckpointID,
+				SourceCheckpoint: checkpointSummaryToDomainCheckpoint(checkpoint),
+				SourceAttemptID:  sourceAttemptID, IdempotencyKey: idempotencyKey,
+				ExpiredLease: &domainservice.JournalRecoveryExpiredLeaseOptions{
+					RunID: source.RunID, LeaseOwner: source.LeaseOwner, LeaseToken: source.LeaseToken,
+					ExecutionGeneration: source.ExecutionGeneration, Now: now,
+					ErrorCode: runRecoveredErrorCode, ErrorMessage: runRecoveredErrorMessage,
+				},
+			},
+		},
 	})
 	if err == nil {
-		if run == nil {
-			return nil, fmt.Errorf("agent thread service returned empty recovery run")
+		if bundle == nil || bundle.Run == nil || bundle.Attempt == nil {
+			return nil, fmt.Errorf("agent thread service returned incomplete recovery bundle")
 		}
-		return run, nil
+		return bundle.Run, nil
 	}
 
-	// A concurrent recovery may win the unique idempotency key race.
-	existing, getErr := p.app.ThreadSVC.GetRunByIdempotencyKey(ctx, source.SpaceID, idempotencyKey)
-	if getErr == nil && existing != nil {
-		return existing, nil
-	}
-	if getErr != nil {
-		return nil, errors.Join(err, getErr)
-	}
 	return nil, err
+}
+
+func checkpointSummaryToDomainCheckpoint(checkpoint *CheckpointSummary) *entity.Checkpoint {
+	if checkpoint == nil {
+		return nil
+	}
+	return &entity.Checkpoint{
+		ID: checkpoint.CheckpointID, ThreadID: checkpoint.ThreadID, RunID: checkpoint.RunID,
+		ParentCheckpointID: checkpoint.ParentCheckpointID, CheckpointNS: checkpoint.CheckpointNS,
+		RuntimeType: checkpoint.RuntimeType, RuntimeKey: checkpoint.RuntimeKey,
+		EnvelopeVersion: checkpoint.EnvelopeVersion, RuntimeDeletedAt: checkpoint.RuntimeDeletedAt,
+		ChannelValues: checkpoint.ChannelValues, ChannelVersions: checkpoint.ChannelVersions,
+		PendingSends: checkpoint.PendingSends, Metadata: checkpoint.Metadata,
+		CreatedAt: checkpoint.CreatedAt,
+	}
 }
 
 func runRecoveryPayloads(source *RunSummary, checkpoint *CheckpointSummary) (string, string, error) {

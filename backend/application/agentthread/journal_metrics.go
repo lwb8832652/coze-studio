@@ -95,7 +95,6 @@ type JournalEventVisibleMetricObservation struct {
 type JournalCompletedTaskMetricObservation struct {
 	Labels                  JournalMetricLabels
 	Enrolled                bool
-	Mode                    DeerFlowMode
 	Completed               bool
 	FinalSequenceContinuous bool
 	ProjectionState         domainentity.JournalProjectionState
@@ -241,8 +240,7 @@ func (c *JournalPrometheusMetricsCollector) RecordCompletedTask(
 	_ context.Context,
 	observation JournalCompletedTaskMetricObservation,
 ) {
-	if c == nil || !observation.Enrolled || !observation.Completed ||
-		(observation.Mode != DeerFlowModePro && observation.Mode != DeerFlowModeUltra) {
+	if c == nil || !observation.Enrolled || !observation.Completed {
 		return
 	}
 	complete := observation.FinalSequenceContinuous &&

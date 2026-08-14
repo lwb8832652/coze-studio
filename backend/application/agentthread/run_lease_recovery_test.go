@@ -31,11 +31,27 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
-func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
+func TestRunLeaseRecoveryProcessorCreatesAtomicResumeBundle(t *testing.T) {
 	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
 	source := expiredRecoveryTestRun(200)
+	source.Config = `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9},
+		"requested_policy":"pro",
+		"mode":"pro",
+		"thinking_enabled":true,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4
+	}`
+	sourceConfig := source.Config
+	source.Context = `{"locale":"zh-CN","configurable":{"reasoning_effort":"high"}}`
 	service := newRunLeaseRecoveryTestService(source)
-	service.reconcileFailures = 1
 	service.checkpoints[source.ID] = []*entity.Checkpoint{
 		{
 			ID:              503,
@@ -76,25 +92,36 @@ func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 		RunLeaseRecoveryProcessorOptions{Limit: 10, Clock: clock},
 	)
 
-	first, err := processor.RecoverExpiredRunLeases(context.Background())
-	require.ErrorContains(t, err, "temporary reconciliation failure")
-	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, ErroredRuns: 1}, first)
-	require.Len(t, service.createRunReqs, 1)
-	require.Equal(t, entity.RunStatusRunning, source.Status)
+	service.recordingThreadService.createdRunBundle = &domainservice.CreateRunBundleResult{
+		Run: &entity.Run{ID: 1_000, ThreadID: source.ThreadID, SpaceID: source.SpaceID},
+		Attempt: &entity.RunAttempt{
+			ID: 1_001, ThreadID: source.ThreadID, JournalRunID: source.ID,
+			ExecutionRunID: 1_000, AttemptID: "att_1001", Ordinal: 1,
+			ProjectionState: entity.JournalProjectionStateDisabled,
+		},
+		Created: true,
+	}
 
-	second, err := processor.RecoverExpiredRunLeases(context.Background())
+	result, err := processor.RecoverExpiredRunLeases(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, RecoveredRuns: 1}, second)
-	require.Len(t, service.createRunReqs, 1)
-	require.Equal(t, entity.RunStatusInterrupted, source.Status)
-	require.Equal(t, "run_recovered", source.ErrorCode)
-	require.Empty(t, source.LeaseToken)
+	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, RecoveredRuns: 1}, result)
+	require.Nil(t, service.createRunReq)
+	require.Nil(t, service.reconcileExpiredRunLeaseReq)
+	require.NotNil(t, service.createRunBundleReq)
 
-	created := service.createRunReqs[0]
+	created := &service.createRunBundleReq.Run
 	require.Equal(t, source.ThreadID, created.ThreadID)
 	require.Equal(t, entity.RunStatusQueued, created.Status)
 	require.Equal(t, `{"messages":[]}`, created.Input)
-	require.Equal(t, source.Config, created.Config)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"model":{"id":"model-a"},
+		"resources":{"ids":[1]},
+		"token_usage":{"input_tokens":3},
+		"opaque":{"keep":true},
+		"nested":{"requested_policy":"nested","mode":"business","thinking_enabled":true,"reasoning_effort":"high","is_plan_mode":true,"subagent_enabled":true,"max_concurrent_subagents":9}
+	}`, created.Config)
+	require.Equal(t, sourceConfig, source.Config)
 	require.Equal(t, source.Context, created.Context)
 	require.Equal(t, "reject", created.MultitaskStrategy)
 	require.Equal(t, "run-recovery:200:3", created.IdempotencyKey)
@@ -120,6 +147,154 @@ func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 			"source_execution_generation": 3
 		}
 	}`, created.Metadata)
+}
+
+func TestRunLeaseRecoveryProcessorRejectsPartialOrdinaryRecoveryBundle(t *testing.T) {
+	source := expiredRecoveryTestRun(200)
+	threadSVC := &recordingThreadService{
+		omitJournalAttempt: true,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run:     &entity.Run{ID: 1_000, ThreadID: source.ThreadID, SpaceID: source.SpaceID},
+			Created: true,
+		},
+	}
+	processor := NewRunLeaseRecoveryProcessor(
+		&ApplicationService{ThreadSVC: threadSVC},
+		RunLeaseRecoveryProcessorOptions{Clock: newManualRunLeaseClock(time.UnixMilli(3_000))},
+	)
+
+	result, err := processor.ensureRecoveryResumeRunAt(
+		context.Background(), DomainRunToSummary(source),
+		&CheckpointSummary{CheckpointID: 502, CheckpointNS: "eino.adk"}, nil, 3_000,
+	)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "incomplete recovery bundle")
+	require.NotNil(t, threadSVC.createRunBundleReq)
+	require.Nil(t, threadSVC.reconcileExpiredRunLeaseReq)
+}
+
+func TestRunLeaseRecoveryProcessorRollsDisabledAttemptIntoOrdinaryBundle(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
+	source := expiredRecoveryTestRun(200)
+	activeSlot := uint8(1)
+	sourceAttempt := &entity.RunAttempt{
+		ID: 100, ThreadID: source.ThreadID, JournalRunID: 99, ExecutionRunID: source.ID,
+		AttemptID: "att_100", Ordinal: 2, Status: entity.RunAttemptStatusRunning,
+		ActiveSlot: &activeSlot, EnrollmentVersion: entity.JournalSchemaVersion,
+		ProjectionState: entity.JournalProjectionStateDisabled,
+	}
+	repo := &journalRecoveryRepositoryStub{attempts: []*entity.RunAttempt{sourceAttempt}}
+	threadSVC := &recordingThreadService{
+		expiredRunLeases: []*entity.Run{source},
+		checkpoints: []*entity.Checkpoint{{
+			ID: 502, ThreadID: source.ThreadID, RunID: source.ID,
+			CheckpointNS: "eino.adk", RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey: "checkpoint-502", EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, ADKCheckpointEnvelope{
+				EnvelopeVersion: 1, Runtime: string(RuntimeModeEinoADK),
+				RuntimeVersion: adkCheckpointRuntimeVersion, RuntimeKey: "checkpoint-502",
+				MessageType: adkCheckpointMessageType, Checkpoint: []byte{1, 2, 3},
+				RunRevision: 7, CreatedAt: 2_800,
+			}),
+			Metadata: `{"runtime":"eino_adk"}`, CreatedAt: 2_800,
+		}},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{ID: 1_000, ThreadID: source.ThreadID, SpaceID: source.SpaceID},
+			Attempt: &entity.RunAttempt{
+				ID: 1_001, ThreadID: source.ThreadID, JournalRunID: 99,
+				ExecutionRunID: 1_000, AttemptID: "att_1001", Ordinal: 3,
+				ProjectionState: entity.JournalProjectionStateDisabled,
+			},
+			Created: true,
+		},
+	}
+	processor := NewRunLeaseRecoveryProcessor(
+		&ApplicationService{ThreadSVC: threadSVC, JournalRecoveryRepository: repo},
+		RunLeaseRecoveryProcessorOptions{Limit: 10, Clock: clock},
+	)
+
+	result, err := processor.RecoverExpiredRunLeases(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, RecoveredRuns: 1}, result)
+	require.NotNil(t, threadSVC.createRunBundleReq)
+	require.Nil(t, threadSVC.reconcileExpiredRunLeaseReq)
+	require.Nil(t, threadSVC.createRunBundleReq.JournalEnrollment.Recovery)
+	ordinary := threadSVC.createRunBundleReq.JournalEnrollment.OrdinaryLeaseRecovery
+	require.NotNil(t, ordinary)
+	require.Equal(t, int64(99), ordinary.JournalRunID)
+	require.Equal(t, "att_100", ordinary.SourceAttemptID)
+	require.Equal(t, int64(502), ordinary.SourceCheckpointID)
+	require.NotNil(t, ordinary.SourceCheckpoint)
+	require.Equal(t, "checkpoint-502", ordinary.SourceCheckpoint.RuntimeKey)
+	require.JSONEq(t, threadSVC.checkpoints[0].ChannelValues, ordinary.SourceCheckpoint.ChannelValues)
+	require.Equal(t, "run-recovery:99:200:3", ordinary.IdempotencyKey)
+}
+
+func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
+	source := expiredRecoveryTestRun(200)
+	threadSVC := &recordingThreadService{
+		expiredRunLeases: []*entity.Run{source},
+		checkpoints: []*entity.Checkpoint{{
+			ID: 502, ThreadID: source.ThreadID, RunID: source.ID,
+			CheckpointNS: "eino.adk", RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey: "checkpoint-502", EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, ADKCheckpointEnvelope{
+				EnvelopeVersion: 1, Runtime: string(RuntimeModeEinoADK),
+				RuntimeVersion: adkCheckpointRuntimeVersion, RuntimeKey: "checkpoint-502",
+				MessageType: adkCheckpointMessageType, Checkpoint: []byte{1, 2, 3},
+				RunRevision: 7, CreatedAt: 2_800,
+			}),
+			Metadata: `{"runtime":"eino_adk"}`, CreatedAt: 2_800,
+		}},
+		createdRun: &entity.Run{
+			ID: 1_000, ThreadID: source.ThreadID, SpaceID: source.SpaceID,
+			CreatorID: source.CreatorID, RunKind: entity.RunKindTask,
+			Status: entity.RunStatusQueued,
+		},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 1_000, ThreadID: source.ThreadID, SpaceID: source.SpaceID,
+				CreatorID: source.CreatorID, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusQueued,
+			},
+			Attempt: &entity.RunAttempt{
+				ID: 1_001, ThreadID: source.ThreadID, JournalRunID: source.ID,
+				ExecutionRunID: 1_000, AttemptID: "att_1001", Ordinal: 1,
+				Status:          entity.RunAttemptStatusPending,
+				ProjectionState: entity.JournalProjectionStateDisabled,
+			},
+			Created: true,
+		},
+		reconciledRunLease: source,
+	}
+	processor := NewRunLeaseRecoveryProcessor(
+		&ApplicationService{ThreadSVC: threadSVC},
+		RunLeaseRecoveryProcessorOptions{Limit: 10, Clock: clock},
+	)
+
+	result, err := processor.RecoverExpiredRunLeases(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, RecoveredRuns: 1}, result)
+	require.Nil(t, threadSVC.createRunReq)
+	require.Nil(t, threadSVC.reconcileExpiredRunLeaseReq)
+	require.NotNil(t, threadSVC.createRunBundleReq)
+	require.True(t, threadSVC.createRunBundleReq.EnrollJournal)
+	require.NotNil(t, threadSVC.createRunBundleReq.JournalEnrollment)
+	ordinary := threadSVC.createRunBundleReq.JournalEnrollment.OrdinaryLeaseRecovery
+	require.NotNil(t, ordinary)
+	require.Equal(t, source.ID, ordinary.JournalRunID)
+	require.Equal(t, int64(502), ordinary.SourceCheckpointID)
+	require.NotNil(t, ordinary.SourceCheckpoint)
+	require.Equal(t, "checkpoint-502", ordinary.SourceCheckpoint.RuntimeKey)
+	require.JSONEq(t, threadSVC.checkpoints[0].ChannelValues, ordinary.SourceCheckpoint.ChannelValues)
+	require.Empty(t, ordinary.SourceAttemptID)
+	require.NotNil(t, ordinary.ExpiredLease)
+	require.Equal(t, source.ID, ordinary.ExpiredLease.RunID)
+	require.Equal(t, source.LeaseToken, ordinary.ExpiredLease.LeaseToken)
 }
 
 func TestRunLeaseRecoveryProcessorAbandonsExpiredRunWithoutCheckpoint(t *testing.T) {

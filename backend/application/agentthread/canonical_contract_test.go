@@ -122,7 +122,6 @@ func TestCanonicalCreateTaskThreadDeferredValidatesBeforeCreatingOnlyThread(t *t
 		ThreadSource:   ThreadSourceAPI,
 		Config: `{
 			"runtime":"eino_adk",
-			"mode":"pro",
 			"skills":{"enabled":true,"allowed_skills":["skill-creator"]}
 		}`,
 	})

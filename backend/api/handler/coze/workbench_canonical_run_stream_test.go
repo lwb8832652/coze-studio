@@ -46,6 +46,36 @@ const canonicalRunStreamRequestBody = `{
 	"on_disconnect":"continue"
 }`
 
+func TestStreamCanonicalRunTypedV2RejectsBeforeThreadAuthorizationAndSSE(t *testing.T) {
+	installAgentThreadTestService(t)
+	authorizer := &countingCanonicalRunThreadAuthorizer{}
+	appagentthread.SVC.ThreadAuthorizer = authorizer
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	invalid := canonicalTypedV2Replace(
+		canonicalTypedRunTurnV2("typed invalid stream"),
+		`"message":"typed invalid stream","uploaded_files":[]`,
+		`"message":"typed invalid stream","uploaded_files":[],"future":"do-not-echo"`,
+	)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunStreamTestServer(20*time.Millisecond),
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		canonicalTypedRunRequestV2(invalid, `,"stream_mode":["events"]`),
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_sdk_field", public.Code)
+	require.Contains(t, public.Detail, "submission_v2.input.future")
+	require.NotContains(t, public.Detail, "do-not-echo")
+	require.Zero(t, authorizer.calls)
+	require.Empty(t, writers.writers)
+	require.NotEqual(t, "text/event-stream; charset=utf-8", response.Result().Header.Get("Content-Type"))
+}
+
 func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) {
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
@@ -195,27 +225,54 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 	require.NotContains(t, replayed, "provider_body")
 }
 
-func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
+func TestStreamCanonicalRunRejectsExecutionControlsBeforeSSE(t *testing.T) {
+	installAgentThreadTestService(t)
+	previousWriterFactory := canonicalRunStreamWriterFactory
+	writerStarted := false
+	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
+		writerStarted = true
+		return canonicalRunStreamWriterHandle{writer: &callbackCanonicalRunStreamWriter{}}
+	}
+	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunStreamTestServer(20*time.Millisecond),
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		`{"mode":"ultra"}`,
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_execution_control", public.Code)
+	require.False(t, writerStarted)
+	require.Empty(t, canonicalRunsForThread(t, 1))
+}
+
+func TestStreamCanonicalRunParsesPathBeforeReadingSubmission(t *testing.T) {
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
-	h := server.Default()
-	h.Use(workbenchSessionMiddlewareForTest(999))
+	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
 	h.POST("/api/workbench/threads/:thread_id/runs/stream", StreamCanonicalRun)
 
 	response := performCanonicalRunJSONRequest(
 		t,
 		h,
 		http.MethodPost,
-		"/api/workbench/threads/1/runs/stream",
+		"/api/workbench/threads/not-a-thread/runs/stream",
 		`{`,
-		ut.Header{Key: canonicalSpaceIDHeader, Value: "1"},
 	)
 
-	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "invalid_path_parameter", public.Code)
 	require.Empty(t, writers.writers)
 }
 
-func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *testing.T) {
+func TestStreamCanonicalRunParsesSubmissionBeforeApplicationThreadAuthorization(t *testing.T) {
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalAgentThreadTestServerForUserAndSpace(2, 1001)
@@ -229,10 +286,10 @@ func TestStreamCanonicalRunAuthorizesDeclaredSpaceBeforeReadingSubmission(t *tes
 		`{`,
 	)
 
-	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Result().Body())
 	var public canonicalError
 	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
-	require.Equal(t, "resource_not_found", public.Code)
+	require.Equal(t, "invalid_json", public.Code)
 	require.Empty(t, writers.writers)
 }
 
@@ -790,6 +847,70 @@ func TestCanonicalJournalStreamAcceptsRecoveryExecutionRunEvents(t *testing.T) {
 	require.NotContains(t, body, "JOURNAL_EVENT_GAP")
 }
 
+func TestCanonicalHumanResumeJournalStreamEndsSourceAndContinuesSuccessor(t *testing.T) {
+	run := &appagentthread.RunSummary{ThreadID: 1, RunID: 10, CreatedAt: 1_000}
+	sourceEndedAt := int64(2_000)
+	sourceTerminalEventID := int64(502)
+	source := canonicalJournalStreamAttempt(run, "attempt-source", domainentity.RunAttemptStatusInterrupted)
+	source.NextSequence = 3
+	source.EndedAt = &sourceEndedAt
+	source.TerminalEventID = &sourceTerminalEventID
+	target := canonicalJournalStreamAttempt(run, "attempt-target", domainentity.RunAttemptStatusPending)
+	target.ExecutionRunID = 20
+	target.Ordinal = 2
+	target.NextSequence = 1
+	active := uint8(1)
+	target.ActiveSlot = &active
+	sourceAttemptID := source.AttemptID
+	sourceCheckpointID := int64(7001)
+	recoveryKey := "human-resume:source:response-1"
+	target.SourceAttemptID = &sourceAttemptID
+	target.SourceCheckpointID = &sourceCheckpointID
+	target.RecoveryIdempotencyKey = &recoveryKey
+	sourceWriter := &recordingTaskThreadRunEventStreamWriter{}
+
+	streamCanonicalJournalEvents(context.Background(), sourceWriter, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{source, target}, SelectedAttempt: source,
+		Events: []*domainentity.JournalEvent{{
+			ID: 502, ThreadID: 1, RunID: 10, JournalRunID: 10,
+			AttemptID: source.AttemptID, Sequence: 2, EventType: "run.lifecycle",
+			Status:        string(domainentity.RunAttemptStatusInterrupted),
+			Payload:       `{"type":"terminal","data":{"status":"interrupted"}}`,
+			SchemaVersion: domainentity.JournalSchemaVersion, PayloadVersion: domainentity.JournalPayloadVersion,
+			Visibility: domainentity.JournalVisibilityUser, CreatedAt: sourceEndedAt,
+		}},
+		LatestSequence: 2, JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: source.AttemptID, AfterSequence: 1,
+	})
+
+	sourceBody := sourceWriter.String()
+	require.Contains(t, sourceBody, `"status":"interrupted"`)
+	require.Equal(t, 1, strings.Count(sourceBody, "event: end\n"))
+	sourceEnds := canonicalRunStreamPayloads(t, sourceBody, canonicalRunStreamEventEnd)
+	require.Len(t, sourceEnds, 1)
+	require.Equal(t, "attempt-source", sourceEnds[0].(map[string]any)["attempt_id"])
+	require.Equal(t, "interrupted", sourceEnds[0].(map[string]any)["status"])
+
+	targetWriter := &recordingTaskThreadRunEventStreamWriter{}
+	streamCanonicalJournalEvents(context.Background(), targetWriter, run, &appagentthread.JournalBootstrapResult{
+		Attempts: []*domainentity.RunAttempt{source, target}, SelectedAttempt: target,
+		JournalEnabled: true, SnapshotsEnabled: true,
+	}, canonicalJournalStreamConfig{
+		ViewerID: 2, SpaceID: 1, AttemptID: target.AttemptID,
+		PollInterval: 20 * time.Millisecond, HeartbeatInterval: 20 * time.Millisecond,
+		Timeout: time.Millisecond,
+	})
+
+	targetBody := targetWriter.String()
+	targetMetadata := canonicalRunStreamPayloads(t, targetBody, canonicalRunStreamEventMetadata)
+	require.Len(t, targetMetadata, 1)
+	require.Equal(t, "attempt-target", targetMetadata[0].(map[string]any)["attempt_id"])
+	require.NotContains(t, targetBody, "event: end\n")
+	require.NotContains(t, targetBody, "journal.attempt.interrupted")
+	require.NotContains(t, targetBody, recoveryKey)
+}
+
 func TestCanonicalJournalStreamResumesFromResolvedEventIDSequence(t *testing.T) {
 	run := &appagentthread.RunSummary{ThreadID: 1, RunID: 10, CreatedAt: 1_000}
 	attempt := &domainentity.RunAttempt{
@@ -1100,6 +1221,10 @@ type revokedCanonicalJournalThreadAuthorizer struct {
 	calls int
 }
 
+type countingCanonicalRunThreadAuthorizer struct {
+	calls int
+}
+
 type revokedCanonicalJournalWorkspaceAuthorizer struct {
 	calls int
 }
@@ -1110,6 +1235,14 @@ func (a *revokedCanonicalJournalThreadAuthorizer) AuthorizeThreadAccess(
 ) error {
 	a.calls++
 	return appagentthread.ErrThreadAccessDenied
+}
+
+func (a *countingCanonicalRunThreadAuthorizer) AuthorizeThreadAccess(
+	context.Context,
+	appagentthread.ThreadAccessRequest,
+) error {
+	a.calls++
+	return nil
 }
 
 func (a *revokedCanonicalJournalWorkspaceAuthorizer) AuthorizeWorkspaceAccess(

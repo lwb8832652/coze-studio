@@ -341,8 +341,18 @@ const canonicalStreamMode = (
   return parsed.map(mode => (mode as string).trim());
 };
 
-const canonicalRunCozeExtension = (
+const isTypedRunRequest = (
   request: CreateWorkbenchRunRequest,
+): request is Extract<CreateWorkbenchRunRequest, { submission_v2: unknown }> =>
+  request.submission_v2 !== undefined;
+
+const isTypedResumeRequest = (
+  request: ResumeWorkbenchRunRequest,
+): request is Extract<ResumeWorkbenchRunRequest, { response_v2: unknown }> =>
+  request.response_v2 !== undefined;
+
+const canonicalRunCozeExtension = (
+  request: Extract<CreateWorkbenchRunRequest, { input: string }>,
   messageMetadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined => {
   const attemptKind = optionalTrimmed(request.attempt_kind) ?? 'turn';
@@ -386,7 +396,7 @@ const canonicalRunCozeExtension = (
 };
 
 const canonicalResumeResponse = (
-  response: ResumeWorkbenchRunRequest['response'],
+  response: Exclude<ResumeWorkbenchRunRequest['response'], undefined>,
 ) => {
   const schema = asNonEmptyRequestString(response.schema, 'response.schema');
   const interactionID = asNonEmptyRequestString(
@@ -1205,24 +1215,48 @@ export class CanonicalThreadCoreClient
       request.space_id,
       'space_id',
     );
-    unsupportedThreadCreateOptions(request);
-    const assistantID = requestAssistantID(request.assistant_id);
-    const config = parseCanonicalWriteJSONObject(request.config, 'config');
-    const context = parseCanonicalWriteJSONObject(request.context, 'context');
-    const metadata = parseCanonicalWriteJSONObject(
-      request.metadata,
-      'metadata',
-    );
-
-    const message = asNonEmptyRequestString(request.message, 'message');
     const title = optionalTrimmed(request.title);
-    const initialRun = {
-      assistant_id: assistantID,
-      input: { messages: [{ role: 'user', content: message }] },
-      ...(config === undefined ? {} : { config }),
-      ...(context === undefined ? {} : { context }),
-      ...(metadata === undefined ? {} : { metadata }),
-    };
+    const body =
+      'initial_submission_v2' in request && request.initial_submission_v2
+        ? { initial_submission_v2: request.initial_submission_v2 }
+        : 'deferred_initial_submission_v2' in request &&
+            request.deferred_initial_submission_v2
+          ? {
+              deferred_initial_submission_v2:
+                request.deferred_initial_submission_v2,
+            }
+          : (() => {
+              unsupportedThreadCreateOptions(request);
+              const assistantID = requestAssistantID(request.assistant_id);
+              const config = parseCanonicalWriteJSONObject(
+                request.config,
+                'config',
+              );
+              const context = parseCanonicalWriteJSONObject(
+                request.context,
+                'context',
+              );
+              const metadata = parseCanonicalWriteJSONObject(
+                request.metadata,
+                'metadata',
+              );
+              const message = asNonEmptyRequestString(
+                request.message,
+                'message',
+              );
+              const initialRun = {
+                assistant_id: assistantID,
+                input: { messages: [{ role: 'user', content: message }] },
+                ...(config === undefined ? {} : { config }),
+                ...(context === undefined ? {} : { context }),
+                ...(metadata === undefined ? {} : { metadata }),
+              };
+              return {
+                coze: request.defer_start
+                  ? { deferred_initial_run: initialRun }
+                  : { initial_run: initialRun },
+              };
+            })();
     const result = await fetchCanonicalJSON('/api/workbench/threads', {
       fetch: this.fetcher,
       method: 'POST',
@@ -1232,9 +1266,7 @@ export class CanonicalThreadCoreClient
           ...(title === undefined ? {} : { title }),
           source: 'web',
         },
-        coze: request.defer_start
-          ? { deferred_initial_run: initialRun }
-          : { initial_run: initialRun },
+        ...body,
       },
       idempotencyKey: request.idempotency_key,
       signal: request.signal,
@@ -1369,6 +1401,41 @@ export class CanonicalThreadCoreClient
       'thread_id',
     );
     const assistantID = requestAssistantID(request.assistant_id);
+    const streamMode = canonicalStreamMode(request.stream_mode);
+    if (isTypedRunRequest(request)) {
+      const result = await fetchCanonicalJSON(
+        `/api/workbench/threads/${threadID}/runs`,
+        {
+          fetch: this.fetcher,
+          method: 'POST',
+          spaceId: spaceID,
+          json: {
+            assistant_id: assistantID,
+            submission_v2: request.submission_v2,
+            ...(streamMode === undefined ? {} : { stream_mode: streamMode }),
+            ...(optionalTrimmed(request.multitask_strategy) === undefined
+              ? {}
+              : {
+                  multitask_strategy: optionalTrimmed(
+                    request.multitask_strategy,
+                  ),
+                }),
+            ...(optionalTrimmed(request.on_disconnect) === undefined
+              ? {}
+              : { on_disconnect: optionalTrimmed(request.on_disconnect) }),
+            ...(optionalTrimmed(request.durability) === undefined
+              ? {}
+              : { durability: optionalTrimmed(request.durability) }),
+          },
+          idempotencyKey: request.idempotency_key,
+          signal: request.signal,
+        },
+      );
+      return adaptCanonicalRunCreation(requiredBody(result.body), {
+        spaceId: spaceID,
+        threadId: threadID,
+      });
+    }
     const input = parseRequiredCanonicalWriteJSONObject(request.input, 'input');
     const command = parseCanonicalWriteJSONObject(request.command, 'command');
     const config = parseCanonicalWriteJSONObject(request.config, 'config');
@@ -1386,7 +1453,6 @@ export class CanonicalThreadCoreClient
       request.message_content,
       'message_content',
     );
-    const streamMode = canonicalStreamMode(request.stream_mode);
     const body = {
       assistant_id: assistantID,
       input: {
@@ -1498,10 +1564,12 @@ export class CanonicalThreadCoreClient
         fetch: this.fetcher,
         method: 'POST',
         spaceId: spaceID,
-        json: {
-          interrupt_id: interruptID,
-          response: canonicalResumeResponse(request.response),
-        },
+        json: isTypedResumeRequest(request)
+          ? { interrupt_id: interruptID, response_v2: request.response_v2 }
+          : {
+              interrupt_id: interruptID,
+              response: canonicalResumeResponse(request.response),
+            },
         idempotencyKey: request.idempotency_key,
         signal: request.signal,
       },

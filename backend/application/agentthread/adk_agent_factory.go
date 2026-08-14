@@ -32,6 +32,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	arkruntime "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"google.golang.org/genai"
 )
@@ -204,9 +205,48 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig(run.Config)
+	runtimeConfig, err := parseADKRuntimeConfig(run.Config)
 	if err != nil {
 		return nil, err
+	}
+	adaptiveSubagentPolicy := applyADKChildRuntimeSafetyPolicy(run, &runtimeConfig)
+	directDecision := false
+	if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {
+		ctx = withoutAdaptiveBootstrapFacts(ctx)
+		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
+			return nil, fmt.Errorf("validate adaptive bootstrap plan capability: %w", err)
+		}
+		expectedPlanScopeRunID := run.PlanScopeRunID
+		if expectedPlanScopeRunID == 0 {
+			expectedPlanScopeRunID = run.RunID
+		}
+		if run.ExecutionGeneration == 0 || facts.Decision.DecisionRevision != 1 ||
+			facts.Decision.ExecutionRunID != run.RunID ||
+			facts.Decision.ExecutionGeneration != run.ExecutionGeneration ||
+			(facts.Decision.PlanScopeRunID != nil && *facts.Decision.PlanScopeRunID != expectedPlanScopeRunID) {
+			return nil, fmt.Errorf("adaptive bootstrap plan capability does not match the current run")
+		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, err
+		}
+		directDecision = facts.Decision.Decision == domainentity.ExecutionDecisionDirect
+		runtimeConfig.PlanModeExplicit = true
+		runtimeConfig.IsPlanMode = facts.Admission.Capabilities.PlanAllowed &&
+			facts.Decision.Decision == domainentity.ExecutionDecisionExecute &&
+			facts.Decision.ExecutionShape == domainentity.ExecutionShapeMultiStep
+		runtimeConfig.SubagentExplicit = true
+		runtimeConfig.SubagentEnabled = !directDecision && facts.Admission.Capabilities.SubagentsAllowed
+		adaptiveSubagentPolicy = true
+		if !runtimeConfig.SubagentEnabled {
+			runtimeConfig.MaxConcurrentSubagents = 0
+		}
+		runtimeConfig.ThinkingExplicit = true
+		runtimeConfig.ThinkingEnabled = false
+		runtimeConfig.ReasoningEffortExplicit = true
+		runtimeConfig.ReasoningEffort = ""
+	}
+	if applyADKChildRuntimeSafetyPolicy(run, &runtimeConfig) {
+		adaptiveSubagentPolicy = true
 	}
 	overlay := ADKLeadPromptOverlay{}
 	if f.promptOverlayProvider != nil {
@@ -284,9 +324,13 @@ func (f *ApplicationADKAgentFactory) Build(
 	var tools []tool.BaseTool
 	var dynamicTools []tool.BaseTool
 	var subagentToolNames []string
-	if f.toolProvider != nil {
+	if f.toolProvider != nil && !directDecision {
+		toolCtx := ctx
+		if adaptiveSubagentPolicy {
+			toolCtx = withAdaptiveSubagentsAllowed(ctx, runtimeConfig.SubagentEnabled)
+		}
 		if toolSetProvider, ok := f.toolProvider.(ADKToolSetProvider); ok {
-			toolSet, resolveErr := toolSetProvider.ResolveToolSet(ctx, run)
+			toolSet, resolveErr := toolSetProvider.ResolveToolSet(toolCtx, run)
 			if resolveErr != nil {
 				return nil, fmt.Errorf("resolve eino adk tool set: %w", resolveErr)
 			}
@@ -297,12 +341,12 @@ func (f *ApplicationADKAgentFactory) Build(
 				toolSet.SubagentToolNames...,
 			)
 		} else {
-			tools, err = f.toolProvider.ResolveTools(ctx, run)
+			tools, err = f.toolProvider.ResolveTools(toolCtx, run)
 			if err != nil {
 				return nil, fmt.Errorf("resolve eino adk tools: %w", err)
 			}
 			if dynamicProvider, ok := f.toolProvider.(ADKDynamicToolProvider); ok {
-				dynamicTools, err = dynamicProvider.ResolveDynamicTools(ctx, run)
+				dynamicTools, err = dynamicProvider.ResolveDynamicTools(toolCtx, run)
 				if err != nil {
 					return nil, fmt.Errorf("resolve eino adk dynamic tools: %w", err)
 				}
@@ -326,17 +370,28 @@ func (f *ApplicationADKAgentFactory) Build(
 	bundle := ADKMiddlewareBundle{}
 	if f.middlewares != nil {
 		bundle, err = f.middlewares.Build(ctx, ADKMiddlewareBuildInput{
-			Run:               run,
-			Model:             chatModel,
-			StaticTools:       tools,
-			DynamicTools:      dynamicTools,
-			SubagentToolNames: subagentToolNames,
-			ModelCapabilities: modelCapabilities,
-			RuntimeConfig:     runtimeConfig,
+			Run:                 run,
+			Model:               chatModel,
+			DisableToolExposure: directDecision,
+			StaticTools:         tools,
+			DynamicTools:        dynamicTools,
+			SubagentToolNames:   subagentToolNames,
+			ModelCapabilities:   modelCapabilities,
+			RuntimeConfig:       runtimeConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("build eino adk middlewares: %w", err)
 		}
+	}
+	if directDecision {
+		bundle.Handlers = append(
+			[]adk.ChatModelAgentMiddleware{newADKDirectDecisionGuard()},
+			bundle.Handlers...,
+		)
+		bundle.HandlerNames = append(
+			[]ADKMiddlewareName{adkMiddlewareDirectDecisionGuard},
+			bundle.HandlerNames...,
+		)
 	}
 
 	agentName := strings.TrimSpace(cfg.AgentName)
@@ -375,6 +430,26 @@ func (f *ApplicationADKAgentFactory) Build(
 	}
 
 	return agent, nil
+}
+
+func applyADKChildRuntimeSafetyPolicy(
+	run *RunSummary,
+	runtimeConfig *DeerFlowRuntimeConfig,
+) bool {
+	if run == nil || runtimeConfig == nil || run.ParentRunID <= 0 || run.RunKind != RunKindSubagent {
+		return false
+	}
+	runtimeConfig.PlanModeExplicit = true
+	runtimeConfig.IsPlanMode = false
+	runtimeConfig.SubagentExplicit = true
+	runtimeConfig.SubagentEnabled = false
+	runtimeConfig.SubagentMaximumExplicit = true
+	runtimeConfig.MaxConcurrentSubagents = 0
+	runtimeConfig.ThinkingExplicit = true
+	runtimeConfig.ThinkingEnabled = false
+	runtimeConfig.ReasoningEffortExplicit = true
+	runtimeConfig.ReasoningEffort = ""
+	return true
 }
 
 func prepareADKChatModelForRun(

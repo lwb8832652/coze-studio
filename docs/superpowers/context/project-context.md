@@ -118,12 +118,198 @@ TLS 由宝塔独立终止。
 
 ## Workbench Canonical API
 
-`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 47 条 always-on
+`/api/workbench/threads/**` 是 Workbench UI 唯一公共 HTTP 合同，共 52 个
 Thread、Run、Message、Upload、Artifact、Memory、Token Usage、Guardrail 和 MCP
-Runtime Audit 路由。前端页面服务统一委托给进程内唯一
+Runtime Audit method/path pair；另有 2 个 `/api/workbench/journal/settings`
+method/path pair，always-on canonical Workbench 路由合计 54 条。前端页面服务统一委托给进程内唯一
 `canonicalThreadClient`；不存在运行时 client selector、canonical 路由开关或旧 HTTP
 fallback。session principal 和 path resource 决定身份与资源归属，workspace 请求
 使用 `X-Coze-Space-ID` 并由服务端再次授权。
+
+P1M-A 已冻结 canonical 外部执行控制：CreateThread、Create/Wait/Stream Run、Resume
+和 Subagent Retry 在 JSON binder 与持久化前，按结构化路径拒绝
+`requested_policy`、`mode`、`thinking_enabled`、`reasoning_effort`、
+`is_plan_mode`、`subagent_enabled` 和 `max_concurrent_subagents`。第一方前端不再写入
+这些字段，并暂时隐藏“模型推理”控件；`runtime=eino_adk`、模型、Skill、MCP、知识库、
+数据库和资源配置仍是合法输入。该冻结本身不代表后端 consumer 或恢复继承已经退休；后续
+P1M-C3h2d 已另行完成 production ADK 的 `requested_policy`/`mode` consumer 退休。
+
+P1M-C3i1 已交付 canonical Typed Submission V2 的封闭 IDL 与 Go/TypeScript 生成合同，
+并让服务端 Create Thread、Create/Wait/Stream Run 与 Resume 接受
+`initial_submission_v2`、`deferred_initial_submission_v2`、`submission_v2` 和
+`response_v2`。handler 在任何 application mutation 前完成 raw JSON 重复键、字段、presence、
+`null`、预算、union 和 V1/V2 混用校验，再把 V2 确定性映射到既有 application command 与
+idempotency fingerprint；V1 继续可读。P1M-C3i2 已把五个第一方 writer 切到该合同：Workbench
+无附件 atomic create、带附件 deferred create + turn、TaskDetail follow-up、top-level retry 与
+Human Resume 分别只写 `initial_submission_v2`/`deferred_initial_submission_v2`、
+`submission_v2` 或 `response_v2`，并继续复用唯一 canonical client、upload-before-run 顺序及
+既有语义幂等 attempt。服务端 V1 reader 和第三方兼容调用仍保留。C3i2 自身不包含 Human Attempt
+rollover；后续 C3h2b 已完成 enrolled Human Resume 的原子 rollover 与 full replay，C3h2c 又补齐
+enrolled Resume 的 legacy exact-miss fallback。dev disposable MySQL 已完成 Human rollover、typed
+recovery race 与 legacy recovery 门禁；production ADK 的旧 mode/policy consumer 也已退休。
+Application rolling Plan writer 后续也已接入 atomic checkpoint boundary；其独立 dev MySQL rolling
+gate 仍 `NOT_VERIFIED`。本轮 ordinary MVP 又让 fresh 顶层 Eino Run 不再以 Journal projection gate
+作为 Attempt enrollment gate，并闭合 disabled/无 Attempt 的 lease recovery、bare Resume bootstrap 与
+bare rolling Plan boundary；ordinary 的真实 dev MySQL 门禁仍 `NOT_VERIFIED`。随后 P1D 已用
+`ModelAdaptiveDecisionProducer` 替换 production gate-on 的 deterministic producer；真实模型调用、
+用量计费与 durable claim/result operation 已接入。随后 runtime consumer 已让 durable `direct` 继续走
+同一 ADK 文本生成链但完全不暴露工具，并让 `clarification` 在 runtime dependency 前 fail closed；
+`coze.adaptive_execution_public.v1` 的安全公共投影和 TaskDetail 顶层最新 Run 四态标签也已接入。
+Human Interaction clarification consumer、holdout、progress/verification 与其它退出门仍未闭合，因此
+P1D 仍在进行中，不能标记 PASS。
+
+P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
+`CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
+closed；因此 canonical、Scheduled Task、飞书和其它 public Application caller 共享同一
+防线。package-private ADK server-owned child seam 仍可生成历史控制字段，Human interaction、
+Subagent、Journal 与 lease recovery 仍原样继承已持久化 Config/Context。该兼容边界是有意的，
+P1M-B1 不等于 mode consumer 退休或完整 P1M PASS。
+
+P1M-C1 已定义纯 Go、无 product mode 的 `AdaptiveAdmissionSnapshot`、
+`ExecutionDecision` 及 fail-closed validators；`BaselineDecisionProducer` 仅在 gate-off
+时确定性地产生固定 `execute/multi_step` decision，gate-on 明确返回 producer unavailable。P1M-C2a
+已在纯 domain `backend/domain/agentthread/adaptivecontract` 实现 strict canonical
+admission/decision codec 与 domain validation，application 保持 C1 validator wrapper 和 sentinel
+alias，兼容既有 `errors.Is` 合同。P1M-C2b 已在 private `AdaptiveExecutionRepository` 实现 durable
+bootstrap 的 exact-tuple commit/readback，并隔离 `adaptive.admission`、`adaptive.decision` 与
+`workbench_control` control checkpoint，通用 writer/reader 不可写入或枚举这些保留事实。这仍是
+P1M-B1 之后的内部合同边界。P1M-C3a 已把 gate-off coordinator 接入已 enrolled、fresh、顶层
+Eino ADK `Execute`：输入解析成功后先读 durable replay，首次才提交固定 baseline
+`execute/multi_step`，随后才允许创建 checkpoint store 与 Agent runtime；明确 `task` 和既有空
+`RunKind` 顶层兼容形式在有效 Execute 身份及启动依赖已满足时，未 enrolled 保持 no-op。logical
+Journal root 可以与当前 execution Run 不同。P1M-C3b 又把该 durable/replayed admission 与 decision
+作为这一条 fresh Execute 链的 Plan capability 权威：Factory 在创建提示词和 middleware 前只覆盖
+本地 Plan capability，因此 Todo prompt 与 Plan backend 同步受控；无 facts 的未接入路径保留历史
+兼容，无效或不匹配 facts fail closed。P1M-C3c 又以同一 admission 的
+`SubagentsAllowed=false` 同步关闭本地 Subagent prompt、limit middleware 与标准 Subagent tool
+provider；provider 在解析 definition 或构建 child Agent 前返回 base tools，且不把私有能力信号传给
+base provider。P1M-C3d 再把同一 fresh Execute 的旧 `mode`/`thinking_enabled`/`reasoning_effort`
+影响中和为本地安全请求（thinking false、reasoning effort 空），使 primary/failover model option 与
+provider-capability middleware 不再消费这些旧控制；持久化 Config 不变，也未引入新推理 policy。
+P1M-C3e 按交付优先只退休 Journal 的两个旧 mode consumer：enrollment 仅允许明确
+`runtime=eino_adk` 的 fresh 顶层 task；后续 ordinary MVP 已把 Attempt enrollment 与 projection
+rollout/kill-switch 解耦，projection gate 只决定 healthy/disabled。completed 完整性指标
+只以真实 `Enrolled && Completed` 为分母，不再读取 `Mode`。本切片未新增 metrics emitter，也未定义
+新的 server inference policy。P1M-C3f 又把 public `CreateTaskThread`、`CreateRun` 与 top-level retry
+的规范化结果收口为新写合同：server policy 仍先完成校验与合法 config/context 合并，但持久化前只从
+顶层删除七个退休执行控制字段；`runtime=eino_adk`、模型、资源、Token Usage 与其它合法 opaque 配置
+继续保留。P1M-C3g 再收口 child 新写：public `CreateRun` 拒绝 caller-owned child shape，只有
+package-private trusted child seam 可以持久化 `ParentRunID > 0 && RunKind=subagent` 的 child；该新写
+Config 也不再包含七个退休字段。Factory 对这一 exact durable child identity 在本地强制关闭 Plan、
+Subagent、thinking 与 reasoning，并在 adaptive facts 投影后再次覆盖，因此旧历史 child Config 也保持
+更安全的兼容行为。后续 C3h2d 已让 builtin/single-agent 内存 child writer 停止写入
+`requested_policy`/`mode`，并让 production ADK consumer 统一忽略这两个顶层旧键；C3g 本身仍不等于
+该退休完成。
+继续按交付优先收口的 P1M-C3h1a 只修改三条已有恢复链的目标 Run 新写：Human
+interaction resume、ordinary non-Journal lease recovery 和 Journal recovery 在写入新 Config
+前，仅删除来源 Config 顶层的七个退休字段；`runtime`、模型、资源、Token Usage、
+opaque 配置和 nested 同名业务字段全部保留。来源历史 Config 与 Context 原样保持，
+该 C3h1a 切片本身不新增 Attempt enrollment，不把这些新 Run 接入 `ADKExecutor.Resume`，也不实现
+legacy decoder、typed inheritance、IDL 或 UI；这些历史范围说明已由后续 C3h2a/C3h2b 的 enrolled
+Resume typed inheritance 与原子 Attempt rollover 取代。
+P1M-C3h2a 只连接 already-enrolled Journal recovery Resume：其 immediate source 必须具有
+有效 fresh/typed durable bootstrap，target 在 ADK `buildRuntime` 前提交或 exact replay gate-off
+`typed_inheritance` snapshot。该 C3h2a 切片当时不包含 Human rollover；后续 C3h2b 已补齐 enrolled
+Human Resume。后续 C3h2c 又把同一 enrolled Resume bootstrap 收口为 typed-first、legacy-exact-miss
+fallback：target exact replay 始终优先；只有 immediate source 的 durable bootstrap 精确返回
+`ErrAdaptiveExecutionBootstrapNotFound`，coordinator 才读取 source Run 并用隔离的
+`LegacyAdaptiveAdmissionDecoder` 严格解析已知 root legacy control。损坏、冲突或其它 repository
+错误不会降级到 Config；decoder 只产生携带 source Run/generation/config digest/decoder version 的
+保守 gate-off snapshot，baseline decision 仍由独立 producer 生成，并与 snapshot 在 target
+lease/generation fence 下原子提交或 exact replay。后续 hop 继承该 durable typed snapshot，不再次解码，
+来源 Config 不回写。后续 ordinary MVP 已补齐无 Attempt/disabled Attempt 的同类 bare/typed 恢复；
+该阶段 gate-on producer 仍 deferred，P1M 未 PASS；
+P1L 与 whole-Thread DELETE hard guard 不变。
+P1M-C3h2b 已用原子 Journal rollover 替换 C3h1b 临时门。canonical Human Resume 先以不可变
+authority 做 full aggregate replay；exact replay 即使 source 生命周期已变化仍返回同一 target，
+损坏或漂移 aggregate fail closed。首次写在同一 Thread-first 事务内追加 source resolved 与 physical
+`journal.attempt.interrupted` terminal、终结 source Attempt 并释放 active slot，再创建带 source
+Attempt/checkpoint lineage 的 pending target Attempt；该 lineage 继续由 C3h2a 在
+`ADKExecutor.Resume` 的 `buildRuntime` 前消费为 typed bootstrap。physical helper 不进入公共
+RunEvents、total/cursor 或 TaskDetail replay/live。phase-1 compatible-reader build `38ddbaf6f` 是首次
+写入 `interrupted` 后的回滚下限，producer activation 为 `212546bc`。后续 ordinary MVP 已补齐
+disabled/无 Attempt 的 lease rollover；该阶段 gate-on producer 仍 deferred。`3c241d012` 已在 dev disposable MySQL 通过
+same-key replay、same-key drift conflict 与 different-key single-winner 三项真实双连接验收；
+`5408b680` 又通过 typed recovery race 与 legacy decoder recovery 的真实 dev MySQL 门禁，覆盖
+原子单写、exact replay、漂移零增量和 durable readback。MySQL JSON 存储归一化在回读时经 typed
+codec 重新 canonicalize 后核对既有 digest/fingerprint，非 MySQL 严格 canonical 检查保持不变。
+P1M-C3h2d 已完成 production ADK 的旧 mode/policy consumer 退休：Factory、Middleware、标准
+Subagent tool provider 与 builtin definition 都经 production-only `parseADKRuntimeConfig` 解析，忽略
+顶层 `requested_policy`/`mode`；builtin/single-agent child writer 不再写入这两个键。显式
+`subagent_enabled`、Plan、thinking、reasoning 与 model/provider server-owned 配置继续保留，历史
+`ParseDeerFlowRuntimeConfig` 也只作为 legacy decoder/兼容 reader，不再驱动 production ADK 分支。
+`b8d1c21b0` 同时交付 same-recovery rolling Plan repository foundation：单一 recovery Attempt 可按
+B1→B2→B3 连续提交 Plan revision、item version、event sequence 与 checkpoint parent，历史 boundary
+exact replay 不改写当前状态，rolling checkpoint 可成为下一 Attempt 的严格恢复来源，漂移均 fail
+closed。后续 Application writer 已把 Eino Plan 工具写入 run-scoped overlay；工具调用完成后的
+`AfterToolCalls` 内部 cancel 形成真实 Eino v3 runtime checkpoint，`ADKCheckpointStore` 再通过同一个
+受 lease/generation/Attempt fence 的 transaction 原子提交 Plan high-watermark、PlanItem、追加 Event、
+checkpoint 与 Attempt cursor。首次 Plan 使用 0→1 初始化，后续支持 B1/B2/B3 rolling；当前 Attempt
+head 在分配新 ID 前 read-first replay，历史 exact replay 不改写当前状态。Plan 与 side-effect 同一
+checkpoint boundary 混用会在任何 durable write 前 fail closed。enrolled typed Resume 继承 durable
+source `PlanScopeRunID`，target checkpoint store/coordinator 沿用该 scope，恢复后的 Plan 写仍进入同一
+atomic boundary，不回落 legacy Plan writer。repository/application Go 测试已通过；本轮 dev disposable
+MySQL rolling gate 因缺少满足安全命名约束的隔离 DSN 保持 `NOT_VERIFIED`。
+本轮 ordinary MVP 进一步把 fresh 顶层 Eino Task 的 Attempt enrollment 固定为 always-on：projection
+gate 命中时写 healthy Attempt，gate off、依赖 nil 或判定错误时写 disabled Attempt 且强制关闭
+snapshot；非 Eino、child 与其它 Run 保持既有边界。expired lease 对 healthy/non-disabled Attempt
+继续走既有 Journal recovery，对 disabled Attempt 或无 Attempt source 则经 dedicated
+`CreateRunBundle` 分支，在单个 Thread-first transaction 中把 source Run 标记 `interrupted`、仅追加
+base terminal event，并创建 disabled target Attempt；已有 disabled source Attempt 同时 CAS
+`interrupted`、释放 active slot，bare source 则创建 ordinal 1 target。Application 传递完整 source
+checkpoint authority，repository 在事务锁内逐字段并按 JSON 语义重比对，阻断 pre-read 与 write
+之间的 TOCTOU 漂移。bare target 的 Resume bootstrap 先 exact replay target，miss 后跳过不存在的
+source durable bootstrap，只用 strict legacy decoder 读取 source Run，并继承 source
+`PlanScopeRunID`；bare Plan boundary 已支持首次 commit、read-first replay 与 rolling。ordinary 的真实
+dev MySQL gate 本轮未运行，明确保持 `NOT_VERIFIED`；rolling MySQL gate 也仍 `NOT_VERIFIED`。
+随后 P1D 新增独立于 Journal projection gate 的服务端 eligibility：
+`AGENT_THREAD_ADAPTIVE_EXECUTION_ENABLED` 与
+`AGENT_THREAD_ADAPTIVE_EXECUTION_ROLLOUT_BASIS_POINTS` 默认分别为 `false`/`0`，显式非法配置在
+fresh Run 首次 bootstrap 时 fail closed；rollout 只按 `SpaceID` 与冻结 feature key
+`workbench_adaptive_execution_mvp` 稳定分桶。fresh 路径继续 read-first，miss 后才解析 eligibility 并
+选择 baseline 或 adaptive producer；producer 只返回无 identity/revision/generation/plan scope/时间戳的
+候选，coordinator 补齐这些服务端 authority、通过 strict pair validation 后，才沿现有事务一次提交
+admission、decision 与 control checkpoint。fresh gate-on 首先投影 authoritative `Run.Input`：最多
+64 KiB、32 条，只保留 `user`/`assistant` content 与附件存在布尔值；unknown、`null`、非法 role、
+非 user 末条或超限均 fail closed。production adaptive producer 通过每次调用严格读取的
+`AGENT_THREAD_ADAPTIVE_DECISION_MODEL_ID` 选择显式正十进制 model ID，没有 builtin；composition root
+显式注入独立 30 秒 timeout。模型只能被 forced 到唯一 `adaptive_execution_decision` tool，并经封闭
+schema/EOF 与 admission validator 解析候选；总 provider Generate attempt 固定为 1，不做盲目重试。
+调用复用 `ThreadUsageCollector` 与既有 billing guard。
+
+模型调用前的窄 durable operation repository 在同一 fresh Attempt/lease/generation fence 下，以
+internal、unsequenced claim/result events 竞争 single winner；持久化 raw operation key/claim token 的
+digest 而非原值。completed replay 直接复用候选并跳过 provider/billing；claim-only、failed、漂移或
+未知状态均 fail closed。这不是 provider exactly-once claim：claim 后进程丢失时不会盲调 provider。
+bootstrap 仍以 target exact replay 为第一步；typed Resume 深拷贝 source durable decision candidate，
+补齐 target authority 后提交，绝不再次调用模型。相应真实 MySQL single-winner/exact replay 测试已
+存在，但本轮缺少安全 disposable DSN，运行结果保持 `NOT_VERIFIED`。
+
+durable `direct` 的 runtime consumer 复用同一 ADK text path，但不调用 ToolProvider，关闭
+Plan/Subagent，并让 Middleware 不构造 offload/plan backend 或 Skill、Filesystem、PlanTask、
+ToolSearch 四类工具注入；若模型仍返回任意 tool call，direct guard 会在工具执行前 fail closed。
+`single_step` 保留受控工具但 Plan/Subagent 关闭，`multi_step` 保留 Plan、关闭 Subagent；本轮不据此
+宣称 single-step 动作上限或 multi-step Plan-before-tool 的新顺序证据。`clarification` 在 Execute 与
+Resume 完成 durable bootstrap 后、任何 runtime store/factory/event 前返回
+`ErrAdaptiveDecisionConsumerUnavailable`；P2 Human Interaction consumer 尚未接入。typed Resume 沿用
+继承的 durable decision，并应用同一 consumer。
+
+公共读取新增与 writer contract 隔离的窄 `AdaptiveExecutionBootstrapByRunRepository`，按 execution
+Run 严格读取完整 admission/decision pair。只有显式公共查询做 hydration；canonical Get/List/Search
+同源投影到 optional `CanonicalRun.coze.adaptive_execution`，v1 只含 `schema`、`enabled`、`mode`、
+`safe_summary`、`clarification_question`。历史 Run 缺失 bootstrap 时省略该字段，partial/corrupt
+aggregate fail closed。前端 canonical adapter 严格校验 schema、四种 mode 和字段类型，TaskDetail 只在
+`enabled=true` 时展示最新 primary top-level Run 的“直接回答/单步执行/多步执行/需要澄清”标签。
+
+holdout、progress/verification、clarification Human consumer 和其它 P1D 退出门仍未交付，P1D 保持
+进行中且不得标记 PASS；P1M 状态不变。
+historical runtime compatibility 与 package-private server-owned subagent seam 仍存在。P1L
+继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
+
+整 Thread DELETE route 与 IDL 仍保留，但在 dependency、workspace 授权和 path ID 校验后
+统一返回 `503 thread_delete_temporarily_disabled`；handler 不读取 Thread 是否存在，也不调用
+`DeleteThreadIfIdle`。P1L 完成并在移除 guard 的同一候选 SHA 上重验前，底层 idle cascade
+仍不可从 canonical HTTP 到达；Artifact、Upload、Memory 等子资源删除不受影响。
 
 canonical handler 只负责严格 HTTP 合同、公开投影、错误映射和脱敏结构化日志，
 继续调用现有 `agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。

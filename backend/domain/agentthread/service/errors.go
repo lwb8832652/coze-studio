@@ -28,6 +28,7 @@ var (
 	ErrRunIdempotencyConflict       = repository.ErrRunIdempotencyConflict
 	ErrActiveRunExists              = repository.ErrActiveRunExists
 	ErrUnsupportedMultitaskStrategy = repository.ErrUnsupportedMultitaskStrategy
+	ErrHumanResumeRolloverConflict  = repository.ErrHumanResumeRolloverConflict
 )
 
 func InvalidArgumentErrorf(format string, args ...any) error {

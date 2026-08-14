@@ -59,7 +59,7 @@ func TestJournalMetricsDeduplicatesVisibleEventsAndUsesOnlyBoundedLabels(t *test
 	}
 }
 
-func TestJournalMetricsCompletenessDenominatorExcludesNonEnrolledAndNonJournalModes(t *testing.T) {
+func TestJournalMetricsCompletenessDenominatorUsesDurableEnrollmentWithoutRetiredMode(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	collector, err := NewJournalPrometheusMetricsCollector(registry)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestJournalMetricsCompletenessDenominatorExcludesNonEnrolledAndNonJournalMo
 			Version: "1.1", RolloutCohort: "treatment", TaskType: "complex",
 			ClientVersion: "1.1", ErrorCode: "none",
 		},
-		Enrolled: true, Mode: DeerFlowModePro, Completed: true,
+		Enrolled: true, Completed: true,
 		FinalSequenceContinuous: true,
 		ProjectionState:         domainentity.JournalProjectionStateHealthy,
 	}

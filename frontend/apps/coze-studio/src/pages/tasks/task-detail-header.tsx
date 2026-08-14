@@ -37,6 +37,13 @@ import { TaskArtifactsPanel } from './task-artifacts-panel';
 type TaskThreadArtifact = WorkbenchArtifact;
 type TaskThreadMessage = WorkbenchMessage;
 
+const adaptiveExecutionModeLabels = {
+  direct: '直接回答',
+  single_step: '单步执行',
+  multi_step: '多步执行',
+  clarification: '需要澄清',
+} as const;
+
 const MILLISECONDS_PER_SECOND = 1000;
 const MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000;
 const DATE_TIME_PART_LENGTH = 2;
@@ -119,6 +126,15 @@ export const TaskDetailHeader = ({
             >
               创建于 {createdAt.label}
             </time>
+          ) : null}
+          {task.adaptive_execution?.enabled ? (
+            <span
+              className="coze-prototype-task-adaptive-mode"
+              data-testid="adaptive-execution-mode"
+              title={task.adaptive_execution.safe_summary || undefined}
+            >
+              {adaptiveExecutionModeLabels[task.adaptive_execution.mode]}
+            </span>
           ) : null}
         </div>
       </div>

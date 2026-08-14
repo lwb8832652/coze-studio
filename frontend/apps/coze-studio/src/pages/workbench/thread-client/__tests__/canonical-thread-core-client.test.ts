@@ -34,6 +34,53 @@ const canonicalSpaceID = '9001';
 const canonicalThreadID = '1001';
 const canonicalRunID = '3001';
 const canonicalFileID = '6001';
+const canonicalTypedConfigV2 = {
+  runtime: 'eino_adk',
+  memory_retrieval: {
+    limit: 5,
+    candidate_limit: 20,
+    scopes: ['thread'],
+    min_confidence: 0.2,
+  },
+  skills: { enabled: true, visibility: 'deferred' },
+  mcp_tools: { enabled: true, visibility: 'deferred' },
+  web_tools: {
+    enabled: true,
+    visibility: 'deferred',
+    http: {
+      enabled: false,
+      allowed_hosts: [],
+      timeout_ms: 10000,
+      max_response_bytes: 262144,
+    },
+    search: { enabled: true, max_results: 5 },
+  },
+  token_usage: { enabled: true },
+};
+const canonicalTypedComposerV2 = {
+  allowed_skills: [],
+  enable_mcp: [],
+  enable_kbs: [],
+  enable_databases: [],
+  allowed_mcp_tools: [],
+};
+const canonicalInitialSubmissionV2 = {
+  schema_version: 'coze.workbench.initial_run_submission.v2',
+  input: { message: 'Prepare the typed launch brief', uploaded_files: [] },
+  composer: canonicalTypedComposerV2,
+  config: canonicalTypedConfigV2,
+};
+const canonicalTurnSubmissionV2 = {
+  schema_version: 'coze.workbench.run_submission.v2',
+  kind: 'turn',
+  input: {
+    message: 'Continue with typed input',
+    uploaded_files: [{ file_id: canonicalFileID }],
+  },
+  composer: canonicalTypedComposerV2,
+  config: canonicalTypedConfigV2,
+  metadata: { source: 'workbench_detail_followup' },
+};
 const forbiddenRoutePrefixes = [
   '/api/workbench/task_threads',
   '/api/threads',
@@ -517,6 +564,32 @@ describe('CanonicalThreadCoreClient request contract', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['initial_submission_v2', canonicalInitialSubmissionV2],
+    ['deferred_initial_submission_v2', canonicalInitialSubmissionV2],
+  ] as const)(
+    'sends exactly the selected typed Thread field: %s',
+    async (field, value) => {
+      const fetchMock = recordingFetch(
+        jsonResponse(
+          makeThreadCreationWire({ deferred: field.startsWith('deferred') }),
+        ),
+      );
+      const client = coreClient(fetchMock);
+
+      await client.createThread({
+        space_id: canonicalSpaceID,
+        title: 'Typed thread',
+        [field]: value,
+      });
+
+      expect(requestSnapshot(fetchMock).body).toEqual({
+        metadata: { title: 'Typed thread', source: 'web' },
+        [field]: value,
+      });
+    },
+  );
+
   it('gets one Thread and injects request space instead of response space', async () => {
     const responseThread = cloneThreadWire();
     responseThread.space_id = '9999';
@@ -782,6 +855,30 @@ describe('CanonicalThreadCoreClient request contract', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('sends one typed Run selector with only safe route options', async () => {
+    const fetchMock = recordingFetch(
+      jsonResponse(makeRunCreationWire('Continue with typed input')),
+    );
+    const client = coreClient(fetchMock);
+
+    await client.createRun({
+      space_id: canonicalSpaceID,
+      thread_id: canonicalThreadID,
+      assistant_id: 'agent',
+      submission_v2: canonicalTurnSubmissionV2,
+      stream_mode: '["updates"]',
+      on_disconnect: 'continue',
+      idempotency_key: 'typed-run-key',
+    });
+
+    expect(requestSnapshot(fetchMock).body).toEqual({
+      assistant_id: 'agent',
+      submission_v2: canonicalTurnSubmissionV2,
+      stream_mode: ['updates'],
+      on_disconnect: 'continue',
+    });
+  });
+
   it('gets and cancels the addressed Run on canonical routes', async () => {
     const fetchMock = recordingFetch(
       jsonResponse(runTransportFixture.canonical),
@@ -857,6 +954,33 @@ describe('CanonicalThreadCoreClient request contract', () => {
         interrupt_id: 'interrupt-1',
         response: humanInteractionTransportFixture.canonical,
       },
+    });
+  });
+
+  it('sends a typed Human response and its idempotency key without V1 response', async () => {
+    const resumedRun = cloneRunWire();
+    resumedRun.run_id = '3002';
+    const fetchMock = recordingFetch(jsonResponse(resumedRun));
+    const client = coreClient(fetchMock);
+    const responseV2 = {
+      schema: 'coze.human_interaction_response.v1',
+      interaction_id: 'interaction-1',
+      kind: 'confirmation',
+      decision: 'approved',
+    };
+
+    await client.resumeRun({
+      space_id: canonicalSpaceID,
+      thread_id: canonicalThreadID,
+      run_id: canonicalRunID,
+      interrupt_id: 'interrupt-1',
+      response_v2: responseV2,
+      idempotency_key: 'typed-resume-key',
+    });
+
+    expect(requestSnapshot(fetchMock)).toMatchObject({
+      headers: { 'idempotency-key': 'typed-resume-key' },
+      body: { interrupt_id: 'interrupt-1', response_v2: responseV2 },
     });
   });
 

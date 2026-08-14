@@ -50,15 +50,14 @@ func (p *adkBuiltinSubagentDefinitionProvider) ResolveADKSubagents(
 	run *RunSummary,
 ) ([]ADKSubagentDefinition, error) {
 	definitions := make([]ADKSubagentDefinition, 0, 1)
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig("")
+	runtimeConfig, err := parseADKRuntimeConfig("")
 	if run != nil {
-		runtimeConfig, err = ParseDeerFlowRuntimeConfig(run.Config)
+		runtimeConfig, err = parseADKRuntimeConfig(run.Config)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if (runtimeConfig.ModeExplicit || runtimeConfig.SubagentExplicit) &&
-		runtimeConfig.SubagentEnabled {
+	if runtimeConfig.SubagentExplicit && runtimeConfig.SubagentEnabled {
 		definitions = append(definitions, builtinADKGeneralPurposeDefinition())
 	}
 	if p == nil || p.configured == nil {
@@ -277,8 +276,6 @@ func buildADKBuiltinSubagentRunSummary(
 		copyADKBuiltinSubagentToolConfig(configPayload, parentConfig)
 	}
 	configPayload["runtime"] = string(RuntimeModeEinoADK)
-	configPayload["requested_policy"] = string(DeerFlowRequestedPolicyPro)
-	configPayload["mode"] = string(DeerFlowModePro)
 	configPayload["thinking_enabled"] = false
 	configPayload["is_plan_mode"] = false
 	configPayload["subagent_enabled"] = false

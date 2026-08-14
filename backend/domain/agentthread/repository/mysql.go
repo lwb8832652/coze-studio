@@ -688,9 +688,10 @@ func (r *threadRepository) CreateThreadBundle(
 		if normalizedAttempt.ProjectionState == "" {
 			normalizedAttempt.ProjectionState = entity.JournalProjectionStateHealthy
 		}
-		if normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy ||
+		if (normalizedAttempt.ProjectionState != entity.JournalProjectionStateHealthy &&
+			normalizedAttempt.ProjectionState != entity.JournalProjectionStateDisabled) ||
 			normalizedAttempt.ProjectionDegradedAt != nil {
-			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy")
+			return nil, fmt.Errorf("thread bundle journal attempt projection must be healthy or disabled")
 		}
 		activeSlot := uint8(1)
 		normalizedAttempt.ActiveSlot = &activeSlot
@@ -834,9 +835,14 @@ func findExistingThreadBundle(
 			ErrRunIdempotencyConflict,
 		)
 	}
+	expectedProjectionState := req.Attempt.ProjectionState
+	if expectedProjectionState == "" {
+		expectedProjectionState = entity.JournalProjectionStateHealthy
+	}
 	if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
 		attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
-		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
+		attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled ||
+		attempt.ProjectionState != string(expectedProjectionState) {
 		return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
 	}
 	result.Attempt = attempt.toEntity()
@@ -1223,6 +1229,12 @@ func (r *threadRepository) CreateRunBundle(
 	if req.Run == nil {
 		return nil, fmt.Errorf("run is required")
 	}
+	if req.HumanResumeRollover != nil {
+		return r.createHumanResumeRunBundle(ctx, req)
+	}
+	if req.OrdinaryLeaseRecovery != nil {
+		return r.createOrdinaryLeaseRecoveryRunBundle(ctx, req)
+	}
 	if req.Message != nil &&
 		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle message does not belong to run")
@@ -1321,8 +1333,10 @@ func (r *threadRepository) CreateRunBundle(
 		if attempt.ProjectionState == "" {
 			attempt.ProjectionState = entity.JournalProjectionStateHealthy
 		}
-		if attempt.ProjectionState != entity.JournalProjectionStateHealthy || attempt.ProjectionDegradedAt != nil {
-			return nil, fmt.Errorf("initial journal attempt projection must be healthy")
+		if (attempt.ProjectionState != entity.JournalProjectionStateHealthy &&
+			(!isRecoveryBundle && attempt.ProjectionState != entity.JournalProjectionStateDisabled)) ||
+			attempt.ProjectionDegradedAt != nil {
+			return nil, fmt.Errorf("initial journal attempt projection must be healthy or disabled")
 		}
 		activeSlot := uint8(1)
 		attempt.ActiveSlot = &activeSlot
@@ -1591,17 +1605,92 @@ func prepareRecoveryRunBundleAttempt(
 		return ErrJournalParentMismatch
 	}
 
-	sourceAttempt, err := lockJournalAttemptByIdentity(
-		tx, attempt.JournalRunID, strings.TrimSpace(*attempt.SourceAttemptID),
-	)
-	if err != nil {
-		return err
+	sourceAttemptID := strings.TrimSpace(*attempt.SourceAttemptID)
+	var sourceAttempt *runAttemptPO
+	var lockedSourceRun *runPO
+	var err error
+	if sourceLease != nil {
+		var discoveredSourceAttempt struct {
+			ExecutionRunID int64
+		}
+		discoveryErr := tx.Model(&runAttemptPO{}).
+			Select("execution_run_id").
+			Where(
+				"journal_run_id = ? AND attempt_id = ?",
+				attempt.JournalRunID,
+				sourceAttemptID,
+			).
+			First(&discoveredSourceAttempt).Error
+		if errors.Is(discoveryErr, gorm.ErrRecordNotFound) {
+			return ErrJournalNotEnrolled
+		}
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		if discoveredSourceAttempt.ExecutionRunID != sourceLease.RunID {
+			return ErrJournalInvalidStateTransition
+		}
+		lockedSourceRun, err = lockAdaptiveExecutionRunIdentity(
+			tx,
+			discoveredSourceAttempt.ExecutionRunID,
+		)
+		if err != nil {
+			return err
+		}
+		if lockedSourceRun.ID != sourceLease.RunID ||
+			lockedSourceRun.ThreadID != run.ThreadID ||
+			lockedSourceRun.SpaceID != run.SpaceID ||
+			lockedSourceRun.CreatorID != run.CreatorID {
+			return fmt.Errorf(
+				"%w: run %d expired lease cannot be recovered",
+				ErrRunLeaseLost,
+				sourceLease.RunID,
+			)
+		}
+		sourceAttempt, err = lockJournalAttemptByIdentity(
+			tx,
+			attempt.JournalRunID,
+			sourceAttemptID,
+		)
+		if err != nil {
+			return err
+		}
+		if sourceAttempt.JournalRunID != attempt.JournalRunID ||
+			sourceAttempt.ExecutionRunID != discoveredSourceAttempt.ExecutionRunID ||
+			sourceAttempt.AttemptID != sourceAttemptID {
+			return ErrJournalParentMismatch
+		}
+	} else {
+		sourceAttempt, err = lockJournalAttemptByIdentity(
+			tx,
+			attempt.JournalRunID,
+			sourceAttemptID,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	if sourceAttempt.ThreadID != run.ThreadID {
 		return ErrJournalParentMismatch
 	}
 	sourceStatus := entity.RunAttemptStatus(sourceAttempt.Status)
-	if !sourceStatus.IsTerminal() && !sourceStatus.IsActive() {
+	if sourceLease != nil {
+		if !sourceStatus.IsActive() {
+			return ErrJournalInvalidStateTransition
+		}
+		if lockedSourceRun == nil ||
+			entity.RunStatus(lockedSourceRun.Status) != entity.RunStatusRunning ||
+			lockedSourceRun.ExecutionGeneration != sourceLease.ExecutionGeneration ||
+			lockedSourceRun.LeaseOwner == nil || *lockedSourceRun.LeaseOwner != sourceLease.LeaseOwner ||
+			lockedSourceRun.LeaseToken == nil || *lockedSourceRun.LeaseToken != sourceLease.LeaseToken ||
+			lockedSourceRun.LeaseExpiresAt == nil || *lockedSourceRun.LeaseExpiresAt > sourceLease.Now {
+			return fmt.Errorf(
+				"%w: run %d expired lease cannot be recovered",
+				ErrRunLeaseLost,
+				sourceLease.RunID,
+			)
+		}
+	} else if !entity.IsLegacyFinalizableRunAttemptStatus(sourceStatus) {
 		return ErrJournalInvalidStateTransition
 	}
 
@@ -2012,11 +2101,18 @@ func findExistingRunBundle(
 				!equalStringPointers(attempt.SourceAttemptID, req.Attempt.SourceAttemptID) {
 				return nil, false, fmt.Errorf("%w: journal recovery semantics changed", ErrRunIdempotencyConflict)
 			}
-		} else if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
-			attempt.RecoveryIdempotencyKey != nil ||
-			attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
-			attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled {
-			return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+		} else {
+			expectedProjectionState := req.Attempt.ProjectionState
+			if expectedProjectionState == "" {
+				expectedProjectionState = entity.JournalProjectionStateHealthy
+			}
+			if attempt.JournalRunID != run.ID || attempt.Ordinal != 1 ||
+				attempt.RecoveryIdempotencyKey != nil ||
+				attempt.EnrollmentVersion != req.Attempt.EnrollmentVersion ||
+				attempt.SnapshotsEnabled != req.Attempt.SnapshotsEnabled ||
+				attempt.ProjectionState != string(expectedProjectionState) {
+				return nil, false, fmt.Errorf("%w: journal enrollment semantics changed", ErrRunIdempotencyConflict)
+			}
 		}
 		result.Attempt = attempt.toEntity()
 	}
@@ -2211,7 +2307,10 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 		pageSize = 100
 	}
 
-	query := r.db.WithContext(ctx).Model(&runEventPO{})
+	query := r.db.WithContext(ctx).
+		Model(&runEventPO{}).
+		Where("(visibility IS NULL OR visibility <> ?)", string(entity.JournalVisibilityInternal)).
+		Where("event_type <> ?", entity.JournalAttemptInterruptedRunEventType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	} else {
@@ -2263,7 +2362,7 @@ func (r *threadRepository) CreateCheckpoint(ctx context.Context, checkpoint *ent
 func (r *threadRepository) GetCheckpoint(ctx context.Context, checkpointID int64) (*entity.Checkpoint, error) {
 	var po checkpointPO
 	if err := r.db.WithContext(ctx).
-		Where("id = ?", checkpointID).
+		Where("id = ? AND runtime_type <> ?", checkpointID, adaptiveBootstrapRuntimeType).
 		First(&po).Error; err != nil {
 		return nil, err
 	}
@@ -2280,7 +2379,10 @@ func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpoi
 		limit = 100
 	}
 
-	query := r.db.WithContext(ctx).Model(&checkpointPO{}).Where("thread_id = ?", req.ThreadID)
+	query := r.db.WithContext(ctx).
+		Model(&checkpointPO{}).
+		Where("thread_id = ?", req.ThreadID).
+		Where("runtime_type <> ?", adaptiveBootstrapRuntimeType)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}
@@ -2313,6 +2415,7 @@ func (r *threadRepository) GetLatestCheckpoint(ctx context.Context, threadID int
 	var po checkpointPO
 	if err := r.db.WithContext(ctx).
 		Where("thread_id = ?", threadID).
+		Where("runtime_type <> ?", adaptiveBootstrapRuntimeType).
 		Order("created_at DESC, id DESC").
 		First(&po).Error; err != nil {
 		return nil, err
@@ -2326,14 +2429,19 @@ func (r *threadRepository) GetLatestRuntimeCheckpoint(
 	threadID, runID int64,
 	runtimeType, runtimeKey string,
 ) (*entity.Checkpoint, error) {
+	runtimeType = strings.TrimSpace(runtimeType)
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return nil, nil
+	}
+	runtimeKey = strings.TrimSpace(runtimeKey)
 	var po checkpointPO
 	err := r.db.WithContext(ctx).
 		Where(
 			"thread_id = ? AND run_id = ? AND runtime_type = ? AND runtime_key = ? AND runtime_deleted_at = 0",
 			threadID,
 			runID,
-			strings.TrimSpace(runtimeType),
-			strings.TrimSpace(runtimeKey),
+			runtimeType,
+			runtimeKey,
 		).
 		Order("created_at DESC, id DESC").
 		First(&po).Error
@@ -2353,6 +2461,11 @@ func (r *threadRepository) DeleteRuntimeCheckpoint(
 	runtimeType, runtimeKey string,
 	deletedAt int64,
 ) error {
+	runtimeType = strings.TrimSpace(runtimeType)
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return ErrAdaptiveExecutionReservedFact
+	}
+	runtimeKey = strings.TrimSpace(runtimeKey)
 	if deletedAt <= 0 {
 		return fmt.Errorf("runtime checkpoint deleted time is required")
 	}
@@ -2363,8 +2476,8 @@ func (r *threadRepository) DeleteRuntimeCheckpoint(
 			"thread_id = ? AND run_id = ? AND runtime_type = ? AND runtime_key = ? AND runtime_deleted_at = 0",
 			threadID,
 			runID,
-			strings.TrimSpace(runtimeType),
-			strings.TrimSpace(runtimeKey),
+			runtimeType,
+			runtimeKey,
 		).
 		Update("runtime_deleted_at", deletedAt).Error
 }
@@ -4285,6 +4398,9 @@ func (r *threadRepository) UpsertPlanItem(
 		created  bool
 	)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockAgentRunPlanForUpdate(tx, item.RunID); err != nil {
+			return err
+		}
 		var existing agentRunPlanItemPO
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("run_id = ? AND task_id = ?", item.RunID, item.TaskID).
@@ -4367,6 +4483,9 @@ func (r *threadRepository) ArchivePlanItem(
 		plan     *entity.AgentRunPlan
 	)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockAgentRunPlanForUpdate(tx, runID); err != nil {
+			return err
+		}
 		var existing agentRunPlanItemPO
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("run_id = ? AND task_id = ?", runID, taskID).
@@ -4413,6 +4532,21 @@ func (r *threadRepository) ArchivePlanItem(
 		return nil, nil, nil, err
 	}
 	return stored, previous, plan, nil
+}
+
+func lockAgentRunPlanForUpdate(tx *gorm.DB, runID int64) (*agentRunPlanPO, error) {
+	query := tx.Where("run_id = ?", runID)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var plan agentRunPlanPO
+	if err := query.First(&plan).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPlanNotFound
+		}
+		return nil, err
+	}
+	return &plan, nil
 }
 
 func incrementPlanRevision(tx *gorm.DB, runID int64, updatedAt int64) error {
@@ -5055,6 +5189,9 @@ func (r *threadRepository) FinalizeRunSuccess(
 	if req.Message.Role != entity.MessageRoleAssistant {
 		return nil, fmt.Errorf("run success message must be assistant role")
 	}
+	if err := validateAdaptiveVerifiedSuccessGate(req); err != nil {
+		return nil, err
+	}
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
 	completionEvent, completionEventPO, err := normalizeTerminalRunEvent(
 		req.CompletionEvent,
@@ -5131,9 +5268,32 @@ func (r *threadRepository) FinalizeRunSuccess(
 		)) {
 		return nil, fmt.Errorf("run success terminal title-conflict checkpoint identity is invalid")
 	}
+	if req.AdaptiveGate != nil {
+		return r.finalizeAdaptiveVerifiedRunSuccess(ctx, req, adaptiveVerifiedSuccessNormalizedFinalize{
+			now: now, message: &message, messagePO: messagePO,
+			titleEvent: titleEvent, titleEventPO: titleEventPO,
+			completionEvent: completionEvent, completionEventPO: completionEventPO,
+			terminalCheckpoint: terminalCheckpoint, terminalCheckpointPO: terminalCheckpointPO,
+			terminalCheckpointOnTitleConflict:   terminalCheckpointOnTitleConflict,
+			terminalCheckpointOnTitleConflictPO: terminalCheckpointOnTitleConflictPO,
+		})
+	}
 
 	result := &FinalizeRunSuccessResult{}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var discoveredRun struct {
+			ThreadID int64
+		}
+		if err := tx.Model(&runPO{}).
+			Select("thread_id").
+			Where("id = ?", req.RunID).
+			First(&discoveredRun).Error; err != nil {
+			return err
+		}
+		if _, err := lockThreadForUpdate(tx, discoveredRun.ThreadID); err != nil {
+			return err
+		}
+
 		updates := map[string]any{
 			"status":        string(entity.RunStatusSucceeded),
 			"error_code":    "",
@@ -5155,21 +5315,25 @@ func (r *threadRepository) FinalizeRunSuccess(
 		if updated.Error != nil {
 			return updated.Error
 		}
+
+		completedQuery := tx.Where("id = ?", req.RunID)
+		if tx.Dialector.Name() != "sqlite" {
+			completedQuery = completedQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var completed runPO
+		if err := completedQuery.First(&completed).Error; err != nil {
+			return err
+		}
+		if completed.ThreadID != discoveredRun.ThreadID {
+			return fmt.Errorf("run success execution run thread identity drift")
+		}
 		if updated.RowsAffected == 0 {
-			var current runPO
-			if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
-				return err
-			}
-			if entity.RunStatus(current.Status) == entity.RunStatusCanceled || current.CancelRequestedAt != nil {
+			if entity.RunStatus(completed.Status) == entity.RunStatusCanceled || completed.CancelRequestedAt != nil {
 				return fmt.Errorf("%w: run %d rejected late success", ErrRunCanceled, req.RunID)
 			}
 			return fmt.Errorf("%w: run %d cannot finalize success", ErrRunLeaseLost, req.RunID)
 		}
 
-		var completed runPO
-		if err := tx.Where("id = ?", req.RunID).First(&completed).Error; err != nil {
-			return err
-		}
 		if message.ThreadID != completed.ThreadID {
 			return fmt.Errorf("run success message does not belong to run thread")
 		}
@@ -5669,7 +5833,27 @@ func createBaseRunEvent(db *gorm.DB, po *runEventPO) error {
 	if db == nil || po == nil {
 		return fmt.Errorf("base run event is required")
 	}
+	if isAdaptiveBootstrapReservedEventType(po.EventType) {
+		return ErrAdaptiveExecutionReservedFact
+	}
 	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
+}
+
+// createAdaptiveBootstrapReservedRunEvent is deliberately private. Only the
+// durable bootstrap transaction and the legacy adaptive-decision boundary use
+// it; all generic run-event writers route through createBaseRunEvent instead.
+func createAdaptiveBootstrapReservedRunEvent(db *gorm.DB, po *runEventPO) error {
+	if db == nil || po == nil {
+		return fmt.Errorf("reserved adaptive run event is required")
+	}
+	if !isAdaptiveBootstrapReservedEventType(po.EventType) {
+		return ErrAdaptiveExecutionReservedFact
+	}
+	return db.Omit("JournalEventType", "JournalPayload").Create(po).Error
+}
+
+func isAdaptiveBootstrapReservedEventType(eventType string) bool {
+	return eventType == adaptiveBootstrapAdmissionEventType || eventType == adaptiveBootstrapDecisionEventType
 }
 
 func (po *runEventPO) toEntity() *entity.RunEvent {
@@ -5704,6 +5888,9 @@ func checkpointToPO(checkpoint *entity.Checkpoint) (*checkpointPO, error) {
 	runtimeType := strings.TrimSpace(checkpoint.RuntimeType)
 	if runtimeType == "" {
 		runtimeType = "legacy"
+	}
+	if runtimeType == adaptiveBootstrapRuntimeType {
+		return nil, ErrAdaptiveExecutionReservedFact
 	}
 
 	return &checkpointPO{

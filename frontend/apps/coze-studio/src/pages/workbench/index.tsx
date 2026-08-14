@@ -46,13 +46,13 @@ import {
   createTaskThread,
   createTaskThreadRun,
   getWorkbenchLLMModels,
-  type TaskThreadUploadedFile,
   uploadTaskThreadFiles,
 } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
-  stringifyWorkbenchRunConfig,
-  WORKBENCH_REQUESTED_POLICY,
+  createInitialSubmissionV2,
+  createTurnSubmissionV2,
+  requireUploadedFileIDs,
   type WorkbenchComposerSubmitPayload,
 } from './components/types';
 
@@ -88,29 +88,6 @@ const activateSkillCreator = (
     },
   };
 };
-
-const buildNewTaskRunInput = ({
-  message,
-  uploadedFiles,
-}: {
-  message: string;
-  uploadedFiles?: TaskThreadUploadedFile[];
-}) =>
-  JSON.stringify({
-    messages: [
-      {
-        role: 'user',
-        content: message,
-      },
-    ],
-    uploaded_files: uploadedFiles ?? [],
-  });
-
-const getNewTaskRunMetadata = () =>
-  JSON.stringify({
-    source: 'workbench_new_task',
-    requested_policy: WORKBENCH_REQUESTED_POLICY,
-  });
 
 const createNewTaskRunIdempotencyKey = (threadId: string) => {
   const requestId =
@@ -383,13 +360,12 @@ const WorkbenchPage = () => {
         ? activateSkillCreator(payload)
         : payload;
       const files = submitPayload.files ?? [];
+      const initialSubmissionV2 = createInitialSubmissionV2(submitPayload);
 
       if (files.length > 0) {
         const response = await createTaskThread({
           space_id,
-          message: submitPayload.message,
-          config: stringifyWorkbenchRunConfig(submitPayload),
-          defer_start: true,
+          deferred_initial_submission_v2: initialSubmissionV2,
         });
         const thread = response?.data?.thread;
         if (!thread?.thread_id) {
@@ -405,14 +381,12 @@ const WorkbenchPage = () => {
         await createTaskThreadRun({
           thread_id: thread.thread_id,
           space_id,
-          input: buildNewTaskRunInput({
-            message: submitPayload.message,
-            uploadedFiles: uploadResponse.data?.files,
-          }),
-          config: stringifyWorkbenchRunConfig(submitPayload),
-          metadata: getNewTaskRunMetadata(),
-          message_content: submitPayload.message,
-          message_metadata: stringifyWorkbenchRunConfig(submitPayload),
+          assistant_id: 'agent',
+          submission_v2: createTurnSubmissionV2(
+            submitPayload,
+            requireUploadedFileIDs(uploadResponse.data?.files ?? []),
+            'workbench_new_task',
+          ),
           idempotency_key: createNewTaskRunIdempotencyKey(thread.thread_id),
         });
 
@@ -427,8 +401,7 @@ const WorkbenchPage = () => {
 
       const response = await createTaskThread({
         space_id,
-        message: submitPayload.message,
-        config: stringifyWorkbenchRunConfig(submitPayload),
+        initial_submission_v2: initialSubmissionV2,
       });
 
       setValue('');

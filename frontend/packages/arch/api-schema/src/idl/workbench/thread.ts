@@ -111,6 +111,109 @@ export interface CanonicalStreamResponse {
   body: string
 }
 export interface CanonicalEmptyResponse {}
+export interface CanonicalComposerSelectionV2 {
+  model_type?: string,
+  model_name?: string,
+  explicit_enable_skills?: string[],
+  allowed_skills: string[],
+  enable_mcp: string[],
+  enable_kbs: string[],
+  enable_databases: string[],
+  allowed_mcp_tools: string[],
+}
+export interface CanonicalMemoryRetrievalV2 {
+  limit: number,
+  candidate_limit: number,
+  scopes: string[],
+  min_confidence: number,
+}
+export interface CanonicalSkillsV2 {
+  enabled: boolean,
+  visibility: string,
+}
+export interface CanonicalMCPToolsV2 {
+  enabled: boolean,
+  visibility: string,
+}
+export interface CanonicalWebHTTPV2 {
+  enabled: boolean,
+  allowed_hosts: string[],
+  timeout_ms: number,
+  max_response_bytes: number,
+}
+export interface CanonicalWebSearchV2 {
+  enabled: boolean,
+  max_results: number,
+}
+export interface CanonicalWebToolsV2 {
+  enabled: boolean,
+  visibility: string,
+  http: CanonicalWebHTTPV2,
+  search: CanonicalWebSearchV2,
+}
+export interface CanonicalModelRetryV2 {
+  max_retries: number,
+  backoff_ms: number,
+  retry_empty_output: boolean,
+  retry_finish_reasons: string[],
+}
+export interface CanonicalModelFailoverV2 {
+  candidate_model_ids: string[],
+  max_retries: number,
+  failover_empty_output: boolean,
+  failover_finish_reasons: string[],
+}
+export interface CanonicalTokenUsageV2 {
+  enabled: boolean
+}
+export interface CanonicalRunConfigV2 {
+  runtime: string,
+  memory_retrieval: CanonicalMemoryRetrievalV2,
+  skills: CanonicalSkillsV2,
+  mcp_tools: CanonicalMCPToolsV2,
+  web_tools: CanonicalWebToolsV2,
+  model_retry?: CanonicalModelRetryV2,
+  model_failover?: CanonicalModelFailoverV2,
+  token_usage: CanonicalTokenUsageV2,
+}
+export interface CanonicalUploadedFileReferenceV2 {
+  file_id: string
+}
+export interface CanonicalRunInputV2 {
+  message: string,
+  uploaded_files: CanonicalUploadedFileReferenceV2[],
+}
+export interface CanonicalRunLineageV2 {
+  source_run_id: string
+}
+export interface CanonicalRunMetadataV2 {
+  source: string
+}
+export interface CanonicalRunSubmissionV2 {
+  schema_version: string,
+  kind: string,
+  input: CanonicalRunInputV2,
+  composer: CanonicalComposerSelectionV2,
+  config: CanonicalRunConfigV2,
+  lineage?: CanonicalRunLineageV2,
+  metadata?: CanonicalRunMetadataV2,
+}
+export interface CanonicalInitialRunSubmissionV2 {
+  schema_version: string,
+  input: CanonicalRunInputV2,
+  composer: CanonicalComposerSelectionV2,
+  config: CanonicalRunConfigV2,
+  metadata?: CanonicalRunMetadataV2,
+}
+export interface CanonicalHumanInteractionResponseV2 {
+  schema: string,
+  interaction_id: string,
+  kind: string,
+  decision: string,
+  answer?: string,
+  choice_id?: string,
+  comment?: string,
+}
 export interface CreateCanonicalThreadRequest {
   thread_id?: string,
   metadata?: any,
@@ -119,6 +222,8 @@ export interface CreateCanonicalThreadRequest {
   supersteps?: any,
   coze?: any,
   "X-Coze-Space-ID": string,
+  initial_submission_v2?: CanonicalInitialRunSubmissionV2,
+  deferred_initial_submission_v2?: CanonicalInitialRunSubmissionV2,
 }
 export interface SearchCanonicalThreadsRequest {
   metadata?: any,
@@ -219,6 +324,7 @@ export interface CreateCanonicalRunRequest {
   "Idempotency-Key"?: string,
   "X-Coze-Space-ID": string,
   coze?: any,
+  submission_v2?: CanonicalRunSubmissionV2,
 }
 export interface WaitCanonicalRunRequest {
   thread_id: string,
@@ -248,6 +354,7 @@ export interface WaitCanonicalRunRequest {
   "Idempotency-Key"?: string,
   "X-Coze-Space-ID": string,
   coze?: any,
+  submission_v2?: CanonicalRunSubmissionV2,
 }
 export interface ReconnectCanonicalRunStreamRequest {
   thread_id: string,
@@ -278,6 +385,8 @@ export interface ResumeCanonicalRunRequest {
   interrupt_id?: string,
   response?: any,
   "X-Coze-Space-ID": string,
+  "Idempotency-Key"?: string,
+  response_v2?: CanonicalHumanInteractionResponseV2,
 }
 export interface ListCanonicalRunEventsRequest {
   thread_id: string,
@@ -303,7 +412,7 @@ export const CreateCanonicalThread = /*#__PURE__*/createAPI<CreateCanonicalThrea
   "name": "CreateCanonicalThread",
   "reqType": "CreateCanonicalThreadRequest",
   "reqMapping": {
-    "body": ["thread_id", "metadata", "if_exists", "ttl", "supersteps", "coze"],
+    "body": ["thread_id", "metadata", "if_exists", "ttl", "supersteps", "coze", "initial_submission_v2", "deferred_initial_submission_v2"],
     "header": ["X-Coze-Space-ID"]
   },
   "resType": "CanonicalThread",
@@ -455,7 +564,7 @@ export const CreateCanonicalRun = /*#__PURE__*/createAPI<CreateCanonicalRunReque
   "reqType": "CreateCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze", "submission_v2"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalRun",
@@ -469,7 +578,7 @@ export const StreamCanonicalRun = /*#__PURE__*/createAPI<CreateCanonicalRunReque
   "reqType": "CreateCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "coze", "submission_v2"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalStreamResponse['body']",
@@ -483,7 +592,7 @@ export const WaitCanonicalRun = /*#__PURE__*/createAPI<WaitCanonicalRunRequest, 
   "reqType": "WaitCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id"],
-    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "raise_error", "coze"],
+    "body": ["assistant_id", "input", "command", "metadata", "config", "context", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "stream_resumable", "stream_subgraphs", "if_not_exists", "webhook", "on_completion", "after_seconds", "feedback_keys", "interrupt_before", "interrupt_after", "checkpoint", "checkpoint_id", "langsmith_tracer", "raise_error", "coze", "submission_v2"],
     "header": ["Idempotency-Key", "X-Coze-Space-ID"]
   },
   "resType": "CanonicalValuesResponse['body']",
@@ -552,8 +661,8 @@ export const ResumeCanonicalRun = /*#__PURE__*/createAPI<ResumeCanonicalRunReque
   "reqType": "ResumeCanonicalRunRequest",
   "reqMapping": {
     "path": ["thread_id", "run_id"],
-    "body": ["interrupt_id", "response"],
-    "header": ["X-Coze-Space-ID"]
+    "body": ["interrupt_id", "response", "response_v2"],
+    "header": ["X-Coze-Space-ID", "Idempotency-Key"]
   },
   "resType": "CanonicalRun",
   "schemaRoot": "api://schemas/idl_workbench_thread",

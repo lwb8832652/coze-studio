@@ -663,6 +663,53 @@ func TestCanonicalListRunEventsByCursorFiltersTypeAndReportsHasMore(t *testing.T
 	require.Equal(t, []int64{3, 4}, runEventIDs(events))
 }
 
+func TestCanonicalListRunEventsByCursorSkipsInternalFactsBeforePagination(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &runEventPO{})
+	repo := &threadRepository{db: db}
+	internal := string(entity.JournalVisibilityInternal)
+	for _, event := range []*runEventPO{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "message", Payload: []byte(`{}`)},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "private.trace", Visibility: &internal, Payload: []byte(`{}`)},
+		{ID: 3, ThreadID: 10, RunID: 20, EventType: "status", Payload: []byte(`{}`)},
+		{ID: 4, ThreadID: 10, RunID: 20, EventType: "private.trace", Visibility: &internal, Payload: []byte(`{}`)},
+		{ID: 5, ThreadID: 10, RunID: 20, EventType: "message", Payload: []byte(`{}`)},
+	} {
+		require.NoError(t, db.Create(event).Error)
+	}
+
+	events, total, hasMore, err := repo.ListRunEventsByCursor(context.Background(), ListRunEventsByCursorRequest{
+		ThreadID: 10, RunID: 20, AfterEventID: 1, Limit: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.False(t, hasMore)
+	require.Equal(t, []int64{3, 5}, runEventIDs(events))
+}
+
+func TestCanonicalListRunEventsByCursorSkipsJournalAttemptInterruptedBeforePagination(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &runEventPO{})
+	repo := &threadRepository{db: db}
+	for _, event := range []*entity.RunEvent{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "message", Payload: `{}`},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 3, ThreadID: 10, RunID: 20, EventType: "status", Payload: `{}`},
+		{ID: 4, ThreadID: 10, RunID: 20, EventType: "journal.attempt.interrupted", Payload: `{}`},
+		{ID: 5, ThreadID: 10, RunID: 20, EventType: "message", Payload: `{}`},
+	} {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	}
+
+	events, total, hasMore, err := repo.ListRunEventsByCursor(context.Background(), ListRunEventsByCursorRequest{
+		ThreadID: 10, RunID: 20, AfterEventID: 1, Limit: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.False(t, hasMore)
+	require.Equal(t, []int64{3, 5}, runEventIDs(events))
+}
+
 func TestCanonicalListCheckpointsBeforeUsesIDCursorOrderAndReportsHasMore(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &checkpointPO{})
 	repo := &threadRepository{db: db}
@@ -702,6 +749,43 @@ func TestCanonicalListCheckpointsBeforeUsesIDCursorOrderAndReportsHasMore(t *tes
 	require.False(t, hasMore)
 	require.Equal(t, []int64{2, 1}, checkpointIDs(checkpoints))
 	require.Equal(t, []string{"canonical_public_state", "eino_adk"}, checkpointRuntimeTypes(checkpoints))
+}
+
+func TestCanonicalListCheckpointsBeforeSkipsControlFactsBeforePagination(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &checkpointPO{})
+	repo := &threadRepository{db: db}
+	for _, checkpoint := range []*checkpointPO{
+		{
+			ID: 1, ThreadID: 10, RunID: 20, RuntimeType: "eino_adk", RuntimeKey: "eino-1",
+			ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 100,
+		},
+		{
+			ID: 2, ThreadID: 10, RunID: 20, RuntimeType: "workbench_control", RuntimeKey: "control-1",
+			ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 200,
+		},
+		{
+			ID: 3, ThreadID: 10, RunID: 20, RuntimeType: "eino_adk", RuntimeKey: "eino-2",
+			ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 300,
+		},
+		{
+			ID: 4, ThreadID: 10, RunID: 20, RuntimeType: "workbench_control", RuntimeKey: "control-2",
+			ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 400,
+		},
+		{
+			ID: 5, ThreadID: 10, RunID: 20, RuntimeType: "eino_adk", RuntimeKey: "eino-3",
+			ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`), CreatedAt: 500,
+		},
+	} {
+		require.NoError(t, db.Create(checkpoint).Error)
+	}
+
+	checkpoints, hasMore, err := repo.ListCheckpointsBefore(context.Background(), ListCheckpointsBeforeRequest{
+		ThreadID: 10, BeforeCheckpointID: 5, Limit: 2,
+	})
+
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Equal(t, []int64{3, 1}, checkpointIDs(checkpoints))
 }
 
 func TestCanonicalPatchThreadAtomicallyMergesMetadataAndTitle(t *testing.T) {

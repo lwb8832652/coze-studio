@@ -109,6 +109,24 @@ type ADKSubagentToolProvider struct {
 	guardrailEnforcer ADKGuardrailEnforcer
 }
 
+type adaptiveSubagentsAllowedContextKey struct{}
+
+func withAdaptiveSubagentsAllowed(ctx context.Context, allowed bool) context.Context {
+	return context.WithValue(ctx, adaptiveSubagentsAllowedContextKey{}, allowed)
+}
+
+func adaptiveSubagentsAllowedFromContext(ctx context.Context) (bool, bool) {
+	if ctx == nil {
+		return false, false
+	}
+	allowed, ok := ctx.Value(adaptiveSubagentsAllowedContextKey{}).(bool)
+	return allowed, ok
+}
+
+func withoutAdaptiveSubagentsAllowed(ctx context.Context) context.Context {
+	return context.WithValue(ctx, adaptiveSubagentsAllowedContextKey{}, nil)
+}
+
 type ADKSubagentToolProviderOption func(*ADKSubagentToolProvider)
 
 func WithADKSubagentToolProviderEventSink(
@@ -162,13 +180,21 @@ func (p *ADKSubagentToolProvider) ResolveToolSet(
 	if p == nil {
 		return ADKToolSet{}, fmt.Errorf("subagent tool provider is required")
 	}
+	adaptiveAllowed, hasAdaptivePolicy := adaptiveSubagentsAllowedFromContext(ctx)
+	if hasAdaptivePolicy {
+		ctx = withoutAdaptiveSubagentsAllowed(ctx)
+	}
 	set, err := p.resolveBaseToolSet(ctx, run)
 	if err != nil {
 		return ADKToolSet{}, err
 	}
-	runtimeConfig, err := ParseDeerFlowRuntimeConfig("")
+	if hasAdaptivePolicy && !adaptiveAllowed {
+		set.SubagentToolNames = nil
+		return set, nil
+	}
+	runtimeConfig, err := parseADKRuntimeConfig("")
 	if run != nil {
-		runtimeConfig, err = ParseDeerFlowRuntimeConfig(run.Config)
+		runtimeConfig, err = parseADKRuntimeConfig(run.Config)
 	}
 	if err != nil {
 		return ADKToolSet{}, err

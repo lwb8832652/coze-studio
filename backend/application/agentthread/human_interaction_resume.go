@@ -27,11 +27,13 @@ import (
 	"time"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
-	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
-const humanInteractionResolvedEventType = "human.interaction.resolved"
+const (
+	humanInteractionResolvedEventType = "human.interaction.resolved"
+)
 
 var (
 	ErrHumanInteractionResumeInvalid  = errors.New("human interaction resume request is invalid")
@@ -93,6 +95,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	response.Comment = strings.TrimSpace(response.Comment)
 	response.SubmittedBy = strings.TrimSpace(response.SubmittedBy)
 	response.Source = strings.TrimSpace(response.Source)
+	response.SubmittedAt = 0
 	if err := validateHumanInteractionResponse(response); err != nil {
 		return nil, newHumanInteractionResumeSemanticError(ErrHumanInteractionResumeInvalid, err)
 	}
@@ -107,6 +110,80 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	if sourceRun.ThreadID != req.ThreadID {
 		return nil, fmt.Errorf("source run does not belong to thread")
 	}
+	if sourceRun.SpaceID <= 0 || sourceRun.CreatorID <= 0 || sourceRun.ParentRunID != 0 ||
+		domainentity.DefaultRunKind(sourceRun.RunKind, sourceRun.ParentRunID) != domainentity.RunKindTask {
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New("source run must be a resumable top-level task"),
+		)
+	}
+	idempotencyKey, err := humanInteractionResumeIdempotencyKey(req, response)
+	if err != nil {
+		return nil, err
+	}
+
+	journalSource := RunEvent{
+		ThreadID: req.ThreadID, RunID: req.SourceRunID,
+		EventType: humanInteractionResolvedEventType,
+		Payload: encodeRunEventPayload(ctx, humanInteractionResolvedPayload(
+			req.ThreadID, req.SourceRunID, 0, interruptID, response,
+		)),
+	}
+	journalProjection, err := ProjectRunEventToJournal(journalSource)
+	if err != nil || journalProjection == nil {
+		if err == nil {
+			err = errors.New("human interaction resolved journal projection is required")
+		}
+		return nil, err
+	}
+	legacyReplay := req.IdempotencyOperation == "" && req.IdempotencyFingerprint == ""
+	if !legacyReplay {
+		replayService, ok := s.ThreadSVC.(domainservice.HumanResumeRolloverReplayService)
+		if !ok {
+			return nil, errors.New("human resume rollover replay service is unavailable")
+		}
+		replay, replayErr := replayService.GetHumanResumeRolloverReplay(ctx, domainrepo.HumanResumeRolloverReplayRequest{
+			SpaceID: sourceRun.SpaceID, ThreadID: req.ThreadID, SourceRunID: req.SourceRunID,
+			IdempotencyKey: idempotencyKey, IdempotencyOperation: req.IdempotencyOperation,
+			IdempotencyFingerprint: req.IdempotencyFingerprint,
+			ResolvedJournalKey:     journalProjection.IdempotencyKey, InterruptID: interruptID,
+			Response:                humanResumeRolloverStableResponse(response),
+			PersistMessageReference: req.PersistMessageReference,
+		})
+		if replayErr == nil && replay != nil {
+			if replay.Run == nil || replay.Message == nil || replay.Event == nil ||
+				replay.Attempt == nil || replay.SourceAttempt == nil || replay.TerminalEvent == nil ||
+				!replay.Replayed || replay.Run.ThreadID != req.ThreadID ||
+				replay.Run.SpaceID != sourceRun.SpaceID || replay.Run.ID == req.SourceRunID {
+				return nil, errors.New("human resume rollover replay result is incomplete")
+			}
+			return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(replay.Run)}, nil
+		}
+		if replayErr != nil && !errors.Is(replayErr, domainrepo.ErrJournalNotEnrolled) {
+			if errors.Is(replayErr, domainrepo.ErrHumanResumeRolloverConflict) ||
+				errors.Is(replayErr, domainrepo.ErrActiveRunExists) {
+				return nil, newHumanInteractionResumeSemanticError(
+					ErrHumanInteractionResumeConflict, replayErr,
+				)
+			}
+			return nil, replayErr
+		}
+		legacyReplay = errors.Is(replayErr, domainrepo.ErrJournalNotEnrolled)
+	}
+	if legacyReplay {
+		existing, lookupErr := s.ThreadSVC.GetRunByIdempotencyKey(ctx, sourceRun.SpaceID, idempotencyKey)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if existing != nil {
+			if validateErr := domainentity.ValidateRunIdempotencyValues(
+				existing.Metadata, req.IdempotencyOperation, req.IdempotencyFingerprint,
+			); validateErr != nil {
+				return nil, validateErr
+			}
+			return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(existing)}, nil
+		}
+	}
 	if sourceRun.Status != domainentity.RunStatusInterrupted {
 		return nil, newHumanInteractionResumeSemanticError(
 			ErrHumanInteractionResumeConflict,
@@ -114,23 +191,32 @@ func (s *ApplicationService) ResumeHumanInteraction(
 		)
 	}
 
-	idempotencyKey, err := humanInteractionResumeIdempotencyKey(req, response)
-	if err != nil {
-		return nil, err
+	var sourceAttempt *domainentity.RunAttempt
+	if s == nil || s.JournalRecoveryRepository == nil {
+		return nil, errors.New("journal attempt reader is unavailable")
 	}
-	existing, err := s.ThreadSVC.GetRunByIdempotencyKey(ctx, sourceRun.SpaceID, idempotencyKey)
-	if err != nil {
+	sourceAttempt, err = s.JournalRecoveryRepository.GetActiveJournalAttempt(ctx, req.SourceRunID)
+	switch {
+	case err == nil && sourceAttempt == nil:
+		return nil, errors.New("journal attempt reader returned no result")
+	case err == nil && (sourceAttempt.ThreadID != req.ThreadID ||
+		sourceAttempt.ExecutionRunID != req.SourceRunID ||
+		sourceAttempt.JournalRunID <= 0 || strings.TrimSpace(sourceAttempt.AttemptID) == "" ||
+		sourceAttempt.Status != domainentity.RunAttemptStatusRunning ||
+		sourceAttempt.ActiveSlot == nil || *sourceAttempt.ActiveSlot != 1):
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New("active journal attempt does not match source run"),
+		)
+	case errors.Is(err, domainrepo.ErrJournalNotEnrolled):
+		sourceAttempt = nil
+	case errors.Is(err, domainrepo.ErrJournalAttemptTerminal):
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New("journal human interaction source attempt is terminal"),
+		)
+	case err != nil:
 		return nil, err
-	}
-	if existing != nil {
-		if err := domainentity.ValidateRunIdempotencyValues(
-			existing.Metadata,
-			req.IdempotencyOperation,
-			req.IdempotencyFingerprint,
-		); err != nil {
-			return nil, err
-		}
-		return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(existing)}, nil
 	}
 
 	checkpoint, envelope, err := s.latestActiveADKCheckpoint(ctx, req.ThreadID, req.SourceRunID)
@@ -163,9 +249,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 			errors.New("human interaction response does not match interrupt"),
 		)
 	}
-	if response.SubmittedAt <= 0 {
-		response.SubmittedAt = time.Now().UnixMilli()
-	}
+	response.SubmittedAt = time.Now().UnixMilli()
 
 	resumeCommand, err := humanInteractionResumeCommand(checkpoint, interruptID, response)
 	if err != nil {
@@ -176,27 +260,33 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	if err != nil {
 		return nil, err
 	}
-	journalSource := RunEvent{
-		ThreadID:  req.ThreadID,
-		RunID:     req.SourceRunID,
-		EventType: humanInteractionResolvedEventType,
-		Payload:   encodeRunEventPayload(ctx, resolved),
+	resumeConfig, err := stripSubmittedExecutionControls(sourceRun.Config)
+	if err != nil {
+		return nil, err
 	}
-	journalProjection, journalProjectionErr := ProjectRunEventToJournal(journalSource)
-	if journalProjectionErr != nil {
-		logs.CtxWarnf(
-			ctx,
-			"[journal-projection] project resolved interaction failed, run_id=%d err=%v",
-			req.SourceRunID,
-			journalProjectionErr,
-		)
+	journalSource.Payload = encodeRunEventPayload(ctx, resolved)
+	journalProjection, err = ProjectRunEventToJournal(journalSource)
+	if err != nil || journalProjection == nil {
+		if err == nil {
+			err = errors.New("human interaction resolved journal projection is required")
+		}
+		return nil, err
+	}
+	journalProjectionErr := error(nil)
+	var journalEnrollment *domainservice.JournalEnrollmentOptions
+	if sourceAttempt != nil {
+		journalEnrollment = &domainservice.JournalEnrollmentOptions{HumanResume: &domainservice.JournalHumanResumeEnrollmentOptions{
+			JournalRunID: sourceAttempt.JournalRunID, SourceRunID: req.SourceRunID,
+			SourceAttemptID: sourceAttempt.AttemptID, SourceCheckpointID: checkpoint.CheckpointID,
+			IdempotencyKey: idempotencyKey,
+		}}
 	}
 
 	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
 		Run: domainservice.CreateRunRequest{
 			ThreadID: req.ThreadID, AssistantID: sourceRun.AssistantID,
 			Status: domainentity.RunStatusQueued, Command: resumeCommand,
-			Input: `{"messages":[]}`, Config: sourceRun.Config, Context: sourceRun.Context,
+			Input: `{"messages":[]}`, Config: resumeConfig, Context: sourceRun.Context,
 			Metadata: metadata, StreamMode: sourceRun.StreamMode,
 			MultitaskStrategy: "reject", OnDisconnect: sourceRun.OnDisconnect,
 			Durability: sourceRun.Durability, IdempotencyKey: idempotencyKey,
@@ -218,17 +308,35 @@ func (s *ApplicationService) ResumeHumanInteraction(
 				return encodeRunEventPayload(ctx, resolved)
 			},
 		},
+		EnrollJournal:           sourceAttempt != nil,
+		JournalEnrollment:       journalEnrollment,
 		PersistMessageReference: req.PersistMessageReference,
 	})
 	if err != nil {
+		if errors.Is(err, domainrepo.ErrHumanResumeRolloverConflict) ||
+			errors.Is(err, domainrepo.ErrActiveRunExists) {
+			return nil, newHumanInteractionResumeSemanticError(ErrHumanInteractionResumeConflict, err)
+		}
 		return nil, err
 	}
-	if bundle == nil || bundle.Run == nil || bundle.Message == nil || bundle.Event == nil {
+	if bundle == nil || bundle.Run == nil || bundle.Message == nil || bundle.Event == nil ||
+		(sourceAttempt != nil && bundle.Attempt == nil) {
 		return nil, fmt.Errorf("agent thread service returned incomplete human resume bundle")
 	}
 	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 
 	return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(bundle.Run)}, nil
+}
+
+func humanResumeRolloverStableResponse(
+	response HumanInteractionResponse,
+) domainrepo.HumanResumeRolloverResponse {
+	return domainrepo.HumanResumeRolloverResponse{
+		Schema: response.Schema, InteractionID: response.InteractionID,
+		Kind: string(response.Kind), Decision: string(response.Decision),
+		Answer: response.Answer, ChoiceID: response.ChoiceID, Comment: response.Comment,
+		SubmittedBy: response.SubmittedBy, Source: response.Source,
+	}
 }
 
 func (s *ApplicationService) latestActiveADKCheckpoint(

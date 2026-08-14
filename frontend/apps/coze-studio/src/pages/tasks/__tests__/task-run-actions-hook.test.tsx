@@ -21,6 +21,7 @@ import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { useTaskRunActions } from '../task-run-actions-hook';
+import { WorkbenchClientError } from '../../workbench/thread-client/canonical-fetch';
 import type { WorkbenchRun } from '../../workbench/thread-client';
 
 const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
@@ -233,15 +234,32 @@ describe('useTaskRunActions task request generation', () => {
       await currentActions.handleRetryTaskRun('run-old');
     });
 
-    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attempt_kind: 'retry',
-        message_content: '重试 task-old',
-        space_id: 'space-1',
-        source_run_id: 'run-old',
-        thread_id: 'task-old',
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      assistant_id: 'agent',
+      idempotency_key: 'space-1:task-old:run-old:task_retry',
+      space_id: 'space-1',
+      submission_v2: expect.objectContaining({
+        schema_version: 'coze.workbench.run_submission.v2',
+        kind: 'retry',
+        input: { message: '重试 task-old', uploaded_files: [] },
+        lineage: { source_run_id: 'run-old' },
+        metadata: { source: 'task_retry' },
       }),
-    );
+      thread_id: 'task-old',
+    });
+    const retryRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    [
+      'attempt_kind',
+      'source_run_id',
+      'source_thread_id',
+      'requested_at',
+      'input',
+      'config',
+      'context',
+      'metadata',
+      'message_content',
+      'message_metadata',
+    ].forEach(field => expect(retryRequest).not.toHaveProperty(field));
     expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
     expect(commitTopLevelRun).toHaveBeenCalledWith(retryRun);
     expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
@@ -255,6 +273,37 @@ describe('useTaskRunActions task request generation', () => {
     expect(mockCreateTaskThreadRun).toHaveBeenCalledTimes(1);
     expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
     expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a retry 409 as authoritative refresh without rotating or resending the key', async () => {
+    const applyTaskDetail = vi.fn();
+    mockCreateTaskThreadRun.mockRejectedValueOnce(
+      new WorkbenchClientError({
+        code: 'idempotency_conflict',
+        message: 'duplicate retry',
+        outcome: 'rejected',
+        retryable: false,
+        status: 409,
+      }),
+    );
+    mockFetchTaskDetail
+      .mockRejectedValueOnce(new Error('刷新超时'))
+      .mockResolvedValueOnce({ task: { id: 'task-old' } });
+    renderHarness(applyTaskDetail);
+
+    await act(async () => {
+      await currentActions.handleRetryTaskRun('run-old');
+    });
+    await act(async () => {
+      await currentActions.handleRetryTaskRun('run-old');
+    });
+
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledTimes(1);
+    expect(mockCreateTaskThreadRun.mock.calls[0]?.[0]).toMatchObject({
+      idempotency_key: 'space-1:task-old:run-old:task_retry',
+    });
+    expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
+    expect(applyTaskDetail).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a top-level subagent retry worker isolated from the primary Run stream', async () => {

@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultADKToolProviderWithSingleAgentSubagentsExposesBuiltinWithoutSource(
+func TestDefaultADKToolProviderWithSingleAgentSubagentsExposesBuiltinWhenExplicitlyAllowed(
 	t *testing.T,
 ) {
 	provider := NewDefaultADKToolProviderWithSingleAgentSubagents(nil)
@@ -34,7 +34,7 @@ func TestDefaultADKToolProviderWithSingleAgentSubagentsExposesBuiltinWithoutSour
 	require.True(t, ok)
 	definitions, err := subagents.definition.ResolveADKSubagents(
 		context.Background(),
-		&RunSummary{Config: `{"mode":"ultra"}`},
+		&RunSummary{Config: `{"subagent_enabled":true}`},
 	)
 	require.NoError(t, err)
 	require.Len(t, definitions, 1)

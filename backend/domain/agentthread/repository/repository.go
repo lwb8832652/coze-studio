@@ -41,6 +41,7 @@ var (
 	ErrJournalInvalidStateTransition       = errors.New("invalid journal attempt state transition")
 	ErrJournalSequenceAllocation           = errors.New("journal sequence allocation failed")
 	ErrUnsupportedJournalEnrollmentVersion = errors.New("unsupported journal enrollment version")
+	ErrHumanResumeRolloverConflict         = errors.New("human resume journal attempt rollover conflict")
 )
 
 type ThreadRepository interface {
@@ -144,9 +145,73 @@ type CreateRunBundleRequest struct {
 	EventJournalProjectionFailed bool
 	Attempt                      *entity.RunAttempt
 	RecoverySourceLease          *ReconcileExpiredRunLeaseRequest
+	OrdinaryLeaseRecovery        *OrdinaryLeaseRecoveryRequest
+	HumanResumeRollover          *HumanResumeRolloverRequest
 	SkipTopLevelAdmission        bool
 	ValidateIdempotencyReplay    bool
 	AllocateInterruptedEventIDs  func(count int) ([]int64, error)
+}
+
+type OrdinaryLeaseRecoveryRequest struct {
+	JournalRunID       int64
+	SourceRunID        int64
+	SourceAttemptID    string
+	SourceCheckpointID int64
+	SourceCheckpoint   *entity.Checkpoint
+	IdempotencyKey     string
+	ExpiredLease       *ReconcileExpiredRunLeaseRequest
+}
+
+type HumanResumeRolloverRequest struct {
+	SourceRunID     int64
+	TerminalBase    *entity.RunEvent
+	TerminalJournal *entity.JournalEvent
+}
+
+// HumanResumeRolloverReplayRepository is deliberately narrower than
+// ThreadRepository. Only the Human Resume application path needs the durable
+// aggregate replay capability, so ordinary repository doubles do not inherit
+// another method.
+type HumanResumeRolloverReplayRepository interface {
+	GetHumanResumeRolloverReplay(
+		ctx context.Context,
+		req HumanResumeRolloverReplayRequest,
+	) (*HumanResumeRolloverReplayResult, error)
+}
+
+type HumanResumeRolloverReplayRequest struct {
+	SpaceID                 int64
+	ThreadID                int64
+	SourceRunID             int64
+	IdempotencyKey          string
+	IdempotencyOperation    string
+	IdempotencyFingerprint  string
+	ResolvedJournalKey      string
+	InterruptID             string
+	Response                HumanResumeRolloverResponse
+	PersistMessageReference bool
+}
+
+type HumanResumeRolloverResponse struct {
+	Schema        string
+	InteractionID string
+	Kind          string
+	Decision      string
+	Answer        string
+	ChoiceID      string
+	Comment       string
+	SubmittedBy   string
+	Source        string
+}
+
+type HumanResumeRolloverReplayResult struct {
+	Run           *entity.Run
+	Message       *entity.Message
+	Event         *entity.RunEvent
+	Attempt       *entity.RunAttempt
+	SourceAttempt *entity.RunAttempt
+	TerminalEvent *entity.RunEvent
+	Replayed      bool
 }
 
 type CreateRunBundleResult struct {
@@ -304,8 +369,9 @@ type TokenUsageSnapshot struct {
 }
 
 type NotificationOutboxIntent struct {
-	Event  domainnotification.Event
-	Append func(context.Context, *gorm.DB, domainnotification.Event) error
+	Event            domainnotification.Event
+	Append           func(context.Context, *gorm.DB, domainnotification.Event) error
+	AppendWithResult func(context.Context, *gorm.DB, domainnotification.Event) (inserted bool, err error)
 }
 
 type ClaimMemoryFlushJobsRequest struct {
@@ -422,6 +488,7 @@ type FinalizeRunSuccessRequest struct {
 	ExpectedThreadTitle               string
 	ThreadTitle                       string
 	OutboxIntent                      *NotificationOutboxIntent
+	AdaptiveGate                      *AdaptiveVerifiedSuccessGate
 }
 
 type FinalizeRunSuccessResult struct {
@@ -431,6 +498,8 @@ type FinalizeRunSuccessResult struct {
 	CompletionEvent    *entity.RunEvent
 	TerminalCheckpoint *entity.Checkpoint
 	TitleUpdated       bool
+	VerificationEvent  *entity.RunEvent
+	Replayed           bool
 }
 
 type UpdateRunStatusRequest struct {

@@ -134,6 +134,9 @@ func (s *threadService) CreateThreadRunMessage(
 		if req.JournalEnrollment.Recovery != nil {
 			return nil, InvalidArgumentErrorf("new thread run cannot be a journal recovery")
 		}
+		if err := validateFreshJournalProjectionState(req.JournalEnrollment); err != nil {
+			return nil, err
+		}
 	} else if req.JournalEnrollment != nil {
 		return nil, InvalidArgumentErrorf("journal enrollment options require journal enrollment")
 	}
@@ -223,10 +226,13 @@ func (s *threadService) CreateThreadRunMessage(
 			NextSequence: 1, LastCommittedSequence: 0,
 			EnrollmentVersion: strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion),
 			SnapshotsEnabled:  req.JournalEnrollment.SnapshotsEnabled,
-			ProjectionState:   entity.JournalProjectionStateHealthy,
+			ProjectionState:   initialJournalProjectionState(req.JournalEnrollment),
 			TraceID:           journalStringPointer(traceID),
 			CreatedAt:         now,
 			UpdatedAt:         now,
+		}
+		if attempt.ProjectionState == entity.JournalProjectionStateDisabled {
+			attempt.SnapshotsEnabled = false
 		}
 		if attemptStatus == entity.RunAttemptStatusRunning {
 			startedAt := run.StartedAt
@@ -261,6 +267,20 @@ func (s *threadService) GetThread(ctx context.Context, id int64) (*entity.Thread
 	}
 
 	return s.repo.GetThread(ctx, id)
+}
+
+func (s *threadService) GetHumanResumeRolloverReplay(
+	ctx context.Context,
+	req repository.HumanResumeRolloverReplayRequest,
+) (*repository.HumanResumeRolloverReplayResult, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	replayRepo, ok := s.repo.(repository.HumanResumeRolloverReplayRepository)
+	if !ok {
+		return nil, fmt.Errorf("human resume rollover replay repository is unavailable")
+	}
+	return replayRepo.GetHumanResumeRolloverReplay(ctx, req)
 }
 
 func (s *threadService) UpdateThreadTitle(
@@ -580,9 +600,26 @@ func (s *threadService) CreateRunBundle(
 		if req.JournalEnrollment == nil {
 			return nil, InvalidArgumentErrorf("journal enrollment options are required")
 		}
-		if req.JournalEnrollment.Recovery == nil {
+		if req.JournalEnrollment.Recovery != nil && req.JournalEnrollment.HumanResume != nil {
+			return nil, InvalidArgumentErrorf("journal recovery and human resume cannot both be set")
+		}
+		if countJournalEnrollmentSpecializations(req.JournalEnrollment) > 1 {
+			return nil, InvalidArgumentErrorf("journal enrollment specialization must be unique")
+		}
+		if human := req.JournalEnrollment.HumanResume; human != nil {
+			if err := validateJournalHumanResumeEnrollment(req, human); err != nil {
+				return nil, err
+			}
+		} else if ordinary := req.JournalEnrollment.OrdinaryLeaseRecovery; ordinary != nil {
+			if err := validateJournalOrdinaryLeaseRecoveryEnrollment(req, ordinary); err != nil {
+				return nil, err
+			}
+		} else if req.JournalEnrollment.Recovery == nil {
 			if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) == "" {
 				return nil, InvalidArgumentErrorf("journal enrollment version is required")
+			}
+			if err := validateFreshJournalProjectionState(req.JournalEnrollment); err != nil {
+				return nil, err
 			}
 		} else {
 			recovery := req.JournalEnrollment.Recovery
@@ -596,6 +633,9 @@ func (s *threadService) CreateRunBundle(
 			}
 			if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) != "" {
 				return nil, InvalidArgumentErrorf("journal recovery enrollment version is repository assigned")
+			}
+			if req.JournalEnrollment.ProjectionState != "" {
+				return nil, InvalidArgumentErrorf("journal recovery projection state is repository assigned")
 			}
 			if lease := recovery.ExpiredLease; lease != nil {
 				if lease.RunID <= 0 || strings.TrimSpace(lease.LeaseOwner) == "" ||
@@ -675,6 +715,12 @@ func (s *threadService) CreateRunBundle(
 			req.JournalEnrollment.Recovery.ExpiredLease != nil {
 			entityCount++
 		}
+		if req.JournalEnrollment.HumanResume != nil {
+			entityCount++
+		}
+		if req.JournalEnrollment.OrdinaryLeaseRecovery != nil {
+			entityCount++
+		}
 	}
 	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
 	if err != nil {
@@ -738,14 +784,21 @@ func (s *threadService) CreateRunBundle(
 	}
 	var attempt *entity.RunAttempt
 	var recoverySourceLease *repository.ReconcileExpiredRunLeaseRequest
+	var humanResumeRollover *repository.HumanResumeRolloverRequest
 	if req.EnrollJournal {
-		if recovery := req.JournalEnrollment.Recovery; recovery != nil && recovery.ExpiredLease != nil {
-			lease := recovery.ExpiredLease
+		if lease := journalEnrollmentExpiredLease(req.JournalEnrollment); lease != nil {
 			eventID := ids[nextID]
 			nextID++
+			ordinaryRecovery := req.JournalEnrollment.OrdinaryLeaseRecovery != nil
+			sourceStatus := entity.RunStatusFailed
+			sourceEventType := "run.failed"
+			if ordinaryRecovery {
+				sourceStatus = entity.RunStatusInterrupted
+				sourceEventType = "run.interrupted"
+			}
 			eventPayload, err := terminalRunEventPayload(
 				"",
-				entity.RunStatusFailed,
+				sourceStatus,
 				"",
 				strings.TrimSpace(lease.ErrorCode),
 			)
@@ -754,21 +807,24 @@ func (s *threadService) CreateRunBundle(
 			}
 			sourceEvent := &entity.RunEvent{
 				ID: eventID, ThreadID: run.ThreadID, RunID: lease.RunID,
-				EventType: "run.failed", Payload: eventPayload, CreatedAt: lease.Now,
+				EventType: sourceEventType, Payload: eventPayload, CreatedAt: lease.Now,
 			}
-			sourceJournalEvent, err := newRunTerminalJournalEvent(
-				sourceEvent,
-				entity.RunStatusFailed,
-				lease.ErrorCode,
-			)
-			if err != nil {
-				return nil, err
+			var sourceJournalEvent *entity.JournalEvent
+			if !ordinaryRecovery {
+				sourceJournalEvent, err = newRunTerminalJournalEvent(
+					sourceEvent,
+					entity.RunStatusFailed,
+					lease.ErrorCode,
+				)
+				if err != nil {
+					return nil, err
+				}
 			}
 			recoverySourceLease = &repository.ReconcileExpiredRunLeaseRequest{
 				RunID: lease.RunID, LeaseOwner: strings.TrimSpace(lease.LeaseOwner),
 				LeaseToken:          strings.TrimSpace(lease.LeaseToken),
 				ExecutionGeneration: lease.ExecutionGeneration,
-				ToStatus:            entity.RunStatusFailed,
+				ToStatus:            sourceStatus,
 				Now:                 lease.Now,
 				ErrorCode:           strings.TrimSpace(lease.ErrorCode),
 				ErrorMessage:        strings.TrimSpace(lease.ErrorMessage),
@@ -781,6 +837,7 @@ func (s *threadService) CreateRunBundle(
 			return nil, err
 		}
 		attemptID := ids[nextID]
+		nextID++
 		traceID := strings.TrimSpace(req.JournalEnrollment.TraceID)
 		attempt = &entity.RunAttempt{
 			ID: attemptID, ThreadID: run.ThreadID,
@@ -790,10 +847,13 @@ func (s *threadService) CreateRunBundle(
 			NextSequence: 1, LastCommittedSequence: 0,
 			EnrollmentVersion: strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion),
 			SnapshotsEnabled:  req.JournalEnrollment.SnapshotsEnabled,
-			ProjectionState:   entity.JournalProjectionStateHealthy,
+			ProjectionState:   initialJournalProjectionState(req.JournalEnrollment),
 			TraceID:           journalStringPointer(traceID),
 			CreatedAt:         now,
 			UpdatedAt:         now,
+		}
+		if attempt.ProjectionState == entity.JournalProjectionStateDisabled {
+			attempt.SnapshotsEnabled = false
 		}
 		if recovery := req.JournalEnrollment.Recovery; recovery != nil {
 			recoveryKey := strings.TrimSpace(recovery.IdempotencyKey)
@@ -805,6 +865,47 @@ func (s *threadService) CreateRunBundle(
 			attempt.SnapshotsEnabled = false
 			attempt.SourceCheckpointID = &sourceCheckpointID
 			attempt.SourceAttemptID = &sourceAttemptID
+			attempt.RecoveryIdempotencyKey = &recoveryKey
+		} else if human := req.JournalEnrollment.HumanResume; human != nil {
+			reentryKey := strings.TrimSpace(human.IdempotencyKey)
+			sourceAttemptID := strings.TrimSpace(human.SourceAttemptID)
+			sourceCheckpointID := human.SourceCheckpointID
+			attempt.JournalRunID = human.JournalRunID
+			attempt.Ordinal = 0
+			attempt.EnrollmentVersion = ""
+			attempt.SnapshotsEnabled = false
+			attempt.SourceCheckpointID = &sourceCheckpointID
+			attempt.SourceAttemptID = &sourceAttemptID
+			attempt.RecoveryIdempotencyKey = &reentryKey
+
+			terminalID := ids[nextID]
+			nextID++
+			terminalBase, terminalJournal, err := newHumanResumeInterruptedTerminal(
+				terminalID,
+				run.ThreadID,
+				human.SourceRunID,
+				run.ID,
+				event.ID,
+				now,
+			)
+			if err != nil {
+				return nil, err
+			}
+			humanResumeRollover = &repository.HumanResumeRolloverRequest{
+				SourceRunID: human.SourceRunID, TerminalBase: terminalBase, TerminalJournal: terminalJournal,
+			}
+		} else if ordinary := req.JournalEnrollment.OrdinaryLeaseRecovery; ordinary != nil {
+			recoveryKey := strings.TrimSpace(ordinary.IdempotencyKey)
+			sourceCheckpointID := ordinary.SourceCheckpointID
+			attempt.JournalRunID = ordinary.JournalRunID
+			attempt.Ordinal = 1
+			attempt.EnrollmentVersion = entity.JournalSchemaVersion
+			attempt.SnapshotsEnabled = false
+			attempt.ProjectionState = entity.JournalProjectionStateDisabled
+			attempt.SourceCheckpointID = &sourceCheckpointID
+			if sourceAttemptID := strings.TrimSpace(ordinary.SourceAttemptID); sourceAttemptID != "" {
+				attempt.SourceAttemptID = &sourceAttemptID
+			}
 			attempt.RecoveryIdempotencyKey = &recoveryKey
 		} else {
 			activeSlot := uint8(1)
@@ -822,6 +923,8 @@ func (s *threadService) CreateRunBundle(
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event, Attempt: attempt,
 		RecoverySourceLease:          recoverySourceLease,
+		OrdinaryLeaseRecovery:        ordinaryLeaseRecoveryRepositoryRequest(req.JournalEnrollment, recoverySourceLease),
+		HumanResumeRollover:          humanResumeRollover,
 		EventJournalSourceRunID:      eventJournalSourceRunID,
 		EventJournal:                 eventJournal,
 		EventJournalProjectionFailed: eventJournalProjectionFailed,
@@ -848,6 +951,186 @@ func (s *threadService) CreateRunBundle(
 		InterruptedRuns: result.InterruptedRuns, InterruptedEvents: result.InterruptedEvents,
 		Created: result.Created,
 	}, nil
+}
+
+func validateFreshJournalProjectionState(enrollment *JournalEnrollmentOptions) error {
+	if enrollment == nil {
+		return InvalidArgumentErrorf("journal enrollment options are required")
+	}
+	switch enrollment.ProjectionState {
+	case "", entity.JournalProjectionStateHealthy, entity.JournalProjectionStateDisabled:
+		return nil
+	default:
+		return InvalidArgumentErrorf("journal projection state must be healthy or disabled")
+	}
+}
+
+func countJournalEnrollmentSpecializations(enrollment *JournalEnrollmentOptions) int {
+	if enrollment == nil {
+		return 0
+	}
+	count := 0
+	if enrollment.Recovery != nil {
+		count++
+	}
+	if enrollment.HumanResume != nil {
+		count++
+	}
+	if enrollment.OrdinaryLeaseRecovery != nil {
+		count++
+	}
+	return count
+}
+
+func validateJournalOrdinaryLeaseRecoveryEnrollment(
+	req *CreateRunBundleRequest,
+	ordinary *JournalOrdinaryLeaseRecoveryEnrollmentOptions,
+) error {
+	if req == nil || ordinary == nil || ordinary.JournalRunID <= 0 ||
+		ordinary.SourceCheckpointID <= 0 || strings.TrimSpace(ordinary.IdempotencyKey) == "" ||
+		ordinary.SourceCheckpoint == nil || ordinary.ExpiredLease == nil {
+		return InvalidArgumentErrorf("ordinary journal lease recovery source is required")
+	}
+	checkpoint := ordinary.SourceCheckpoint
+	sourceAttemptID := strings.TrimSpace(ordinary.SourceAttemptID)
+	if ordinary.ExpiredLease.RunID <= 0 ||
+		(sourceAttemptID == "" && ordinary.ExpiredLease.RunID != ordinary.JournalRunID) ||
+		checkpoint.ID != ordinary.SourceCheckpointID || checkpoint.ThreadID != req.Run.ThreadID ||
+		checkpoint.RunID != ordinary.ExpiredLease.RunID || checkpoint.RuntimeDeletedAt != 0 ||
+		checkpoint.CheckpointNS != "eino.adk" || checkpoint.RuntimeType != "eino_adk" ||
+		strings.TrimSpace(checkpoint.RuntimeKey) == "" || checkpoint.EnvelopeVersion <= 0 ||
+		!json.Valid([]byte(checkpoint.ChannelValues)) || !json.Valid([]byte(checkpoint.ChannelVersions)) ||
+		!json.Valid([]byte(checkpoint.PendingSends)) || !json.Valid([]byte(checkpoint.Metadata)) ||
+		strings.TrimSpace(req.Run.IdempotencyKey) != strings.TrimSpace(ordinary.IdempotencyKey) {
+		return InvalidArgumentErrorf("ordinary journal lease recovery identity is invalid")
+	}
+	lease := ordinary.ExpiredLease
+	if strings.TrimSpace(lease.LeaseOwner) == "" || strings.TrimSpace(lease.LeaseToken) == "" ||
+		lease.ExecutionGeneration == 0 || lease.Now <= 0 {
+		return InvalidArgumentErrorf("ordinary journal lease recovery fence is required")
+	}
+	if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) != "" ||
+		req.JournalEnrollment.SnapshotsEnabled || req.JournalEnrollment.ProjectionState != "" ||
+		strings.TrimSpace(req.JournalEnrollment.TraceID) != "" {
+		return InvalidArgumentErrorf("ordinary journal lease recovery lifecycle is repository assigned")
+	}
+	return nil
+}
+
+func journalEnrollmentExpiredLease(
+	enrollment *JournalEnrollmentOptions,
+) *JournalRecoveryExpiredLeaseOptions {
+	if enrollment == nil {
+		return nil
+	}
+	if enrollment.Recovery != nil {
+		return enrollment.Recovery.ExpiredLease
+	}
+	if enrollment.OrdinaryLeaseRecovery != nil {
+		return enrollment.OrdinaryLeaseRecovery.ExpiredLease
+	}
+	return nil
+}
+
+func ordinaryLeaseRecoveryRepositoryRequest(
+	enrollment *JournalEnrollmentOptions,
+	lease *repository.ReconcileExpiredRunLeaseRequest,
+) *repository.OrdinaryLeaseRecoveryRequest {
+	if enrollment == nil || enrollment.OrdinaryLeaseRecovery == nil {
+		return nil
+	}
+	ordinary := enrollment.OrdinaryLeaseRecovery
+	checkpoint := *ordinary.SourceCheckpoint
+	return &repository.OrdinaryLeaseRecoveryRequest{
+		JournalRunID: ordinary.JournalRunID, SourceRunID: ordinary.ExpiredLease.RunID,
+		SourceAttemptID:    strings.TrimSpace(ordinary.SourceAttemptID),
+		SourceCheckpointID: ordinary.SourceCheckpointID,
+		SourceCheckpoint:   &checkpoint,
+		IdempotencyKey:     strings.TrimSpace(ordinary.IdempotencyKey), ExpiredLease: lease,
+	}
+}
+
+func initialJournalProjectionState(enrollment *JournalEnrollmentOptions) entity.JournalProjectionState {
+	if enrollment != nil && enrollment.ProjectionState == entity.JournalProjectionStateDisabled {
+		return entity.JournalProjectionStateDisabled
+	}
+	return entity.JournalProjectionStateHealthy
+}
+
+func validateJournalHumanResumeEnrollment(
+	req *CreateRunBundleRequest,
+	human *JournalHumanResumeEnrollmentOptions,
+) error {
+	if req == nil || human == nil {
+		return InvalidArgumentErrorf("journal human resume enrollment is required")
+	}
+	reentryKey := strings.TrimSpace(human.IdempotencyKey)
+	if human.JournalRunID <= 0 || human.SourceRunID <= 0 || human.SourceCheckpointID <= 0 ||
+		strings.TrimSpace(human.SourceAttemptID) == "" || reentryKey == "" {
+		return InvalidArgumentErrorf("journal human resume enrollment source is required")
+	}
+	if strings.TrimSpace(req.Run.IdempotencyKey) != reentryKey {
+		return InvalidArgumentErrorf("journal human resume run idempotency key must match enrollment")
+	}
+	if req.Run.Status != entity.RunStatusQueued || req.Run.ParentRunID != 0 ||
+		(req.Run.RunKind != "" && req.Run.RunKind != entity.RunKindTask) ||
+		strings.TrimSpace(req.Run.MultitaskStrategy) != "reject" {
+		return InvalidArgumentErrorf("journal human resume run must be a queued root task with reject admission")
+	}
+	if strings.TrimSpace(req.JournalEnrollment.EnrollmentVersion) != "" ||
+		req.JournalEnrollment.SnapshotsEnabled || req.JournalEnrollment.ProjectionState != "" ||
+		strings.TrimSpace(req.JournalEnrollment.TraceID) != "" {
+		return InvalidArgumentErrorf("journal human resume enrollment lifecycle is repository assigned")
+	}
+	if req.Message == nil || req.Message.Role != entity.MessageRoleUser {
+		return InvalidArgumentErrorf("journal human resume requires a user message")
+	}
+	if req.Event == nil || strings.TrimSpace(req.Event.EventType) != "human.interaction.resolved" ||
+		req.Event.JournalSourceRunID != human.SourceRunID || req.Event.Journal == nil ||
+		req.Event.JournalProjectionFailed {
+		return InvalidArgumentErrorf("journal human resume requires a healthy resolved projection")
+	}
+	projection := req.Event.Journal
+	if strings.TrimSpace(projection.EventType) != "confirmation.resolved" ||
+		strings.TrimSpace(projection.Status) != "completed" ||
+		projection.Visibility != entity.JournalVisibilityUser ||
+		projection.JournalRunID != 0 || strings.TrimSpace(projection.AttemptID) != "" ||
+		strings.TrimSpace(projection.IdempotencyKey) == "" ||
+		strings.TrimSpace(projection.SchemaVersion) != entity.JournalSchemaVersion ||
+		strings.TrimSpace(projection.PayloadVersion) != entity.JournalPayloadVersion {
+		return InvalidArgumentErrorf("journal human resume requires a healthy resolved projection")
+	}
+	return nil
+}
+
+func newHumanResumeInterruptedTerminal(
+	id int64,
+	threadID int64,
+	sourceRunID int64,
+	resumeRunID int64,
+	parentEventID int64,
+	createdAt int64,
+) (*entity.RunEvent, *entity.JournalEvent, error) {
+	payload := fmt.Sprintf(
+		`{"schema":"coze.journal_attempt_interrupted.v1","status":"interrupted","resume_run_id":%d}`,
+		resumeRunID,
+	)
+	journalPayload := `{"type":"terminal","data":{"status":"interrupted"}}`
+	base := &entity.RunEvent{
+		ID: id, ThreadID: threadID, RunID: sourceRunID,
+		EventType: entity.JournalAttemptInterruptedRunEventType,
+		Payload:   payload, CreatedAt: createdAt,
+	}
+	journal := &entity.JournalEvent{
+		ID: id, ThreadID: threadID, RunID: sourceRunID,
+		IdempotencyKey: fmt.Sprintf("journal:run:%d:terminal:interrupted", sourceRunID),
+		ParentEventID:  parentEventID, SchemaVersion: entity.JournalSchemaVersion,
+		Status:             string(entity.RunAttemptStatusInterrupted),
+		OccurredAtUnixNano: createdAt * int64(1_000_000),
+		Visibility:         entity.JournalVisibilityUser, PayloadVersion: entity.JournalPayloadVersion,
+		EventType: "run.lifecycle", Payload: journalPayload, CreatedAt: createdAt,
+	}
+	return base, journal, nil
 }
 
 func newRunEntity(
@@ -1203,7 +1486,8 @@ func (s *threadService) FinalizeJournalAttempt(
 	if err := s.requireComponents(); err != nil {
 		return nil, false, err
 	}
-	if req == nil || req.Event.RunID <= 0 || !req.Status.IsTerminal() {
+	if req == nil || req.Event.RunID <= 0 ||
+		!entity.IsLegacyFinalizableRunAttemptStatus(req.Status) {
 		return nil, false, InvalidArgumentErrorf("terminal run id and attempt status are required")
 	}
 	journalRepo, err := s.journalRepository()

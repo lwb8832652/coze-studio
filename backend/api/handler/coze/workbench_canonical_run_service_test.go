@@ -33,6 +33,146 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
+func TestCreateCanonicalRunTypedV2TurnPersistsMappedMessage(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "typed create turn", `{}`)
+	body := canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("typed follow-up"), "")
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID),
+		body,
+		ut.Header{Key: "Idempotency-Key", Value: "typed-create-turn"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	messages, runs := canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, "typed follow-up", messages[0].Content)
+	require.NotEmpty(t, runs[0].Config)
+	require.JSONEq(t, runs[0].Config, messages[0].Metadata)
+	require.Contains(t, runs[0].Input, "typed follow-up")
+}
+
+func TestWaitCanonicalRunTypedV2RetryReplaysWithoutMessage(t *testing.T) {
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "typed wait retry", `{}`)
+	source := createCanonicalRunFixture(t, thread.ThreadID, "failed typed source")
+	failCanonicalRunFixture(t, source, "runtime_failed", "failed")
+	submissionBody := canonicalTypedRunRetryV2(source.RunID, "retry typed source")
+	body := canonicalTypedRunRequestV2(submissionBody, "")
+	header := ut.Header{Key: "Idempotency-Key", Value: "typed-wait-retry"}
+	created := performCanonicalRunJSONRequest(
+		t, canonicalRunTestServer(), http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID), body, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var projected canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &projected))
+	retryRunID := mustCanonicalTestID(t, projected.RunID)
+	messages, runs := canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+	var retryRun *appagentthread.RunSummary
+	for _, run := range runs {
+		if run != nil && run.RunID == retryRunID {
+			retryRun = run
+			break
+		}
+	}
+	require.NotNil(t, retryRun)
+	require.Contains(t, retryRun.Input, "retry typed source")
+	require.NotContains(t, retryRun.Metadata, `"_message"`)
+	completeCanonicalRunWithPublicState(t, retryRun, `{"custom":{"status":"waited"}}`)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServer(),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/wait", thread.ThreadID),
+		body,
+		header,
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	var values map[string]any
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &values))
+	require.Equal(t, "waited", values["custom"].(map[string]any)["status"])
+	messages, runs = canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+}
+
+func TestCreateCanonicalRunTypedV2RejectsVersionMixingAndCaseVariant(t *testing.T) {
+	typedUnknownBeforeBinder := canonicalTypedV2Replace(
+		canonicalTypedRunTurnV2("strict before binder"),
+		`"input":{`,
+		`"input":{"future":"must-not-leak",`,
+	)
+	tests := []struct {
+		name, body, code string
+	}{
+		{"input null", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"input":null`), "invalid_request"},
+		{"command case folded", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"CoMmAnD":null`), "invalid_request"},
+		{"metadata", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"metadata":{}`), "invalid_request"},
+		{"config null", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"config":null`), "invalid_request"},
+		{"context", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"context":{}`), "invalid_request"},
+		{"coze case folded", canonicalTypedRunRequestV2(canonicalTypedRunTurnV2("mixed"), `,"CoZe":null`), "invalid_request"},
+		{"typed root case variant", fmt.Sprintf(`{"assistant_id":"agent","Submission_V2":%s}`, canonicalTypedRunTurnV2("case variant")), "unsupported_sdk_field"},
+		{"typed root unicode fold variant", fmt.Sprintf(`{"assistant_id":"agent","ſubmission_v2":%s,"input":"{\"message\":\"must not run\",\"uploaded_files\":[]}"}`, canonicalTypedRunTurnV2("unicode case variant")), "unsupported_sdk_field"},
+		{"typed root unicode fold duplicate", fmt.Sprintf(`{"assistant_id":"agent","submission_v2":%s,"ſubmission_v2":%s}`, canonicalTypedRunTurnV2("exact"), canonicalTypedRunTurnV2("alias")), "unsupported_sdk_field"},
+		{"typed assistant must be exact", fmt.Sprintf(`{"assistant_id":" agent ","submission_v2":%s}`, canonicalTypedRunTurnV2("assistant exact")), "invalid_request"},
+		{"typed strict validation precedes binder", fmt.Sprintf(`{"assistant_id":{},"submission_v2":%s}`, typedUnknownBeforeBinder), "unsupported_sdk_field"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			thread := createCanonicalTestThread(t, 1001, "typed run rejection", `{}`)
+			response := performCanonicalRunJSONRequest(
+				t, canonicalRunTestServer(), http.MethodPost,
+				fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID), test.body,
+			)
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			require.Empty(t, canonicalRunsForThread(t, thread.ThreadID))
+		})
+	}
+}
+
+func canonicalTypedRunTurnV2(message string) string {
+	return canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictRunV2),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+}
+
+func canonicalTypedRunRetryV2(sourceRunID int64, message string) string {
+	body := canonicalTypedV2Replace(
+		canonicalSemanticRunV2(canonicalStrictRunV2WithOptionals()),
+		`"message":"hello"`,
+		`"message":`+strconv.Quote(message),
+	)
+	return canonicalTypedV2Replace(
+		body,
+		`"source_run_id":"9"`,
+		fmt.Sprintf(`"source_run_id":"%d"`, sourceRunID),
+	)
+}
+
+func canonicalTypedRunRequestV2(submission, extraFields string) string {
+	return fmt.Sprintf(
+		`{"assistant_id":"agent","submission_v2":%s%s}`,
+		submission,
+		extraFields,
+	)
+}
+
 func TestCanonicalRunRequestDefaultsAndAllowlist(t *testing.T) {
 	installAgentThreadTestService(t)
 
@@ -144,6 +284,58 @@ func TestCanonicalRunRequestRejectsUnsupportedFieldsWithoutSideEffects(t *testin
 	}
 }
 
+func TestCanonicalRunRoutesRejectExecutionControlsBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(threadID int64) string
+		body string
+	}{
+		{
+			name: "create nested config",
+			path: func(threadID int64) string {
+				return fmt.Sprintf("/api/workbench/threads/%d/runs", threadID)
+			},
+			body: `{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"CoNfIg":{"CoNfIgUrAbLe":{"MoDe":"ultra"}}
+			}`,
+		},
+		{
+			name: "wait root control",
+			path: func(threadID int64) string {
+				return fmt.Sprintf("/api/workbench/threads/%d/runs/wait", threadID)
+			},
+			body: `{
+				"assistant_id":"agent",
+				"input":{"messages":[{"role":"user","content":"do not persist"}]},
+				"reasoning_effort":"high"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			thread := createCanonicalTestThread(t, 1001, "execution control rejection", `{}`)
+			response := performCanonicalRunJSONRequest(
+				t,
+				canonicalRunTestServer(),
+				http.MethodPost,
+				test.path(thread.ThreadID),
+				test.body,
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, "unsupported_execution_control", public.Code)
+			require.Empty(t, canonicalRunsForThread(t, thread.ThreadID))
+		})
+	}
+}
+
 func TestCanonicalRunRequestOnlyAcceptsSingleUserTurn(t *testing.T) {
 	tests := map[string]string{
 		"missing input":      `{"assistant_id":"agent"}`,
@@ -186,7 +378,7 @@ func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency(t
 		"command":{},
 		"metadata":{"source":"workbench_detail_followup"},
 		"coze":{"message_metadata":{"source":"workbench_detail_followup","composer":"detail"}},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"context":{"locale":"zh-CN"},
 		"stream_mode":["messages-tuple","updates"],
 		"on_disconnect":"continue"
@@ -258,7 +450,7 @@ func TestCanonicalCreateRunTopLevelRetryIsMessageLessAndReplaysAcrossWait(t *tes
 		"input":{"messages":[{"role":"user","content":"retry the current task"}]},
 		"command":{},
 		"metadata":{"source":"task_retry"},
-		"config":{"runtime":"eino_adk","mode":"pro"},
+		"config":{"runtime":"eino_adk"},
 		"context":{"locale":"zh-CN"},
 		"stream_mode":["messages-tuple","updates"],
 		"on_disconnect":"continue",
@@ -328,13 +520,7 @@ func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *te
 	thread := createCanonicalTestThread(t, 1001, "canonical retry validation", `{}`)
 	failed := createCanonicalRunFixture(t, thread.ThreadID, "failed source")
 	failCanonicalRunFixture(t, failed, "runtime_failed", "failed")
-	childResponse, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: thread.ThreadID, ParentRunID: failed.RunID,
-		RunKind: appagentthread.RunKindSubagent, Input: `{"messages":[{"role":"user","content":"child"}]}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, childResponse)
-	require.NotNil(t, childResponse.Run)
+	child := createCanonicalServerOwnedSubagentFixture(t, failed)
 	otherThread := createCanonicalTestThread(t, 1001, "other retry source", `{}`)
 	crossThread := createCanonicalRunFixture(t, otherThread.ThreadID, "cross thread source")
 	failCanonicalRunFixture(t, crossThread, "runtime_failed", "failed")
@@ -350,7 +536,7 @@ func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *te
 	}{
 		{name: "missing source", coze: `{"attempt_kind":"retry","source_run_id":"999999"}`, status: http.StatusNotFound},
 		{name: "cross thread source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, crossThread.RunID), status: http.StatusNotFound},
-		{name: "child source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, childResponse.Run.RunID), status: http.StatusUnprocessableEntity},
+		{name: "child source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, child.RunID), status: http.StatusUnprocessableEntity},
 		{name: "non failed source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, active.RunID), status: http.StatusConflict},
 		{name: "malformed source", coze: `{"attempt_kind":"retry","source_run_id":"not-an-id"}`, status: http.StatusUnprocessableEntity},
 		{name: "numeric source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":%d}`, failed.RunID), status: http.StatusUnprocessableEntity},
@@ -401,7 +587,7 @@ func TestCanonicalRunTopLevelRetryFingerprintScopesSourceAndOperation(t *testing
 		AssistantID:    "agent",
 		MessageContent: "retry the current task",
 		Metadata:       `{"source":"task_retry"}`,
-		Config:         `{"runtime":"eino_adk","mode":"pro"}`,
+		Config:         `{"runtime":"eino_adk"}`,
 		Context:        `{"locale":"zh-CN"}`,
 		Options: canonicalRunOptions{
 			StreamModes:       []string{"messages-tuple", "updates"},
@@ -801,6 +987,172 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 	assertCanonicalResumePersistence(t, sourceRunID, "canonical-resume-route-1")
 }
 
+func TestCanonicalResumeRolloverExactReplayAfterSourceLifecycleChange(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
+	payload := `{
+		"interrupt_id":"interrupt-1",
+		"response":{
+			"schema":"coze.human_interaction_response.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"decision":"answered",
+			"answer":"最近 7 天"
+		}
+	}`
+	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-resume-lifecycle-replay"}
+
+	created := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID), payload, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var first canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &first))
+
+	failed, err := appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID: sourceRunID, From: appagentthread.RunStatusInterrupted,
+		ErrorCode: "source_lifecycle_advanced", ErrorMessage: "source advanced after resume",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, failed)
+	require.Equal(t, appagentthread.RunStatusFailed, failed.Run.Status)
+
+	replayed := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID), payload, header,
+	)
+	require.Equal(t, http.StatusOK, replayed.Code, replayed.Result().Body())
+	var second canonicalRun
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &second))
+	require.Equal(t, first.RunID, second.RunID)
+	require.Len(t, canonicalRunsForThread(t, 1), 2)
+}
+
+func TestResumeCanonicalRunAcceptsTypedV2AndSharesFingerprint(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	h := canonicalRunTestServerForUserAndSpace(2, 1)
+	header := ut.Header{Key: "Idempotency-Key", Value: "typed-resume-shared-1"}
+	typed := `{
+		"interrupt_id":"interrupt-1",
+		"response_v2":{
+			"schema":"coze.human_interaction_response.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"decision":"answered",
+			"answer":"  last 14 days  "
+		}
+	}`
+
+	created := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+		typed, header,
+	)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var first canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &first))
+
+	legacyBody, err := json.Marshal(map[string]any{
+		"assistant_id": "agent",
+		"command": map[string]any{"resume": map[string]any{
+			"source_run_id": strconv.FormatInt(sourceRunID, 10),
+			"interrupt_id":  "interrupt-1",
+			"response": canonicalResumeResponse{
+				Schema: "coze.human_interaction_response.v1", InteractionID: "hi_1",
+				Kind: "clarification", Decision: "answered", Answer: "last 14 days",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	replayed := performCanonicalRunJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads/1/runs", string(legacyBody), header,
+	)
+	require.Equal(t, http.StatusOK, replayed.Code, replayed.Result().Body())
+	var second canonicalRun
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &second))
+	require.Equal(t, first.RunID, second.RunID)
+	require.Len(t, canonicalRunsForThread(t, 1), 2)
+}
+
+func TestResumeCanonicalRunRejectsTypedV2UnionWithoutMutation(t *testing.T) {
+	v1 := `{"schema":"coze.human_interaction_response.v1","interaction_id":"hi_1","kind":"clarification","decision":"answered","answer":"last 7 days"}`
+	v2 := `{"schema":"coze.human_interaction_response.v1","interaction_id":"hi_1","kind":"clarification","decision":"answered","answer":"last 7 days"}`
+	tests := []struct {
+		name, body, code string
+	}{
+		{
+			name: "both versions",
+			body: `{"interrupt_id":"interrupt-1","response":` + v1 + `,"response_v2":` + v2 + `}`,
+			code: "invalid_request",
+		},
+		{
+			name: "typed null counts present",
+			body: `{"interrupt_id":"interrupt-1","response_v2":null}`,
+			code: "invalid_request",
+		},
+		{
+			name: "typed root case variant",
+			body: `{"interrupt_id":"interrupt-1","Response_V2":` + v2 + `}`,
+			code: "unsupported_sdk_field",
+		},
+		{
+			name: "typed interrupt duplicate",
+			body: `{"interrupt_id":"interrupt-1","interrupt_id":"interrupt-2","response_v2":` + v2 + `}`,
+			code: "invalid_json",
+		},
+		{
+			name: "typed interrupt case variant",
+			body: `{"Interrupt_ID":"interrupt-1","response_v2":` + v2 + `}`,
+			code: "unsupported_sdk_field",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installAgentThreadTestService(t)
+			sourceRunID := createInterruptedHumanInteractionRun(t)
+			response := performCanonicalRunJSONRequest(
+				t, canonicalRunTestServerForUserAndSpace(2, 1), http.MethodPost,
+				fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+				test.body,
+			)
+			wantStatus := http.StatusUnprocessableEntity
+			if test.code == "invalid_json" {
+				wantStatus = http.StatusBadRequest
+			}
+			require.Equal(t, wantStatus, response.Code, response.Result().Body())
+			var public canonicalError
+			require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+			require.Equal(t, test.code, public.Code)
+			runs := canonicalRunsForThread(t, 1)
+			require.Len(t, runs, 1)
+			require.Equal(t, sourceRunID, runs[0].RunID)
+		})
+	}
+}
+
+func TestCanonicalResumeRejectsExecutionControlsBeforeApplication(t *testing.T) {
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	response := performCanonicalRunJSONRequest(
+		t,
+		canonicalRunTestServerForUserAndSpace(2, 1),
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/resume", sourceRunID),
+		`{"mode":"ultra"}`,
+	)
+
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Result().Body())
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "unsupported_execution_control", public.Code)
+	runs := canonicalRunsForThread(t, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, sourceRunID, runs[0].RunID)
+}
+
 func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) {
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
@@ -1186,7 +1538,7 @@ func TestCanonicalRunDoesNotTreatUserMessageAsRuntimeConfiguration(t *testing.T)
 	h := canonicalRunTestServer()
 	body := `{
 		"assistant_id":"agent",
-		"input":{"messages":[{"role":"user","content":"请说明为什么 api_key=sk-example 不应写入配置"}]}
+		"input":{"messages":[{"role":"user","content":"请说明为什么 api_key=sk-example 和 requested_policy=auto 都不应被当作配置"}]}
 	}`
 
 	response := performCanonicalRunJSONRequest(
