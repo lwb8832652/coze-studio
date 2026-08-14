@@ -96,6 +96,7 @@ func TestServerMountsSessionRoutesOnlyWhenSessionBackendEnabled(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/v1/sessions/session-1/operations/op-1:cancel", nil),
 		httptest.NewRequest(http.MethodGet, "/v1/session-configuration", nil),
 		httptest.NewRequest(http.MethodPut, "/v1/session-configuration", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/session-runtime-status", nil),
 	} {
 		response = httptest.NewRecorder()
 		enabled.Handler().ServeHTTP(response, request)
@@ -103,8 +104,8 @@ func TestServerMountsSessionRoutesOnlyWhenSessionBackendEnabled(t *testing.T) {
 			t.Fatalf("%s %s status = %d", request.Method, request.URL.Path, response.Code)
 		}
 	}
-	if session.calls != 11 {
-		t.Fatalf("Session handler calls = %d, want 11", session.calls)
+	if session.calls != 12 {
+		t.Fatalf("Session handler calls = %d, want 12", session.calls)
 	}
 }
 
@@ -163,6 +164,38 @@ func TestServerHealthAdvertisesSessionFeaturesOnlyWhileCoreReady(t *testing.T) {
 	notReady := readFeatures()
 	if len(notReady) != 2 || notReady[0] != domainsandbox.ProviderFeatureQueueStatusV1 || notReady[1] != domainsandbox.ProviderFeatureSignedExecutionContext {
 		t.Fatalf("not-ready features = %#v", notReady)
+	}
+}
+
+func TestServerSessionConfigurationRoutesBypassCoreAdmissionGate(t *testing.T) {
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	core := &recordingSessionCoreReadiness{err: ErrUnavailable}
+	session := &recordingSessionHandler{status: http.StatusOK}
+	server, err := NewServer(config, Dependencies{
+		Scheduler: acceptSchedulerFunc(func(context.Context, ExecuteCommand) (ExecutionProjection, error) {
+			return ExecutionProjection{ExecutionID: "exec-runner-test", Status: infrasandbox.ExecutionStatusAccepted}, nil
+		}),
+		Session: session, CoreReadiness: core,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []struct{ method, path string }{{http.MethodGet, "/v1/session-configuration"}, {http.MethodPut, "/v1/session-configuration"}, {http.MethodGet, "/v1/session-runtime-status"}} {
+		request := httptest.NewRequest(route.method, route.path, nil)
+		request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s %s status = %d", route.method, route.path, response.Code)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions:acquire", nil)
+	request.Header.Set("Authorization", "Bearer runner-auth-token-0123456789")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || session.calls != 3 {
+		t.Fatalf("business status/session calls = %d/%d", response.Code, session.calls)
 	}
 }
 

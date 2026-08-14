@@ -330,6 +330,31 @@ type schedulerSettingsRepositoryFake struct {
 	calls    int
 }
 
+type sessionSettingsRepositoryFake struct {
+	settings domainsandbox.SessionRuntimeSettings
+	err      error
+	calls    int
+}
+
+func (f *sessionSettingsRepositoryFake) GetSessionSettings(context.Context) (domainsandbox.SessionRuntimeSettings, error) {
+	f.calls++
+	if f.err != nil {
+		return domainsandbox.SessionRuntimeSettings{}, f.err
+	}
+	return f.settings, nil
+}
+
+func (*sessionSettingsRepositoryFake) UpdateSessionSettingsCAS(context.Context, domainsandbox.UpdateSessionSettingsInput) (domainsandbox.SessionRuntimeSettings, error) {
+	return domainsandbox.SessionRuntimeSettings{}, domainsandbox.ErrInvalidInput
+}
+
+func enabledSessionSettingsRepository() *sessionSettingsRepositoryFake {
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.CoreEnabled = true
+	settings.Version = domainsandbox.InitialVersion
+	return &sessionSettingsRepositoryFake{settings: settings}
+}
+
 func (f *schedulerSettingsRepositoryFake) GetSchedulerSettings(context.Context) (domainsandbox.SchedulerSettings, error) {
 	f.calls++
 	if f.err != nil {
@@ -716,6 +741,7 @@ func newRouterForTest(
 	if err != nil {
 		t.Fatalf("create router: %v", err)
 	}
+	router.SetSessionSettingsRepository(enabledSessionSettingsRepository())
 	return router
 }
 
@@ -785,6 +811,70 @@ func TestProviderRouterResolveSessionRequiresBothFeaturesAndNeverAcquiresCapacit
 			}
 			if _, err := selection.Get(context.Background(), domainsandbox.SessionRef{}); !errors.Is(err, domainsandbox.ErrExecutionForbidden) {
 				t.Fatalf("selection.Get() after CloseContext error = %v", err)
+			}
+		})
+	}
+}
+
+func TestProviderRouterResolveSessionReadsPersistedCoreGateBeforeFactory(t *testing.T) {
+	now := time.Unix(2_000_001_050, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Health.Features = []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureSandboxSessionV1,
+		domainsandbox.ProviderFeatureSignedSessionContextV2,
+	}
+	tests := []struct {
+		name       string
+		repository *sessionSettingsRepositoryFake
+		inject     bool
+		want       error
+	}{
+		{name: "repository missing", want: domainsandbox.ErrConfigurationInvalid},
+		{name: "repository unavailable", inject: true, repository: &sessionSettingsRepositoryFake{err: errors.New("database unavailable")}, want: domainsandbox.ErrUnavailable},
+		{name: "invalid persisted snapshot", inject: true, repository: &sessionSettingsRepositoryFake{settings: domainsandbox.SessionRuntimeSettings{Version: 1}}, want: domainsandbox.ErrConfigurationInvalid},
+		{name: "core disabled", inject: true, repository: func() *sessionSettingsRepositoryFake {
+			settings := domainsandbox.DefaultSessionRuntimeSettings()
+			settings.Version = 1
+			return &sessionSettingsRepositoryFake{settings: settings}
+		}(), want: domainsandbox.ErrExecutionForbidden},
+		{name: "core enabled", inject: true, repository: enabledSessionSettingsRepository()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			validateCalls, buildCalls := 0, 0
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+				validateSession: func(context.Context, ProviderDescriptor) error {
+					validateCalls++
+					return nil
+				},
+				buildSession: func(context.Context, domainsandbox.Provider, ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error) {
+					buildCalls++
+					return &sessionRuntimeProviderStub{}, nil
+				},
+			}, &capacityLimiterFuncs{})
+			router.SetSessionSettingsRepository(nil)
+			if test.inject {
+				router.SetSessionSettingsRepository(test.repository)
+			}
+
+			selection, err := router.ResolveSession(context.Background(), testRouterRequest())
+			if !errors.Is(err, test.want) {
+				t.Fatalf("ResolveSession() error = %v, want %v", err, test.want)
+			}
+			if test.want != nil {
+				if selection != nil || validateCalls != 0 || buildCalls != 0 {
+					t.Fatalf("closed gate reached factory: selection=%t validate=%d build=%d", selection != nil, validateCalls, buildCalls)
+				}
+				if test.inject && test.repository.calls != 1 {
+					t.Fatalf("GetSessionSettings() calls = %d, want 1", test.repository.calls)
+				}
+				return
+			}
+			if selection == nil || validateCalls != 1 || buildCalls != 1 || test.repository.calls != 1 {
+				t.Fatalf("enabled gate selection/validate/build/reads = %t/%d/%d/%d", selection != nil, validateCalls, buildCalls, test.repository.calls)
+			}
+			if closeErr := selection.CloseContext(context.Background()); closeErr != nil {
+				t.Fatalf("CloseContext() error = %v", closeErr)
 			}
 		})
 	}

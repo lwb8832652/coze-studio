@@ -198,6 +198,9 @@ func TestSandboxWiringAllowsManagementBeforeRuntimeRouting(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, SandboxSVC)
+	require.NotNil(t, SandboxSessionSVC)
+	require.NotNil(t, capture.sessionStore)
+	require.Nil(t, capture.sessionRunner)
 	require.NotNil(t, SandboxRuntimeRepository)
 	require.Nil(t, SandboxRouter)
 	_, ok := (sandboxMCPRuntimeBindingSource{}).LoadADKMCPRuntimeSandboxBinding()
@@ -378,6 +381,8 @@ func TestSandboxWiringInjectsRunnerDeploymentAndV2SignerOnlyIntoSessionFactory(t
 	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
 	require.Equal(t, "runner-dev-a", capture.runtimeFactory.factory.deploymentID)
 	require.NotNil(t, capture.runtimeFactory.factory.sessionSigner)
+	require.NotNil(t, SandboxSessionSVC)
+	require.NotNil(t, capture.sessionRunner)
 
 	descriptor := appsandbox.ProviderDescriptor{
 		ProviderKey: "remote-primary", ProviderType: domainsandbox.ProviderTypeRemoteHTTP,
@@ -509,6 +514,8 @@ type sandboxWiringCapture struct {
 	healthFactory   sandboxHealthProviderFactory
 	runtimeFactory  sandboxRuntimeProviderFactory
 	schedulerRunner appsandbox.NativeSchedulerRunner
+	sessionRunner   appsandbox.NativeSessionRunner
+	sessionStore    domainsandbox.SessionSettingsAuditRepository
 	serviceErr      error
 	identitySigner  sandboxidentity.Signer
 }
@@ -560,6 +567,11 @@ func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCa
 		newSchedulerService: func(options appsandbox.SchedulerServiceOptions) (*appsandbox.SchedulerService, error) {
 			capture.schedulerRunner = options.Runner
 			return appsandbox.NewSchedulerService(options)
+		},
+		newSessionService: func(options appsandbox.SessionSettingsServiceOptions) (*appsandbox.SessionSettingsService, error) {
+			capture.sessionStore = options.Store
+			capture.sessionRunner = options.Runner
+			return appsandbox.NewSessionSettingsService(options)
 		},
 	}
 	t.Cleanup(func() { sandboxControlPlaneConstructors = previous })

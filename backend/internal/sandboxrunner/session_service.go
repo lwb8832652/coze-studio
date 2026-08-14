@@ -38,11 +38,11 @@ type SessionOperationScheduler interface {
 
 type SessionSettingsStore interface {
 	GetSessionSettings(context.Context) (domainsandbox.SessionRuntimeSettings, error)
-	UpdateSessionSettingsCAS(context.Context, domainsandbox.UpdateSessionSettingsInput) (domainsandbox.SessionRuntimeSettings, error)
 }
 
 type SessionSettingsRuntimeApplier interface {
 	ApplySessionSettings(domainsandbox.SessionRuntimeSettings) error
+	AppliedSessionSettings() domainsandbox.SessionRuntimeSettings
 }
 
 type SessionServiceConfig struct {
@@ -302,30 +302,57 @@ func (service *SessionService) CancelOperation(ctx context.Context, command Sess
 }
 
 func (service *SessionService) SessionConfiguration(ctx context.Context, claims sandboxidentity.SessionRequest) (SessionConfigurationProjection, error) {
-	if service.settings == nil || claims.ProviderID <= 0 || claims.UserID <= 0 {
+	if service == nil || service.settings == nil || service.applier == nil || !validSessionConfigurationClaims(claims, claims.RequestDigest) || claims.DeploymentID != service.deploymentID {
 		return SessionConfigurationProjection{}, ErrUnavailable
 	}
-	settings, err := service.settings.GetSessionSettings(ctx)
-	if err != nil {
+	desired, err := service.settings.GetSessionSettings(ctx)
+	if err != nil || desired.Version == 0 {
 		return SessionConfigurationProjection{}, err
 	}
-	return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: settings.Version, Settings: settings}, nil
+	applied := service.applier.AppliedSessionSettings()
+	if _, err := domainsandbox.NormalizeSessionRuntimeSettings(applied); err != nil || applied.Version == 0 || applied.Version > desired.Version {
+		return SessionConfigurationProjection{}, ErrUnavailable
+	}
+	return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: applied.Version, Settings: applied}, nil
 }
 
 func (service *SessionService) ApplySessionConfiguration(ctx context.Context, command SessionConfigurationCommand) (SessionConfigurationProjection, error) {
-	if service.settings == nil || service.applier == nil || command.Claims.UserID <= 0 {
+	if service == nil || service.settings == nil || service.applier == nil ||
+		!validSessionConfigurationClaims(command.Claims, command.Claims.RequestDigest) || command.Claims.DeploymentID != service.deploymentID ||
+		command.Version == 0 || command.Settings.Version != command.Version {
 		return SessionConfigurationProjection{}, ErrUnavailable
 	}
-	updated, err := service.settings.UpdateSessionSettingsCAS(ctx, domainsandbox.UpdateSessionSettingsInput{
-		ExpectedVersion: command.ExpectedVersion, Settings: command.Settings, UpdatedBy: command.Claims.UserID,
-	})
+	current := service.applier.AppliedSessionSettings()
+	if _, err := domainsandbox.NormalizeSessionRuntimeSettings(current); err != nil || current.Version == 0 {
+		return SessionConfigurationProjection{}, ErrUnavailable
+	}
+	desired, err := service.settings.GetSessionSettings(ctx)
 	if err != nil {
 		return SessionConfigurationProjection{}, err
 	}
-	if err := service.applier.ApplySessionSettings(updated); err != nil {
+	if command.Version != desired.Version || !sameSessionSettingsPayload(command.Settings, desired) {
+		return SessionConfigurationProjection{}, domainsandbox.ErrVersionConflict
+	}
+	if current.Version > desired.Version || current.Version == desired.Version && !sameSessionSettingsPayload(current, desired) {
+		return SessionConfigurationProjection{}, domainsandbox.ErrVersionConflict
+	}
+	if current.Version == desired.Version {
+		return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: current.Version, Settings: current}, nil
+	}
+	if err := service.applier.ApplySessionSettings(desired); err != nil {
 		return SessionConfigurationProjection{}, ErrUnavailable
 	}
-	return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: updated.Version, Settings: updated}, nil
+	applied := service.applier.AppliedSessionSettings()
+	if applied.Version != desired.Version || !sameSessionSettingsPayload(applied, desired) {
+		return SessionConfigurationProjection{}, ErrUnavailable
+	}
+	return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: applied.Version, Settings: applied}, nil
+}
+
+func sameSessionSettingsPayload(left, right domainsandbox.SessionRuntimeSettings) bool {
+	left.Version, left.UpdatedBy = 0, 0
+	right.Version, right.UpdatedBy = 0, 0
+	return left == right
 }
 
 func (service *SessionService) executeOperation(ctx context.Context, ref domainsandbox.SessionRef, command SessionOperationCommand) (json.RawMessage, []byte, SessionOperationState, string) {

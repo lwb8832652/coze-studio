@@ -565,6 +565,35 @@ func TestMySQLRuntimeSessionAcquireConcurrentCallersShareWinner(t *testing.T) {
 	}
 }
 
+func TestMySQLRuntimeSessionRepositoryAggregatesOnlyCurrentGenerationSafeCounts(t *testing.T) {
+	repository, db := newSQLiteRuntimeSessionRepository(t)
+	now := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
+	shellA, shellB := "opaque-shell-a", "opaque-shell-b"
+	rows := []runtimeSessionPO{
+		{SessionID: "10000000-0000-4000-8000-000000000001", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-active", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateActive), RuntimeGeneration: 3, UpstreamShellID: &shellA, Version: 1, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000002", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-running", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateRecovering), RuntimeGeneration: 3, UpstreamShellID: &shellB, RecoveryReason: domainsandbox.SessionOperationFenceReason, Version: 2, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000003", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-idle", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateReleased), RuntimeGeneration: 3, Version: 2, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000004", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-destroyed", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateDestroyed), RuntimeGeneration: 3, Version: 2, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000005", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-old", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateActive), RuntimeGeneration: 2, UpstreamShellID: &shellA, Version: 1, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000006", DeploymentID: "runner-dev-b", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-other", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateActive), RuntimeGeneration: 3, UpstreamShellID: &shellA, Version: 1, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+		{SessionID: "10000000-0000-4000-8000-000000000007", DeploymentID: "runner-dev-a", ProviderID: 1, SpaceID: 1, UserID: 1, ThreadID: "thread-recovery", Profile: string(domainsandbox.SessionProfileCore), State: string(domainsandbox.SessionStateRecovering), RuntimeGeneration: 3, RecoveryReason: "aio_runtime_restarted", Version: 2, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed runtime sessions: %v", err)
+	}
+
+	aggregate, err := repository.RuntimeSessionAggregate(context.Background(), "runner-dev-a", 3)
+	if err != nil {
+		t.Fatalf("RuntimeSessionAggregate() error = %v", err)
+	}
+	if aggregate != (RuntimeSessionAggregate{ReadySessions: 1, OperationFencedSessions: 1, RecoveringSessions: 1, IdleSessions: 1, BoundShells: 2}) {
+		t.Fatalf("RuntimeSessionAggregate() = %#v", aggregate)
+	}
+	if _, err := repository.RuntimeSessionAggregate(context.Background(), "runner-dev-a", 0); !errors.Is(err, domainsandbox.ErrInvalidInput) {
+		t.Fatalf("RuntimeSessionAggregate(generation=0) error = %v", err)
+	}
+}
+
 func newSQLiteRuntimeSessionRepository(t *testing.T) (*MySQLRepository, *gorm.DB) {
 	t.Helper()
 	repository, db := newSQLiteRepository(t)

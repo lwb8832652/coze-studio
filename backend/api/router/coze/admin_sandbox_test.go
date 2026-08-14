@@ -65,6 +65,9 @@ func TestAdminSandboxRoutesUseSharedAdminAuthAndExposeCompleteContract(t *testin
 			{http.MethodGet, "/api/admin/sandboxes/17/"},
 			{http.MethodPost, "/api/admin/sandboxes/17/enable/"},
 			{http.MethodGet, "/api/admin/sandboxes/17/audit-events/"},
+			{http.MethodGet, "/api/admin/sandboxes/session-settings/"},
+			{http.MethodPut, "/api/admin/sandboxes/session-settings/"},
+			{http.MethodGet, "/api/admin/sandboxes/session-runtime-status/"},
 		}
 		for _, request := range requests {
 			response := performAdminSandboxRouteRequest("admin@example.test", request.method, request.path, "")
@@ -100,6 +103,31 @@ func TestAdminSandboxRoutesUseSharedAdminAuthAndExposeCompleteContract(t *testin
 		response := performAdminSandboxRouteRequest("admin@example.test", request.method, request.path, request.body)
 		require.Equalf(t, http.StatusServiceUnavailable, response.Code, "%s %s: %s", request.method, request.path, response.Result().Body())
 		require.Contains(t, string(response.Result().Body()), `"error_code":"SANDBOX_UNAVAILABLE"`)
+	}
+}
+
+func TestAdminSandboxSessionRoutesRequireSystemAdmin(t *testing.T) {
+	previousFactory := adminAuthMiddlewareFactory
+	adminAuthMiddlewareFactory = func() app.HandlerFunc {
+		return middleware.AdminAuthMWWithEmailLoader(func(context.Context) (string, error) {
+			return "admin@example.test", nil
+		})
+	}
+	t.Cleanup(func() { adminAuthMiddlewareFactory = previousFactory })
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/admin/sandboxes/session-settings"},
+		{http.MethodPut, "/api/admin/sandboxes/session-settings"},
+		{http.MethodGet, "/api/admin/sandboxes/session-runtime-status"},
+	} {
+		unauthenticated := performAdminSandboxRouteRequest("", request.method, request.path, "")
+		require.Equal(t, http.StatusUnauthorized, unauthenticated.Code)
+		member := performAdminSandboxRouteRequest("member@example.test", request.method, request.path, "")
+		require.Equal(t, http.StatusForbidden, member.Code)
+		administrator := performAdminSandboxRouteRequest("admin@example.test", request.method, request.path, "")
+		require.NotEqual(t, http.StatusNotFound, administrator.Code, string(administrator.Result().Body()))
 	}
 }
 

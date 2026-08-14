@@ -300,3 +300,87 @@ type SchedulerServiceOptions struct {
 	Store  domainsandbox.SchedulerSettingsAuditRepository
 	Runner NativeSchedulerRunner
 }
+
+var ErrInteractiveUnsupported = errors.New("sandbox interactive sessions are not supported")
+
+const SessionReasonRunnerUnavailable = "RUNNER_UNAVAILABLE"
+
+type SessionSettingsDTO struct {
+	Version  uint64                               `json:"version"`
+	Settings domainsandbox.SessionRuntimeSettings `json:"settings"`
+}
+
+type UpdateSessionSettingsRequest struct {
+	ExpectedVersion uint64
+	Settings        domainsandbox.SessionRuntimeSettings
+}
+
+type SessionSettingsUpdateResult struct {
+	Version        uint64                               `json:"version"`
+	Settings       domainsandbox.SessionRuntimeSettings `json:"settings"`
+	Applied        bool                                 `json:"applied"`
+	AppliedVersion uint64                               `json:"applied_version"`
+	ReasonCode     string                               `json:"reason_code,omitempty"`
+}
+
+// NativeSessionRuntimeStatus is the aggregate-only Runner projection. It must
+// never contain tenant, endpoint, sentinel, Shell, path, image, or credential
+// identifiers.
+type NativeSessionRuntimeStatus struct {
+	Available            bool
+	AppliedConfigVersion uint64
+	RuntimeGeneration    uint64
+	CoreEnabled          bool
+	InteractiveEnabled   bool
+	HostShellEnabled     bool
+	HostShellAvailable   bool
+	RawAIOReady          bool
+	GenerationState      string
+	QueueDepth           int
+	Running              int
+	UsedWeight           int
+	TotalWeight          int
+	ActiveSessions       int
+	IdleSessions         int
+	ActiveShells         int
+	IdleShells           int
+	TransportKnown       bool
+	TransportEncrypted   bool
+	ReasonCode           string
+}
+
+type SessionRuntimeStatusDTO struct {
+	Available            bool   `json:"available"`
+	DesiredConfigVersion uint64 `json:"desired_config_version"`
+	AppliedConfigVersion uint64 `json:"applied_config_version"`
+	RuntimeGeneration    uint64 `json:"runtime_generation"`
+	CoreEnabled          bool   `json:"core_enabled"`
+	InteractiveEnabled   bool   `json:"interactive_enabled"`
+	HostShellEnabled     bool   `json:"host_shell_enabled"`
+	HostShellAvailable   bool   `json:"host_shell_available"`
+	RawAIOReady          bool   `json:"raw_aio_ready"`
+	GenerationState      string `json:"generation_state"`
+	QueueDepth           int    `json:"queue_depth"`
+	Running              int    `json:"running"`
+	UsedWeight           int    `json:"used_weight"`
+	TotalWeight          int    `json:"total_weight"`
+	ActiveSessions       int    `json:"active_sessions"`
+	IdleSessions         int    `json:"idle_sessions"`
+	ActiveShells         int    `json:"active_shells"`
+	IdleShells           int    `json:"idle_shells"`
+	TransportKnown       bool   `json:"transport_known"`
+	TransportEncrypted   bool   `json:"transport_encrypted"`
+	ReasonCode           string `json:"reason_code,omitempty"`
+}
+
+// NativeSessionRunner accepts only a complete snapshot already committed by
+// the application service and reports the exact version it has applied.
+type NativeSessionRunner interface {
+	ApplySessionSettings(context.Context, domainsandbox.SessionRuntimeSettings) (uint64, error)
+	SessionRuntimeStatus(context.Context) (NativeSessionRuntimeStatus, error)
+}
+
+type SessionSettingsServiceOptions struct {
+	Store  domainsandbox.SessionSettingsAuditRepository
+	Runner NativeSessionRunner
+}

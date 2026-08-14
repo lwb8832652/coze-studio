@@ -49,6 +49,7 @@ const maxSandboxRemoteProviderAllowedPrivateCIDRs = 16
 var (
 	SandboxSVC               *appsandbox.Service
 	SandboxSchedulerSVC      *appsandbox.SchedulerService
+	SandboxSessionSVC        *appsandbox.SessionSettingsService
 	SandboxRouter            *appsandbox.ProviderRouter
 	SandboxRuntimeRepository sandboxRepository
 )
@@ -83,6 +84,7 @@ type sandboxRepository interface {
 	domainsandbox.ProviderCreateUnitOfWork
 	appsandbox.ProviderLookup
 	domainsandbox.SchedulerSettingsAuditRepository
+	domainsandbox.SessionSettingsAuditRepository
 }
 
 type sandboxSharedLimiter interface {
@@ -99,6 +101,7 @@ type sandboxWiringConstructors struct {
 	newService          func(appsandbox.ServiceOptions) (*appsandbox.Service, error)
 	newRouter           func(appsandbox.ProviderLookup, appsandbox.RuntimeProviderFactory, appsandbox.CapacityLimiter, time.Duration) (*appsandbox.ProviderRouter, error)
 	newSchedulerService func(appsandbox.SchedulerServiceOptions) (*appsandbox.SchedulerService, error)
+	newSessionService   func(appsandbox.SessionSettingsServiceOptions) (*appsandbox.SessionSettingsService, error)
 }
 
 var sandboxControlPlaneConstructors = sandboxWiringConstructors{
@@ -131,6 +134,7 @@ var sandboxControlPlaneConstructors = sandboxWiringConstructors{
 	newService:          appsandbox.NewService,
 	newRouter:           appsandbox.NewProviderRouter,
 	newSchedulerService: appsandbox.NewSchedulerService,
+	newSessionService:   appsandbox.NewSessionSettingsService,
 }
 
 var errSandboxControlPlaneInitialization = fmt.Errorf("sandbox control plane initialization failed")
@@ -139,6 +143,7 @@ func clearSandboxControlPlane() {
 	clearSandboxMCPRuntimeBinding()
 	SandboxSVC = nil
 	SandboxSchedulerSVC = nil
+	SandboxSessionSVC = nil
 	SandboxRouter = nil
 	SandboxRuntimeRepository = nil
 }
@@ -183,7 +188,7 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 
 	constructors := sandboxControlPlaneConstructors
 	if constructors.loadCodec == nil || constructors.loadIdentitySigner == nil || constructors.loadSchedulerSigner == nil || constructors.newRepository == nil || constructors.newLimiter == nil ||
-		constructors.newService == nil || constructors.newSchedulerService == nil || (runtimeRoutingEnabled && constructors.newRouter == nil) {
+		constructors.newService == nil || constructors.newSchedulerService == nil || constructors.newSessionService == nil || (runtimeRoutingEnabled && constructors.newRouter == nil) {
 		return fmt.Errorf("sandbox control plane constructors are incomplete")
 	}
 	codec, err := constructors.loadCodec(os.Getenv)
@@ -238,6 +243,26 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 		return fmt.Errorf("create sandbox scheduler service: %w", err)
 	}
 	SandboxSchedulerSVC = schedulerService
+	var sessionRunner appsandbox.NativeSessionRunner
+	if providerFactory.sessionSigner != nil {
+		deploymentID, deploymentErr := domainsandbox.NormalizeAIOGenerationDeploymentID(providerFactory.deploymentID)
+		if deploymentErr == nil && deploymentID == providerFactory.deploymentID {
+			sessionRunner, err = appsandbox.NewDefaultProviderSessionRunner(appsandbox.DefaultProviderSessionRunnerOptions{
+				Defaults: repository, Providers: repository,
+				Factory: sandboxRuntimeProviderFactory{factory: providerFactory},
+			})
+			if err != nil {
+				return fmt.Errorf("create sandbox session runner: %w", err)
+			}
+		}
+	}
+	sessionService, err := constructors.newSessionService(appsandbox.SessionSettingsServiceOptions{
+		Store: repository, Runner: sessionRunner,
+	})
+	if err != nil {
+		return fmt.Errorf("create sandbox session settings service: %w", err)
+	}
+	SandboxSessionSVC = sessionService
 	SandboxRuntimeRepository = repository
 	if !runtimeRoutingEnabled {
 		return nil
@@ -252,6 +277,7 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 		return fmt.Errorf("create sandbox provider router: %w", err)
 	}
 	router.SetSchedulerSettingsRepository(repository)
+	router.SetSessionSettingsRepository(repository)
 	router.SetMetricsRecorder(metrics)
 	if auditRepository, ok := any(repository).(domainsandbox.ProviderAuditRepository); ok {
 		router.SetRuntimeAuditRecorder(appsandbox.NewProviderRuntimeAuditRecorder(

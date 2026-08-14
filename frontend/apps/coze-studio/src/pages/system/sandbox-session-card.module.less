@@ -1,0 +1,203 @@
+.card {
+  padding: 16px;
+
+  color: var(--newx-color-text-primary, #1d2520);
+
+  background: var(--newx-color-surface, #fff);
+  border: 1px solid var(--newx-color-border, #dfe6e0);
+  border-radius: 12px;
+}
+
+.header,
+.switchRow,
+.footer {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h3,
+.header p {
+  margin: 0;
+}
+
+.header h3 {
+  font-size: 15px;
+}
+
+.header p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--newx-color-text-secondary, #607067);
+}
+
+.runtimeUnavailable,
+.runtime,
+.message,
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  margin-top: 12px;
+  padding: 10px 12px;
+
+  font-size: 12px;
+  color: #755300;
+
+  background: #fff7dc;
+  border-radius: 8px;
+}
+
+.runtimeUnavailable span,
+.loading {
+  color: #786a3a;
+}
+
+.runtime {
+  color: var(--newx-color-text-primary, #1d2520);
+  background: #f2f8f3;
+}
+
+.runtimeHeader,
+.runtimeHeader > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runtimeHeader span {
+  color: var(--newx-color-text-secondary, #607067);
+}
+
+.runtimeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.runtimeGrid > div {
+  display: grid;
+  gap: 2px;
+
+  min-width: 0;
+  padding: 8px;
+
+  background: rgb(255 255 255 / 72%);
+  border-radius: 6px;
+}
+
+.runtimeGrid dt,
+.runtimeGrid dd {
+  margin: 0;
+}
+
+.runtimeGrid dt {
+  color: var(--newx-color-text-secondary, #607067);
+}
+
+.runtimeGrid dd {
+  font-weight: 600;
+}
+
+.transportEncrypted,
+.transportUnknown,
+.transportWarning {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+
+  margin-top: 8px;
+  padding: 7px 8px;
+
+  border-radius: 6px;
+}
+
+.transportEncrypted {
+  color: #25653f;
+  background: #e7f5ea;
+}
+
+.transportUnknown {
+  color: var(--newx-color-text-secondary, #607067);
+  background: #f1f4f2;
+}
+
+.transportWarning {
+  color: #755300;
+  background: #fff0bd;
+}
+
+.message {
+  color: #25653f;
+  background: #edf8f0;
+}
+
+.body {
+  margin-top: 14px;
+}
+
+.switches {
+  display: grid;
+  gap: 8px;
+}
+
+.switchRow {
+  padding: 10px 12px;
+  background: #f7f9f7;
+  border-radius: 8px;
+}
+
+.switchRow > div {
+  display: grid;
+  gap: 2px;
+}
+
+.switchRow strong {
+  font-size: 13px;
+}
+
+.switchRow span {
+  font-size: 11px;
+  color: var(--newx-color-text-secondary, #607067);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.fields label {
+  display: grid;
+  gap: 4px;
+
+  min-width: 0;
+
+  font-size: 11px;
+  color: var(--newx-color-text-secondary, #607067);
+}
+
+.footer {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .runtimeHeader,
+  .transportEncrypted,
+  .transportUnknown,
+  .transportWarning {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .runtimeGrid,
+  .fields {
+    grid-template-columns: 1fr;
+  }
+}

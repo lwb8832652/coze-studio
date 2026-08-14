@@ -113,6 +113,19 @@ type SessionOperationStore interface {
 	RecoverOperations(context.Context) ([]SessionOperationRecord, error)
 }
 
+// SessionOperationAggregate contains only bounded scheduling counters. It is
+// derived from encrypted Redis records and never exposes an operation ID,
+// Session ID, user hash, request digest, result, command, or path.
+type SessionOperationAggregate struct {
+	QueueDepth int
+	Running    int
+	UsedWeight int
+}
+
+type SessionOperationAggregateSource interface {
+	SessionOperationAggregate(context.Context) (SessionOperationAggregate, error)
+}
+
 type RedisSessionStoreConfig struct {
 	DeploymentID  string
 	ActiveKeyID   string
@@ -588,6 +601,50 @@ func (store *RedisSessionStore) RecoverOperations(ctx context.Context) ([]Sessio
 		}
 	}
 	return nil, nil
+}
+
+// SessionOperationAggregate reads the encrypted active-record index without
+// mutating recovery state. Missing, duplicate, or undecryptable metadata is
+// uncertainty and therefore fails closed instead of being counted as zero.
+func (store *RedisSessionStore) SessionOperationAggregate(ctx context.Context) (SessionOperationAggregate, error) {
+	if store == nil || store.client == nil || ctx == nil {
+		return SessionOperationAggregate{}, ErrProtocol
+	}
+	recordIDs, err := store.client.LRange(ctx, store.activeOperationsKey(), 0, int64(store.maxQueueDepth)).Result()
+	if err != nil && !errors.Is(err, cache.Nil) {
+		return SessionOperationAggregate{}, ErrUnavailable
+	}
+	if len(recordIDs) > store.maxQueueDepth {
+		return SessionOperationAggregate{}, ErrUnavailable
+	}
+	seen := make(map[string]struct{}, len(recordIDs))
+	var aggregate SessionOperationAggregate
+	for _, recordID := range recordIDs {
+		if _, duplicate := seen[recordID]; duplicate {
+			return SessionOperationAggregate{}, ErrUnavailable
+		}
+		seen[recordID] = struct{}{}
+		payload, _, err := store.loadOperationByRecordID(ctx, recordID)
+		if err != nil {
+			return SessionOperationAggregate{}, ErrUnavailable
+		}
+		switch payload.State {
+		case SessionOperationAccepted, SessionOperationQueued:
+			aggregate.QueueDepth++
+		case SessionOperationRunning:
+			if payload.Weight < 1 || payload.Weight > coreSessionTotalWeight || aggregate.UsedWeight > coreSessionTotalWeight-payload.Weight {
+				return SessionOperationAggregate{}, ErrUnavailable
+			}
+			aggregate.Running++
+			aggregate.UsedWeight += payload.Weight
+		case SessionOperationSucceeded, SessionOperationFailed, SessionOperationCanceled, SessionOperationTimedOut, SessionOperationUnknown:
+			// The record can become terminal after the active index was read.
+			// Ignore that completed observation rather than resurrecting it.
+		default:
+			return SessionOperationAggregate{}, ErrUnavailable
+		}
+	}
+	return aggregate, nil
 }
 
 // Consume implements the Session v2 replay boundary. Neither key ID nor nonce

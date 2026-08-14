@@ -1,6 +1,7 @@
 /* Copyright 2025 coze-dev Authors */
 
-/* eslint-disable @typescript-eslint/require-await, max-params -- Test doubles preserve async request and callback contracts. */
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/require-await -- Component mocks preserve contracts. */
+/* eslint-disable max-params -- Async doubles preserve imported contracts. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
@@ -50,6 +51,18 @@ vi.mock('../sandbox-service', async importOriginal => ({
   setSandboxProviderDefault: mocks.setDefault,
   setSandboxProviderEnabled: mocks.setEnabled,
   updateSandboxProvider: mocks.update,
+}));
+
+vi.mock('../sandbox-session-card', () => ({
+  SandboxSessionCard: () => (
+    <div data-testid="sandbox-session-card">Session card</div>
+  ),
+}));
+
+vi.mock('../sandbox-scheduler-card', () => ({
+  SandboxSchedulerCard: () => (
+    <div data-testid="sandbox-scheduler-card">Scheduler card</div>
+  ),
 }));
 
 import { SandboxManagementSection } from '../sandbox-management-section';
@@ -187,6 +200,26 @@ describe('SandboxManagementSection', () => {
     expect(container.textContent).not.toContain('当前查询结果');
     expect(container.textContent).not.toContain('本页 Provider');
     expect(container.innerHTML).not.toContain('must-never-survive');
+  });
+
+  it('keeps Session settings separate and ordered before the existing Scheduler card', async () => {
+    await render();
+
+    const defaults = container.querySelector(
+      'section[aria-label="默认 Provider 范围"]',
+    )!;
+    const session = container.querySelector(
+      '[data-testid="sandbox-session-card"]',
+    )!;
+    const scheduler = container.querySelector(
+      '[data-testid="sandbox-scheduler-card"]',
+    )!;
+    expect(defaults.compareDocumentPosition(session)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(session.compareDocumentPosition(scheduler)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it('keeps an unavailable control-plane capability when provider projections fail', async () => {

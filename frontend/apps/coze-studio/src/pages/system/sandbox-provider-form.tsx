@@ -77,6 +77,9 @@ interface SandboxProviderFormProps {
 
 const toNumber = (value: string) => Number(value || 0);
 
+const isRemoteProviderEndpoint = (value: string) =>
+  /^https?:\/\/[^\s]+$/i.test(value.trim());
+
 const FieldError = ({ message }: { message?: string }) =>
   message ? <small className={styles.fieldError}>{message}</small> : null;
 
@@ -223,15 +226,15 @@ export const SandboxProviderForm = ({
       nextErrors.type = localDebug.reason;
     }
     if (mode === 'create' && type === 'remote_http') {
-      if (!/^https:\/\/[^\s]+$/i.test(endpoint.trim())) {
-        nextErrors.endpoint = '远程 Provider Endpoint 必须使用 HTTPS';
+      if (!isRemoteProviderEndpoint(endpoint)) {
+        nextErrors.endpoint = '远程 Provider Endpoint 必须使用 HTTP 或 HTTPS';
       }
       if (!credential.trim()) {
         nextErrors.credential = '远程 Provider 必须填写凭据';
       }
     }
-    if (replaceEndpoint && !/^https:\/\/[^\s]+$/i.test(endpoint.trim())) {
-      nextErrors.endpoint = '新的 Provider Endpoint 必须使用 HTTPS';
+    if (replaceEndpoint && !isRemoteProviderEndpoint(endpoint)) {
+      nextErrors.endpoint = '新的 Provider Endpoint 必须使用 HTTP 或 HTTPS';
     }
     if (replaceCredential && !credential.trim()) {
       nextErrors.credential = '请填写新的 Provider 凭据';
@@ -415,7 +418,11 @@ export const SandboxProviderForm = ({
                     value={endpoint}
                     onChange={event => setEndpoint(event.target.value)}
                   />
-                  <small>仅接受 HTTPS；保存后只显示安全摘要。</small>
+                  <small>
+                    {endpoint.trim().toLowerCase().startsWith('http://')
+                      ? 'HTTP 传输未加密；仅用于受控私网，并保留签名与凭据校验。'
+                      : '支持 HTTP 或 HTTPS；保存后只显示安全摘要。'}
+                  </small>
                   <FieldError message={fieldErrors.endpoint} />
                 </label>
               ) : null}

@@ -26,10 +26,12 @@ import (
 )
 
 const (
-	remoteSessionAcquireSchemaV1  = "coze.sandbox.session_acquire.v1"
-	remoteSessionProjectionSchema = "coze.sandbox.session.v1"
-	remoteSessionOperationSchema  = "coze.sandbox.session_operation.v1"
-	remoteSessionEventSchema      = "coze.sandbox.session_operation_event.v1"
+	remoteSessionAcquireSchemaV1     = "coze.sandbox.session_acquire.v1"
+	remoteSessionProjectionSchema    = "coze.sandbox.session.v1"
+	remoteSessionOperationSchema     = "coze.sandbox.session_operation.v1"
+	remoteSessionEventSchema         = "coze.sandbox.session_operation_event.v1"
+	remoteSessionConfigurationSchema = "coze.sandbox.session_configuration.v1"
+	remoteSessionRuntimeStatusSchema = "coze.sandbox.session_runtime_status.v1"
 
 	maxRemoteSessionResponseBytes = int64(64 << 20)
 	maxRemoteSessionEventsBytes   = int64(16 << 10)
@@ -129,6 +131,125 @@ func (provider *RemoteSessionProvider) Destroy(ctx context.Context, ref domainsa
 
 func (provider *RemoteSessionProvider) Recover(ctx context.Context, ref domainsandbox.SessionRef) (SandboxSession, error) {
 	return provider.sessionLifecycle(ctx, http.MethodPost, ":recover", ref, true, true)
+}
+
+func (provider *RemoteSessionProvider) SessionSettings(ctx context.Context) (domainsandbox.SessionRuntimeSettings, error) {
+	projection, err := provider.sessionConfigurationRequest(ctx, http.MethodGet, nil)
+	if err != nil {
+		return domainsandbox.SessionRuntimeSettings{}, err
+	}
+	return projection.Settings, nil
+}
+
+func (provider *RemoteSessionProvider) ApplySessionSettings(ctx context.Context, settings domainsandbox.SessionRuntimeSettings) (uint64, error) {
+	normalized, err := domainsandbox.NormalizeSessionRuntimeSettings(settings)
+	if err != nil || settings.Version == 0 {
+		return 0, domainsandbox.ErrInvalidInput
+	}
+	normalized.Version = settings.Version
+	body, err := json.Marshal(remoteSessionConfigurationProjection{Schema: remoteSessionConfigurationSchema, Version: settings.Version, Settings: normalized})
+	if err != nil {
+		return 0, domainsandbox.ErrInvalidInput
+	}
+	projection, err := provider.sessionConfigurationRequest(ctx, http.MethodPut, body)
+	if err != nil {
+		return 0, err
+	}
+	if projection.Version != settings.Version || !sameRemoteSessionSettings(projection.Settings, normalized) {
+		return 0, domainsandbox.ErrProviderUnhealthy
+	}
+	return projection.Version, nil
+}
+
+// SessionRuntimeStatus reads the independent aggregate-only Session status
+// route. Runner cannot assert transport security; that fact is filled from
+// the exact-origin endpoint policy used for this request.
+func (provider *RemoteSessionProvider) SessionRuntimeStatus(ctx context.Context) (SessionRuntimeStatus, error) {
+	if provider == nil || ctx == nil || provider.endpoint == nil {
+		return SessionRuntimeStatus{}, domainsandbox.ErrInvalidInput
+	}
+	digest := sha256.Sum256(nil)
+	signed, err := provider.signer.SignSession(sandboxidentity.SessionRequest{
+		DeploymentID: provider.deploymentID, RequestDigest: digest[:],
+	}, http.MethodGet, "/v1/session-runtime-status")
+	if err != nil {
+		return SessionRuntimeStatus{}, domainsandbox.ErrConfigurationInvalid
+	}
+	requestCtx := safehttp.WithResponseBodyLimit(ctx, MaxHealthResponseBodyBytes)
+	request, err := provider.newRequest(requestCtx, http.MethodGet, "/v1/session-runtime-status", nil)
+	if err != nil {
+		return SessionRuntimeStatus{}, err
+	}
+	request.Header.Set(sandboxidentity.SessionContextHeader, signed.Context)
+	request.Header.Set(sandboxidentity.SessionContextSignatureHeader, signed.Signature)
+	response, err := provider.doer.Do(request)
+	if err != nil {
+		return SessionRuntimeStatus{}, mapProviderErrorWithContext(request.Context(), err)
+	}
+	defer response.Body.Close()
+	if err := mapRemoteSessionHTTPStatus(response.StatusCode); err != nil {
+		return SessionRuntimeStatus{}, err
+	}
+	var projection remoteSessionRuntimeStatusProjection
+	if err := decodeStrictJSONResponseContext(request.Context(), response, MaxHealthResponseBodyBytes, &projection); err != nil ||
+		!validRemoteSessionRuntimeStatus(projection) {
+		return SessionRuntimeStatus{}, domainsandbox.ErrProviderUnhealthy
+	}
+	return SessionRuntimeStatus{
+		Available: projection.Available, AppliedConfigVersion: projection.AppliedConfigVersion,
+		RuntimeGeneration: projection.RuntimeGeneration, CoreEnabled: projection.CoreEnabled,
+		InteractiveEnabled: projection.InteractiveEnabled, HostShellEnabled: projection.HostShellEnabled,
+		HostShellAvailable: projection.HostShellAvailable, RawAIOReady: projection.RawAIOReady,
+		GenerationState: projection.GenerationState, QueueDepth: projection.QueueDepth,
+		Running: projection.Running, UsedWeight: projection.UsedWeight, TotalWeight: projection.TotalWeight,
+		ActiveSessions: projection.ActiveSessions, IdleSessions: projection.IdleSessions,
+		ActiveShells: projection.ActiveShells, IdleShells: projection.IdleShells,
+		TransportEncrypted: provider.endpoint.TransportEncrypted, ReasonCode: projection.ReasonCode,
+	}, nil
+}
+
+func (provider *RemoteSessionProvider) sessionConfigurationRequest(ctx context.Context, method string, body []byte) (remoteSessionConfigurationProjection, error) {
+	if provider == nil || ctx == nil || (method != http.MethodGet && method != http.MethodPut) || method == http.MethodGet && len(body) != 0 || method == http.MethodPut && len(body) == 0 {
+		return remoteSessionConfigurationProjection{}, domainsandbox.ErrInvalidInput
+	}
+	digest := sha256.Sum256(body)
+	signed, err := provider.signer.SignSession(sandboxidentity.SessionRequest{DeploymentID: provider.deploymentID, RequestDigest: digest[:]}, method, "/v1/session-configuration")
+	if err != nil {
+		return remoteSessionConfigurationProjection{}, domainsandbox.ErrConfigurationInvalid
+	}
+	requestCtx := safehttp.WithResponseBodyLimit(ctx, MaxHealthResponseBodyBytes)
+	request, err := provider.newRequest(requestCtx, method, "/v1/session-configuration", body)
+	if err != nil {
+		return remoteSessionConfigurationProjection{}, err
+	}
+	request.Header.Set(sandboxidentity.SessionContextHeader, signed.Context)
+	request.Header.Set(sandboxidentity.SessionContextSignatureHeader, signed.Signature)
+	response, err := provider.doer.Do(request)
+	if err != nil {
+		return remoteSessionConfigurationProjection{}, mapProviderErrorWithContext(request.Context(), err)
+	}
+	defer response.Body.Close()
+	if err := mapRemoteSessionHTTPStatus(response.StatusCode); err != nil {
+		return remoteSessionConfigurationProjection{}, err
+	}
+	var projection remoteSessionConfigurationProjection
+	if err := decodeStrictJSONResponseContext(request.Context(), response, MaxHealthResponseBodyBytes, &projection); err != nil ||
+		projection.Schema != remoteSessionConfigurationSchema || projection.Version == 0 || projection.Settings.Version != 0 {
+		return remoteSessionConfigurationProjection{}, domainsandbox.ErrProviderUnhealthy
+	}
+	settings, err := domainsandbox.NormalizeSessionRuntimeSettings(projection.Settings)
+	if err != nil {
+		return remoteSessionConfigurationProjection{}, domainsandbox.ErrProviderUnhealthy
+	}
+	settings.Version = projection.Version
+	projection.Settings = settings
+	return projection, nil
+}
+
+func sameRemoteSessionSettings(left, right domainsandbox.SessionRuntimeSettings) bool {
+	left.Version, left.UpdatedBy = 0, 0
+	right.Version, right.UpdatedBy = 0, 0
+	return left == right
 }
 
 func (provider *RemoteSessionProvider) sessionLifecycle(ctx context.Context, method, suffix string, ref domainsandbox.SessionRef, wantProjection, allowNewGeneration bool) (SandboxSession, error) {
@@ -556,6 +677,67 @@ type remoteSessionProjection struct {
 	State             domainsandbox.SessionState   `json:"state"`
 	RuntimeGeneration uint64                       `json:"runtime_generation"`
 	Profile           domainsandbox.SessionProfile `json:"profile"`
+}
+
+type remoteSessionConfigurationProjection struct {
+	Schema   string                               `json:"schema"`
+	Version  uint64                               `json:"version"`
+	Settings domainsandbox.SessionRuntimeSettings `json:"settings"`
+}
+
+type remoteSessionRuntimeStatusProjection struct {
+	Schema               string `json:"schema"`
+	Available            bool   `json:"available"`
+	AppliedConfigVersion uint64 `json:"applied_config_version"`
+	RuntimeGeneration    uint64 `json:"runtime_generation"`
+	CoreEnabled          bool   `json:"core_enabled"`
+	InteractiveEnabled   bool   `json:"interactive_enabled"`
+	HostShellEnabled     bool   `json:"host_shell_enabled"`
+	HostShellAvailable   bool   `json:"host_shell_available"`
+	RawAIOReady          bool   `json:"raw_aio_ready"`
+	GenerationState      string `json:"generation_state"`
+	QueueDepth           int    `json:"queue_depth"`
+	Running              int    `json:"running"`
+	UsedWeight           int    `json:"used_weight"`
+	TotalWeight          int    `json:"total_weight"`
+	ActiveSessions       int    `json:"active_sessions"`
+	IdleSessions         int    `json:"idle_sessions"`
+	ActiveShells         int    `json:"active_shells"`
+	IdleShells           int    `json:"idle_shells"`
+	ReasonCode           string `json:"reason_code,omitempty"`
+}
+
+func validRemoteSessionRuntimeStatus(status remoteSessionRuntimeStatusProjection) bool {
+	if status.Schema != remoteSessionRuntimeStatusSchema || status.AppliedConfigVersion == 0 || status.InteractiveEnabled ||
+		status.QueueDepth < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight != 2 ||
+		status.ActiveSessions < 0 || status.IdleSessions < 0 || status.ActiveShells < 0 || status.IdleShells < 0 ||
+		status.UsedWeight > status.TotalWeight || status.Running > status.ActiveSessions || status.ActiveShells != status.Running ||
+		status.HostShellAvailable && !status.HostShellEnabled || status.Available == (status.ReasonCode != "") ||
+		status.ReasonCode != "" && !validRemoteSessionReasonCode(status.ReasonCode) {
+		return false
+	}
+	switch status.GenerationState {
+	case "disabled", "unknown":
+		return status.RuntimeGeneration == 0 && !status.RawAIOReady
+	case "recovering":
+		return status.RuntimeGeneration > 0 && !status.RawAIOReady
+	case "ready":
+		return status.RuntimeGeneration > 0 && status.RawAIOReady
+	default:
+		return false
+	}
+}
+
+func validRemoteSessionReasonCode(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if character != '_' && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type remoteSessionOperationKind string

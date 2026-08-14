@@ -61,12 +61,13 @@ func TestParseSessionOperationEnforcesLogicalPathsDeadlinesAndSDKBounds(t *testi
 
 func TestParseSessionConfigurationUsesCompleteStrictSettingsSnapshot(t *testing.T) {
 	settings := `{"core_enabled":true,"interactive_enabled":false,"host_shell_enabled":false,"core_weight":1,"heavy_weight":2,"per_user_active_limit":1,"idle_session_limit":20,"idle_shell_limit":4,"session_idle_ttl_seconds":1200,"shell_idle_ttl_seconds":300,"command_timeout_seconds":600,"cancel_grace_seconds":5,"workspace_quota_mb":2048}`
-	valid := `{"schema":"coze.sandbox.session_configuration.v1","expected_version":1,"settings":` + settings + `}`
-	if parsed, err := parseSessionConfiguration([]byte(valid)); err != nil || parsed.ExpectedVersion != 1 || !parsed.Settings.CoreEnabled {
+	valid := `{"schema":"coze.sandbox.session_configuration.v1","version":2,"settings":` + settings + `}`
+	if parsed, err := parseSessionConfiguration([]byte(valid)); err != nil || parsed.Version != 2 || parsed.Settings.Version != 2 || !parsed.Settings.CoreEnabled {
 		t.Fatalf("parseSessionConfiguration() = %#v, %v", parsed, err)
 	}
 	for _, invalid := range []string{
-		strings.Replace(valid, `"expected_version":1`, `"expected_version":0`, 1),
+		strings.Replace(valid, `"version":2`, `"version":0`, 1),
+		strings.Replace(valid, `"version":2`, `"expected_version":1`, 1),
 		strings.Replace(valid, `"interactive_enabled":false`, `"interactive_enabled":true`, 1),
 		strings.TrimSuffix(valid, "}") + `,"credential":"secret"}`,
 	} {

@@ -1301,6 +1301,7 @@ type ProviderRouter struct {
 	metrics                       SandboxMetricsRecorder
 	runtimeAudit                  SandboxRuntimeAuditRecorder
 	schedulerSettings             domainsandbox.SchedulerSettingsRepository
+	sessionSettings               domainsandbox.SessionSettingsRepository
 }
 
 func NewProviderRouter(
@@ -1329,6 +1330,15 @@ func (r *ProviderRouter) SetRuntimeAuditRecorder(recorder SandboxRuntimeAuditRec
 func (r *ProviderRouter) SetSchedulerSettingsRepository(repository domainsandbox.SchedulerSettingsRepository) {
 	if r != nil {
 		r.schedulerSettings = repository
+	}
+}
+
+// SetSessionSettingsRepository injects the desired Core Session snapshot.
+// Session resolution always reads this durable gate before provider adapter
+// validation or construction; one-shot resolution never reads it.
+func (r *ProviderRouter) SetSessionSettingsRepository(repository domainsandbox.SessionSettingsRepository) {
+	if r != nil {
+		r.sessionSettings = repository
 	}
 }
 
@@ -1465,6 +1475,20 @@ func (r *ProviderRouter) ResolveSession(
 	}
 	consumed := false
 	defer func() { request.finishResolve(consumed) }()
+	if r.sessionSettings == nil {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	settings, err := r.sessionSettings.GetSessionSettings(ctx)
+	if err != nil {
+		return nil, normalizeOperationalError(ctx, err)
+	}
+	normalizedSettings, err := domainsandbox.NormalizeSessionRuntimeSettings(settings)
+	if err != nil || normalizedSettings.Version < domainsandbox.InitialVersion {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	if !normalizedSettings.CoreEnabled {
+		return nil, domainsandbox.ErrExecutionForbidden
+	}
 
 	descriptor, provider, err := r.prepareRuntime(ctx, request.ProviderKey, request.Scope)
 	if err != nil {

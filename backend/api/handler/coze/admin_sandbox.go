@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	maxAdminSandboxBodyBytes      = 128 * 1024
-	maxAdminSandboxRequestIDBytes = 128
+	maxAdminSandboxBodyBytes        = 128 * 1024
+	maxAdminSandboxSessionBodyBytes = 64 * 1024
+	maxAdminSandboxRequestIDBytes   = 128
 )
 
 var (
@@ -62,6 +63,12 @@ type adminSandboxSchedulerService interface {
 	GetRuntimeStatus(context.Context, appsandbox.Actor) (*appsandbox.SchedulerRuntimeStatusDTO, error)
 }
 
+type adminSandboxSessionService interface {
+	GetSessionSettings(context.Context, appsandbox.Actor) (*appsandbox.SessionSettingsDTO, error)
+	UpdateSessionSettings(context.Context, appsandbox.Actor, appsandbox.UpdateSessionSettingsRequest) (*appsandbox.SessionSettingsUpdateResult, error)
+	GetSessionRuntimeStatus(context.Context, appsandbox.Actor) (*appsandbox.SessionRuntimeStatusDTO, error)
+}
+
 type applicationAdminSandboxService struct{}
 
 func (applicationAdminSandboxService) current() (*appsandbox.Service, error) {
@@ -76,6 +83,13 @@ func (applicationAdminSandboxService) currentScheduler() (*appsandbox.SchedulerS
 		return nil, domainsandbox.ErrUnavailable
 	}
 	return rootapplication.SandboxSchedulerSVC, nil
+}
+
+func (applicationAdminSandboxService) currentSession() (*appsandbox.SessionSettingsService, error) {
+	if rootapplication.SandboxSessionSVC == nil {
+		return nil, domainsandbox.ErrUnavailable
+	}
+	return rootapplication.SandboxSessionSVC, nil
 }
 
 func (a applicationAdminSandboxService) List(ctx context.Context, actor appsandbox.Actor, request appsandbox.ListProvidersRequest) (*appsandbox.ListProvidersResult, error) {
@@ -215,6 +229,30 @@ func (a applicationAdminSandboxService) GetRuntimeStatus(ctx context.Context, ac
 	return service.RuntimeStatus(ctx, actor)
 }
 
+func (a applicationAdminSandboxService) GetSessionSettings(ctx context.Context, actor appsandbox.Actor) (*appsandbox.SessionSettingsDTO, error) {
+	service, err := a.currentSession()
+	if err != nil {
+		return nil, err
+	}
+	return service.Get(ctx, actor)
+}
+
+func (a applicationAdminSandboxService) UpdateSessionSettings(ctx context.Context, actor appsandbox.Actor, request appsandbox.UpdateSessionSettingsRequest) (*appsandbox.SessionSettingsUpdateResult, error) {
+	service, err := a.currentSession()
+	if err != nil {
+		return nil, err
+	}
+	return service.Update(ctx, actor, request)
+}
+
+func (a applicationAdminSandboxService) GetSessionRuntimeStatus(ctx context.Context, actor appsandbox.Actor) (*appsandbox.SessionRuntimeStatusDTO, error) {
+	service, err := a.currentSession()
+	if err != nil {
+		return &appsandbox.SessionRuntimeStatusDTO{ReasonCode: appsandbox.SessionReasonRunnerUnavailable}, nil
+	}
+	return service.RuntimeStatus(ctx, actor)
+}
+
 type adminSandboxHandler struct {
 	service adminSandboxService
 }
@@ -248,6 +286,9 @@ type AdminSandboxRouteHandlers struct {
 	SchedulerSettings       app.HandlerFunc
 	UpdateSchedulerSettings app.HandlerFunc
 	RuntimeStatus           app.HandlerFunc
+	SessionSettings         app.HandlerFunc
+	UpdateSessionSettings   app.HandlerFunc
+	SessionRuntimeStatus    app.HandlerFunc
 }
 
 func DefaultAdminSandboxRouteHandlers() *AdminSandboxRouteHandlers {
@@ -270,6 +311,9 @@ func DefaultAdminSandboxRouteHandlers() *AdminSandboxRouteHandlers {
 		SchedulerSettings:       handler.schedulerSettings,
 		UpdateSchedulerSettings: handler.updateSchedulerSettings,
 		RuntimeStatus:           handler.runtimeStatus,
+		SessionSettings:         handler.sessionSettings,
+		UpdateSessionSettings:   handler.updateSessionSettings,
+		SessionRuntimeStatus:    handler.sessionRuntimeStatus,
 	}
 }
 
@@ -412,6 +456,11 @@ type defaultAdminSandboxRequest struct {
 type updateAdminSandboxSchedulerSettingsRequest struct {
 	ExpectedVersion uint64                          `json:"expected_version"`
 	Settings        domainsandbox.SchedulerSettings `json:"settings"`
+}
+
+type updateAdminSandboxSessionSettingsRequest struct {
+	ExpectedVersion uint64                               `json:"expected_version"`
+	Settings        domainsandbox.SessionRuntimeSettings `json:"settings"`
 }
 
 func (h *adminSandboxHandler) list(ctx context.Context, c *app.RequestContext) {
@@ -722,6 +771,71 @@ func (h *adminSandboxHandler) runtimeStatus(ctx context.Context, c *app.RequestC
 	adminSandboxResult(ctx, c, result, err)
 }
 
+func (h *adminSandboxHandler) sessionSettings(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	service, ok := h.service.(adminSandboxSessionService)
+	if !ok {
+		adminSandboxError(ctx, c, domainsandbox.ErrUnavailable)
+		return
+	}
+	result, err := service.GetSessionSettings(ctx, actor)
+	adminSandboxResult(ctx, c, result, err)
+}
+
+func (h *adminSandboxHandler) updateSessionSettings(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	var request updateAdminSandboxSessionSettingsRequest
+	if err := decodeAdminSandboxJSONWithLimit(c, &request, maxAdminSandboxSessionBodyBytes); err != nil {
+		adminSandboxError(ctx, c, err)
+		return
+	}
+	if request.ExpectedVersion == 0 {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	if request.Settings.InteractiveEnabled {
+		adminSandboxError(ctx, c, appsandbox.ErrInteractiveUnsupported)
+		return
+	}
+	settingsJSON, err := json.Marshal(request.Settings)
+	if err != nil {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	settings, err := domainsandbox.DecodeSessionRuntimeSettingsJSON(settingsJSON)
+	if err != nil {
+		adminSandboxError(ctx, c, domainsandbox.ErrInvalidInput)
+		return
+	}
+	service, ok := h.service.(adminSandboxSessionService)
+	if !ok {
+		adminSandboxError(ctx, c, domainsandbox.ErrUnavailable)
+		return
+	}
+	result, err := service.UpdateSessionSettings(ctx, actor, appsandbox.UpdateSessionSettingsRequest{ExpectedVersion: request.ExpectedVersion, Settings: settings})
+	adminSandboxResult(ctx, c, result, err)
+}
+
+func (h *adminSandboxHandler) sessionRuntimeStatus(ctx context.Context, c *app.RequestContext) {
+	actor, ok := adminSandboxActor(ctx, c)
+	if !ok {
+		return
+	}
+	service, ok := h.service.(adminSandboxSessionService)
+	if !ok {
+		adminSandboxResult(ctx, c, &appsandbox.SessionRuntimeStatusDTO{ReasonCode: appsandbox.SessionReasonRunnerUnavailable}, nil)
+		return
+	}
+	result, err := service.GetSessionRuntimeStatus(ctx, actor)
+	adminSandboxResult(ctx, c, result, err)
+}
+
 func adminSandboxActor(ctx context.Context, c *app.RequestContext) (appsandbox.Actor, bool) {
 	session, authenticated := ctxcache.Get[*userentity.Session](ctx, typeconsts.SessionDataKeyInCtx)
 	if !authenticated || session == nil || session.UserID <= 0 {
@@ -812,22 +926,29 @@ func adminSandboxSecretMutation(
 }
 
 func decodeAdminSandboxJSON(c *app.RequestContext, target any) error {
+	return decodeAdminSandboxJSONWithLimit(c, target, maxAdminSandboxBodyBytes)
+}
+
+func decodeAdminSandboxJSONWithLimit(c *app.RequestContext, target any, maxBodyBytes int) error {
 	contentType, _, err := mime.ParseMediaType(string(c.Request.Header.ContentType()))
 	if err != nil || contentType != "application/json" {
 		return domainsandbox.ErrInvalidInput
 	}
-	if contentLength := c.Request.Header.ContentLength(); contentLength > maxAdminSandboxBodyBytes {
+	if maxBodyBytes <= 0 {
+		return domainsandbox.ErrInvalidInput
+	}
+	if contentLength := c.Request.Header.ContentLength(); contentLength > maxBodyBytes {
 		return errAdminSandboxBodyTooLarge
 	}
 	if !c.Request.IsBodyStream() {
 		return domainsandbox.ErrInvalidInput
 	}
-	body, err := io.ReadAll(io.LimitReader(c.Request.BodyStream(), maxAdminSandboxBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(c.Request.BodyStream(), int64(maxBodyBytes)+1))
 	_ = c.Request.CloseBodyStream()
 	if err != nil || len(body) == 0 {
 		return domainsandbox.ErrInvalidInput
 	}
-	if len(body) > maxAdminSandboxBodyBytes {
+	if len(body) > maxBodyBytes {
 		return errAdminSandboxBodyTooLarge
 	}
 	if !utf8.Valid(body) {
@@ -1057,7 +1178,10 @@ type adminSandboxResponsePayload interface {
 		*appsandbox.ListAuditEventsResult |
 		*appsandbox.SchedulerSettingsDTO |
 		*appsandbox.SchedulerSettingsUpdateResult |
-		*appsandbox.SchedulerRuntimeStatusDTO
+		*appsandbox.SchedulerRuntimeStatusDTO |
+		*appsandbox.SessionSettingsDTO |
+		*appsandbox.SessionSettingsUpdateResult |
+		*appsandbox.SessionRuntimeStatusDTO
 }
 
 func adminSandboxResult[T adminSandboxResponsePayload](ctx context.Context, c *app.RequestContext, result T, err error) {
@@ -1101,6 +1225,8 @@ func adminSandboxErrorContract(err error) (int, string, string) {
 		return http.StatusRequestEntityTooLarge, "SANDBOX_REQUEST_TOO_LARGE", "sandbox request body is too large"
 	case errors.Is(err, appsandbox.ErrPermissionDenied):
 		return http.StatusForbidden, "SANDBOX_POLICY_DENIED", "sandbox operation is not permitted"
+	case errors.Is(err, appsandbox.ErrInteractiveUnsupported):
+		return http.StatusUnprocessableEntity, "SANDBOX_INTERACTIVE_UNSUPPORTED", "interactive sandbox sessions are not supported"
 	case errors.Is(err, domainsandbox.ErrProviderNotFound):
 		return http.StatusNotFound, "SANDBOX_PROVIDER_NOT_FOUND", "sandbox provider was not found"
 	case errors.Is(err, domainsandbox.ErrDefaultMissing):

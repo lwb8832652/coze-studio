@@ -18,6 +18,7 @@ import (
 	"time"
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
+	"github.com/coze-dev/coze-studio/backend/internal/sandboxrunner/aio"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
@@ -29,6 +30,10 @@ const (
 )
 
 type SessionCoreReadiness interface{ CoreReady(context.Context) error }
+
+type SessionConfigurationReadiness interface {
+	ConfigurationReady(context.Context, bool) error
+}
 
 type SessionVerifyInput struct {
 	ContextHeader   string
@@ -104,6 +109,9 @@ type SessionConfigurationGetter interface {
 type SessionConfigurationApplier interface {
 	ApplySessionConfiguration(context.Context, SessionConfigurationCommand) (SessionConfigurationProjection, error)
 }
+type SessionRuntimeStatusGetter interface {
+	SessionRuntimeStatus(context.Context, sandboxidentity.SessionRequest) (SessionRuntimeStatusProjection, error)
+}
 
 type SessionHTTPConfig struct {
 	DeploymentID            string
@@ -114,9 +122,10 @@ type SessionHTTPConfig struct {
 }
 
 type SessionHTTPDependencies struct {
-	Readiness SessionCoreReadiness
-	Verifier  SessionIdentityVerifier
-	Service   any
+	Readiness     SessionCoreReadiness
+	Verifier      SessionIdentityVerifier
+	Service       any
+	RuntimeStatus SessionRuntimeStatusGetter
 }
 
 type SessionHTTPHandler struct {
@@ -124,6 +133,7 @@ type SessionHTTPHandler struct {
 	readiness       SessionCoreReadiness
 	verifier        SessionIdentityVerifier
 	service         any
+	runtimeStatus   SessionRuntimeStatusGetter
 	allowedEnvNames []string
 }
 
@@ -142,7 +152,7 @@ func NewSessionHTTPHandler(config SessionHTTPConfig, dependencies SessionHTTPDep
 	if err != nil {
 		return nil, ErrConfiguration
 	}
-	return &SessionHTTPHandler{config: config, readiness: dependencies.Readiness, verifier: dependencies.Verifier, service: dependencies.Service,
+	return &SessionHTTPHandler{config: config, readiness: dependencies.Readiness, verifier: dependencies.Verifier, service: dependencies.Service, runtimeStatus: dependencies.RuntimeStatus,
 		allowedEnvNames: allowedEnvNames}, nil
 }
 
@@ -160,6 +170,7 @@ const (
 	sessionRouteCancelOperation
 	sessionRouteGetConfiguration
 	sessionRoutePutConfiguration
+	sessionRouteGetRuntimeStatus
 )
 
 type sessionRoute struct {
@@ -177,6 +188,9 @@ func parseSessionRoute(method, requestPath string) (sessionRoute, bool) {
 	}
 	if method == http.MethodPut && requestPath == "/v1/session-configuration" {
 		return sessionRoute{kind: sessionRoutePutConfiguration}, true
+	}
+	if method == http.MethodGet && requestPath == "/v1/session-runtime-status" {
+		return sessionRoute{kind: sessionRouteGetRuntimeStatus}, true
 	}
 	const prefix = "/v1/sessions/"
 	if !strings.HasPrefix(requestPath, prefix) {
@@ -262,7 +276,7 @@ func (handler *SessionHTTPHandler) ServeHTTP(writer http.ResponseWriter, request
 	authCtx, cancelAuth := context.WithTimeout(request.Context(), handler.config.RequestTimeout)
 	defer cancelAuth()
 	targetAudience := sandboxidentity.SessionContextAudienceProvider
-	if route.kind == sessionRouteGetConfiguration || route.kind == sessionRoutePutConfiguration {
+	if route.kind == sessionRouteGetConfiguration || route.kind == sessionRoutePutConfiguration || route.kind == sessionRouteGetRuntimeStatus {
 		targetAudience = sandboxidentity.SessionContextAudienceRunner
 	}
 	claims, err := handler.verifier.VerifySession(authCtx, SessionVerifyInput{
@@ -270,7 +284,12 @@ func (handler *SessionHTTPHandler) ServeHTTP(writer http.ResponseWriter, request
 		Target: sandboxidentity.SessionContextTarget{DeploymentID: handler.config.DeploymentID, Audience: targetAudience},
 		Method: request.Method, Path: request.URL.Path, RequestDigest: digest,
 	})
-	if err != nil || claims.DeploymentID != handler.config.DeploymentID || !validSessionClaims(claims, digest) {
+	configurationRoute := route.kind == sessionRouteGetConfiguration || route.kind == sessionRoutePutConfiguration || route.kind == sessionRouteGetRuntimeStatus
+	validClaims := validSessionClaims(claims, digest)
+	if configurationRoute {
+		validClaims = validSessionConfigurationClaims(claims, digest)
+	}
+	if err != nil || claims.DeploymentID != handler.config.DeploymentID || !validClaims {
 		writePublicError(writer, http.StatusUnauthorized, "UNAUTHORIZED")
 		return
 	}
@@ -307,7 +326,14 @@ func (handler *SessionHTTPHandler) ServeHTTP(writer http.ResponseWriter, request
 			return
 		}
 	}
-	if err := handler.readiness.CoreReady(ctx); err != nil {
+	if configurationRoute {
+		readiness, ok := handler.readiness.(SessionConfigurationReadiness)
+		enabling := route.kind == sessionRoutePutConfiguration && configuration.Settings.CoreEnabled
+		if !ok || readiness.ConfigurationReady(ctx, enabling) != nil {
+			writePublicError(writer, http.StatusServiceUnavailable, "SANDBOX_UNAVAILABLE")
+			return
+		}
+	} else if err := handler.readiness.CoreReady(ctx); err != nil {
 		writePublicError(writer, http.StatusServiceUnavailable, "SANDBOX_UNAVAILABLE")
 		return
 	}
@@ -357,7 +383,7 @@ func (handler *SessionHTTPHandler) parseRouteBody(route sessionRoute, body []byt
 		if !strictEmptyJSONObject(body) {
 			err = errSessionProtocol
 		}
-	case sessionRouteGet, sessionRouteGetOperation, sessionRouteEvents, sessionRouteGetConfiguration:
+	case sessionRouteGet, sessionRouteGetOperation, sessionRouteEvents, sessionRouteGetConfiguration, sessionRouteGetRuntimeStatus:
 		if len(body) != 0 {
 			err = errSessionProtocol
 		}
@@ -458,6 +484,13 @@ func (handler *SessionHTTPHandler) dispatch(writer http.ResponseWriter, ctx cont
 		configuration.Claims = claims
 		projection, err := service.ApplySessionConfiguration(ctx, configuration)
 		handler.writeConfigurationProjection(writer, projection, err)
+	case sessionRouteGetRuntimeStatus:
+		if handler.runtimeStatus == nil {
+			handler.writeServiceError(writer, ErrUnavailable)
+			return
+		}
+		projection, err := handler.runtimeStatus.SessionRuntimeStatus(ctx, claims)
+		handler.writeRuntimeStatusProjection(writer, projection, err)
 	}
 }
 
@@ -559,6 +592,51 @@ func (handler *SessionHTTPHandler) writeConfigurationProjection(writer http.Resp
 		return
 	}
 	handler.writeBoundedJSON(writer, http.StatusOK, projection)
+}
+
+func (handler *SessionHTTPHandler) writeRuntimeStatusProjection(writer http.ResponseWriter, projection SessionRuntimeStatusProjection, err error) {
+	if err != nil {
+		handler.writeServiceError(writer, err)
+		return
+	}
+	if !validSessionRuntimeStatusProjection(projection) {
+		handler.writeServiceError(writer, ErrUnavailable)
+		return
+	}
+	handler.writeBoundedJSON(writer, http.StatusOK, projection)
+}
+
+func validSessionRuntimeStatusProjection(status SessionRuntimeStatusProjection) bool {
+	if status.Schema != sessionRuntimeStatusSchemaV1 || status.AppliedConfigVersion == 0 || status.InteractiveEnabled ||
+		status.QueueDepth < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight != coreSessionTotalWeight ||
+		status.ActiveSessions < 0 || status.IdleSessions < 0 || status.ActiveShells < 0 || status.IdleShells < 0 ||
+		status.UsedWeight > status.TotalWeight || status.Running > status.ActiveSessions || status.ActiveShells != status.Running ||
+		status.HostShellAvailable && !status.HostShellEnabled || status.Available == (status.ReasonCode != "") ||
+		status.ReasonCode != "" && !validSessionRuntimeReasonCode(status.ReasonCode) {
+		return false
+	}
+	switch status.GenerationState {
+	case string(aio.LifecycleStateDisabled), string(aio.LifecycleStateUnknown):
+		return status.RuntimeGeneration == 0 && !status.RawAIOReady
+	case string(aio.LifecycleStateRecovering):
+		return status.RuntimeGeneration > 0 && !status.RawAIOReady
+	case string(aio.LifecycleStateReady):
+		return status.RuntimeGeneration > 0 && status.RawAIOReady
+	default:
+		return false
+	}
+}
+
+func validSessionRuntimeReasonCode(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if character != '_' && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func validSHA256Digest(value string) bool {

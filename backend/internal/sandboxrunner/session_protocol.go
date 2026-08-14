@@ -161,9 +161,9 @@ type SessionConfigurationProjection struct {
 }
 
 type SessionConfigurationCommand struct {
-	ExpectedVersion uint64
-	Settings        domainsandbox.SessionRuntimeSettings
-	Claims          sandboxidentity.SessionRequest
+	Version  uint64
+	Settings domainsandbox.SessionRuntimeSettings
+	Claims   sandboxidentity.SessionRequest
 }
 
 type sessionAcquireWire struct {
@@ -324,22 +324,23 @@ func cloneSessionOperationPayload(payload SessionOperationPayload) SessionOperat
 }
 
 type sessionConfigurationWire struct {
-	Schema          string          `json:"schema"`
-	ExpectedVersion uint64          `json:"expected_version"`
-	Settings        json.RawMessage `json:"settings"`
+	Schema   string          `json:"schema"`
+	Version  uint64          `json:"version"`
+	Settings json.RawMessage `json:"settings"`
 }
 
 func parseSessionConfiguration(body []byte) (SessionConfigurationCommand, error) {
 	var wire sessionConfigurationWire
 	if len(body) == 0 || len(body) > maxRequestBytes || decodeStrictJSON(body, &wire) != nil ||
-		wire.Schema != sessionConfigurationSchemaV1 || wire.ExpectedVersion == 0 || len(wire.Settings) == 0 {
+		wire.Schema != sessionConfigurationSchemaV1 || wire.Version == 0 || len(wire.Settings) == 0 {
 		return SessionConfigurationCommand{}, errSessionProtocol
 	}
 	settings, err := domainsandbox.DecodeSessionRuntimeSettingsJSON(wire.Settings)
 	if err != nil {
 		return SessionConfigurationCommand{}, errSessionProtocol
 	}
-	return SessionConfigurationCommand{ExpectedVersion: wire.ExpectedVersion, Settings: settings}, nil
+	settings.Version = wire.Version
+	return SessionConfigurationCommand{Version: wire.Version, Settings: settings}, nil
 }
 
 func claimsMatchAcquire(actual sandboxidentity.SessionRequest, expected parsedSessionAcquire) bool {
@@ -361,6 +362,12 @@ func validSessionClaims(claims sandboxidentity.SessionRequest, digest []byte) bo
 	return validSessionProtocolIdentifier(claims.DeploymentID) && claims.ProviderID > 0 && claims.SpaceID > 0 && claims.UserID > 0 && validSessionScope(claims.Scope) &&
 		validSessionProtocolIdentifier(claims.ThreadID) && validSessionProtocolIdentifier(claims.RunID) &&
 		validSessionProtocolIdentifier(claims.OperationID) && claims.Profile == string(domainsandbox.SessionProfileCore) &&
+		len(digest) == sha256.Size && hmac.Equal(claims.RequestDigest, digest)
+}
+
+func validSessionConfigurationClaims(claims sandboxidentity.SessionRequest, digest []byte) bool {
+	return validSessionProtocolIdentifier(claims.DeploymentID) && claims.ProviderID == 0 && claims.Scope == "" && claims.SpaceID == 0 && claims.UserID == 0 &&
+		claims.ThreadID == "" && claims.RunID == "" && claims.OperationID == "" && claims.Profile == "" &&
 		len(digest) == sha256.Size && hmac.Equal(claims.RequestDigest, digest)
 }
 

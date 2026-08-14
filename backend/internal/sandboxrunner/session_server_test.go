@@ -35,6 +35,7 @@ func TestSessionHTTPRouteMatrixRejectsUnfrozenRenewAndPublish(t *testing.T) {
 		{http.MethodPost, "/v1/sessions/550e8400-e29b-41d4-a716-446655440000/operations/operation_01:cancel"},
 		{http.MethodGet, "/v1/session-configuration"},
 		{http.MethodPut, "/v1/session-configuration"},
+		{http.MethodGet, "/v1/session-runtime-status"},
 	} {
 		if _, ok := parseSessionRoute(request.method, request.path); !ok {
 			t.Errorf("frozen route rejected: %s %s", request.method, request.path)
@@ -341,15 +342,49 @@ func TestSessionHTTPNonSubmitRouteKeepsConfiguredRequestTimeout(t *testing.T) {
 	}
 }
 
-func TestSessionHTTPConfigurationAuthenticatesAndChecksCoreWithoutResolvingSession(t *testing.T) {
-	dependencies := &recordingSessionHTTPDependencies{}
+func TestSessionHTTPConfigurationAuthenticatesWithoutRequiringEnabledCoreOrResolvingSession(t *testing.T) {
+	dependencies := &recordingSessionHTTPDependencies{readyErr: ErrUnavailable}
 	handler := newSessionTestHandler(t, dependencies)
 	request := httptest.NewRequest(http.MethodGet, "/v1/session-configuration", nil)
 	setSessionTestHeaders(request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || dependencies.verifyCalls != 1 || dependencies.readyCalls != 1 || dependencies.resolveCalls != 0 || dependencies.configurationCalls != 1 {
+	if response.Code != http.StatusOK || dependencies.verifyCalls != 1 || dependencies.readyCalls != 0 || dependencies.configurationReadyCalls != 1 || dependencies.resolveCalls != 0 || dependencies.configurationCalls != 1 {
 		t.Fatalf("status/verify/ready/resolve/config = %d/%d/%d/%d/%d", response.Code, dependencies.verifyCalls, dependencies.readyCalls, dependencies.resolveCalls, dependencies.configurationCalls)
+	}
+}
+
+func TestSessionHTTPRuntimeStatusUsesRunnerAudienceAndStrictEmptyGET(t *testing.T) {
+	dependencies := &recordingSessionHTTPDependencies{readyErr: ErrUnavailable}
+	handler := newSessionTestHandler(t, dependencies)
+	request := httptest.NewRequest(http.MethodGet, "/v1/session-runtime-status", nil)
+	setSessionTestHeaders(request)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || dependencies.verifyCalls != 1 || dependencies.readyCalls != 0 ||
+		dependencies.configurationReadyCalls != 1 || dependencies.resolveCalls != 0 || dependencies.runtimeStatusCalls != 1 ||
+		dependencies.lastVerify.Target.Audience != sandboxidentity.SessionContextAudienceRunner {
+		t.Fatalf("status/verify/ready/config-ready/resolve/runtime/audience = %d/%d/%d/%d/%d/%d/%q", response.Code, dependencies.verifyCalls, dependencies.readyCalls, dependencies.configurationReadyCalls, dependencies.resolveCalls, dependencies.runtimeStatusCalls, dependencies.lastVerify.Target.Audience)
+	}
+	body := response.Body.String()
+	for _, forbidden := range []string{"transport_encrypted", "endpoint", "sentinel", "upstream_shell", "physical", "identity", "secret"} {
+		if strings.Contains(strings.ToLower(body), forbidden) {
+			t.Fatalf("runtime status leaked %q: %s", forbidden, body)
+		}
+	}
+
+	for _, invalid := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/v1/session-runtime-status", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodPost, "/v1/session-runtime-status", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodGet, "/v1/session-runtime-status/", nil),
+		httptest.NewRequest(http.MethodGet, "/v1/session-runtime-status?endpoint=secret", nil),
+	} {
+		setSessionTestHeaders(invalid)
+		invalidResponse := httptest.NewRecorder()
+		handler.ServeHTTP(invalidResponse, invalid)
+		if invalidResponse.Code == http.StatusOK {
+			t.Fatalf("invalid runtime status route accepted: %s %s", invalid.Method, invalid.URL.String())
+		}
 	}
 }
 
@@ -376,7 +411,7 @@ func TestSessionContextIdentityVerifierUsesAuthenticatedV2EnvelopeAndNonce(t *te
 	keyring.Now = func() time.Time { return now }
 	keyring.Nonce = func() (string, error) { return "nonce_01", nil }
 	digest := sha256.Sum256(nil)
-	claims := sandboxidentity.SessionRequest{DeploymentID: "runner-a", ProviderID: 41, Scope: sandboxidentity.ScopeAgent, SpaceID: 42, UserID: 43, ThreadID: "thread_01", RunID: "run_01", OperationID: "request_01", Profile: "core", RequestDigest: digest[:]}
+	claims := sandboxidentity.SessionRequest{DeploymentID: "runner-a", RequestDigest: digest[:]}
 	signed, err := keyring.SignSession(claims, http.MethodGet, "/v1/session-configuration")
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +425,7 @@ func TestSessionContextIdentityVerifierUsesAuthenticatedV2EnvelopeAndNonce(t *te
 		Target: sandboxidentity.SessionContextTarget{DeploymentID: "runner-a", Audience: sandboxidentity.SessionContextAudienceRunner},
 		Method: http.MethodGet, Path: "/v1/session-configuration", RequestDigest: digest[:]}
 	verified, err := verifier.VerifySession(context.Background(), input)
-	if err != nil || verified.UserID != claims.UserID {
+	if err != nil || verified.DeploymentID != claims.DeploymentID || verified.ProviderID != 0 {
 		t.Fatalf("VerifySession() = %#v, %v", verified, err)
 	}
 	if _, err := verifier.VerifySession(context.Background(), input); err == nil {
@@ -399,29 +434,36 @@ func TestSessionContextIdentityVerifierUsesAuthenticatedV2EnvelopeAndNonce(t *te
 }
 
 type recordingSessionHTTPDependencies struct {
-	readyErr            error
-	verifyErr           error
-	claimMutator        func(*sandboxidentity.SessionRequest)
-	identityMutator     func(*SessionStableIdentity)
-	verifyCalls         int
-	readyCalls          int
-	resolveCalls        int
-	acquireCalls        int
-	submitCalls         int
-	getCalls            int
-	configurationCalls  int
-	lastVerify          SessionVerifyInput
-	lastVerifyDeadline  time.Time
-	lastResolveExpected SessionStableIdentity
-	lastAcquireDeadline time.Time
-	lastSubmitDeadline  time.Time
-	events              []SessionOperationEvent
-	lastAfterEventID    string
+	readyErr                error
+	verifyErr               error
+	claimMutator            func(*sandboxidentity.SessionRequest)
+	identityMutator         func(*SessionStableIdentity)
+	verifyCalls             int
+	readyCalls              int
+	configurationReadyCalls int
+	resolveCalls            int
+	acquireCalls            int
+	submitCalls             int
+	getCalls                int
+	configurationCalls      int
+	runtimeStatusCalls      int
+	lastVerify              SessionVerifyInput
+	lastVerifyDeadline      time.Time
+	lastResolveExpected     SessionStableIdentity
+	lastAcquireDeadline     time.Time
+	lastSubmitDeadline      time.Time
+	events                  []SessionOperationEvent
+	lastAfterEventID        string
 }
 
 func (d *recordingSessionHTTPDependencies) CoreReady(context.Context) error {
 	d.readyCalls++
 	return d.readyErr
+}
+
+func (d *recordingSessionHTTPDependencies) ConfigurationReady(context.Context, bool) error {
+	d.configurationReadyCalls++
+	return nil
 }
 
 func (d *recordingSessionHTTPDependencies) VerifySession(ctx context.Context, input SessionVerifyInput) (sandboxidentity.SessionRequest, error) {
@@ -435,6 +477,9 @@ func (d *recordingSessionHTTPDependencies) VerifySession(ctx context.Context, in
 		DeploymentID: input.Target.DeploymentID, ProviderID: 41, Scope: sandboxidentity.ScopeAgent, SpaceID: 42, UserID: 43,
 		ThreadID: "thread_01", RunID: "run_01", OperationID: "request_01", Profile: "core",
 		RequestDigest: append([]byte(nil), input.RequestDigest...),
+	}
+	if input.Target.Audience == sandboxidentity.SessionContextAudienceRunner {
+		claims = sandboxidentity.SessionRequest{DeploymentID: input.Target.DeploymentID, RequestDigest: append([]byte(nil), input.RequestDigest...)}
 	}
 	if route, ok := parseSessionRoute(input.Method, input.Path); ok && route.operationID != "" {
 		claims.OperationID = route.operationID
@@ -483,12 +528,21 @@ func (d *recordingSessionHTTPDependencies) SessionConfiguration(context.Context,
 	return SessionConfigurationProjection{Schema: sessionConfigurationSchemaV1, Version: 1, Settings: settings}, nil
 }
 
+func (d *recordingSessionHTTPDependencies) SessionRuntimeStatus(context.Context, sandboxidentity.SessionRequest) (SessionRuntimeStatusProjection, error) {
+	d.runtimeStatusCalls++
+	return SessionRuntimeStatusProjection{
+		Schema: sessionRuntimeStatusSchemaV1, Available: false, AppliedConfigVersion: 1,
+		GenerationState: "unknown", TotalWeight: coreSessionTotalWeight,
+		ReasonCode: sessionRuntimeReasonAIOUnavailable,
+	}, nil
+}
+
 func newSessionTestHandler(t *testing.T, dependencies *recordingSessionHTTPDependencies) http.Handler {
 	t.Helper()
 	handler, err := NewSessionHTTPHandler(SessionHTTPConfig{
 		DeploymentID: "runner-a", AuthToken: "runner-auth-token-0123456789",
 		Now: func() time.Time { return time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC) }, AllowedEnvironmentNames: []string{"LANG"},
-	}, SessionHTTPDependencies{Readiness: dependencies, Verifier: dependencies, Service: dependencies})
+	}, SessionHTTPDependencies{Readiness: dependencies, Verifier: dependencies, Service: dependencies, RuntimeStatus: dependencies})
 	if err != nil {
 		t.Fatal(err)
 	}

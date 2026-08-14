@@ -570,6 +570,13 @@ func (scheduler *CoreSessionScheduler) ApplySessionSettings(settings domainsandb
 	return nil
 }
 
+func (scheduler *CoreSessionScheduler) AppliedSessionSettings() domainsandbox.SessionRuntimeSettings {
+	if scheduler == nil {
+		return domainsandbox.SessionRuntimeSettings{}
+	}
+	return scheduler.sessionSettings()
+}
+
 // CoreEnabled reports the currently applied database-backed Core admission
 // setting. The environment-level Session backend switch is a separate gate;
 // callers must require both before advertising or accepting Core Sessions.

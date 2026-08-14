@@ -379,24 +379,46 @@ func TestSessionContextV2AuthenticatedDecodeRejectsWrongExpectedAudienceBeforeNo
 	}
 }
 
-func TestSessionContextV2RunnerAudienceIsLimitedToConfigurationRoute(t *testing.T) {
+func TestSessionContextV2RunnerAudienceIsLimitedToDeploymentControlRoutes(t *testing.T) {
 	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
 	keyring := newTestKeyring(t, now)
-	request := newValidSessionRequest()
-	signed, err := keyring.SignSession(request, "GET", "/v1/session-configuration")
+	digest := sha256.Sum256([]byte("runner configuration"))
+	request := SessionRequest{DeploymentID: "runner-a", RequestDigest: digest[:]}
+	for _, requestPath := range []string{"/v1/session-configuration", "/v1/session-runtime-status"} {
+		signed, err := keyring.SignSession(request, "GET", requestPath)
+		if err != nil {
+			t.Fatalf("SignSession(%s) error = %v", requestPath, err)
+		}
+		if _, err := keyring.VerifySessionContext(context.Background(), signed.Context, signed.Signature,
+			SessionContextTarget{DeploymentID: "runner-a", Audience: SessionContextAudienceProvider},
+			"GET", requestPath, request.RequestDigest, now, newFakeSessionNonceStore()); !errors.Is(err, ErrInvalidContext) {
+			t.Fatalf("VerifySessionContext(%s provider target) error = %v, want ErrInvalidContext", requestPath, err)
+		}
+		if _, err := keyring.VerifySessionContext(context.Background(), signed.Context, signed.Signature,
+			SessionContextTarget{DeploymentID: "runner-a", Audience: SessionContextAudienceRunner},
+			"GET", requestPath, request.RequestDigest, now, newFakeSessionNonceStore()); err != nil {
+			t.Fatalf("VerifySessionContext(%s runner target) error = %v", requestPath, err)
+		}
+	}
+}
+
+func TestSessionContextV2RunnerConfigurationUsesDeploymentOnlyClaims(t *testing.T) {
+	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	keyring := newTestKeyring(t, now)
+	digest := sha256.Sum256([]byte(`{"schema":"coze.sandbox.session_configuration.v1","version":2}`))
+	request := SessionRequest{DeploymentID: "runner-a", RequestDigest: digest[:]}
+	signed, err := keyring.SignSession(request, "PUT", "/v1/session-configuration")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("SignSession(deployment configuration) error = %v", err)
 	}
-	store := newFakeSessionNonceStore()
-	if _, err := keyring.VerifySessionContext(context.Background(), signed.Context, signed.Signature,
-		SessionContextTarget{DeploymentID: "runner-a", Audience: SessionContextAudienceProvider},
-		"GET", "/v1/session-configuration", request.RequestDigest, now, store); !errors.Is(err, ErrInvalidContext) {
-		t.Fatalf("VerifySessionContext(provider target) error = %v, want ErrInvalidContext", err)
-	}
-	if _, err := keyring.VerifySessionContext(context.Background(), signed.Context, signed.Signature,
+	verified, err := keyring.VerifySessionContext(context.Background(), signed.Context, signed.Signature,
 		SessionContextTarget{DeploymentID: "runner-a", Audience: SessionContextAudienceRunner},
-		"GET", "/v1/session-configuration", request.RequestDigest, now, store); err != nil {
-		t.Fatalf("VerifySessionContext(runner target) error = %v", err)
+		"PUT", "/v1/session-configuration", digest[:], now, newFakeSessionNonceStore())
+	if err != nil || !sameSessionRequest(verified, request) {
+		t.Fatalf("VerifySessionContext(deployment configuration) = %#v, %v", verified, err)
+	}
+	if _, err := keyring.SignSession(request, "GET", "/v1/sessions/session_01"); !errors.Is(err, ErrInvalidContext) {
+		t.Fatalf("deployment-only claims signed a business route: %v", err)
 	}
 }
 

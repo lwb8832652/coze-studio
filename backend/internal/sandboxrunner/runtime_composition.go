@@ -318,9 +318,16 @@ func newProcessRuntime(ctx context.Context, config Config, factories processRunt
 						Settings: sessionRepository, SettingsApplier: coreScheduler, Clock: time.Now,
 					})
 					coreReadiness := runtimeCoreReadiness{sessionBackendEnabled: true, lifecycle: supervisor, redisReadiness: redisReadiness, settings: coreScheduler}
+					var sessionRuntimeStatus SessionRuntimeStatusGetter
+					if aggregateRepository, ok := any(sessionRepository).(RuntimeSessionAggregateRepository); ok {
+						sessionRuntimeStatus = sessionRuntimeStatusSource{
+							deploymentID: config.DeploymentID, lifecycle: supervisor,
+							scheduler: coreScheduler, repository: aggregateRepository,
+						}
+					}
 					sessionHandler, handlerErr := NewSessionHTTPHandler(SessionHTTPConfig{
 						DeploymentID: config.DeploymentID, AuthToken: config.AuthToken, Now: time.Now,
-					}, SessionHTTPDependencies{Readiness: coreReadiness, Verifier: verifier, Service: service})
+					}, SessionHTTPDependencies{Readiness: coreReadiness, Verifier: verifier, Service: service, RuntimeStatus: sessionRuntimeStatus})
 					if dispatcherErr != nil || serviceErr != nil || handlerErr != nil {
 						if ownedPool != nil {
 							_ = ownedPool.Close()
@@ -515,6 +522,24 @@ type runtimeCoreReadiness struct {
 func (source runtimeCoreReadiness) CoreReady(ctx context.Context) error {
 	if ctx == nil || !source.sessionBackendEnabled || source.lifecycle == nil || source.redisReadiness == nil || source.settings == nil || !source.settings.CoreEnabled() ||
 		source.recoveryReady != nil && !source.recoveryReady.Load() || source.redisReadiness.CheckReadiness(ctx) != nil {
+		return ErrUnavailable
+	}
+	snapshot := source.lifecycle.Snapshot()
+	if !snapshot.Enabled || !snapshot.Ready || snapshot.State != aio.LifecycleStateReady || snapshot.Generation == 0 {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func (source runtimeCoreReadiness) ConfigurationReady(ctx context.Context, enabling bool) error {
+	if ctx == nil || !source.sessionBackendEnabled || source.redisReadiness == nil || source.settings == nil ||
+		source.redisReadiness.CheckReadiness(ctx) != nil {
+		return ErrUnavailable
+	}
+	if !enabling {
+		return nil
+	}
+	if source.lifecycle == nil || source.recoveryReady != nil && !source.recoveryReady.Load() {
 		return ErrUnavailable
 	}
 	snapshot := source.lifecycle.Snapshot()

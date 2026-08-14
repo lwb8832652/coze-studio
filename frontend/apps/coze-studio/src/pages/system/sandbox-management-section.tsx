@@ -1,6 +1,7 @@
 /* Copyright 2025 coze-dev Authors */
 
-/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function, complexity, max-params -- Cohesive management page. */
+/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function -- Cohesive management page. */
+/* eslint-disable complexity, max-params -- Cohesive management page. */
 /* eslint-disable max-lines -- The control-plane workflow is explicit. */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -14,6 +15,7 @@ import {
   SANDBOX_SCOPE_OPTIONS,
   sandboxViewReducer,
 } from './sandbox-view-model';
+import { SandboxSessionCard } from './sandbox-session-card';
 import {
   createSandboxProvider,
   deleteSandboxProvider,
@@ -649,6 +651,8 @@ export const SandboxManagementSection = () => {
           })}
         </div>
       </section>
+
+      <SandboxSessionCard />
 
       <SandboxSchedulerCard />
 

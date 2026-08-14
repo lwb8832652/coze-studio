@@ -166,7 +166,8 @@ func NewServer(config Config, dependencies Dependencies) (*Server, error) {
 			// Preserve the inner Session handler's authentication ordering for bad
 			// credentials, while ensuring every authenticated Core route shares the
 			// runtime startup-recovery gate used by feature advertisement.
-			if authenticateBearer(request, config.AuthToken) && server.coreReadiness.CoreReady(request.Context()) != nil {
+			configurationRoute := request.URL.Path == "/v1/session-configuration" || request.URL.Path == "/v1/session-runtime-status"
+			if !configurationRoute && authenticateBearer(request, config.AuthToken) && server.coreReadiness.CoreReady(request.Context()) != nil {
 				writePublicError(writer, http.StatusServiceUnavailable, "SANDBOX_UNAVAILABLE")
 				return
 			}
@@ -188,6 +189,7 @@ func NewServer(config Config, dependencies Dependencies) (*Server, error) {
 		mux.Handle("/v1/sessions/", sessionHandler)
 		mux.Handle("GET /v1/session-configuration", sessionHandler)
 		mux.Handle("PUT /v1/session-configuration", sessionHandler)
+		mux.Handle("GET /v1/session-runtime-status", sessionHandler)
 	}
 	mux.HandleFunc("/v1/", server.notFound)
 	server.handler = mux

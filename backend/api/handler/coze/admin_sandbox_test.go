@@ -190,6 +190,69 @@ func TestAdminSandboxRuntimeStatusReturnsSafeUnavailableEnvelope(t *testing.T) {
 	require.Contains(t, string(response.Result().Body()), `"available":false`)
 }
 
+func TestAdminSandboxSessionSettingsHandlersExposeStrictSafeContract(t *testing.T) {
+	stub := &adminSandboxServiceStub{}
+	h := newAdminSandboxTestServer(stub)
+
+	get := performAdminSandboxRequest(h, http.MethodGet, "/api/admin/sandboxes/session-settings", "")
+	require.Equal(t, http.StatusOK, get.Code, string(get.Result().Body()))
+	require.Contains(t, string(get.Result().Body()), `"core_enabled":false`)
+
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.CoreEnabled = true
+	encoded, err := json.Marshal(map[string]any{"expected_version": uint64(1), "settings": settings})
+	require.NoError(t, err)
+	put := performAdminSandboxRequest(h, http.MethodPut, "/api/admin/sandboxes/session-settings", string(encoded))
+	require.Equal(t, http.StatusOK, put.Code, string(put.Result().Body()))
+	require.Contains(t, string(put.Result().Body()), `"applied_version":2`)
+
+	status := performAdminSandboxRequest(h, http.MethodGet, "/api/admin/sandboxes/session-runtime-status", "")
+	require.Equal(t, http.StatusOK, status.Code, string(status.Result().Body()))
+	body := string(status.Result().Body())
+	require.Contains(t, body, `"runtime_generation":7`)
+	require.Contains(t, body, `"transport_encrypted":true`)
+	require.NotContains(t, body, "sentinel")
+	require.NotContains(t, body, "shell_id")
+	require.NotContains(t, body, "endpoint")
+	require.Equal(t, []string{"session_get", "session_update", "session_runtime_status"}, stub.calls)
+}
+
+func TestAdminSandboxSessionSettingsRejectInteractiveWith422(t *testing.T) {
+	h := newAdminSandboxTestServer(&adminSandboxServiceStub{err: appsandbox.ErrInteractiveUnsupported})
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.InteractiveEnabled = true
+	encoded, err := json.Marshal(map[string]any{"expected_version": uint64(1), "settings": settings})
+	require.NoError(t, err)
+	response := performAdminSandboxRequest(h, http.MethodPut, "/api/admin/sandboxes/session-settings", string(encoded))
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code, string(response.Result().Body()))
+	require.Contains(t, string(response.Result().Body()), `"error_code":"SANDBOX_INTERACTIVE_UNSUPPORTED"`)
+}
+
+func TestAdminSandboxSessionSettingsUse64KiBStrictJSONAndStableErrors(t *testing.T) {
+	for _, body := range []string{
+		`{"expected_version":1,"settings":{},"unknown":true}`,
+		`{"expected_version":1,"expected_version":2,"settings":{}}`,
+	} {
+		response := performAdminSandboxRequest(newAdminSandboxTestServer(&adminSandboxServiceStub{}), http.MethodPut, "/api/admin/sandboxes/session-settings", body)
+		require.Equal(t, http.StatusBadRequest, response.Code, string(response.Result().Body()))
+	}
+
+	stub := &adminSandboxServiceStub{}
+	h := newAdminSandboxTestServer(stub)
+	reader := &countingAdminSandboxReader{reader: strings.NewReader(strings.Repeat("x", maxAdminSandboxSessionBodyBytes+64))}
+	response := ut.PerformRequest(h.Engine, http.MethodPut, "/api/admin/sandboxes/session-settings", &ut.Body{Body: reader, Len: -1}, ut.Header{Key: "content-type", Value: "application/json"})
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, string(response.Result().Body()))
+	require.Equal(t, maxAdminSandboxSessionBodyBytes+1, reader.bytesRead)
+	require.Empty(t, stub.calls)
+
+	stub.err = domainsandbox.ErrVersionConflict
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.CoreEnabled = true
+	encoded, _ := json.Marshal(map[string]any{"expected_version": uint64(1), "settings": settings})
+	response = performAdminSandboxRequest(h, http.MethodPut, "/api/admin/sandboxes/session-settings", string(encoded))
+	require.Equal(t, http.StatusConflict, response.Code, string(response.Result().Body()))
+}
+
 func TestAdminSandboxHandlersAcceptBodyAtExactLimit(t *testing.T) {
 	stub := &adminSandboxServiceStub{}
 	h := newAdminSandboxTestServer(stub)
@@ -355,6 +418,21 @@ func (s *adminSandboxServiceStub) GetRuntimeStatus(_ context.Context, actor apps
 	return &appsandbox.SchedulerRuntimeStatusDTO{ReasonCode: appsandbox.SchedulerReasonProviderUnavailable}, err
 }
 
+func (s *adminSandboxServiceStub) GetSessionSettings(_ context.Context, actor appsandbox.Actor) (*appsandbox.SessionSettingsDTO, error) {
+	err := s.record("session_get", actor)
+	return &appsandbox.SessionSettingsDTO{Version: 1, Settings: domainsandbox.DefaultSessionRuntimeSettings()}, err
+}
+
+func (s *adminSandboxServiceStub) UpdateSessionSettings(_ context.Context, actor appsandbox.Actor, request appsandbox.UpdateSessionSettingsRequest) (*appsandbox.SessionSettingsUpdateResult, error) {
+	err := s.record("session_update", actor)
+	return &appsandbox.SessionSettingsUpdateResult{Version: request.ExpectedVersion + 1, Settings: request.Settings, Applied: true, AppliedVersion: request.ExpectedVersion + 1}, err
+}
+
+func (s *adminSandboxServiceStub) GetSessionRuntimeStatus(_ context.Context, actor appsandbox.Actor) (*appsandbox.SessionRuntimeStatusDTO, error) {
+	err := s.record("session_runtime_status", actor)
+	return &appsandbox.SessionRuntimeStatusDTO{Available: true, DesiredConfigVersion: 2, AppliedConfigVersion: 2, RuntimeGeneration: 7, CoreEnabled: true, RawAIOReady: true, GenerationState: "ready", TotalWeight: 2, TransportEncrypted: true}, err
+}
+
 func adminSandboxSafeProvider() *appsandbox.ProviderDTO {
 	return &appsandbox.ProviderDTO{
 		ID:                    17,
@@ -395,6 +473,9 @@ func newAdminSandboxTestServer(service adminSandboxService) *server.Hertz {
 	h.GET("/api/admin/sandboxes/scheduler-settings", handler.schedulerSettings)
 	h.PUT("/api/admin/sandboxes/scheduler-settings", handler.updateSchedulerSettings)
 	h.GET("/api/admin/sandboxes/runtime-status", handler.runtimeStatus)
+	h.GET("/api/admin/sandboxes/session-settings", handler.sessionSettings)
+	h.PUT("/api/admin/sandboxes/session-settings", handler.updateSessionSettings)
+	h.GET("/api/admin/sandboxes/session-runtime-status", handler.sessionRuntimeStatus)
 	return h
 }
 

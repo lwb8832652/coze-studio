@@ -12,6 +12,8 @@ import {
   getSandboxProviderSummary,
   getSandboxRuntimeStatus,
   getSandboxSchedulerSettings,
+  getSandboxSessionRuntimeStatus,
+  getSandboxSessionSettings,
   healthCheckSandboxProvider,
   isSandboxConflict,
   isSandboxPermissionError,
@@ -23,6 +25,7 @@ import {
   setSandboxProviderDefault,
   setSandboxProviderEnabled,
   updateSandboxSchedulerSettings,
+  updateSandboxSessionSettings,
   updateSandboxProvider,
 } from '../sandbox-service';
 import { fullPolicy, providerFixture } from './sandbox-test-fixtures';
@@ -35,6 +38,233 @@ const ok = (data: object) => ({
 
 describe('sandbox service', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('loads only the allowlisted Session runtime projection', async () => {
+    const runtime = {
+      available: true,
+      desired_config_version: 5,
+      applied_config_version: 4,
+      runtime_generation: 12,
+      core_enabled: true,
+      interactive_enabled: false,
+      host_shell_enabled: true,
+      host_shell_available: false,
+      raw_aio_ready: true,
+      generation_state: 'ready',
+      queue_depth: 3,
+      running: 2,
+      used_weight: 4,
+      total_weight: 8,
+      active_sessions: 2,
+      idle_sessions: 6,
+      active_shells: 1,
+      idle_shells: 3,
+      transport_known: true,
+      transport_encrypted: false,
+      reason_code: 'AVAILABLE',
+      endpoint: 'http://runner.internal:8080',
+      endpoint_hint: 'runner.internal',
+      sentinel_id: 'sentinel-secret',
+      upstream_shell_id: 'shell-secret',
+      physical_root: '/private/workspaces/secret',
+      docker_image: 'ghcr.io/private/image:secret',
+      credential: 'secret-token',
+      raw_error: 'dial tcp 10.0.0.1:8080: credential=secret',
+    };
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn().mockResolvedValue(ok(runtime)) as never;
+
+    await expect(
+      getSandboxSessionRuntimeStatus(controller.signal),
+    ).resolves.toEqual({
+      available: true,
+      desired_config_version: 5,
+      applied_config_version: 4,
+      runtime_generation: 12,
+      core_enabled: true,
+      interactive_enabled: false,
+      host_shell_enabled: true,
+      host_shell_available: false,
+      raw_aio_ready: true,
+      generation_state: 'ready',
+      queue_depth: 3,
+      running: 2,
+      used_weight: 4,
+      total_weight: 8,
+      active_sessions: 2,
+      idle_sessions: 6,
+      active_shells: 1,
+      idle_shells: 3,
+      transport_known: true,
+      transport_encrypted: false,
+      reason_code: 'AVAILABLE',
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/admin/sandboxes/session-runtime-status',
+      expect.objectContaining({ method: 'GET', signal: controller.signal }),
+    );
+  });
+
+  it('fails closed on malformed Session runtime projection fields', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      ok({
+        available: 'true',
+        desired_config_version: '5',
+        applied_config_version: -1,
+        runtime_generation: Number.MAX_SAFE_INTEGER + 1,
+        core_enabled: 1,
+        interactive_enabled: true,
+        host_shell_enabled: 'true',
+        host_shell_available: true,
+        raw_aio_ready: 'yes',
+        generation_state: 'raw-secret-state',
+        queue_depth: -3,
+        running: 1.5,
+        used_weight: Number.NaN,
+        total_weight: Number.POSITIVE_INFINITY,
+        active_sessions: {},
+        idle_sessions: null,
+        active_shells: '1',
+        idle_shells: -1,
+        transport_known: 'true',
+        transport_encrypted: 'true',
+        reason_code: 'RUNNER_UNAVAILABLE\nraw-secret',
+      }),
+    ) as never;
+
+    await expect(getSandboxSessionRuntimeStatus()).resolves.toEqual({
+      available: false,
+      desired_config_version: 0,
+      applied_config_version: 0,
+      runtime_generation: 0,
+      core_enabled: false,
+      interactive_enabled: true,
+      host_shell_enabled: false,
+      host_shell_available: true,
+      raw_aio_ready: false,
+      generation_state: 'unknown',
+      queue_depth: 0,
+      running: 0,
+      used_weight: 0,
+      total_weight: 0,
+      active_sessions: 0,
+      idle_sessions: 0,
+      active_shells: 0,
+      idle_shells: 0,
+      transport_known: false,
+      transport_encrypted: false,
+      reason_code: undefined,
+    });
+  });
+
+  it('loads and CAS-updates the complete Session settings snapshot', async () => {
+    const settings = {
+      core_enabled: false,
+      interactive_enabled: false,
+      host_shell_enabled: false,
+      core_weight: 1,
+      heavy_weight: 2,
+      per_user_active_limit: 1,
+      idle_session_limit: 20,
+      idle_shell_limit: 4,
+      session_idle_ttl_seconds: 1200,
+      shell_idle_ttl_seconds: 300,
+      command_timeout_seconds: 600,
+      cancel_grace_seconds: 5,
+      workspace_quota_mb: 2048,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        ok({
+          version: 4,
+          settings,
+          endpoint: 'must-not-surface',
+          credential: 'must-not-surface',
+        }),
+      )
+      .mockResolvedValueOnce(
+        ok({
+          version: 5,
+          settings: { ...settings, core_enabled: true },
+          applied: false,
+          applied_version: 3,
+          reason_code: 'RUNNER_UNAVAILABLE',
+          endpoint: 'must-not-surface',
+        }),
+      );
+    globalThis.fetch = fetchMock as never;
+
+    await expect(getSandboxSessionSettings()).resolves.toEqual({
+      version: 4,
+      settings,
+    });
+    const result = await updateSandboxSessionSettings(4, {
+      ...settings,
+      core_enabled: true,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/sandboxes/session-settings',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/sandboxes/session-settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          expected_version: 4,
+          settings: { ...settings, core_enabled: true },
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      version: 5,
+      settings: { ...settings, core_enabled: true },
+      applied: false,
+      applied_version: 3,
+      reason_code: 'RUNNER_UNAVAILABLE',
+    });
+    expect(result).not.toHaveProperty('endpoint');
+    expect(result).not.toHaveProperty('credential');
+  });
+
+  it('fails closed on malformed Session settings response projections', async () => {
+    const settings = {
+      core_enabled: false,
+      interactive_enabled: false,
+      host_shell_enabled: false,
+      core_weight: 1,
+      heavy_weight: 2,
+      per_user_active_limit: 1,
+      idle_session_limit: 20,
+      idle_shell_limit: 4,
+      session_idle_ttl_seconds: 1200,
+      shell_idle_ttl_seconds: 300,
+      command_timeout_seconds: 600,
+      cancel_grace_seconds: 5,
+      workspace_quota_mb: 2048,
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      ok({
+        version: 5,
+        settings,
+        applied: false,
+        applied_version: '4',
+        reason_code: 'RUNNER_UNAVAILABLE\nraw-secret',
+      }),
+    ) as never;
+
+    await expect(
+      updateSandboxSessionSettings(4, settings),
+    ).resolves.toMatchObject({
+      applied: false,
+      applied_version: 0,
+      reason_code: undefined,
+    });
+  });
 
   it('loads and saves the complete scheduler snapshot without surfacing runner secrets', async () => {
     const settings = {

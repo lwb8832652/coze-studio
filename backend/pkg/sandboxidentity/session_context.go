@@ -86,7 +86,7 @@ type SessionContextVerifier interface {
 }
 
 func (keyring Keyring) SignSession(request SessionRequest, method, requestPath string) (SignedContext, error) {
-	if keyring.valid() != nil || !validSessionRequest(request) || !validSessionBinding(method, requestPath) {
+	if keyring.valid() != nil || !validSessionRequestForBinding(request, requestPath) || !validSessionBinding(method, requestPath) {
 		return SignedContext{}, ErrInvalidContext
 	}
 	nonce, err := keyring.Nonce()
@@ -120,7 +120,7 @@ func (keyring Keyring) VerifySession(
 	now time.Time,
 	nonceStore SessionNonceStore,
 ) (SessionRequest, error) {
-	if ctx == nil || keyring.valid() != nil || !validSessionRequest(expected) ||
+	if ctx == nil || keyring.valid() != nil || !validSessionRequestForBinding(expected, requestPath) ||
 		!validSessionBinding(method, requestPath) || now.IsZero() || nonceStore == nil {
 		return SessionRequest{}, ErrInvalidContext
 	}
@@ -191,7 +191,7 @@ func (keyring Keyring) VerifySessionContext(
 		OperationID: envelope.OperationID, Profile: envelope.Profile,
 		RequestDigest: append([]byte(nil), expectedDigest...),
 	}
-	if !validSessionRequest(request) {
+	if !validSessionRequestForBinding(request, requestPath) {
 		return SessionRequest{}, ErrInvalidContext
 	}
 	if envelope.Audience != expectedSessionAudience(expectedTarget, request.ProviderID) {
@@ -255,7 +255,7 @@ func newSessionEnvelope(
 	method string,
 	requestPath string,
 ) (sessionEnvelope, error) {
-	if !validSessionRequest(request) || !validIdentifier(keyID) || !validIdentifier(nonce) ||
+	if !validSessionRequestForBinding(request, requestPath) || !validIdentifier(keyID) || !validIdentifier(nonce) ||
 		issuedAtUnix <= 0 || expiresAtUnix <= issuedAtUnix || !validSessionBinding(method, requestPath) {
 		return sessionEnvelope{}, ErrInvalidContext
 	}
@@ -376,12 +376,27 @@ func validSessionRequest(request SessionRequest) bool {
 	return request.Profile == "core" || request.Profile == "interactive"
 }
 
+func validSessionRequestForBinding(request SessionRequest, requestPath string) bool {
+	if !isSessionRunnerControlPath(requestPath) {
+		return validSessionRequest(request)
+	}
+	return validIdentifier(request.DeploymentID) && request.ProviderID == 0 && request.Scope == "" && request.SpaceID == 0 && request.UserID == 0 &&
+		request.ThreadID == "" && request.RunID == "" && request.OperationID == "" && request.Profile == "" &&
+		len(request.RequestDigest) == sha256.Size && !hmac.Equal(request.RequestDigest, make([]byte, sha256.Size))
+}
+
 func newSessionAudience(request SessionRequest, requestPath string) (sessionAudience, error) {
-	if !validIdentifier(request.DeploymentID) || request.ProviderID <= 0 {
+	if !validIdentifier(request.DeploymentID) {
 		return sessionAudience{}, ErrInvalidContext
 	}
-	if requestPath == "/v1/session-configuration" {
+	if isSessionRunnerControlPath(requestPath) {
+		if !validSessionRequestForBinding(request, requestPath) {
+			return sessionAudience{}, ErrInvalidContext
+		}
 		return sessionAudience{Kind: SessionContextAudienceRunner, DeploymentID: request.DeploymentID}, nil
+	}
+	if request.ProviderID <= 0 {
+		return sessionAudience{}, ErrInvalidContext
 	}
 	return sessionAudience{Kind: SessionContextAudienceProvider, DeploymentID: request.DeploymentID, ProviderID: request.ProviderID}, nil
 }
@@ -390,10 +405,14 @@ func validSessionContextTarget(target SessionContextTarget, requestPath string) 
 	if !validIdentifier(target.DeploymentID) {
 		return false
 	}
-	if requestPath == "/v1/session-configuration" {
+	if isSessionRunnerControlPath(requestPath) {
 		return target.Audience == SessionContextAudienceRunner
 	}
 	return target.Audience == SessionContextAudienceProvider
+}
+
+func isSessionRunnerControlPath(requestPath string) bool {
+	return requestPath == "/v1/session-configuration" || requestPath == "/v1/session-runtime-status"
 }
 
 func expectedSessionAudience(target SessionContextTarget, providerID int64) sessionAudience {

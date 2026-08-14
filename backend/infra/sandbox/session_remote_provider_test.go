@@ -394,6 +394,130 @@ func TestRemoteSessionStrictJSONRejectsUnknownDuplicateOversizeAndBadNDJSON(t *t
 	}
 }
 
+func TestRemoteSessionProviderGetsAndAppliesExactRunnerConfiguration(t *testing.T) {
+	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	keyring := remoteSessionTestKeyring(t, now)
+	desired := domainsandbox.DefaultSessionRuntimeSettings()
+	desired.CoreEnabled = true
+	desired.Version = 2
+	requests := make([]string, 0, 2)
+	remote := mustRemoteProvider(t, providerDoerFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(body)
+		claims, err := keyring.VerifySessionContext(context.Background(),
+			request.Header.Get(sandboxidentity.SessionContextHeader), request.Header.Get(sandboxidentity.SessionContextSignatureHeader),
+			sandboxidentity.SessionContextTarget{DeploymentID: "runner-dev-a", Audience: sandboxidentity.SessionContextAudienceRunner},
+			request.Method, request.URL.Path, digest[:], now, acceptingRemoteSessionNonceStore{})
+		if err != nil || claims.ProviderID != 0 || claims.UserID != 0 || claims.ThreadID != "" {
+			t.Fatalf("configuration claims = %#v, %v", claims, err)
+		}
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		switch request.Method {
+		case http.MethodGet:
+			if len(body) != 0 {
+				t.Fatalf("GET body = %q", body)
+			}
+			settings := domainsandbox.DefaultSessionRuntimeSettings()
+			return jsonResponse(request, http.StatusOK, sessionConfigurationResponseJSON(t, 1, settings)), nil
+		case http.MethodPut:
+			var wire struct {
+				Schema   string                               `json:"schema"`
+				Version  uint64                               `json:"version"`
+				Settings domainsandbox.SessionRuntimeSettings `json:"settings"`
+			}
+			if err := json.Unmarshal(body, &wire); err != nil || wire.Schema != "coze.sandbox.session_configuration.v1" || wire.Version != 2 || !wire.Settings.CoreEnabled {
+				t.Fatalf("configuration wire = %#v, %v", wire, err)
+			}
+			return jsonResponse(request, http.StatusOK, sessionConfigurationResponseJSON(t, 2, desired)), nil
+		default:
+			t.Fatalf("configuration method = %s", request.Method)
+			return nil, nil
+		}
+	}))
+	provider := mustRemoteSessionProvider(t, remote, keyring, now)
+	current, err := provider.SessionSettings(context.Background())
+	if err != nil || current.Version != 1 || current.CoreEnabled {
+		t.Fatalf("SessionSettings() = %#v, %v", current, err)
+	}
+	applied, err := provider.ApplySessionSettings(context.Background(), desired)
+	if err != nil || applied != 2 {
+		t.Fatalf("ApplySessionSettings() = %d, %v", applied, err)
+	}
+	if want := []string{"GET /v1/session-configuration", "PUT /v1/session-configuration"}; !reflect.DeepEqual(requests, want) {
+		t.Fatalf("configuration requests = %#v", requests)
+	}
+}
+
+func TestRemoteSessionProviderRuntimeStatusUsesSignedStrictSafeProjectionAndEndpointTransport(t *testing.T) {
+	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	keyring := remoteSessionTestKeyring(t, now)
+	valid := `{"schema":"coze.sandbox.session_runtime_status.v1","available":true,"applied_config_version":4,"runtime_generation":7,"core_enabled":true,"interactive_enabled":false,"host_shell_enabled":false,"host_shell_available":false,"raw_aio_ready":true,"generation_state":"ready","queue_depth":2,"running":1,"used_weight":1,"total_weight":2,"active_sessions":3,"idle_sessions":4,"active_shells":1,"idle_shells":2}`
+	newProvider := func(t *testing.T, endpoint, body string) *RemoteSessionProvider {
+		t.Helper()
+		config := validRemoteProviderConfig()
+		config.Endpoint = endpoint
+		remote, err := newRemoteProviderWithDoer(config, providerDoerFunc(func(request *http.Request) (*http.Response, error) {
+			requestBody, readErr := io.ReadAll(request.Body)
+			if readErr != nil || len(requestBody) != 0 || request.Method != http.MethodGet || request.URL.Path != "/v1/session-runtime-status" || request.URL.RawQuery != "" {
+				t.Fatalf("runtime request = %s %s body=%q err=%v", request.Method, request.URL.String(), requestBody, readErr)
+			}
+			digest := sha256.Sum256(nil)
+			claims, verifyErr := keyring.VerifySessionContext(context.Background(),
+				request.Header.Get(sandboxidentity.SessionContextHeader), request.Header.Get(sandboxidentity.SessionContextSignatureHeader),
+				sandboxidentity.SessionContextTarget{DeploymentID: "runner-dev-a", Audience: sandboxidentity.SessionContextAudienceRunner},
+				request.Method, request.URL.Path, digest[:], now, acceptingRemoteSessionNonceStore{})
+			if verifyErr != nil || claims.ProviderID != 0 || claims.SpaceID != 0 || claims.ThreadID != "" {
+				t.Fatalf("runtime claims = %#v, %v", claims, verifyErr)
+			}
+			return jsonResponse(request, http.StatusOK, body), nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mustRemoteSessionProvider(t, remote, keyring, now)
+	}
+
+	status, err := newProvider(t, "https://sandbox.example.test/", valid).SessionRuntimeStatus(context.Background())
+	if err != nil || !status.Available || status.AppliedConfigVersion != 4 || status.RuntimeGeneration != 7 ||
+		status.QueueDepth != 2 || status.ActiveSessions != 3 || status.ActiveShells != 1 || !status.TransportEncrypted {
+		t.Fatalf("SessionRuntimeStatus(https) = %#v, %v", status, err)
+	}
+	status, err = newProvider(t, "http://sandbox.example.test/", valid).SessionRuntimeStatus(context.Background())
+	if err != nil || status.TransportEncrypted {
+		t.Fatalf("SessionRuntimeStatus(http) = %#v, %v", status, err)
+	}
+
+	for name, body := range map[string]string{
+		"endpoint":  strings.TrimSuffix(valid, "}") + `,"endpoint":"https://secret.invalid"}`,
+		"transport": strings.TrimSuffix(valid, "}") + `,"transport_encrypted":true}`,
+		"sentinel":  strings.TrimSuffix(valid, "}") + `,"sentinel_id":"secret-sentinel"}`,
+		"duplicate": strings.Replace(valid, `"queue_depth":2`, `"queue_depth":2,"queue_depth":2`, 1),
+		"reason":    strings.Replace(valid, `"available":true`, `"available":false`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := newProvider(t, "https://sandbox.example.test/", body).SessionRuntimeStatus(context.Background()); !errors.Is(err, domainsandbox.ErrProviderUnhealthy) {
+				t.Fatalf("unsafe runtime projection error = %v", err)
+			}
+		})
+	}
+}
+
+func sessionConfigurationResponseJSON(t *testing.T, version uint64, settings domainsandbox.SessionRuntimeSettings) string {
+	t.Helper()
+	body, err := json.Marshal(struct {
+		Schema   string                               `json:"schema"`
+		Version  uint64                               `json:"version"`
+		Settings domainsandbox.SessionRuntimeSettings `json:"settings"`
+	}{Schema: "coze.sandbox.session_configuration.v1", Version: version, Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
 func remoteSessionTestKey() domainsandbox.SessionKey {
 	return domainsandbox.SessionKey{DeploymentID: "runner-dev-a", ProviderID: 41, SpaceID: 42, UserID: 43, ThreadID: "thread-a", Profile: domainsandbox.SessionProfileCore}
 }

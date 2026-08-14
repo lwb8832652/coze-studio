@@ -1124,6 +1124,30 @@ git commit -m "feat: dispatch shared AIO core sessions"
 - Modify: `backend/application/sandbox/router_test.go`
 - Modify: `backend/application/sandbox_wiring.go`
 - Modify: `backend/application/sandbox_wiring_test.go`
+- Modify: `backend/application/sandbox/router.go`
+- Modify: `backend/application/sandbox/router_test.go`
+- Create: `backend/application/sandbox/session_default_runner.go`
+- Create: `backend/application/sandbox/session_default_runner_test.go`
+- Modify: `backend/pkg/sandboxidentity/session_context.go`
+- Modify: `backend/pkg/sandboxidentity/session_context_test.go`
+- Modify: `backend/infra/sandbox/session_remote_provider.go`
+- Modify: `backend/infra/sandbox/session_remote_provider_test.go`
+- Create: `backend/infra/sandbox/runtime_session_status.go`
+- Modify: `backend/infra/sandbox/mysql_runtime_session_repository_test.go`
+- Modify: `backend/internal/sandboxrunner/server.go`
+- Modify: `backend/internal/sandboxrunner/server_test.go`
+- Modify: `backend/internal/sandboxrunner/session_protocol.go`
+- Modify: `backend/internal/sandboxrunner/session_protocol_test.go`
+- Modify: `backend/internal/sandboxrunner/session_server.go`
+- Modify: `backend/internal/sandboxrunner/session_server_test.go`
+- Modify: `backend/internal/sandboxrunner/session_service.go`
+- Modify: `backend/internal/sandboxrunner/session_store.go`
+- Modify: `backend/internal/sandboxrunner/scheduler.go`
+- Modify: `backend/internal/sandboxrunner/runtime_composition.go`
+- Create: `backend/internal/sandboxrunner/session_configuration_test.go`
+- Create: `backend/internal/sandboxrunner/session_runtime_status.go`
+- Create: `backend/internal/sandboxrunner/session_runtime_status_test.go`
+- Modify: `backend/application/sandbox_wiring_test.go`
 
 Remote Session Provider 只把统一 Go Session 合同映射到 Task 7 Runner private routes；业务端
 不得直连 raw AIO。本 Task 不修改 `backend/application/agentthread/**`，不切
@@ -1235,11 +1259,13 @@ git commit -m "feat: route signed remote sandbox sessions"
 - Create: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-session-card.test.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-management-section.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-management-section.test.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/system/sandbox-provider-form.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/system/__tests__/sandbox-provider-form.test.tsx`
 
 Session 管理只控制默认关闭的 Core。Interactive 固定关闭；Host Shell 由 Task 10 独立门禁
 控制。运行投影只展示 raw AIO health、generation 与 Session/queue 聚合。
 
-- [ ] **Step 1: 写 backend admin contract RED tests**
+- [x] **Step 1: 写 backend admin contract RED tests**
 
 新增 GET/PUT `/api/admin/sandboxes/session-settings` 与 GET
 `/api/admin/sandboxes/session-runtime-status`。沿用 admin permission、strict JSON、64 KiB、
@@ -1248,7 +1274,7 @@ trailing slash 404、CAS 409、脱敏 envelope。成功/失败审计复用 DB CH
 `settings_domain=session` 区分；metadata 只含 previous/new version 与 changed fields。
 仓储必须把成功审计 action/actor/version/真实 changed fields 与 CAS 语义绑定。
 
-- [ ] **Step 2: 写 desired/applied 和 Runner 应用 RED tests**
+- [x] **Step 2: 写 desired/applied 和 Runner 应用 RED tests**
 
 Service 先事务保存 desired snapshot + audit，再调用签名 Runner configuration route：
 
@@ -1265,7 +1291,13 @@ Service 先事务保存 desired snapshot + audit，再调用签名 Runner config
 dev 集成只使用现有 dev MySQL；测试使用 sqlmock/已有测试设施，不启动 DB 容器、不
 AutoMigrate production schema。
 
-- [ ] **Step 3: 写前端 card RED tests**
+控制面是 desired settings 与审计的唯一写入者。Runner configuration PUT 接受已提交的
+精确 `{schema, version, settings}`，只读 MySQL 核对后更新内存 applied snapshot，不再次
+执行 CAS 或写审计；版本禁止降级，同版本同载荷幂等、异载荷拒绝。configuration/status
+使用 deployment-only Runner audience，绕过业务 `CoreReady`，但仍要求签名、nonce 与
+基础配置依赖。禁用先由数据库 gate 关闭 Router，即使 AIO/Runner 不可达也不会继续放流。
+
+- [x] **Step 3: 写前端 card RED tests**
 
 覆盖 desired/applied version、Core 默认关闭、Interactive disabled、Host Shell、raw AIO
 ready/unknown、generation ready/recovering、queue/weight/Session/Shell 聚合与 transport
@@ -1273,7 +1305,7 @@ encrypted。HTTP Provider 显示未加密风险但不显示 endpoint。保留 lo
 refresh/error/focus/ARIA；Scheduler card 与 Provider CRUD 不变。页面不得渲染 sentinel/
 upstream Shell ID、physical path、Docker/image、secret 或 raw error。
 
-- [ ] **Step 4: 运行 RED tests**
+- [x] **Step 4: 运行 RED tests**
 
 ```bash
 cd backend
@@ -1284,7 +1316,7 @@ rushx test -- src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages
 
 Expected: FAIL，因为 admin routes、service 与 card 尚不存在。
 
-- [ ] **Step 5: 实现 backend service/handler/router 与聚合 DTO**
+- [x] **Step 5: 实现 backend service/handler/router 与聚合 DTO**
 
 复用 Scheduler Service 的 actor、CAS、审计与 signed Runner client 风格，但 Session
 repository/version 独立。Runtime DTO 至少包含 available、desired/applied version、
@@ -1292,7 +1324,13 @@ generation、Core/Interactive/Host Shell、raw AIO readiness、generation state�
 active/idle Session/Shell、transport encrypted 和稳定 reason。sentinel ID 不对外投影。
 Runner apply 失败不回滚已提交 desired fact，也不能伪造 applied。
 
-- [ ] **Step 6: 实现前端 service/card 并运行 GREEN**
+Runner 通过独立签名 GET `/v1/session-runtime-status` 投影 current-generation 聚合，不复用
+legacy one-shot `/v1/runtime-status`。Redis 只读取有界加密 operation metadata，MySQL 只
+统计当前 deployment/generation；跨源不一致、恢复待处理、记录损坏或 AIO 不确定时返回
+安全 unavailable。Runner wire 不声明传输安全，Remote Provider 只从实际 exact-origin
+endpoint policy 补充 `transport_encrypted`。
+
+- [x] **Step 6: 实现前端 service/card 并运行 GREEN**
 
 复用现有 card/request envelope 和 `@coze-arch/coze-design`，不引入 UI 库。
 
@@ -1303,7 +1341,7 @@ cd ../frontend/apps/coze-studio
 rushx test -- src/pages/system/__tests__/sandbox-session-card.test.tsx src/pages/system/__tests__/sandbox-scheduler-card.test.tsx src/pages/system/__tests__/sandbox-service.test.ts src/pages/system/__tests__/sandbox-management-section.test.tsx src/pages/system/__tests__/sandbox-system-page.test.tsx
 ```
 
-- [ ] **Step 7: 完成唯一一次 Task 9 主线审核并提交**
+- [x] **Step 7: 完成唯一一次 Task 9 主线审核并提交**
 
 综合审核只检查 admin permission/CAS/audit、desired/applied、默认关闭、generation 投影、
 敏感字段、Host Shell/Interactive fail closed、UI 状态与 one-shot 管理回归。修复后重跑

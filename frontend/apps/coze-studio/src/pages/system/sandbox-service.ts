@@ -142,6 +142,64 @@ export interface SandboxSchedulerSettingsUpdate
   reason_code?: string;
 }
 
+export interface SandboxSessionSettings {
+  core_enabled: boolean;
+  interactive_enabled: boolean;
+  host_shell_enabled: boolean;
+  core_weight: number;
+  heavy_weight: number;
+  per_user_active_limit: number;
+  idle_session_limit: number;
+  idle_shell_limit: number;
+  session_idle_ttl_seconds: number;
+  shell_idle_ttl_seconds: number;
+  command_timeout_seconds: number;
+  cancel_grace_seconds: number;
+  workspace_quota_mb: number;
+}
+
+export interface SandboxSessionSettingsSnapshot {
+  version: number;
+  settings: SandboxSessionSettings;
+}
+
+export interface SandboxSessionSettingsUpdate
+  extends SandboxSessionSettingsSnapshot {
+  applied: boolean;
+  applied_version: number;
+  reason_code?: string;
+}
+
+export type SandboxSessionGenerationState =
+  | 'disabled'
+  | 'unknown'
+  | 'recovering'
+  | 'ready';
+
+export interface SandboxSessionRuntimeStatus {
+  available: boolean;
+  desired_config_version: number;
+  applied_config_version: number;
+  runtime_generation: number;
+  core_enabled: boolean;
+  interactive_enabled: boolean;
+  host_shell_enabled: boolean;
+  host_shell_available: boolean;
+  raw_aio_ready: boolean;
+  generation_state: SandboxSessionGenerationState;
+  queue_depth: number;
+  running: number;
+  used_weight: number;
+  total_weight: number;
+  active_sessions: number;
+  idle_sessions: number;
+  active_shells: number;
+  idle_shells: number;
+  transport_known: boolean;
+  transport_encrypted: boolean;
+  reason_code?: string;
+}
+
 export interface SandboxRuntimeStatus {
   available: boolean;
   desired_config_version: number;
@@ -598,6 +656,111 @@ export const updateSandboxSchedulerSettings = async (
     '/api/admin/sandboxes/scheduler-settings',
     jsonRequest('PUT', { expected_version: expectedVersion, settings }, signal),
   );
+
+const safeUnsignedInteger = (value: unknown) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+
+const safeSessionReasonCode = (value: unknown) =>
+  typeof value === 'string' && /^[A-Z0-9_]{1,64}$/.test(value)
+    ? value
+    : undefined;
+
+const sanitizeSessionSettings = (
+  settings: Partial<SandboxSessionSettings> | null | undefined,
+): SandboxSessionSettings => ({
+  core_enabled: settings?.core_enabled === true,
+  interactive_enabled: settings?.interactive_enabled === true,
+  host_shell_enabled: settings?.host_shell_enabled === true,
+  core_weight: safeUnsignedInteger(settings?.core_weight),
+  heavy_weight: safeUnsignedInteger(settings?.heavy_weight),
+  per_user_active_limit: safeUnsignedInteger(settings?.per_user_active_limit),
+  idle_session_limit: safeUnsignedInteger(settings?.idle_session_limit),
+  idle_shell_limit: safeUnsignedInteger(settings?.idle_shell_limit),
+  session_idle_ttl_seconds: safeUnsignedInteger(
+    settings?.session_idle_ttl_seconds,
+  ),
+  shell_idle_ttl_seconds: safeUnsignedInteger(settings?.shell_idle_ttl_seconds),
+  command_timeout_seconds: safeUnsignedInteger(
+    settings?.command_timeout_seconds,
+  ),
+  cancel_grace_seconds: safeUnsignedInteger(settings?.cancel_grace_seconds),
+  workspace_quota_mb: safeUnsignedInteger(settings?.workspace_quota_mb),
+});
+
+export const getSandboxSessionSettings = async (
+  signal?: AbortSignal,
+): Promise<SandboxSessionSettingsSnapshot> => {
+  const snapshot = await requestSandbox<SandboxSessionSettingsSnapshot>(
+    '/api/admin/sandboxes/session-settings',
+    { method: 'GET', signal },
+  );
+  return {
+    version: safeUnsignedInteger(snapshot.version),
+    settings: sanitizeSessionSettings(snapshot.settings),
+  };
+};
+
+export const updateSandboxSessionSettings = async (
+  expectedVersion: number,
+  settings: SandboxSessionSettings,
+  signal?: AbortSignal,
+): Promise<SandboxSessionSettingsUpdate> => {
+  const result = await requestSandbox<SandboxSessionSettingsUpdate>(
+    '/api/admin/sandboxes/session-settings',
+    jsonRequest('PUT', { expected_version: expectedVersion, settings }, signal),
+  );
+  return {
+    version: safeUnsignedInteger(result.version),
+    settings: sanitizeSessionSettings(result.settings),
+    applied: result.applied === true,
+    applied_version: safeUnsignedInteger(result.applied_version),
+    reason_code: safeSessionReasonCode(result.reason_code),
+  };
+};
+
+const sanitizeSessionGenerationState = (
+  value: unknown,
+): SandboxSessionGenerationState =>
+  value === 'disabled' ||
+  value === 'recovering' ||
+  value === 'ready' ||
+  value === 'unknown'
+    ? value
+    : 'unknown';
+
+export const getSandboxSessionRuntimeStatus = async (
+  signal?: AbortSignal,
+): Promise<SandboxSessionRuntimeStatus> => {
+  const status = await requestSandbox<SandboxSessionRuntimeStatus>(
+    '/api/admin/sandboxes/session-runtime-status',
+    { method: 'GET', signal },
+  );
+  return {
+    available: status.available === true,
+    desired_config_version: safeUnsignedInteger(status.desired_config_version),
+    applied_config_version: safeUnsignedInteger(status.applied_config_version),
+    runtime_generation: safeUnsignedInteger(status.runtime_generation),
+    core_enabled: status.core_enabled === true,
+    interactive_enabled: status.interactive_enabled === true,
+    host_shell_enabled: status.host_shell_enabled === true,
+    host_shell_available: status.host_shell_available === true,
+    raw_aio_ready: status.raw_aio_ready === true,
+    generation_state: sanitizeSessionGenerationState(status.generation_state),
+    queue_depth: safeUnsignedInteger(status.queue_depth),
+    running: safeUnsignedInteger(status.running),
+    used_weight: safeUnsignedInteger(status.used_weight),
+    total_weight: safeUnsignedInteger(status.total_weight),
+    active_sessions: safeUnsignedInteger(status.active_sessions),
+    idle_sessions: safeUnsignedInteger(status.idle_sessions),
+    active_shells: safeUnsignedInteger(status.active_shells),
+    idle_shells: safeUnsignedInteger(status.idle_shells),
+    transport_known: status.transport_known === true,
+    transport_encrypted: status.transport_encrypted === true,
+    reason_code: safeSessionReasonCode(status.reason_code),
+  };
+};
 
 export const getSandboxRuntimeStatus = async (
   signal?: AbortSignal,

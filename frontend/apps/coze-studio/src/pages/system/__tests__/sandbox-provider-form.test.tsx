@@ -130,6 +130,46 @@ describe('SandboxProviderForm', () => {
     );
   });
 
+  it('accepts an HTTP Runner endpoint with an explicit unencrypted transport warning', async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <SandboxProviderForm
+          capabilities={capabilities(true)}
+          mode="create"
+          open
+          onCancel={vi.fn()}
+          onSubmit={submit}
+        />,
+      ),
+    );
+
+    await act(async () => {
+      setInput('Provider 名称', 'Private Runner');
+      setInput('Provider Endpoint', 'http://runner.internal:8080');
+      setInput('Provider 凭据', 'create-secret');
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('HTTP 传输未加密');
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="创建 Provider"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: {
+          mode: 'replace',
+          value: 'http://runner.internal:8080',
+        },
+      }),
+    );
+  });
+
   it('builds controlled policy lists and rejects unsafe client input before submission', async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
     act(() =>
