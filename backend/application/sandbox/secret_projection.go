@@ -80,7 +80,7 @@ func DeriveEndpointHint(rawEndpoint string) (string, error) {
 	parsed, err := url.Parse(rawEndpoint)
 	if err != nil ||
 		parsed == nil ||
-		parsed.Scheme != "https" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.Host == "" ||
 		parsed.Opaque != "" ||
 		parsed.User != nil ||
@@ -109,7 +109,7 @@ func DeriveEndpointHint(rawEndpoint string) (string, error) {
 	if ipv6 {
 		maskedHost = "[" + maskedHost + "]"
 	}
-	hint := "https://" + maskedHost
+	hint := parsed.Scheme + "://" + maskedHost
 	if port != "" {
 		hint += ":" + port
 	}
@@ -316,10 +316,17 @@ func isDNSAlphaNumeric(character byte) bool {
 }
 
 func validProjectedEndpointHint(hint string) bool {
-	const prefix = "https://"
+	prefix := ""
+	switch {
+	case strings.HasPrefix(hint, "https://"):
+		prefix = "https://"
+	case strings.HasPrefix(hint, "http://"):
+		prefix = "http://"
+	default:
+		return false
+	}
 	if len(hint) <= len(prefix) ||
 		len(hint) > maxEndpointHintBytes ||
-		!strings.HasPrefix(hint, prefix) ||
 		!asciiEndpointAuthority(strings.TrimPrefix(hint, prefix)) {
 		return false
 	}

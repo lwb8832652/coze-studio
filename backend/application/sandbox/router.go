@@ -57,6 +57,18 @@ type RuntimeProviderFactory interface {
 	Build(ctx context.Context, provider domainsandbox.Provider) (infrasandbox.RuntimeProvider, error)
 }
 
+// SessionRuntimeProviderFactory is an optional extension. Existing one-shot
+// factories remain source-compatible and a router must fail closed instead of
+// falling back to RuntimeProvider when this extension is absent.
+type SessionRuntimeProviderFactory interface {
+	ValidateSessionConfig(ctx context.Context, descriptor ProviderDescriptor) error
+	BuildSession(
+		ctx context.Context,
+		provider domainsandbox.Provider,
+		descriptor ProviderDescriptor,
+	) (infrasandbox.SessionRuntimeProvider, error)
+}
+
 type ResolveProviderRequest struct {
 	ProviderKey string
 	Scope       domainsandbox.Scope
@@ -248,6 +260,241 @@ type SelectedProvider struct {
 	closeMu           sync.Mutex
 	closeAttempt      *runtimeCloseAttempt
 	closeSucceeded    bool
+}
+
+// SelectedSessionProvider is a short-lived selection resource around a
+// persistent Session manager. CloseContext releases only the transport owned
+// by the selection; Runtime Sessions are released or destroyed solely through
+// the explicit SessionRef methods below.
+type SelectedSessionProvider struct {
+	ProviderDescriptor
+	runtime         infrasandbox.SessionRuntimeProvider
+	mu              sync.Mutex
+	state           selectedSessionProviderState
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	inflightCount   int
+	drainSignal     chan struct{}
+	closeMu         sync.Mutex
+	closeAttempt    *runtimeCloseAttempt
+	closeSucceeded  bool
+}
+
+type selectedSessionProviderState uint8
+
+const (
+	selectedSessionProviderReady selectedSessionProviderState = iota
+	selectedSessionProviderClosing
+	selectedSessionProviderCleanupPending
+	selectedSessionProviderClosed
+)
+
+func (*SelectedSessionProvider) String() string {
+	return "SelectedSessionProvider{lifecycle:<redacted>}"
+}
+func (*SelectedSessionProvider) GoString() string {
+	return "SelectedSessionProvider{lifecycle:<redacted>}"
+}
+func (*SelectedSessionProvider) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "SelectedSessionProvider{lifecycle:<redacted>}")
+}
+
+func (s *SelectedSessionProvider) Acquire(
+	ctx context.Context,
+	request infrasandbox.AcquireSessionRequest,
+) (infrasandbox.SandboxSession, error) {
+	callCtx, finish, err := s.beginSessionOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
+	session, runtimeErr := s.runtime.Acquire(callCtx, request)
+	if runtimeErr != nil {
+		return nil, normalizeOperationalError(callCtx, runtimeErr)
+	}
+	return session, nil
+}
+
+func (s *SelectedSessionProvider) Get(
+	ctx context.Context,
+	ref domainsandbox.SessionRef,
+) (infrasandbox.SandboxSession, error) {
+	callCtx, finish, err := s.beginSessionOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
+	session, runtimeErr := s.runtime.Get(callCtx, ref)
+	if runtimeErr != nil {
+		return nil, normalizeOperationalError(callCtx, runtimeErr)
+	}
+	return session, nil
+}
+
+func (s *SelectedSessionProvider) Release(ctx context.Context, ref domainsandbox.SessionRef) error {
+	callCtx, finish, err := s.beginSessionOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return normalizeOperationalError(callCtx, s.runtime.Release(callCtx, ref))
+}
+
+func (s *SelectedSessionProvider) Destroy(ctx context.Context, ref domainsandbox.SessionRef) error {
+	callCtx, finish, err := s.beginSessionOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return normalizeOperationalError(callCtx, s.runtime.Destroy(callCtx, ref))
+}
+
+func (s *SelectedSessionProvider) Recover(
+	ctx context.Context,
+	ref domainsandbox.SessionRef,
+) (infrasandbox.SandboxSession, error) {
+	callCtx, finish, err := s.beginSessionOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
+	session, runtimeErr := s.runtime.Recover(callCtx, ref)
+	if runtimeErr != nil {
+		return nil, normalizeOperationalError(callCtx, runtimeErr)
+	}
+	return session, nil
+}
+
+func (s *SelectedSessionProvider) CloseContext(ctx context.Context) error {
+	if s == nil || s.runtime == nil || ctx == nil {
+		return domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.state == selectedSessionProviderClosed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.state = selectedSessionProviderClosing
+	s.ensureSessionLifecycleLocked()
+	s.lifecycleCancel()
+	drain := s.currentSessionDrainSignalLocked()
+	s.mu.Unlock()
+	if err := waitForCleanupSignal(ctx, drain); err != nil {
+		s.markSessionCleanupPending()
+		return err
+	}
+	if err := s.closeSessionRuntime(ctx); err != nil {
+		s.markSessionCleanupPending()
+		return err
+	}
+	s.mu.Lock()
+	s.state = selectedSessionProviderClosed
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *SelectedSessionProvider) beginSessionOperation(
+	ctx context.Context,
+) (context.Context, func(), error) {
+	if s == nil || s.runtime == nil || ctx == nil {
+		return nil, nil, domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	if s.state != selectedSessionProviderReady {
+		s.mu.Unlock()
+		return nil, nil, domainsandbox.ErrExecutionForbidden
+	}
+	s.ensureSessionLifecycleLocked()
+	if s.lifecycleCtx.Err() != nil {
+		s.mu.Unlock()
+		return nil, nil, domainsandbox.ErrExecutionForbidden
+	}
+	if s.inflightCount == 0 {
+		s.drainSignal = make(chan struct{})
+	}
+	s.inflightCount++
+	callCtx, cancel := context.WithCancel(ctx)
+	stopLifecycleCancel := context.AfterFunc(s.lifecycleCtx, cancel)
+	s.mu.Unlock()
+	finish := func() {
+		stopLifecycleCancel()
+		cancel()
+		s.mu.Lock()
+		s.inflightCount--
+		if s.inflightCount == 0 && s.drainSignal != nil {
+			close(s.drainSignal)
+			s.drainSignal = nil
+		}
+		s.mu.Unlock()
+	}
+	return callCtx, finish, nil
+}
+
+func (s *SelectedSessionProvider) ensureSessionLifecycleLocked() {
+	if s.lifecycleCtx != nil && s.lifecycleCancel != nil {
+		return
+	}
+	s.lifecycleCtx, s.lifecycleCancel = context.WithCancel(context.Background())
+}
+
+func (s *SelectedSessionProvider) currentSessionDrainSignalLocked() <-chan struct{} {
+	if s.inflightCount > 0 && s.drainSignal != nil {
+		return s.drainSignal
+	}
+	drained := make(chan struct{})
+	close(drained)
+	return drained
+}
+
+func (s *SelectedSessionProvider) markSessionCleanupPending() {
+	s.mu.Lock()
+	if s.state != selectedSessionProviderClosed {
+		s.state = selectedSessionProviderCleanupPending
+	}
+	s.mu.Unlock()
+}
+
+func (s *SelectedSessionProvider) closeSessionRuntime(ctx context.Context) error {
+	s.closeMu.Lock()
+	if s.closeSucceeded {
+		s.closeMu.Unlock()
+		return nil
+	}
+	attempt := s.closeAttempt
+	owner := false
+	if attempt == nil || closeAttemptFailed(attempt) {
+		attempt = &runtimeCloseAttempt{done: make(chan struct{})}
+		s.closeAttempt = attempt
+		owner = true
+	}
+	s.closeMu.Unlock()
+	if owner {
+		err := closeSessionRuntimeProvider(ctx, s.runtime)
+		s.closeMu.Lock()
+		attempt.err = err
+		if err == nil {
+			s.closeSucceeded = true
+		}
+		close(attempt.done)
+		s.closeMu.Unlock()
+		return err
+	}
+	if err := waitForCleanupSignal(ctx, attempt.done); err != nil {
+		return err
+	}
+	s.closeMu.Lock()
+	err := attempt.err
+	s.closeMu.Unlock()
+	if err != nil {
+		return domainsandbox.ErrUnavailable
+	}
+	return nil
 }
 
 type providerCancelAttempt struct {
@@ -1198,6 +1445,69 @@ func (r *ProviderRouter) Resolve(
 	return selected, nil
 }
 
+// ResolveSession selects the exact provider for the persistent Session
+// contract. It intentionally does not acquire a one-shot capacity lease: the
+// Runner owns Session capacity and same-Shell serialization.
+func (r *ProviderRouter) ResolveSession(
+	ctx context.Context,
+	request ResolveProviderRequest,
+) (*SelectedSessionProvider, error) {
+	if r == nil || ctx == nil || domainsandbox.ValidateProviderKey(request.ProviderKey) != nil ||
+		!validRouterScope(request.Scope) || !validOpaqueLeaseToken(request.leaseToken) ||
+		!validOpaqueLeaseToken(request.leaseFence) || request.state == nil {
+		return nil, domainsandbox.ErrInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := request.beginResolve(); err != nil {
+		return nil, err
+	}
+	consumed := false
+	defer func() { request.finishResolve(consumed) }()
+
+	descriptor, provider, err := r.prepareRuntime(ctx, request.ProviderKey, request.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if !descriptor.HasFeature(domainsandbox.ProviderFeatureSandboxSessionV1) ||
+		!descriptor.HasFeature(domainsandbox.ProviderFeatureSignedSessionContextV2) {
+		return nil, domainsandbox.ErrScopeUnsupported
+	}
+	factory, ok := r.factory.(SessionRuntimeProviderFactory)
+	if !ok || factory == nil {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	if err := factory.ValidateSessionConfig(ctx, descriptor); err != nil {
+		return nil, normalizeOperationalError(ctx, err)
+	}
+	runtime, buildErr := factory.BuildSession(ctx, provider, descriptor)
+	if buildErr != nil {
+		if runtime != nil {
+			cleanupCtx, cleanupCancel := newCapacityCleanupContext(ctx)
+			closeErr := closeSessionRuntimeProvider(cleanupCtx, runtime)
+			cleanupCancel()
+			if closeErr != nil {
+				return nil, domainsandbox.ErrUnavailable
+			}
+		}
+		return nil, normalizeOperationalError(ctx, buildErr)
+	}
+	if runtime == nil {
+		return nil, domainsandbox.ErrUnavailable
+	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	selected := &SelectedSessionProvider{
+		ProviderDescriptor: descriptor,
+		runtime:            runtime,
+		state:              selectedSessionProviderReady,
+		lifecycleCtx:       lifecycleCtx,
+		lifecycleCancel:    lifecycleCancel,
+	}
+	consumed = true
+	return selected, nil
+}
+
 func (r *ProviderRouter) recordProviderSelection(
 	ctx context.Context,
 	scope domainsandbox.Scope,
@@ -1835,6 +2145,32 @@ func closeRuntimeProvider(ctx context.Context, runtime infrasandbox.RuntimeProvi
 	closeCtx, cancel := context.WithTimeout(ctx, selectedProviderCleanupTimeout)
 	defer cancel()
 	if err := runtime.CloseContext(closeCtx); err != nil {
+		if contextErr := closeCtx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return domainsandbox.ErrUnavailable
+	}
+	return nil
+}
+
+type sessionRuntimeCloser interface {
+	CloseContext(context.Context) error
+}
+
+func closeSessionRuntimeProvider(ctx context.Context, runtime infrasandbox.SessionRuntimeProvider) error {
+	if runtime == nil {
+		return nil
+	}
+	if ctx == nil {
+		return domainsandbox.ErrInvalidInput
+	}
+	closer, ok := runtime.(sessionRuntimeCloser)
+	if !ok {
+		return domainsandbox.ErrConfigurationInvalid
+	}
+	closeCtx, cancel := context.WithTimeout(ctx, selectedProviderCleanupTimeout)
+	defer cancel()
+	if err := closer.CloseContext(closeCtx); err != nil {
 		if contextErr := closeCtx.Err(); contextErr != nil {
 			return contextErr
 		}

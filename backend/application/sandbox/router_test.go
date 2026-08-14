@@ -381,8 +381,10 @@ func (f providerLookupFunc) GetProviderByKey(ctx context.Context, providerKey st
 }
 
 type runtimeProviderFactoryFuncs struct {
-	validate func(context.Context, ProviderDescriptor) error
-	build    func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error)
+	validate        func(context.Context, ProviderDescriptor) error
+	build           func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error)
+	validateSession func(context.Context, ProviderDescriptor) error
+	buildSession    func(context.Context, domainsandbox.Provider, ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error)
 }
 
 func (f *runtimeProviderFactoryFuncs) ValidateConfig(
@@ -403,6 +405,67 @@ func (f *runtimeProviderFactoryFuncs) Build(
 		return &runtimeProviderStub{}, nil
 	}
 	return f.build(ctx, provider)
+}
+
+func (f *runtimeProviderFactoryFuncs) ValidateSessionConfig(
+	ctx context.Context,
+	descriptor ProviderDescriptor,
+) error {
+	if f.validateSession == nil {
+		return nil
+	}
+	return f.validateSession(ctx, descriptor)
+}
+
+func (f *runtimeProviderFactoryFuncs) BuildSession(
+	ctx context.Context,
+	provider domainsandbox.Provider,
+	descriptor ProviderDescriptor,
+) (infrasandbox.SessionRuntimeProvider, error) {
+	if f.buildSession == nil {
+		return &sessionRuntimeProviderStub{}, nil
+	}
+	return f.buildSession(ctx, provider, descriptor)
+}
+
+type sessionRuntimeProviderStub struct {
+	acquireCalls        int
+	getCalls            int
+	releaseSessionCalls int
+	destroyCalls        int
+	recoverCalls        int
+	closeCalls          int
+	closeErr            error
+}
+
+func (p *sessionRuntimeProviderStub) Acquire(context.Context, infrasandbox.AcquireSessionRequest) (infrasandbox.SandboxSession, error) {
+	p.acquireCalls++
+	return nil, nil
+}
+
+func (p *sessionRuntimeProviderStub) Get(context.Context, domainsandbox.SessionRef) (infrasandbox.SandboxSession, error) {
+	p.getCalls++
+	return nil, nil
+}
+
+func (p *sessionRuntimeProviderStub) Release(context.Context, domainsandbox.SessionRef) error {
+	p.releaseSessionCalls++
+	return nil
+}
+
+func (p *sessionRuntimeProviderStub) Destroy(context.Context, domainsandbox.SessionRef) error {
+	p.destroyCalls++
+	return nil
+}
+
+func (p *sessionRuntimeProviderStub) Recover(context.Context, domainsandbox.SessionRef) (infrasandbox.SandboxSession, error) {
+	p.recoverCalls++
+	return nil, nil
+}
+
+func (p *sessionRuntimeProviderStub) CloseContext(context.Context) error {
+	p.closeCalls++
+	return p.closeErr
 }
 
 type runtimeProviderStub struct {
@@ -654,6 +717,229 @@ func newRouterForTest(
 		t.Fatalf("create router: %v", err)
 	}
 	return router
+}
+
+func TestProviderRouterResolveSessionRequiresBothFeaturesAndNeverAcquiresCapacity(t *testing.T) {
+	now := time.Unix(2_000_001_000, 0).UTC()
+	tests := []struct {
+		name     string
+		features []domainsandbox.ProviderFeature
+		want     error
+	}{
+		{name: "none", want: domainsandbox.ErrScopeUnsupported},
+		{name: "manager only", features: []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureSandboxSessionV1}, want: domainsandbox.ErrScopeUnsupported},
+		{name: "signing only", features: []domainsandbox.ProviderFeature{domainsandbox.ProviderFeatureSignedSessionContextV2}, want: domainsandbox.ErrScopeUnsupported},
+		{name: "both", features: []domainsandbox.ProviderFeature{
+			domainsandbox.ProviderFeatureSandboxSessionV1,
+			domainsandbox.ProviderFeatureSignedSessionContextV2,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := healthyRouterProvider(now)
+			provider.Health.Features = tt.features
+			capacityCalls := 0
+			sessionRuntime := &sessionRuntimeProviderStub{}
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+				buildSession: func(_ context.Context, got domainsandbox.Provider, descriptor ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error) {
+					if got.ID != provider.ID || got.ProviderKey != provider.ProviderKey {
+						t.Fatalf("BuildSession() provider identity = %d/%q", got.ID, got.ProviderKey)
+					}
+					if descriptor.Scope != domainsandbox.ScopeAgent {
+						t.Fatalf("BuildSession() descriptor scope = %q", descriptor.Scope)
+					}
+					return sessionRuntime, nil
+				},
+			}, &capacityLimiterFuncs{acquire: func(context.Context, string, string, string, int, time.Duration) (int64, error) {
+				capacityCalls++
+				return now.Add(time.Minute).UnixMilli(), nil
+			}})
+
+			selection, err := router.ResolveSession(context.Background(), testRouterRequest())
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("ResolveSession() error = %v, want %v", err, tt.want)
+			}
+			if capacityCalls != 0 {
+				t.Fatalf("ResolveSession() acquired one-shot capacity %d times", capacityCalls)
+			}
+			if tt.want != nil {
+				if selection != nil {
+					t.Fatal("ineligible provider returned a session selection")
+				}
+				return
+			}
+			if selection == nil || selection.ProviderKey != provider.ProviderKey {
+				t.Fatalf("ResolveSession() selection = %#v", selection)
+			}
+			if _, err := selection.Acquire(context.Background(), infrasandbox.AcquireSessionRequest{}); err != nil {
+				t.Fatalf("selection.Acquire() error = %v", err)
+			}
+			if sessionRuntime.acquireCalls != 1 {
+				t.Fatalf("session manager Acquire() calls = %d, want 1", sessionRuntime.acquireCalls)
+			}
+			if err := selection.CloseContext(context.Background()); err != nil {
+				t.Fatalf("selection.CloseContext() error = %v", err)
+			}
+			if sessionRuntime.closeCalls != 1 || sessionRuntime.releaseSessionCalls != 0 {
+				t.Fatalf("selection cleanup close/session release calls = %d/%d", sessionRuntime.closeCalls, sessionRuntime.releaseSessionCalls)
+			}
+			if _, err := selection.Get(context.Background(), domainsandbox.SessionRef{}); !errors.Is(err, domainsandbox.ErrExecutionForbidden) {
+				t.Fatalf("selection.Get() after CloseContext error = %v", err)
+			}
+		})
+	}
+}
+
+func TestProviderRouterResolveSessionFailsClosedForHealthFactoryAndRequestState(t *testing.T) {
+	now := time.Unix(2_000_001_100, 0).UTC()
+	tests := []struct {
+		name   string
+		mutate func(*domainsandbox.Provider)
+		want   error
+	}{
+		{name: "disabled", mutate: func(p *domainsandbox.Provider) { p.Status = domainsandbox.ProviderStatusDisabled }, want: domainsandbox.ErrProviderDisabled},
+		{name: "unhealthy", mutate: func(p *domainsandbox.Provider) { p.Health.Status = domainsandbox.HealthStatusUnhealthy }, want: domainsandbox.ErrProviderUnhealthy},
+		{name: "stale", mutate: func(p *domainsandbox.Provider) {
+			p.Health.CheckedAt = now.Add(-DefaultProviderHealthMaxAge - time.Second)
+		}, want: domainsandbox.ErrProviderUnhealthy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := healthyRouterProvider(now)
+			provider.Health.Features = []domainsandbox.ProviderFeature{
+				domainsandbox.ProviderFeatureSandboxSessionV1,
+				domainsandbox.ProviderFeatureSignedSessionContextV2,
+			}
+			tt.mutate(provider)
+			buildCalls := 0
+			router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+				buildSession: func(context.Context, domainsandbox.Provider, ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error) {
+					buildCalls++
+					return &sessionRuntimeProviderStub{}, nil
+				},
+			}, &capacityLimiterFuncs{})
+			if selection, err := router.ResolveSession(context.Background(), testRouterRequest()); !errors.Is(err, tt.want) || selection != nil {
+				t.Fatalf("ResolveSession() = %#v, %v; want nil, %v", selection, err, tt.want)
+			}
+			if buildCalls != 0 {
+				t.Fatalf("ineligible provider reached Session factory %d times", buildCalls)
+			}
+		})
+	}
+
+	provider := healthyRouterProvider(now)
+	provider.Health.Features = []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureSandboxSessionV1,
+		domainsandbox.ProviderFeatureSignedSessionContextV2,
+	}
+	router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{}, &capacityLimiterFuncs{})
+	request := testRouterRequest()
+	selection, err := router.ResolveSession(context.Background(), request)
+	if err != nil {
+		t.Fatalf("first ResolveSession() error = %v", err)
+	}
+	defer func() { _ = selection.CloseContext(context.Background()) }()
+	if _, err := router.ResolveSession(context.Background(), request); !errors.Is(err, domainsandbox.ErrExecutionForbidden) {
+		t.Fatalf("reused Session resolve request error = %v", err)
+	}
+}
+
+func TestProviderRouterResolveSessionUsesValidatedRequestedScopeForMultiScopeProvider(t *testing.T) {
+	now := time.Unix(2_000_001_200, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopeAppDev, domainsandbox.ScopeAgent}
+	provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopeAppDev, domainsandbox.ScopeAgent}
+	provider.Health.Features = []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureSandboxSessionV1,
+		domainsandbox.ProviderFeatureSignedSessionContextV2,
+	}
+	var builtScope domainsandbox.Scope
+	router := newRouterForTest(t, now, provider, &runtimeProviderFactoryFuncs{
+		buildSession: func(_ context.Context, _ domainsandbox.Provider, descriptor ProviderDescriptor) (infrasandbox.SessionRuntimeProvider, error) {
+			builtScope = descriptor.Scope
+			return &sessionRuntimeProviderStub{}, nil
+		},
+	}, &capacityLimiterFuncs{})
+
+	selection, err := router.ResolveSession(context.Background(), testRouterRequest())
+	if err != nil {
+		t.Fatalf("ResolveSession() error = %v", err)
+	}
+	defer func() { _ = selection.CloseContext(context.Background()) }()
+	if builtScope != domainsandbox.ScopeAgent || selection.Scope != domainsandbox.ScopeAgent {
+		t.Fatalf("BuildSession()/selection scope = %q/%q, want requested agent", builtScope, selection.Scope)
+	}
+}
+
+func TestProviderRouterResolveSessionDoesNotFallbackToOneShotFactory(t *testing.T) {
+	now := time.Unix(2_000_001_300, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Health.Features = []domainsandbox.ProviderFeature{
+		domainsandbox.ProviderFeatureSandboxSessionV1,
+		domainsandbox.ProviderFeatureSignedSessionContextV2,
+	}
+	oneShotBuildCalls := 0
+	factory := runtimeProviderFactoryWithoutSessions{
+		build: func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
+			oneShotBuildCalls++
+			return &runtimeProviderStub{}, nil
+		},
+	}
+	lookup := providerLookupFunc(func(context.Context, string) (*domainsandbox.Provider, error) {
+		copy := *provider
+		return &copy, nil
+	})
+	router, err := newProviderRouter(lookup, factory, &capacityLimiterFuncs{}, 2*time.Second, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("newProviderRouter() error = %v", err)
+	}
+	if selection, err := router.ResolveSession(context.Background(), testRouterRequest()); !errors.Is(err, domainsandbox.ErrConfigurationInvalid) || selection != nil {
+		t.Fatalf("ResolveSession() = %#v, %v", selection, err)
+	}
+	if oneShotBuildCalls != 0 {
+		t.Fatalf("ResolveSession() fell back to one-shot Build %d times", oneShotBuildCalls)
+	}
+}
+
+func TestSelectedSessionProviderCloseContextIsRetryableAndNeverReleasesSession(t *testing.T) {
+	runtime := &sessionRuntimeProviderStub{closeErr: errors.New("temporary close failure")}
+	selection := newSelectedSessionProviderForTest(runtime)
+	if err := selection.CloseContext(context.Background()); !errors.Is(err, domainsandbox.ErrUnavailable) {
+		t.Fatalf("first CloseContext() error = %v", err)
+	}
+	if runtime.releaseSessionCalls != 0 {
+		t.Fatalf("selection cleanup released Runtime Session %d times", runtime.releaseSessionCalls)
+	}
+	runtime.closeErr = nil
+	if err := selection.CloseContext(context.Background()); err != nil {
+		t.Fatalf("retry CloseContext() error = %v", err)
+	}
+	if runtime.closeCalls != 2 || runtime.releaseSessionCalls != 0 {
+		t.Fatalf("retry cleanup close/session release calls = %d/%d", runtime.closeCalls, runtime.releaseSessionCalls)
+	}
+	if err := selection.Destroy(context.Background(), domainsandbox.SessionRef{}); !errors.Is(err, domainsandbox.ErrExecutionForbidden) {
+		t.Fatalf("Destroy() after selection cleanup error = %v", err)
+	}
+}
+
+func newSelectedSessionProviderForTest(runtime infrasandbox.SessionRuntimeProvider) *SelectedSessionProvider {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	return &SelectedSessionProvider{
+		runtime: runtime, state: selectedSessionProviderReady,
+		lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel,
+	}
+}
+
+type runtimeProviderFactoryWithoutSessions struct {
+	build func(context.Context, domainsandbox.Provider) (infrasandbox.RuntimeProvider, error)
+}
+
+func (runtimeProviderFactoryWithoutSessions) ValidateConfig(context.Context, ProviderDescriptor) error {
+	return nil
+}
+
+func (f runtimeProviderFactoryWithoutSessions) Build(ctx context.Context, provider domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
+	return f.build(ctx, provider)
 }
 
 func TestProviderRouterSelectsExactProviderAndReturnsSanitizedMetadata(t *testing.T) {

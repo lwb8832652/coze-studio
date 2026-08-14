@@ -16,7 +16,6 @@ import (
 	"time"
 
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
-	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
@@ -450,8 +449,33 @@ func TestRemoteProviderProductionConstructorAlwaysBuildsSafeHTTP(t *testing.T) {
 	if !ok {
 		t.Fatalf("production doer type = %T", provider.doer)
 	}
-	if _, ok := client.Transport.(*safehttp.Transport); !ok {
+	if _, ok := client.Transport.(*endpointHTTPTransport); !ok {
 		t.Fatalf("production transport type = %T", client.Transport)
+	}
+}
+
+func TestRemoteProviderProductionConstructorSupportsExactOriginPlainHTTP(t *testing.T) {
+	t.Parallel()
+
+	config := validRemoteProviderConfig()
+	config.Endpoint = "http://sandbox.example.test/"
+	provider, err := NewRemoteProvider(config)
+	if err != nil {
+		t.Fatalf("NewRemoteProvider(http) error = %v", err)
+	}
+	client, ok := provider.doer.(*http.Client)
+	if !ok {
+		t.Fatalf("production doer type = %T", provider.doer)
+	}
+	transport, ok := client.Transport.(*endpointHTTPTransport)
+	if !ok || transport.base.Proxy != nil || provider.endpoint.TransportEncrypted {
+		t.Fatalf("http transport = %#v encrypted=%t", client.Transport, provider.endpoint.TransportEncrypted)
+	}
+	redirect, _ := http.NewRequest(http.MethodGet, "http://sandbox.example.test/v1/health", nil)
+	via, _ := http.NewRequest(http.MethodGet, "http://sandbox.example.test/v1/start", nil)
+	redirect.Header.Set("Authorization", "Bearer secret")
+	if err := client.CheckRedirect(redirect, []*http.Request{via}); !errors.Is(err, domainsandbox.ErrInvalidInput) || redirect.Header.Get("Authorization") != "" {
+		t.Fatalf("redirect error/header = %v/%q", err, redirect.Header.Get("Authorization"))
 	}
 }
 

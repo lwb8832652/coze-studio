@@ -6,8 +6,10 @@ package application
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	codecontrolplane "github.com/coze-dev/coze-studio/backend/infra/coderunner/impl/controlplane"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
+	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
 
@@ -28,9 +31,20 @@ const (
 )
 
 const (
-	sandboxAppEnv                = "APP_ENV"
-	sandboxHostRuntimeEnabledEnv = "APP_DEV_HOST_RUNTIME_ENABLED"
+	sandboxAppEnv                               = "APP_ENV"
+	sandboxHostRuntimeEnabledEnv                = "APP_DEV_HOST_RUNTIME_ENABLED"
+	sandboxRunnerDeploymentIDEnv                = "SANDBOX_RUNNER_DEPLOYMENT_ID"
+	sandboxRemoteProviderAllowedPrivateCIDRsEnv = "SANDBOX_REMOTE_PROVIDER_ALLOWED_PRIVATE_CIDRS"
 )
+
+var sandboxRemoteProviderPrivateRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+const maxSandboxRemoteProviderAllowedPrivateCIDRs = 16
 
 var (
 	SandboxSVC               *appsandbox.Service
@@ -150,6 +164,12 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	if err != nil {
 		return err
 	}
+	allowedPrivateCIDRs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs(
+		os.Getenv(sandboxRemoteProviderAllowedPrivateCIDRsEnv),
+	)
+	if err != nil {
+		return fmt.Errorf("%s is invalid", sandboxRemoteProviderAllowedPrivateCIDRsEnv)
+	}
 	if infra == nil || infra.DB == nil || infra.CacheCli == nil {
 		return fmt.Errorf("sandbox control plane dependencies are incomplete")
 	}
@@ -185,7 +205,10 @@ func initSandboxControlPlane(infra *appinfra.AppDependencies) error {
 	}
 	metrics := appsandbox.NewSandboxPrometheusMetricsCollectorFromEnv()
 	providerFactory := &configuredSandboxProviderFactory{
-		codec: codec, identitySigner: identitySigner, localDelegate: localDelegate, metrics: metrics,
+		codec: codec, identitySigner: identitySigner, sessionSigner: sessionSignerFromIdentitySigner(identitySigner),
+		deploymentID:        strings.TrimSpace(os.Getenv(sandboxRunnerDeploymentIDEnv)),
+		allowedPrivateCIDRs: append([]string(nil), allowedPrivateCIDRs...),
+		localDelegate:       localDelegate, metrics: metrics,
 	}
 	service, err := constructors.newService(appsandbox.ServiceOptions{
 		Providers:  repository,
@@ -443,6 +466,49 @@ func sandboxLocalDebugEnabled(getenv func(string) string) bool {
 		getenv(sandboxHostRuntimeEnabledEnv) == "true"
 }
 
+func parseSandboxRemoteProviderAllowedPrivateCIDRs(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	values := strings.Split(raw, ",")
+	if len(values) > maxSandboxRemoteProviderAllowedPrivateCIDRs {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || strings.TrimSpace(value) != value {
+			return nil, domainsandbox.ErrConfigurationInvalid
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.IsValid() || prefix.Addr().Zone() != "" || prefix.Addr().Is4In6() ||
+			prefix != prefix.Masked() || prefix.String() != value || !sandboxRemoteProviderPrivatePrefixAllowed(prefix) {
+			return nil, domainsandbox.ErrConfigurationInvalid
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func sandboxRemoteProviderPrivatePrefixAllowed(prefix netip.Prefix) bool {
+	for _, privateRange := range sandboxRemoteProviderPrivateRanges {
+		if prefix.Addr().BitLen() == privateRange.Addr().BitLen() &&
+			prefix.Bits() >= privateRange.Bits() && privateRange.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
+func sandboxRemoteProviderAllowedAuthority(endpoint *url.URL) (string, error) {
+	return safehttp.NormalizeAuthority(endpoint)
+}
+
 func validateSandboxHTTPSURL(raw, name string) error {
 	value := strings.TrimSpace(raw)
 	parsed, err := url.Parse(value)
@@ -454,10 +520,21 @@ func validateSandboxHTTPSURL(raw, name string) error {
 }
 
 type configuredSandboxProviderFactory struct {
-	codec          *infrasandbox.CredentialCodec
-	identitySigner sandboxidentity.Signer
-	localDelegate  infrasandbox.LocalExecutionDelegate
-	metrics        appsandbox.SandboxMetricsRecorder
+	codec               *infrasandbox.CredentialCodec
+	identitySigner      sandboxidentity.Signer
+	sessionSigner       sandboxidentity.SessionSigner
+	deploymentID        string
+	allowedPrivateCIDRs []string
+	localDelegate       infrasandbox.LocalExecutionDelegate
+	metrics             appsandbox.SandboxMetricsRecorder
+}
+
+func sessionSignerFromIdentitySigner(signer sandboxidentity.Signer) sandboxidentity.SessionSigner {
+	if signer == nil {
+		return nil
+	}
+	sessionSigner, _ := signer.(sandboxidentity.SessionSigner)
+	return sessionSigner
 }
 
 func (f *configuredSandboxProviderFactory) build(
@@ -508,14 +585,19 @@ func (f *configuredSandboxProviderFactory) build(
 		if err != nil || parsedEndpoint == nil || parsedEndpoint.Hostname() == "" {
 			return nil, domainsandbox.ErrConfigurationInvalid
 		}
+		endpointAuthority, err := sandboxRemoteProviderAllowedAuthority(parsedEndpoint)
+		if err != nil {
+			return nil, domainsandbox.ErrConfigurationInvalid
+		}
 		allowedHosts := append([]string(nil), provider.Policy.NetworkAllowlist...)
-		allowedHosts = append(allowedHosts, strings.ToLower(parsedEndpoint.Hostname()))
+		allowedHosts = append(allowedHosts, endpointAuthority)
 		return infrasandbox.NewRemoteProvider(infrasandbox.RemoteProviderConfig{
-			Endpoint:       string(endpoint),
-			Credential:     string(credential),
-			AllowedHosts:   allowedHosts,
-			Timeout:        time.Duration(provider.Policy.TimeoutSeconds) * time.Second,
-			IdentitySigner: f.identitySigner,
+			Endpoint:            string(endpoint),
+			Credential:          string(credential),
+			AllowedHosts:        allowedHosts,
+			AllowedPrivateCIDRs: append([]string(nil), f.allowedPrivateCIDRs...),
+			Timeout:             time.Duration(provider.Policy.TimeoutSeconds) * time.Second,
+			IdentitySigner:      f.identitySigner,
 		})
 	default:
 		return nil, domainsandbox.ErrConfigurationInvalid
@@ -560,6 +642,73 @@ func (f sandboxRuntimeProviderFactory) ValidateConfig(_ context.Context, descrip
 
 func (f sandboxRuntimeProviderFactory) Build(ctx context.Context, provider domainsandbox.Provider) (infrasandbox.RuntimeProvider, error) {
 	return f.factory.build(ctx, &provider)
+}
+
+func (f sandboxRuntimeProviderFactory) ValidateSessionConfig(_ context.Context, descriptor appsandbox.ProviderDescriptor) error {
+	if err := domainsandbox.ValidateRuntimePolicy(descriptor.Policy); err != nil {
+		return domainsandbox.ErrConfigurationInvalid
+	}
+	if _, err := domainsandbox.NormalizeScopes([]domainsandbox.Scope{descriptor.Scope}); err != nil {
+		return domainsandbox.ErrConfigurationInvalid
+	}
+	if descriptor.ProviderType != domainsandbox.ProviderTypeRemoteHTTP || f.factory == nil ||
+		f.factory.sessionSigner == nil || f.factory.deploymentID == "" {
+		return domainsandbox.ErrConfigurationInvalid
+	}
+	if normalized, err := domainsandbox.NormalizeAIOGenerationDeploymentID(f.factory.deploymentID); err != nil || normalized != f.factory.deploymentID {
+		return domainsandbox.ErrConfigurationInvalid
+	}
+	if !descriptor.HasFeature(domainsandbox.ProviderFeatureSandboxSessionV1) ||
+		!descriptor.HasFeature(domainsandbox.ProviderFeatureSignedSessionContextV2) {
+		return domainsandbox.ErrScopeUnsupported
+	}
+	return nil
+}
+
+func (f sandboxRuntimeProviderFactory) BuildSession(
+	ctx context.Context,
+	provider domainsandbox.Provider,
+	descriptor appsandbox.ProviderDescriptor,
+) (infrasandbox.SessionRuntimeProvider, error) {
+	if f.factory == nil || f.factory.sessionSigner == nil || f.factory.deploymentID == "" || provider.ID <= 0 ||
+		descriptor.ProviderKey != provider.ProviderKey || descriptor.ProviderType != provider.Type ||
+		!scopeIncludedForSandboxWiring(provider.Scopes, descriptor.Scope) {
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	runtime, err := f.factory.build(ctx, &provider)
+	if err != nil {
+		return nil, err
+	}
+	remote, ok := runtime.(*infrasandbox.RemoteProvider)
+	if !ok {
+		if runtime != nil {
+			_ = runtime.CloseContext(ctx)
+		}
+		return nil, domainsandbox.ErrConfigurationInvalid
+	}
+	session, err := infrasandbox.NewRemoteSessionProvider(remote, infrasandbox.RemoteSessionProviderConfig{
+		DeploymentID:            f.factory.deploymentID,
+		ProviderID:              provider.ID,
+		Scope:                   sandboxidentity.Scope(descriptor.Scope),
+		SessionSigner:           f.factory.sessionSigner,
+		AllowedEnvironmentNames: append([]string(nil), provider.Policy.AllowedEnvNames...),
+	})
+	if err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_ = remote.CloseContext(cleanupCtx)
+		cleanupCancel()
+		return nil, err
+	}
+	return session, nil
+}
+
+func scopeIncludedForSandboxWiring(scopes []domainsandbox.Scope, requested domainsandbox.Scope) bool {
+	for _, scope := range scopes {
+		if scope == requested {
+			return true
+		}
+	}
+	return false
 }
 
 func wipeSandboxWiringBytes(value []byte) {

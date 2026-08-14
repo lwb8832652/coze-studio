@@ -31,6 +31,13 @@ func TestEndpointHintUsesCanonicalFixedMasks(t *testing.T) {
 			want:      "https://***.com:8443",
 		},
 		{
+			name:      "plain HTTP preserves transport risk scheme",
+			raw:       "http://runner.private.example.com:8080/",
+			fullHost:  "runner.private.example.com",
+			forbidden: []string{"runner", "private", "example"},
+			want:      "http://***.com:8080",
+		},
+		{
 			name:      "two-label DNS",
 			raw:       "https://x.io",
 			fullHost:  "x.io",
@@ -86,7 +93,7 @@ func TestEndpointHintUsesCanonicalFixedMasks(t *testing.T) {
 	}
 }
 
-func TestEndpointHintRejectsNonCanonicalHTTPSURLsSafely(t *testing.T) {
+func TestEndpointHintRejectsNonCanonicalHTTPOrHTTPSURLsSafely(t *testing.T) {
 	marker := "endpoint-marker-must-not-leak"
 	tests := []string{
 		"",

@@ -6,7 +6,7 @@ package sandbox
 import (
 	"context"
 	"errors"
-	"net"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
+	"github.com/coze-dev/coze-studio/backend/pkg/safehttp"
 	"github.com/google/uuid"
 )
 
@@ -953,25 +954,46 @@ func normalizeRemoteControlPlaneEndpoint(input []byte) ([]byte, string, error) {
 		return nil, "", domainsandbox.ErrInvalidInput
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || !parsed.IsAbs() || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" ||
+	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, "", domainsandbox.ErrInvalidInput
 	}
-	hostname := parsed.Hostname()
-	if hostname == "" || strings.EqualFold(hostname, "localhost") {
+	hostname, err := safehttp.CanonicalHostname(parsed.Hostname())
+	if err != nil || sandboxControlPlaneHostForbidden(hostname) {
 		return nil, "", domainsandbox.ErrInvalidInput
 	}
-	if ip := net.ParseIP(hostname); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()) {
+	if address, parseErr := netip.ParseAddr(hostname); parseErr == nil && !safehttp.IsAddressAllowed(address, nil) {
 		return nil, "", domainsandbox.ErrInvalidInput
 	}
-	parsed.Scheme = "https"
-	parsed.Host = strings.ToLower(parsed.Host)
+	port := parsed.Port()
+	parsed.Host = hostname
+	if port != "" {
+		parsed.Host = netipAuthority(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		parsed.Host = "[" + hostname + "]"
+	}
 	canonical := parsed.String()
 	if parsed.Path == "/" {
 		canonical = strings.TrimSuffix(canonical, "/")
 	}
 	return []byte(canonical), hint, nil
+}
+
+func sandboxControlPlaneHostForbidden(hostname string) bool {
+	switch hostname {
+	case "localhost", "host.docker.internal", "gateway.docker.internal", "host.containers.internal",
+		"docker.for.mac.host.internal", "docker.for.win.localhost", "host-gateway":
+		return true
+	default:
+		return strings.HasSuffix(hostname, ".localhost")
+	}
+}
+
+func netipAuthority(host, port string) string {
+	if strings.Contains(host, ":") {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 func validControlPlaneCredential(input []byte) bool {

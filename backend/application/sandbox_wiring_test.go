@@ -4,8 +4,12 @@
 package application
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +24,146 @@ import (
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/pkg/sandboxidentity"
 )
+
+func TestSandboxRemoteProviderAllowedAuthorityPreservesCanonicalCustomPort(t *testing.T) {
+	endpoint, err := url.Parse("https://Runner.Example.Test:8443/")
+	require.NoError(t, err)
+
+	authority, err := sandboxRemoteProviderAllowedAuthority(endpoint)
+
+	require.NoError(t, err)
+	require.Equal(t, "runner.example.test:8443", authority)
+}
+
+func TestParseSandboxRemoteProviderAllowedPrivateCIDRs(t *testing.T) {
+	t.Run("empty keeps public address behavior", func(t *testing.T) {
+		cidrs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs("")
+		require.NoError(t, err)
+		require.Empty(t, cidrs)
+	})
+
+	t.Run("canonical private prefixes are sorted and deduplicated", func(t *testing.T) {
+		cidrs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs(
+			"fd12:3456::/48,10.20.0.0/16,192.168.10.0/24,172.20.0.0/16,10.20.0.0/16",
+		)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"10.20.0.0/16",
+			"172.20.0.0/16",
+			"192.168.10.0/24",
+			"fd12:3456::/48",
+		}, cidrs)
+	})
+
+	for _, value := range []string{
+		"not-a-cidr",
+		"10.20.1.1/16",
+		"10.0.0.0/7",
+		"172.0.0.0/8",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"100.100.100.200/32",
+		"0.0.0.0/0",
+		"::/0",
+		"fe80::/10",
+		"FD00::/8",
+		"10.0.0.0/8, 192.168.0.0/16",
+		"10.0.0.0/8,",
+	} {
+		t.Run(value, func(t *testing.T) {
+			cidrs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs(value)
+			require.Error(t, err)
+			require.Nil(t, cidrs)
+		})
+	}
+
+	t.Run("allows at most sixteen raw tokens", func(t *testing.T) {
+		cidrs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs(strings.Join(
+			[]string{
+				"10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24",
+				"10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24", "10.0.7.0/24",
+				"10.0.8.0/24", "10.0.9.0/24", "10.0.10.0/24", "10.0.11.0/24",
+				"10.0.12.0/24", "10.0.13.0/24", "10.0.14.0/24", "10.0.15.0/24",
+			}, ",",
+		))
+		require.NoError(t, err)
+		require.Len(t, cidrs, 16)
+	})
+
+	t.Run("rejects seventeen raw tokens even when duplicated", func(t *testing.T) {
+		cidrs, err := parseSandboxRemoteProviderAllowedPrivateCIDRs(strings.Join(
+			[]string{
+				"10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8",
+				"10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8",
+				"10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8",
+				"10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8", "10.0.0.0/8",
+				"10.0.0.0/8",
+			}, ",",
+		))
+		require.Error(t, err)
+		require.Nil(t, cidrs)
+	})
+}
+
+func TestSandboxWiringParsesRemoteProviderPrivateCIDRsOnlyWhenControlPlaneEnabled(t *testing.T) {
+	t.Setenv(sandboxRemoteProviderAllowedPrivateCIDRsEnv, "not-a-cidr")
+	t.Setenv(sandboxControlPlaneEnabledEnv, "false")
+	require.NoError(t, initSandboxControlPlane(&appinfra.AppDependencies{}))
+
+	t.Setenv(sandboxControlPlaneEnabledEnv, "true")
+	require.Error(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.Nil(t, SandboxSVC)
+	require.Nil(t, SandboxRouter)
+}
+
+func TestSandboxWiringInjectsCanonicalRemoteProviderPrivateCIDRs(t *testing.T) {
+	t.Setenv(sandboxControlPlaneEnabledEnv, "true")
+	t.Setenv(sandboxRemoteProviderAllowedPrivateCIDRsEnv, "fd12:3456::/48,10.20.0.0/16,10.20.0.0/16")
+	capture := &sandboxWiringCapture{}
+	installSandboxWiringTestConstructors(t, capture)
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.Equal(t, []string{"10.20.0.0/16", "fd12:3456::/48"}, capture.runtimeFactory.factory.allowedPrivateCIDRs)
+}
+
+func TestConfiguredSandboxProviderFactoryBuildAllowsConfiguredPrivateCustomPort(t *testing.T) {
+	codec := sandboxWiringCredentialCodec(t)
+	endpointSecret, err := codec.Encrypt(
+		"remote-primary", infrasandbox.CredentialFieldEndpoint, []byte("https://10.20.30.40:8443/"),
+	)
+	require.NoError(t, err)
+	credentialSecret, err := codec.Encrypt(
+		"remote-primary", infrasandbox.CredentialFieldCredential, []byte("synthetic-bearer-credential"),
+	)
+	require.NoError(t, err)
+	factory := &configuredSandboxProviderFactory{
+		codec: codec, allowedPrivateCIDRs: []string{"10.20.0.0/16"},
+	}
+	provider := &domainsandbox.Provider{
+		ProviderKey:      "remote-primary",
+		Type:             domainsandbox.ProviderTypeRemoteHTTP,
+		EndpointSecret:   endpointSecret,
+		CredentialSecret: credentialSecret,
+		Policy: domainsandbox.RuntimePolicy{
+			TimeoutSeconds: 30,
+		},
+	}
+
+	runtime, err := factory.build(context.Background(), provider)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	require.NoError(t, runtime.CloseContext(context.Background()))
+}
+
+func sandboxWiringCredentialCodec(t *testing.T) *infrasandbox.CredentialCodec {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
+	keyRing, err := infrasandbox.ParseSandboxKeyRing(`{"primary":"`+key+`"}`, "primary")
+	require.NoError(t, err)
+	codec, err := infrasandbox.NewCredentialCodec(keyRing)
+	require.NoError(t, err)
+	return codec
+}
 
 func TestSandboxWiringFailsClosedWhenEnabledDependenciesAreMissing(t *testing.T) {
 	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
@@ -224,6 +368,94 @@ func TestSandboxWiringAssemblesRealGraphWithSharedLimiterGuardAndFactory(t *test
 	require.Nil(t, capture.healthFactory.factory.localDelegate)
 }
 
+func TestSandboxWiringInjectsRunnerDeploymentAndV2SignerOnlyIntoSessionFactory(t *testing.T) {
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
+	t.Setenv(sandboxRunnerDeploymentIDEnv, "runner-dev-a")
+	signer := sandboxWiringSessionKeyring(t)
+	capture := &sandboxWiringCapture{identitySigner: signer}
+	installSandboxWiringTestConstructors(t, capture)
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	require.Equal(t, "runner-dev-a", capture.runtimeFactory.factory.deploymentID)
+	require.NotNil(t, capture.runtimeFactory.factory.sessionSigner)
+
+	descriptor := appsandbox.ProviderDescriptor{
+		ProviderKey: "remote-primary", ProviderType: domainsandbox.ProviderTypeRemoteHTTP,
+		Scope: domainsandbox.ScopeAgent,
+		Policy: domainsandbox.RuntimePolicy{
+			TimeoutSeconds: 30, MemoryLimitMB: 128, CPULimit: 1,
+			MaxOutputBytes: 4096, MaxConcurrency: 1,
+		},
+	}
+	// Missing Session capabilities fail closed only on the optional factory;
+	// the same base factory continues to validate one-shot providers.
+	require.NoError(t, capture.runtimeFactory.ValidateConfig(context.Background(), descriptor))
+	require.ErrorIs(t, capture.runtimeFactory.ValidateSessionConfig(context.Background(), descriptor), domainsandbox.ErrScopeUnsupported)
+}
+
+func TestSandboxSessionFactoryRequiresValidDeploymentWithoutBreakingOneShot(t *testing.T) {
+	policy := domainsandbox.RuntimePolicy{
+		TimeoutSeconds: 30, MemoryLimitMB: 128, CPULimit: 1,
+		MaxOutputBytes: 4096, MaxConcurrency: 1,
+	}
+	for _, deploymentID := range []string{"", "runner/dev"} {
+		factory := sandboxRuntimeProviderFactory{factory: &configuredSandboxProviderFactory{
+			identitySigner: sandboxWiringSessionKeyring(t),
+			sessionSigner:  sandboxWiringSessionKeyring(t),
+			deploymentID:   deploymentID,
+		}}
+		descriptor := appsandbox.ProviderDescriptor{
+			ProviderKey: "remote-primary", ProviderType: domainsandbox.ProviderTypeRemoteHTTP,
+			Scope: domainsandbox.ScopeAgent, Policy: policy,
+		}
+		require.NoError(t, factory.ValidateConfig(context.Background(), descriptor))
+		require.ErrorIs(t, factory.ValidateSessionConfig(context.Background(), descriptor), domainsandbox.ErrConfigurationInvalid)
+	}
+}
+
+func TestSandboxSessionFactoryUsesValidatedDescriptorScopeForMultiScopeProvider(t *testing.T) {
+	factory := sandboxRuntimeProviderFactory{factory: &configuredSandboxProviderFactory{
+		sessionSigner: sandboxWiringSessionKeyring(t),
+		deploymentID:  "runner-dev-a",
+	}}
+	provider := domainsandbox.Provider{
+		ID: 41, ProviderKey: "remote-primary", Type: domainsandbox.ProviderTypeRemoteHTTP,
+		Scopes: []domainsandbox.Scope{domainsandbox.ScopeAppDev, domainsandbox.ScopeAgent},
+	}
+	descriptor := appsandbox.ProviderDescriptor{
+		ProviderKey: provider.ProviderKey, ProviderType: provider.Type,
+		Scope: domainsandbox.ScopeAgent,
+	}
+
+	// It reaches the shared base builder (and fails for this deliberately empty
+	// codec) instead of rejecting a valid multi-scope provider or guessing the
+	// first configured scope.
+	_, err := factory.BuildSession(context.Background(), provider, descriptor)
+	require.ErrorIs(t, err, domainsandbox.ErrConfigurationInvalid)
+
+	descriptor.Scope = domainsandbox.ScopePlugin
+	_, err = factory.BuildSession(context.Background(), provider, descriptor)
+	require.ErrorIs(t, err, domainsandbox.ErrConfigurationInvalid)
+}
+
+func sandboxWiringSessionKeyring(t *testing.T) sandboxidentity.Keyring {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
+	keyring, configured, err := sandboxidentity.LoadKeyringFromEnv(func(name string) string {
+		switch name {
+		case sandboxidentity.ExecutionContextSigningKeysJSONEnv:
+			return `{"keys":{"primary":"` + key + `"}}`
+		case sandboxidentity.ExecutionContextActiveKeyIDEnv:
+			return "primary"
+		default:
+			return ""
+		}
+	}, time.Minute)
+	require.NoError(t, err)
+	require.True(t, configured)
+	return keyring
+}
+
 func TestSandboxWiringPropagatesStartupAssemblyError(t *testing.T) {
 	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
 	t.Setenv("APP_ENV", "production")
@@ -278,6 +510,7 @@ type sandboxWiringCapture struct {
 	runtimeFactory  sandboxRuntimeProviderFactory
 	schedulerRunner appsandbox.NativeSchedulerRunner
 	serviceErr      error
+	identitySigner  sandboxidentity.Signer
 }
 
 func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCapture) {
@@ -293,7 +526,7 @@ func installSandboxWiringTestConstructors(t *testing.T, capture *sandboxWiringCa
 			return &infrasandbox.CredentialCodec{}, nil
 		},
 		loadIdentitySigner: func(func(string) string) (sandboxidentity.Signer, error) {
-			return nil, nil
+			return capture.identitySigner, nil
 		},
 		loadSchedulerSigner: func(getenv func(string) string) (*infrasandbox.SchedulerConfigSigner, bool, error) {
 			return infrasandbox.LoadSchedulerConfigSignerFromEnv(getenv, time.Minute)

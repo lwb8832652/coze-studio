@@ -223,8 +223,16 @@ func validCredentialFingerprint(value string) bool {
 }
 
 func validMaskedEndpointHint(value string) bool {
-	const prefix = "https://"
-	if len(value) <= len(prefix) || len(value) > MaxEndpointHintLength || !strings.HasPrefix(value, prefix) {
+	prefix := ""
+	switch {
+	case strings.HasPrefix(value, "https://"):
+		prefix = "https://"
+	case strings.HasPrefix(value, "http://"):
+		prefix = "http://"
+	default:
+		return false
+	}
+	if len(value) <= len(prefix) || len(value) > MaxEndpointHintLength {
 		return false
 	}
 	authority := strings.TrimPrefix(value, prefix)

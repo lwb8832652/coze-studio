@@ -230,12 +230,10 @@ func NewRemoteProvider(config RemoteProviderConfig) (*RemoteProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := safehttp.NewClient(safehttp.ClientOptions{
-		Policy:               endpoint.httpPolicy,
-		Timeout:              config.Timeout,
-		MaxResponseBodyBytes: MaxExecutionResponseWireBytes,
-		UnavailableError:     domainsandbox.ErrProviderUnhealthy,
-	})
+	// Session results can carry a bounded 32 MiB logical file encoded inside a
+	// JSON envelope. Keep the transport at the Runner's 64 MiB response ceiling;
+	// every one-shot/session decoder still applies its narrower route limit.
+	client, err := endpoint.newHTTPClient(config.Timeout, maxRemoteSessionResponseBytes, domainsandbox.ErrProviderUnhealthy)
 	if err != nil {
 		return nil, domainsandbox.ErrInvalidInput
 	}

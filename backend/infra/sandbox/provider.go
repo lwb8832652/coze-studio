@@ -294,6 +294,12 @@ type RuntimeProvider interface {
 	CloseContext(ctx context.Context) error
 }
 
+// SessionRuntimeProvider is an optional capability. RuntimeProvider remains
+// source compatible for one-shot providers that do not expose Session v1.
+type SessionRuntimeProvider interface {
+	SandboxSessionManager
+}
+
 // AsyncRuntimeProvider is an optional capability for providers whose Execute
 // call returns accepted or running. Synchronous RuntimeProvider implementations
 // remain source-compatible and do not need to implement it.

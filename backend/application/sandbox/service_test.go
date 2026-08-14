@@ -86,6 +86,69 @@ func TestControlPlaneServiceCreateListGetSanitizesSecretsAndAudits(t *testing.T)
 	}
 }
 
+func TestControlPlaneServiceAcceptsCanonicalHTTPProviderEndpointAndProjectsRiskScheme(t *testing.T) {
+	h := newControlPlaneHarness(t)
+	request := validCreateRequest()
+	request.Endpoint = []byte("http://sandbox.example.test:8080/")
+
+	created, err := h.service.Create(context.Background(), testActor(), request)
+	if err != nil {
+		t.Fatalf("Create(HTTP endpoint) error = %v", err)
+	}
+	if created.EndpointHint != "http://***.test:8080" {
+		t.Fatalf("EndpointHint = %q, want HTTP risk-preserving hint", created.EndpointHint)
+	}
+	stored := h.providers.providers[created.ID]
+	if stored == nil || stored.EndpointSecret != "encrypted:endpoint" || stored.EndpointHint != created.EndpointHint {
+		t.Fatalf("stored HTTP provider = %#v", stored)
+	}
+	assertSanitizedJSON(t, []any{created, h.audits.events}, "sandbox.example.test")
+}
+
+func TestNormalizeRemoteControlPlaneEndpointUsesCanonicalRootOriginAndRejectsUnsafeLiterals(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		raw  string
+		want string
+		hint string
+	}{
+		{raw: "http://SANDBOX.Example.TEST:8080/", want: "http://sandbox.example.test:8080", hint: "http://***.test:8080"},
+		{raw: "https://SANDBOX.Example.TEST/", want: "https://sandbox.example.test", hint: "https://***.test"},
+	} {
+		endpoint, hint, err := normalizeRemoteControlPlaneEndpoint([]byte(test.raw))
+		if err != nil {
+			t.Fatalf("normalize %q: %v", test.raw, err)
+		}
+		if got := string(endpoint); got != test.want || hint != test.hint {
+			t.Fatalf("normalize %q = %q, %q; want %q, %q", test.raw, got, hint, test.want, test.hint)
+		}
+	}
+
+	for _, raw := range []string{
+		"http://127.0.0.1:8080/",
+		"https://169.254.1.1/",
+		"https://169.254.169.254/",
+		"https://100.100.100.200/",
+		"https://224.0.0.1/",
+		"https://192.0.2.1/",
+		"https://172.17.0.1/",
+		"https://host.docker.internal/",
+		"https://gateway.docker.internal/",
+		"https://host.containers.internal/",
+		"https://[::1]/",
+		"https://[fe80::1]/",
+		"https://[ff02::1]/",
+		"https://[fd00:ec2::254]/",
+		"https://[::ffff:127.0.0.1]/",
+		"https://[64:ff9b::7f00:1]/",
+	} {
+		if _, _, err := normalizeRemoteControlPlaneEndpoint([]byte(raw)); !errors.Is(err, domainsandbox.ErrInvalidInput) {
+			t.Fatalf("unsafe endpoint %q error = %v, want invalid input", raw, err)
+		}
+	}
+}
+
 func TestControlPlaneServiceRejectsUntrustedActorScopeAndDuplicateKey(t *testing.T) {
 	h := newControlPlaneHarness(t)
 	request := validCreateRequest()

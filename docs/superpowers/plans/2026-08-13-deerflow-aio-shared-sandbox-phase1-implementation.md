@@ -1129,7 +1129,7 @@ Remote Session Provider 只把统一 Go Session 合同映射到 Task 7 Runner pr
 不得直连 raw AIO。本 Task 不修改 `backend/application/agentthread/**`，不切
 Agent/Subagent/Plugin/MCP/AppDev 流量。
 
-- [ ] **Step 1: 写 Remote Session client RED tests**
+- [x] **Step 1: 写 Remote Session client RED tests**
 
 覆盖 Acquire/Get/Release/Destroy/Recover、Exec、Read/Write/List/Glob/Grep/
 Replace/Download、operation status/events/cancel 的完整映射：
@@ -1145,7 +1145,7 @@ Replace/Download、operation status/events/cancel 的完整映射：
 - 错误不泄露 endpoint、credential、签名、Thread 身份、物理 workspace、Shell ID、
   Redis metadata 或 upstream body。
 
-- [ ] **Step 2: 写 HTTP/HTTPS exact-origin policy RED tests**
+- [x] **Step 2: 写 HTTP/HTTPS exact-origin policy RED tests**
 
 Remote endpoint 可显式配置 HTTP 或 HTTPS，但必须精确锁定 scheme/host/port；每次拨号
 重新解析并拒绝 loopback、link-local、multicast、metadata、宿主网关、Unix socket 和
@@ -1156,7 +1156,12 @@ Remote endpoint 可显式配置 HTTP 或 HTTPS，但必须精确锁定 scheme/ho
 不全局放宽现有 `safehttp`；只在 Sandbox endpoint policy 内实现 exact-origin transport，
 复用已有地址分类与 response limit。
 
-- [ ] **Step 3: 写 Router capability RED tests**
+私网 Provider 默认仍拒绝；部署侧只有通过
+`SANDBOX_REMOTE_PROVIDER_ALLOWED_PRIVATE_CIDRS` 显式配置不超过 16 个 canonical
+RFC1918/ULA 子网后才可拨号。该配置独立于业务 `NetworkAllowlist`，不得从 hostname
+规则推断或放开全部私网；loopback、link-local、metadata 和特殊地址始终拒绝。
+
+- [x] **Step 3: 写 Router capability RED tests**
 
 - 只有健康/fresh 且同时声明 `sandbox_session_v1` 与
   `signed_session_context_v2` 的 Provider 才能 `ResolveSession`；
@@ -1166,7 +1171,7 @@ Remote endpoint 可显式配置 HTTP 或 HTTPS，但必须精确锁定 scheme/ho
 - `local_debug` 只有 Task 10 三重门禁通过才实现 Session；
 - `SelectedSessionProvider.Release` 只释放选择资源，不销毁 Runtime Session。
 
-- [ ] **Step 4: 运行 RED tests**
+- [x] **Step 4: 运行 RED tests**
 
 ```bash
 cd backend
@@ -1175,7 +1180,7 @@ GOCACHE=/private/tmp/coze-go-build go test ./infra/sandbox ./application/sandbox
 
 Expected: FAIL，因为 Session remote provider 与 router 入口尚不存在。
 
-- [ ] **Step 5: 实现可选 Provider、Router 与 wiring**
+- [x] **Step 5: 实现可选 Provider、Router 与 wiring**
 
 新增可选 `SessionRuntimeProvider`，不要给旧 `RuntimeProvider` 增加方法：
 
@@ -1192,14 +1197,14 @@ Session 使用独立短期 guard。wiring 从数据库 descriptor 注入 Provide
 Session fail closed，one-shot v1 仍可用。wiring 不注入中间代理、Docker metadata、物理根
 或客户端身份覆盖字段。
 
-- [ ] **Step 6: 运行 GREEN 与全部 Provider/Router 回归**
+- [x] **Step 6: 运行 GREEN 与全部 Provider/Router 回归**
 
 ```bash
 cd backend
 GOCACHE=/private/tmp/coze-go-build go test ./infra/sandbox ./application/sandbox -run 'Remote|Endpoint|Router|Resolve|Session|HTTP' -count=1
 ```
 
-- [ ] **Step 7: 完成唯一一次 Task 8 主线审核并提交**
+- [x] **Step 7: 完成唯一一次 Task 8 主线审核并提交**
 
 综合审核只检查 SSRF/exact-origin、签名/防重放、非幂等不重试、服务端身份绑定、feature
 negotiation、脱敏与 one-shot 回归。修复后重跑本 Task 验证，不发起第二轮审核。

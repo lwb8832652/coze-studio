@@ -216,6 +216,19 @@ func TestProviderNewNormalizesAndClonesOwnedSlices(t *testing.T) {
 	}
 }
 
+func TestProviderNewAcceptsCanonicalMaskedHTTPHint(t *testing.T) {
+	input := validCreateProviderInput()
+	input.EndpointHint = "http://***.test:8080"
+
+	provider, err := NewProvider(input)
+	if err != nil {
+		t.Fatalf("NewProvider(HTTP hint) error = %v", err)
+	}
+	if provider.EndpointHint != input.EndpointHint {
+		t.Fatalf("EndpointHint = %q, want %q", provider.EndpointHint, input.EndpointHint)
+	}
+}
+
 func TestProviderUpdateOmitsImmutableKeyAndRequiresCASIdentity(t *testing.T) {
 	inputType := reflect.TypeOf(UpdateProviderInput{})
 	for _, field := range []string{"ProviderKey", "Version", "CreatedAt", "UpdatedAt", "DeletedAt", "Status", "Health"} {
