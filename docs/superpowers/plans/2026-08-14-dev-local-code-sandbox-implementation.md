@@ -548,4 +548,3 @@ Remote；再打开 local flag 重启，Workflow 与 Plugin 再次成功，排除
 读取 verification-before-completion 与 finishing-a-development-branch。报告新鲜命令、页面 URL、账号/
 空间、revision、可见结果、console、未验证项和本地依赖路径；不 merge、不 push、不 deploy，等待用户
 复验与后续 Git 指令。
-
