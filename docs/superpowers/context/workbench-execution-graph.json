@@ -27,6 +27,7 @@
       "backend/api/model/workbench/thread_contract/**",
       "backend/api/model/workbench/thread_product_contract/**",
       "backend/application/application.go",
+      "backend/application/adaptive_execution_wiring_test.go",
       "backend/application/agentthread/**",
       "backend/domain/agentthread/**",
       "backend/application/scheduledtask/**",
@@ -492,7 +493,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M/P1D mode-free bootstrap, deterministic gate-on selection, recovery and atomic rolling Plan boundary",
+      "label": "P1M/P1D mode-free bootstrap, model-backed gate-on selection, recovery and atomic rolling Plan boundary",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -529,9 +530,9 @@
           "locator": "func (envAdaptiveEligibilityResolver) Resolve("
         },
         {
-          "path": "backend/application/agentthread/adaptive_decision_producer.go",
-          "symbol": "DeterministicAdaptiveDecisionProducer.Produce",
-          "locator": "func (DeterministicAdaptiveDecisionProducer) Produce("
+          "path": "backend/application/agentthread/adaptive_decision_model_contract.go",
+          "symbol": "ProjectAdaptiveDecisionSemanticInput",
+          "locator": "func ProjectAdaptiveDecisionSemanticInput(rawInput string) (AdaptiveDecisionSemanticInput, error) {"
         },
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
@@ -773,6 +774,10 @@
         },
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
+          "locator": "func TestAdaptiveBootstrapCoordinatorTypedResumeCopiesDecisionWithoutProducer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator_test.go",
           "locator": "func TestAdaptiveBootstrapCoordinatorResumeFallsBackToLegacyOnlyAfterSourceDurableMiss(t *testing.T) {"
         },
         {
@@ -910,6 +915,92 @@
         {
           "path": "backend/application/agentthread/run_lease_recovery_test.go",
           "locator": "func TestRunLeaseRecoveryProcessorUsesAtomicOrdinaryRecoveryBundleForBareSource(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "application.model_adaptive_decision_producer",
+      "label": "Model-backed adaptive decision producer",
+      "layer": "application",
+      "kind": "conditional_runtime_boundary",
+      "production_status": "current",
+      "runtime_scope": "canonical_runtime",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "symbol": "(*ModelAdaptiveDecisionProducer).Produce",
+          "locator": "func (p *ModelAdaptiveDecisionProducer) Produce("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "symbol": "NewEnvAdaptiveDecisionModelProvider",
+          "locator": "func NewEnvAdaptiveDecisionModelProvider() AdaptiveDecisionModelProvider {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_contract.go",
+          "symbol": "decodeAdaptiveDecisionCandidateWire",
+          "locator": "func decodeAdaptiveDecisionCandidateWire("
+        },
+        {
+          "path": "backend/application/application.go",
+          "symbol": "Init",
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_contract_test.go",
+          "locator": "func TestProjectAdaptiveDecisionSemanticInputProjectsOnlyTypedSemantics(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer_test.go",
+          "locator": "func TestModelAdaptiveDecisionProducerClaimsCallsOnceRecordsUsageAndReplays(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer_test.go",
+          "locator": "func TestModelAdaptiveDecisionProducerCompletesOwnedFailuresWithoutRetry(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/adaptive_execution_wiring_test.go",
+          "locator": "func TestAdaptiveExecutionProductionWiringInstallsGateOnDecisionDependencies(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "repository.adaptive_decision_model_operation",
+      "label": "Adaptive decision model durable operation repository",
+      "layer": "repository",
+      "kind": "durable_operation",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/adaptive_execution.go",
+          "symbol": "AdaptiveDecisionModelOperationRepository",
+          "locator": "type AdaptiveDecisionModelOperationRepository interface {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model.go",
+          "symbol": "(*threadRepository).PrepareAdaptiveDecisionModelOperation",
+          "locator": "func (r *threadRepository) PrepareAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model.go",
+          "symbol": "(*threadRepository).CompleteAdaptiveDecisionModelOperation",
+          "locator": "func (r *threadRepository) CompleteAdaptiveDecisionModelOperation("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationCompletesAndReplaysExactResult(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_integration_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationMySQLIntegrationClaimSingleWinnerAndReplay(t *testing.T) {"
         }
       ]
     },
@@ -4636,6 +4727,50 @@
       ]
     },
     {
+      "id": "edge.adaptive_bootstrap_delegates_model_producer",
+      "from": "application.adaptive_mode_free_contract_boundary",
+      "to": "application.model_adaptive_decision_producer",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
+          "locator": "candidate, err := producer.Produce(ctx, AdaptiveDecisionRequest{"
+        },
+        {
+          "path": "backend/application/application.go",
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        },
+        {
+          "path": "backend/application/adaptive_execution_wiring_test.go",
+          "locator": "func TestAdaptiveExecutionProductionWiringInstallsGateOnDecisionDependencies(t *testing.T) {"
+        }
+      ]
+    },
+    {
+      "id": "edge.model_producer_persists_durable_operation",
+      "from": "application.model_adaptive_decision_producer",
+      "to": "repository.adaptive_decision_model_operation",
+      "relation": "persists_via",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "prepared, err := p.options.OperationRepository.PrepareAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "completed, err := p.options.OperationRepository.CompleteAdaptiveDecisionModelOperation("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
+        }
+      ]
+    },
+    {
       "id": "edge.adaptive_bootstrap_precedes_agent_build",
       "from": "application.adaptive_mode_free_contract_boundary",
       "to": "runtime.adk_agent_factory.build",
@@ -6608,6 +6743,8 @@
       ],
       "required_side_edge_ids": [
         "edge.adk_resume_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_delegates_model_producer",
+        "edge.model_producer_persists_durable_operation",
         "edge.adk_builds_agent",
         "edge.plan_tool_stages_adaptive_overlay",
         "edge.adaptive_plan_commits_checkpoint_boundary",
@@ -6968,9 +7105,9 @@
     },
     {
       "id": "exclude.unwired_adaptive_boundary",
-      "term": "Adaptive capabilities outside the deterministic P1D first packet",
+      "term": "Adaptive capabilities outside the delivered P1D model-producer slice",
       "status": "partially_wired",
-      "reason": "P0/P1M provide fenced durable admission/decision bootstrap, Execute/Resume recovery, rolling Plan/checkpoint authority, ordinary enrollment/recovery and retired-control boundaries. The P1D deterministic first packet now adds an independent server-owned env eligibility resolver, stable SpaceID plus workbench_adaptive_execution_mvp rollout, a candidate-only producer contract, coordinator-owned authority materialization, strict validation before the existing atomic commit, and typed Resume gate inheritance without re-evaluation. Production gate-on currently uses only a conservative deterministic execute/multi_step producer; it does not inspect task text or call a model. The real dev MySQL gate-on fresh replay/typed Resume test exists but remains NOT_VERIFIED without a compliant disposable DSN; the ordinary and rolling MySQL gates also remain NOT_VERIFIED. A model-backed task-aware producer, actual direct/multi-step selection, holdout, public DTO/TaskDetail, progress/verification and the Adaptive finalizer gate remain unwired, so P1D is in_progress and NOT PASS. P1M remains locked/NOT PASS, P1L remains deferred, and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
+      "reason": "P0/P1M provide fenced durable admission/decision bootstrap, Execute/Resume recovery, rolling Plan/checkpoint authority, ordinary enrollment/recovery and retired-control boundaries. P1D now installs ModelAdaptiveDecisionProducer for production gate-on: authoritative Run.Input is closed-project to bounded user/assistant content plus attachment bool; an explicit positive-decimal model ID, one forced adaptive_execution_decision tool, strict output validation, a 30-second timeout, shared usage/billing, and a single-attempt provider budget are enforced. A narrow internal/unsequenced claim/result repository elects one owner, stores only key/token digests, replays completed results without provider/billing, and fails closed for claim-only or drift; it does not claim provider exactly-once. Target exact replay remains first and typed Resume copies the durable candidate without a model call. The MySQL single-winner/exact replay test exists but remains NOT_VERIFIED without a compliant disposable DSN; ordinary and rolling MySQL gates also remain NOT_VERIFIED. Holdout, public DTO/TaskDetail, progress/verification and the Adaptive finalizer gate remain unwired, so P1D is in_progress and NOT PASS. P1M remains locked/NOT PASS, P1L remains deferred, and canonical whole-Thread DELETE stays hard-disabled pending the unresolved idle-cascade lock order.",
       "evidence": [
         {
           "path": "docs/superpowers/context/workbench-execution-chain.md",
@@ -7097,8 +7234,8 @@
           "locator": "func (envAdaptiveEligibilityResolver) Resolve("
         },
         {
-          "path": "backend/application/agentthread/adaptive_decision_producer.go",
-          "locator": "func (DeterministicAdaptiveDecisionProducer) Produce("
+          "path": "backend/application/agentthread/adaptive_decision_model_producer.go",
+          "locator": "func (p *ModelAdaptiveDecisionProducer) Produce("
         },
         {
           "path": "backend/application/agentthread/adaptive_bootstrap_coordinator.go",
@@ -7106,7 +7243,11 @@
         },
         {
           "path": "backend/application/application.go",
-          "locator": "AdaptiveProducer:    agentthread.DeterministicAdaptiveDecisionProducer{},"
+          "locator": "AdaptiveProducer:    adaptiveDecisionProducer,"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_decision_model_test.go",
+          "locator": "func TestAdaptiveDecisionModelOperationPrepareElectsOneOwnerAndFailsClosedForLoser(t *testing.T) {"
         },
         {
           "path": "backend/application/agentthread/adk_executor_test.go",
@@ -7307,7 +7448,10 @@
         "EventSink",
         "server-owned gate-off/on bootstrap",
         "stable adaptive eligibility",
-        "candidate-only decision producer",
+        "Model-backed adaptive decision producer",
+        "Adaptive decision model durable operation repository",
+        "forced adaptive_execution_decision tool",
+        "single-winner durable claim and replay",
         "atomic rolling Plan checkpoint",
         "read-first crash replay"
       ],
@@ -7315,6 +7459,8 @@
       "required_node_ids": [
         "runtime.adk_executor.execute",
         "application.adaptive_mode_free_contract_boundary",
+        "application.model_adaptive_decision_producer",
+        "repository.adaptive_decision_model_operation",
         "runtime.adk_agent_factory.build",
         "runtime.eino.chat_model_agent",
         "runtime.eino.runner",
@@ -7323,6 +7469,8 @@
       ],
       "required_edge_ids": [
         "edge.adk_execute_delegates_adaptive_bootstrap",
+        "edge.adaptive_bootstrap_delegates_model_producer",
+        "edge.model_producer_persists_durable_operation",
         "edge.adaptive_bootstrap_precedes_agent_build",
         "edge.plan_tool_stages_adaptive_overlay",
         "edge.adaptive_plan_commits_checkpoint_boundary",

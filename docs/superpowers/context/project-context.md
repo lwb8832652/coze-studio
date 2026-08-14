@@ -135,9 +135,10 @@ recovery race 与 legacy recovery 门禁；production ADK 的旧 mode/policy con
 Application rolling Plan writer 后续也已接入 atomic checkpoint boundary；其独立 dev MySQL rolling
 gate 仍 `NOT_VERIFIED`。本轮 ordinary MVP 又让 fresh 顶层 Eino Run 不再以 Journal projection gate
 作为 Attempt enrollment gate，并闭合 disabled/无 Attempt 的 lease recovery、bare Resume bootstrap 与
-bare rolling Plan boundary；ordinary 的真实 dev MySQL 门禁仍 `NOT_VERIFIED`。随后 P1D 首个
-deterministic packet 已接入 server-owned gate-on eligibility/producer seam，但只固定输出保守
-`execute/multi_step`，不读取任务正文、也不调用模型；P1D 仍在进行中，不能标记 PASS。
+bare rolling Plan boundary；ordinary 的真实 dev MySQL 门禁仍 `NOT_VERIFIED`。随后 P1D 已用
+`ModelAdaptiveDecisionProducer` 替换 production gate-on 的 deterministic producer；真实模型调用、
+用量计费与 durable claim/result operation 已接入，但 holdout、公共 DTO/TaskDetail、progress/
+verification 等退出门仍未闭合，因此 P1D 仍在进行中，不能标记 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -243,20 +244,29 @@ checkpoint authority，repository 在事务锁内逐字段并按 JSON 语义重�
 source durable bootstrap，只用 strict legacy decoder 读取 source Run，并继承 source
 `PlanScopeRunID`；bare Plan boundary 已支持首次 commit、read-first replay 与 rolling。ordinary 的真实
 dev MySQL gate 本轮未运行，明确保持 `NOT_VERIFIED`；rolling MySQL gate 也仍 `NOT_VERIFIED`。
-随后 P1D 首个 deterministic packet 新增独立于 Journal projection gate 的服务端 eligibility：
+随后 P1D 新增独立于 Journal projection gate 的服务端 eligibility：
 `AGENT_THREAD_ADAPTIVE_EXECUTION_ENABLED` 与
 `AGENT_THREAD_ADAPTIVE_EXECUTION_ROLLOUT_BASIS_POINTS` 默认分别为 `false`/`0`，显式非法配置在
 fresh Run 首次 bootstrap 时 fail closed；rollout 只按 `SpaceID` 与冻结 feature key
 `workbench_adaptive_execution_mvp` 稳定分桶。fresh 路径继续 read-first，miss 后才解析 eligibility 并
 选择 baseline 或 adaptive producer；producer 只返回无 identity/revision/generation/plan scope/时间戳的
 候选，coordinator 补齐这些服务端 authority、通过 strict pair validation 后，才沿现有事务一次提交
-admission、decision 与 control checkpoint。durable exact replay 不重新调用 resolver/producer；typed
-Resume 继承 source gate/capabilities/limits 与 plan scope，不重新计算 rollout，legacy decoder 始终
-gate-off。Factory 已能消费 gate-on `direct`、`single_step` 与 `multi_step` 合法 facts，但当前 production
-adaptive producer 只生成保守 `execute/multi_step`，不扫描任务正文、不调用模型，也不构成真正的任务
-自适应分类。相应真实 dev MySQL gate-on fresh replay/typed Resume 测试已存在，但本轮缺少安全的
-disposable DSN，运行结果保持 `NOT_VERIFIED`。model-backed producer、真实 direct/multi-step 选择、
-holdout、公共 DTO/TaskDetail 和后续 progress/verification 仍未交付，P1D 保持进行中且不得标记 PASS。
+admission、decision 与 control checkpoint。fresh gate-on 首先投影 authoritative `Run.Input`：最多
+64 KiB、32 条，只保留 `user`/`assistant` content 与附件存在布尔值；unknown、`null`、非法 role、
+非 user 末条或超限均 fail closed。production adaptive producer 通过每次调用严格读取的
+`AGENT_THREAD_ADAPTIVE_DECISION_MODEL_ID` 选择显式正十进制 model ID，没有 builtin；composition root
+显式注入独立 30 秒 timeout。模型只能被 forced 到唯一 `adaptive_execution_decision` tool，并经封闭
+schema/EOF 与 admission validator 解析候选；总 provider Generate attempt 固定为 1，不做盲目重试。
+调用复用 `ThreadUsageCollector` 与既有 billing guard。
+
+模型调用前的窄 durable operation repository 在同一 fresh Attempt/lease/generation fence 下，以
+internal、unsequenced claim/result events 竞争 single winner；持久化 raw operation key/claim token 的
+digest 而非原值。completed replay 直接复用候选并跳过 provider/billing；claim-only、failed、漂移或
+未知状态均 fail closed。这不是 provider exactly-once claim：claim 后进程丢失时不会盲调 provider。
+bootstrap 仍以 target exact replay 为第一步；typed Resume 深拷贝 source durable decision candidate，
+补齐 target authority 后提交，绝不再次调用模型。相应真实 MySQL single-winner/exact replay 测试已
+存在，但本轮缺少安全 disposable DSN，运行结果保持 `NOT_VERIFIED`。holdout、公共 DTO/TaskDetail、
+progress/verification 和其它 P1D 退出门仍未交付，P1D 保持进行中且不得标记 PASS；P1M 状态不变。
 historical runtime compatibility 与 package-private server-owned subagent seam 仍存在。P1L
 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 

@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 用一个 server-owned、默认关闭且可稳定按空间放量的首包，让 fresh 顶层 Eino Run 原子持久化 gate-on admission 与保守 deterministic multi-step decision，同时冻结现有 runtime factory 对 direct/single-step/multi-step typed decision 的消费合同。
+**Goal:** 用 server-owned、默认关闭且可稳定按空间放量的 P1D 纵切，让 fresh 顶层 Eino Run 通过真实 model producer 生成 gate-on typed decision，并在既有 fenced bootstrap 中持久化，同时保持 normal/resume 共用同一 authority。
 
-**Architecture:** fresh bootstrap 保持 durable read-first；仅在 exact miss 后由 eligibility resolver 在本次 `Resolve` 中严格读取 `AGENT_THREAD_ADAPTIVE_EXECUTION_ENABLED` 与 `AGENT_THREAD_ADAPTIVE_EXECUTION_ROLLOUT_BASIS_POINTS`，再依据固定 feature key `workbench_adaptive_execution_mvp` 和稳定 space bucket 冻结 gate。Coordinator 选择独立 producer、覆盖 candidate 的全部 durable identity、执行现有 strict pair validation，之后才分配三个 ID 并调用既有原子 bootstrap；typed Resume 只继承 source gate/capability/limits，legacy decoder 永远 gate-off。首包安装同文件内的 deterministic gate-on producer，它只产生保守 server-owned multi-step candidate，不扫描任务正文、legacy config 或 Journal；这不是模型分类器，也不引入第二次模型调用。
+**Architecture:** fresh bootstrap 保持 durable read-first；exact miss 才冻结 eligibility，并把 authoritative `Run.Input` closed-project 为最多 64 KiB/32 条 `user`/`assistant` content 与 attachment bool。Production gate-on 使用显式正十进制 `AGENT_THREAD_ADAPTIVE_DECISION_MODEL_ID`、独立 30 秒 timeout、唯一 forced `adaptive_execution_decision` tool、closed output schema、共享 usage/billing 和窄 durable claim/result operation；provider Generate 总预算为 1。Coordinator 覆盖 candidate 的 durable identity 并 strict validate 后调用既有原子 bootstrap；typed Resume 复制 source durable candidate、绝不调用模型，legacy 永远 gate-off。
 
 **Tech Stack:** Go、Eino ADK、GORM/MySQL、现有 `adaptivecontract` canonical codec、`go test`、Workbench execution graph verifier。
 
-**Status:** `in_progress`；deterministic first packet 已实现、验证并完成一次综合审核，但真实模型 producer exit gate 尚未交付，因此 `P1D NOT PASS`。
+**Status:** `in_progress`；真实 model producer 的 production wiring 与 Task 5 的 contract/TDD/durable replay 部分已交付，但 MySQL exact gate 未在安全 disposable DSN 上验证，holdout、公共 DTO/TaskDetail、progress/verification 等 P1D 退出门仍未闭合，因此 `P1D NOT PASS`。
 
 ---
 
@@ -17,22 +17,23 @@
 **In scope**
 
 - `backend/application/agentthread/adaptive_eligibility.go`：每次 `Resolve` 严格解析 server-owned 双 env，计算稳定 space eligibility；默认 disabled/`0`，enabled + `10000` 全量开启。
-- `backend/application/agentthread/adaptive_decision_producer.go`：统一 producer interface、baseline adapter 与首包 deterministic gate-on producer；deterministic 候选固定为保守 `execute/multi_step`，不读取正文或旧控制字段。
+- `backend/application/agentthread/adaptive_decision_producer.go`、`adaptive_decision_model_contract.go`、`adaptive_decision_model_producer.go`：统一 producer interface、authoritative semantic projection、model tool/output contract 与真实 gate-on producer。
 - `backend/application/agentthread/adaptive_bootstrap_coordinator.go`：fresh read-first 后 resolver → producer → strict validate → IDs → atomic commit；Resume 继承 typed gate，不重算。
 - `backend/application/agentthread/adk_agent_factory.go`：把已有 decision 合同收口成 direct/single-step/multi-step runtime capability；不另建 executor。
-- `backend/application/application.go`：构造无状态 env resolver 和两个 producer 并注入 coordinator；constructor 不解析 env，错误在对应 fresh `Resolve` 时 fail closed。
+- `backend/application/application.go`：构造 env resolver、baseline producer、`ModelAdaptiveDecisionProducer`、共享 usage collector 与 durable operation repository，并显式注入 30 秒 model timeout。
+- `backend/domain/agentthread/repository/mysql_adaptive_decision_model.go`：以 internal/unsequenced claim/result events 实现 narrow durable operation；single winner，raw key/token 不落库。
 - 对应 `*_test.go`、已有 disposable MySQL bootstrap integration test、两份 Workbench authority context 与 execution graph JSON。
 
 **Out of scope**
 
-- progress、repair/replan、verification、UI、IDL、migration、公共 DTO、模型调用、正文 classifier、acceptance-check registry、Journal enrollment 改造、Subagent 开启。
-- 不允许从 `Run.Input`、`Run.Config`、`Run.Context`、Message/Journal 内容推断 gate 或 decision；不允许把 env 或 producer candidate 作为 durable identity 权威。
+- progress、repair/replan、verification、UI、IDL、migration、公共 DTO、holdout、acceptance-check registry、Journal enrollment 改造、Subagent 开启。
+- 不允许从 `Run.Config`、`Run.Context` 或 Journal 内容推断 gate/decision；模型只能读取审核后的 `Run.Input` semantic projection，不允许把 env 或 producer candidate 作为 durable identity 权威。
 
 **本轮交付状态**
 
-- 本轮只交付 server-owned eligibility、独立 producer seam 和保守 deterministic gate-on 运行闭环；它不是智能分类器，也不是 task-aware classifier，不能据此宣称 `P1D PASS`。
+- 本轮已交付 server-owned eligibility 与真实 model-backed gate-on 运行闭环，但不能据此宣称 `P1D PASS`。
 - 禁止以关键字、正则、prompt/body/message 扫描或 legacy config/Journals 启发式替代真实 producer。
-- P1D 的后续独立 task/exit gate 必须安装真实模型 producer，并显式覆盖独立 timeout、billing/usage、结构化输出 codec、有限重试、稳定幂等与故障零提交；该 exit gate 通过前，P1D 状态保持 `in_progress`。
+- 剩余 exit gate 必须完成安全 disposable MySQL exact 验证、holdout、公共 DTO/TaskDetail 与其余既定验收；通过前 P1D 保持 `in_progress`。
 
 **Frozen interfaces**
 
@@ -56,7 +57,18 @@ type AdaptiveDecisionProducer interface {
 }
 
 type AdaptiveDecisionRequest struct {
-	Admission entity.AdaptiveAdmissionSnapshot
+	Admission     entity.AdaptiveAdmissionSnapshot
+	SemanticInput AdaptiveDecisionSemanticInput
+}
+
+type AdaptiveDecisionSemanticInput struct {
+	Messages       []AdaptiveDecisionSemanticMessage
+	HasAttachments bool
+}
+
+type AdaptiveDecisionSemanticMessage struct {
+	Role    string
+	Content string
 }
 
 type AdaptiveDecisionCandidate struct {
@@ -70,7 +82,7 @@ type AdaptiveDecisionCandidate struct {
 }
 ```
 
-`AdaptiveDecisionCandidate` 有意不含 decision ID、revision、Run/Journal/Attempt/generation、Plan scope 或 created-at。Coordinator 必须覆盖这些 server-owned identity 字段；producer 不能获得或伪造它们。
+`AdaptiveDecisionCandidate` 有意不含 decision ID、revision、Run/Journal/Attempt/generation、Plan scope 或 created-at。Coordinator 必须覆盖这些 server-owned identity 字段；producer request 只携带 admission 与审核后的语义投影，不能携带或伪造 durable authority。
 
 ### Task 1: Stable server-owned admission gate
 
@@ -211,14 +223,19 @@ type AdaptiveDecisionCandidate struct {
 - fresh exact replay 不调用 resolver/producer、不分配 ID；fresh miss 只提交一次既有 atomic bootstrap。
 - typed Resume 原样继承 gate/capability/limits，实时 env 变化不影响 lineage；legacy 永远 gate-off。
 - producer candidate 的 server identity 全被 coordinator 覆盖并 strict validate；任何 dependency/candidate/repository 错误均在 runtime 前 fail closed。
-- deterministic 首包只产生保守 multi-step；Factory 已冻结 direct 不开 Plan、single-step 不开 Plan、multi-step 使用已有 Plan 的未来 consumer 合同。首包不声称语义分类质量，不包含 progress/verification/UI/IDL/migration/模型调用。
-- 本计划完成只代表 deterministic first packet 交付，不代表 P1D PASS；后续真实模型 producer 的 timeout、billing/usage、结构化输出、有限重试和稳定幂等 exit gate 尚未完成。
+- gate-on 使用真实 model producer；只有唯一 forced tool 的 closed typed candidate 才能进入 materialize。一次 provider Generate attempt 是本阶段的有限预算，timeout、provider/model、usage 或 codec 错误全部 fail closed，禁止 deterministic/正文启发式 fallback。
+- Factory 已冻结 direct 不开 Plan、single-step 不开 Plan、multi-step 使用已有 Plan；typed Resume 继承 durable candidate，不重新调用模型。本计划仍不包含 holdout、公共 DTO/TaskDetail、progress/verification、UI、IDL 或 migration，因此不代表 P1D PASS。
 
-### Task 5: Real model producer exit gate（后续，未实现）
+### Task 5: Real model producer exit gate（部分交付，P1D 仍未 PASS）
 
 **Files:** 实施前必须在 tracked 权威与当前 model execution seam 上重新定位并单独展开，不得复用本首包的 deterministic producer 伪装完成。
 
-- [ ] **Step 1: 冻结独立 typed model producer contract。** 明确结构化输出 schema、单次调用 timeout、billing/usage 归属、稳定 operation/decision idempotency key、有限重试预算和错误 taxonomy；禁止正文扫描启发式作为 fallback。
-- [ ] **Step 2: TDD 实现真实模型 producer。** RED 必须证明 timeout、provider error、invalid structured output、重试耗尽和 lost response 全部在 bootstrap ID/commit/runtime 前零副作用；GREEN 才允许替换 production gate-on deterministic producer。
-- [ ] **Step 3: 证明幂等、计费与恢复。** 同一 logical bootstrap 不重复计费或重复提交 decision；typed Resume 继承已持久化 decision，不再次调用模型；usage 必须进入现有权威 collector，不自建旁路计费。
+- [x] **Step 1: 冻结独立 typed model producer contract。** `Run.Input` closed projection 只输出 user/assistant content 与 attachment bool（64 KiB/32 条）；显式正十进制 model ID、唯一 forced tool、strict closed schema/EOF、独立 30 秒 timeout、共享 billing/usage、稳定 operation fingerprint、一次 provider Generate attempt及 closed error code 已冻结；无正文启发式 fallback。
+- [x] **Step 2: TDD 实现真实模型 producer。** production gate-on 已替换为 `ModelAdaptiveDecisionProducer`；timeout、provider/model error、invalid structured output、usage error 均 fail closed 并记录 closed failed result，单次调用不重试。focused 与 application package 验证已 GREEN。
+- [x] **Step 3: 证明幂等、计费与恢复。** narrow durable operation 以 internal/unsequenced claim/result events 选 single winner，raw operation key/claim token 只保存 digest；completed replay 跳过 provider/billing，claim-only unknown state fail closed。typed Resume 复制 durable candidate，绝不调用模型；不宣称 provider exactly-once。
 - [ ] **Step 4: 完成独立 exit gate。** 运行相关 Go/MySQL/Graphify/Workbench 验证并做一次 combined review；只有该 gate 以及 P1D 其余既定验收全部通过，才可把 `P1D NOT PASS` 改为 PASS。
+
+  Evidence：Go focused/package tests 已由实现与验证任务通过；MySQL
+  `TestAdaptiveDecisionModelOperationMySQLIntegrationClaimSingleWinnerAndReplay` 已存在，但当前没有满足
+  安全命名约束的 disposable DSN，状态为 `NOT_VERIFIED`。80 holdout、公共 DTO/TaskDetail、
+  progress/verification 与完整 P1D verification 仍是剩余 exit gate；P1M 状态不因本 Task 改变。
