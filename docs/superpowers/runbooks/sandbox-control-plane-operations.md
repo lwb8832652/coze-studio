@@ -21,6 +21,7 @@
 | `SANDBOX_CONTROL_PLANE_ENABLED` | 非 `true` 时关闭 | 启用 Provider 管理、持久化、健康检查和管理 API |
 | `SANDBOX_RUNTIME_ROUTING_ENABLED` | 未设置时兼容既有行为；控制面开启后视为开启 | 独立控制 Agent、AppDev、MCP 和 CodeRunner 的 Provider 路由 |
 | `SANDBOX_PROMETHEUS_METRICS_ENABLED` | `false` | 注册 Sandbox Prometheus 指标 |
+| `SANDBOX_RUNNER_SESSION_ENABLED` | `false` | 启用 Runner 的 Shared AIO Core Session backend；不代表业务 consumer 已切流 |
 | `APP_DEV_HOST_RUNTIME_ENABLED` | `false` | 仅用于 `APP_ENV=debug` 的本机 AppDev 调试双重开关 |
 
 生产环境必须显式设置 `SANDBOX_RUNTIME_ROUTING_ENABLED`，不要依赖兼容默认值。
@@ -28,8 +29,9 @@
 
 ## Native Sandbox Runner（2C4G）
 
-`runner-2c4g` 是额外部署 profile，不会替换既有 `local-data` profile。它只启动
-`nsqd`、`coze-server`、`coze-web` 与 `coze-sandbox-runner`；MySQL、Redis、
+`runner-2c4g` 是额外部署 profile，不会替换既有 `local-data` profile。它启动
+`nsqd`、`coze-server`、`coze-web`、`coze-sandbox-runner` 与一个
+`coze-sandbox-aio`；MySQL、Redis、
 Elasticsearch 和对象存储继续读取服务器本地 `app.env` 的远程配置，禁止为此 profile
 额外启动数据服务容器。
 
@@ -41,6 +43,10 @@ Elasticsearch 和对象存储继续读取服务器本地 `app.env` 的远程配�
 加密 keyring 和调度配置验签 keyring；不能放入仓库、CI 变量或 `app.env`。
 `SANDBOX_RUNNER_ROOTLESS_SOCKET` 必须是这个专用 socket，绝不能是
 `/var/run/docker.sock`。
+
+rootless socket 只服务既有 one-shot Runtime。Shared AIO 的生命周期不经过该 socket：
+Runner 不得 create/start/stop/restart/remove/inspect `coze-sandbox-aio`，也不得把
+Docker socket 或容器标识作为 Session readiness、generation 或恢复事实。
 
 部署脚本会把执行 Runtime 镜像解析为不可变 digest，写入部署记录，并在回滚时恢复
 上一个 digest。不要手工给 `SANDBOX_RUNNER_EXECUTION_IMAGE` 传 mutable tag。
@@ -60,6 +66,59 @@ Runner 的 `/v1/runtime-status` 与 `/v1/metrics` 均要求 Runner Bearer token�
 容器 ID、endpoint 或凭据。Prometheus 应经受控采集端访问 `/v1/metrics`，不得把该
 端点映射为公网匿名接口。
 
+## Shared AIO Core Session（默认关闭）
+
+deploy/Compose 直接拉取并运行 `ghcr.io/agent-infra/sandbox:latest`。仓库不构建派生
+AIO 镜像，不固定 tag、OCI digest 或版本，也不要求 JWT、`DISABLE_*` 或容器级
+CPU/内存/PID 启动参数。每次部署应记录当次解析到的 image ID 作为审计证据；image ID
+不是配置锁、readiness 条件或 `runtime_generation` 来源。
+
+启动只保留 Task 0/1 已由 official latest 真实探针确认的兼容项：
+`seccomp=unconfined` 与 ARM64 上的 `OPENSSL_armcap=0`。前者会放宽容器 syscall
+过滤，是已接受并必须显式记录的上游风险；它不等于 `privileged`，也不能被描述为
+Session 隔离能力。`WORKSPACE=/mnt/user-data` 只固定持久工作目录，不是业务配置入口。
+
+未锁定 `latest` 的代价是无法仅凭代码 SHA 精确重现或回退 AIO。若节点仍保留上一
+image ID，运维可以按已审核记录显式选择；否则必须保持 Core disabled，不能把当前
+`latest` 冒充上一版本或由 Runner 猜测性重启。AIO 首次启动或健康检查失败时，现有
+server/web 与 one-shot Runner 继续启动，只有 Core Session 投影为 unavailable。
+
+生命周期唯一归 deploy 层：顺序为 pull/up AIO、确认 raw `8080` health，再启动或更新
+Runner。AIO 只在 Compose 私网 `expose: 8080`，不得配置宿主机 `ports`、host network、
+privileged 或 Docker socket。Runner 只通过
+`http://coze-sandbox-aio:8080` 监督 raw health、reserved sentinel 和 MySQL CAS
+generation；它不能管理容器生命周期。
+
+`/mnt/user-data` 使用保留型 named volume，`/mnt/skills` 只读挂载。服务端从可信事实
+派生目录：
+
+```text
+/mnt/user-data/<space_id>/<user_id>/<thread_id>/workspace
+/mnt/user-data/<space_id>/<user_id>/<thread_id>/uploads
+/mnt/user-data/<space_id>/<user_id>/<thread_id>/outputs
+/mnt/skills
+```
+
+业务 API 只接受逻辑 `/mnt/user-data/{workspace,uploads,outputs}` 路径；File mutation
+固定 `sudo=false`。该层级是控制面的逻辑路由，不是 chroot、Unix 用户隔离或恶意命令
+边界。Shared AIO 是共享 failure domain；绝不能把它描述为对抗性多租户隔离。
+
+Phase 1 的 Core、Interactive 与 remote Host Shell 均默认关闭。Plugin 继续使用既有
+one-shot Runtime；Agent、Subagent、MCP、AppDev 和 Interactive 均未迁移。Core 只能在
+MySQL/Redis、raw AIO、sentinel/generation 和 workspace 全部确定后显式启用，任一状态
+unknown 时 fail closed，且不回退本机 Host Shell。
+
+Runner 直接使用 dev 环境已配置的 MySQL 与 Redis；Compose 不启动数据库容器。
+`deploy.sh` 在启动 AIO 或更新服务前，用已经拉取并校验 revision 的候选 Runner 执行一次
+`migration-status`。该命令从权限为 `600` 的 Runner env 读取既有 `MYSQL_DSN`，在数据库
+只读事务中核验 `atlas_schema_revisions` 的 `20260813000100` 已完整 applied；它不接收或
+输出 DSN，不执行 apply，也不启动数据库容器。缺表、缺 revision、部分执行、Atlas error
+或连接状态未知都必须在任何 service `up` 前 fail closed。
+
+只有 `publish-dev.sh` 在用户确认 exact code SHA、实际 migration 区间、credential 文件
+权限与 Atlas status 后，才可执行一次 forward apply；禁止 AutoMigrate、drop、truncate
+或 schema reset。
+
 ## 首次上线顺序
 
 1. 应用并校验 Atlas 迁移，但暂不开放 Sandbox 前端入口。
@@ -72,7 +131,8 @@ Runner 的 `/v1/runtime-status` 与 `/v1/metrics` 均要求 Runner Bearer token�
    Provider。
 6. 核对默认 Provider、审计记录、凭据重包状态和监控采集，不执行真实流量。
 7. 显式设置 `SANDBOX_RUNTIME_ROUTING_ENABLED=true`，滚动重启后端。
-8. 依次执行 Agent、AppDev、MCP/CodeRunner 的最小真实任务，再开放前端入口。
+8. 依次执行 Agent、AppDev、MCP/CodeRunner 的既有链路回归；这些回归不代表已迁移到
+   Shared AIO。Phase 1 保持 Core disabled，不开放业务入口。
 
 如果任一 scope 没有可用默认 Provider，该 scope 应保持不可用，而不是使用其
 他 scope、其他租户或宿主机作为兜底。
@@ -158,13 +218,19 @@ keyring 的每个值必须是标准 Base64 编码的 32 字节随机密钥，key
 
 ## 回滚与恢复
 
-1. 设置 `SANDBOX_RUNTIME_ROUTING_ENABLED=false` 并滚动重启。
+1. 先把 Session desired Core 设置为 disabled；若控制面不可用，再设置
+   `SANDBOX_RUNNER_SESSION_ENABLED=false`。随后按需要设置
+   `SANDBOX_RUNTIME_ROUTING_ENABLED=false` 并滚动重启。
 2. 保持 `SANDBOX_CONTROL_PLANE_ENABLED=true`，保留 Provider、默认项、健康
    状态和审计记录。
-3. 已在 Provider 上运行的任务按 Provider 合同完成或取消；不要迁移到宿主机
+3. 保留 `sandbox_runtime_sessions`、scheduler additive columns、AIO named volume 和
+   Thread workspace；禁止 `down -v`、volume rm、drop/truncate 或批量删除目录。
+4. 已在 Provider 上运行的任务按 Provider 合同完成或取消；不要迁移到宿主机
    或另一 Provider 继续执行。
-4. 修复并验证健康检查、密钥、allowlist、容量和默认项。
-5. 在预发布执行最小真实任务后，再重新开启运行时路由。
+5. AIO `latest` 无法精确回退时保持 Core disabled，并报告本次/上次 image ID 与限制；
+   Runner 不得自行 restart AIO。
+6. 修复并验证健康检查、密钥、allowlist、容量和默认项。
+7. 在预发布执行最小真实任务后，再重新开启运行时路由。
 
 如果必须同时关闭控制面，应先导出合规的配置元数据和审计证据；不得导出明文
 凭据。

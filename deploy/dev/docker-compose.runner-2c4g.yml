@@ -77,6 +77,28 @@ services:
       - coze-dev
     logging: *default-logging
 
+  coze-sandbox-aio:
+    image: ghcr.io/agent-infra/sandbox:latest
+    restart: unless-stopped
+    environment:
+      OPENSSL_armcap: "0"
+      WORKSPACE: /mnt/user-data
+    expose:
+      - "8080"
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      - type: volume
+        source: sandbox-aio-user-data
+        target: /mnt/user-data
+      - type: volume
+        source: sandbox-aio-skills
+        target: /mnt/skills
+        read_only: true
+    networks:
+      - coze-dev
+    logging: *default-logging
+
   coze-sandbox-runner:
     image: ${ACR_REGISTRY:?ACR_REGISTRY is required}/${ACR_NAMESPACE:?ACR_NAMESPACE is required}/coze-sandbox-runner:${SANDBOX_RUNNER_IMAGE_TAG:-dev}
     restart: unless-stopped
@@ -91,6 +113,8 @@ services:
       SANDBOX_RUNNER_TLS_CERT_FILE: /app/secrets/sandbox-runner.crt
       SANDBOX_RUNNER_TLS_KEY_FILE: /app/secrets/sandbox-runner.key
       SANDBOX_RUNNER_EXECUTION_IMAGE: ${SANDBOX_RUNNER_EXECUTION_IMAGE:?SANDBOX_RUNNER_EXECUTION_IMAGE is required}
+      SANDBOX_RUNNER_SESSION_ENABLED: "${SANDBOX_RUNNER_SESSION_ENABLED:-false}"
+      SANDBOX_RUNNER_AIO_UPSTREAM_URL: http://coze-sandbox-aio:8080
     group_add:
       - ${SANDBOX_RUNNER_ROOTLESS_SOCKET_GID:?SANDBOX_RUNNER_ROOTLESS_SOCKET_GID is required}
     expose:
@@ -165,3 +189,5 @@ networks:
 
 volumes:
   nsq-data:
+  sandbox-aio-skills:
+  sandbox-aio-user-data:

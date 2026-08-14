@@ -33,6 +33,13 @@ SANDBOX_RUNNER_IMAGE_REF=${SANDBOX_RUNNER_IMAGE_REF:-}
 SANDBOX_RUNTIME_REPOSITORY=${SANDBOX_RUNTIME_REPOSITORY:-}
 SANDBOX_RUNTIME_IMAGE_REF=${SANDBOX_RUNTIME_IMAGE_REF:-}
 SANDBOX_RUNNER_EXECUTION_IMAGE=${SANDBOX_RUNNER_EXECUTION_IMAGE:-}
+readonly OFFICIAL_SANDBOX_AIO_IMAGE_REF=ghcr.io/agent-infra/sandbox:latest
+SANDBOX_AIO_IMAGE_REF=$OFFICIAL_SANDBOX_AIO_IMAGE_REF
+SANDBOX_AIO_IMAGE_ID=
+SANDBOX_AIO_STATUS=not-managed
+SANDBOX_AIO_AVAILABLE=false
+REQUIRED_ADDITIVE_MIGRATION_ID=20260813000100
+readonly AIO_RAW_MAX_RESPONSE_BYTES=4096
 DEPLOY_PROFILE=${DEPLOY_PROFILE:-local-data}
 
 log() {
@@ -92,6 +99,27 @@ compose_cmd() {
 
 runner_profile_enabled() {
   [ "$DEPLOY_PROFILE" = runner-2c4g ]
+}
+
+lock_official_aio_image_ref() {
+  if [ "${SANDBOX_AIO_IMAGE_REF:-}" != "$OFFICIAL_SANDBOX_AIO_IMAGE_REF" ]; then
+    error 'official AIO image ref cannot be overridden'
+    return 1
+  fi
+  SANDBOX_AIO_IMAGE_REF=$OFFICIAL_SANDBOX_AIO_IMAGE_REF
+  readonly SANDBOX_AIO_IMAGE_REF
+  export SANDBOX_AIO_IMAGE_REF
+}
+
+preflight_additive_migration() {
+  runner_profile_enabled || return 0
+  if ! SANDBOX_RUNNER_SESSION_ENABLED=false SANDBOX_RUNNER_IMAGE_TAG=dev \
+    SANDBOX_RUNNER_EXECUTION_IMAGE="$SANDBOX_RUNNER_EXECUTION_IMAGE" \
+    compose_cmd run --rm --no-deps coze-sandbox-runner migration-status >/dev/null 2>&1; then
+    error 'required additive migration is not applied'
+    return 1
+  fi
+  log "verified pre-applied additive migration $REQUIRED_ADDITIVE_MIGRATION_ID without database mutation"
 }
 
 validate_private_deploy_file() {
@@ -163,6 +191,112 @@ container_image_id() {
   docker_cmd inspect --format '{{.Image}}' "$container_id"
 }
 
+is_private_ipv4() {
+  local address=${1:-}
+  local -a octets
+
+  is_ipv4 "$address" || return 1
+  IFS=. read -r -a octets <<< "$address"
+  ((10#${octets[0]} == 10)) ||
+    ((10#${octets[0]} == 172 && 10#${octets[1]} >= 16 && 10#${octets[1]} <= 31)) ||
+    ((10#${octets[0]} == 192 && 10#${octets[1]} == 168))
+}
+
+container_private_ipv4() {
+  local service=$1
+  local container_id addresses address selected=
+
+  container_id=$(compose_cmd ps -q "$service") || return 1
+  [ -n "$container_id" ] || return 1
+  addresses=$(docker_cmd inspect --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "$container_id") || return 1
+  while IFS= read -r address; do
+    [ -n "$address" ] || continue
+    is_private_ipv4 "$address" || return 1
+    [ -z "$selected" ] || return 1
+    selected=$address
+  done <<< "$addresses"
+  [ -n "$selected" ] || return 1
+  printf '%s\n' "$selected"
+}
+
+aio_raw_fetch_exact_200() {
+  local url=$1
+  local output_file=$2
+  local status size
+
+  status=$(curl --noproxy '*' --silent --show-error --max-time 5 \
+    --max-redirs 0 --max-filesize "$AIO_RAW_MAX_RESPONSE_BYTES" \
+    --output "$output_file" --write-out '%{http_code}' "$url" 2>/dev/null) || return 1
+  [ "$status" = 200 ] || return 1
+  size=$(wc -c < "$output_file" | tr -d '[:space:]') || return 1
+  [[ "$size" =~ ^[0-9]+$ ]] || return 1
+  ((size <= AIO_RAW_MAX_RESPONSE_BYTES))
+}
+
+aio_ping_body_matches() {
+  local body_file=$1
+  local size bytes
+
+  size=$(wc -c < "$body_file" | tr -d '[:space:]') || return 1
+  [ "$size" = 4 ] || return 1
+  bytes=$(LC_ALL=C od -An -tx1 "$body_file" | tr -d '[:space:]') || return 1
+  [ "$bytes" = 706f6e67 ]
+}
+
+aio_sandbox_body_matches() {
+  local body_file=$1
+  local compact
+
+  compact=$(tr -d '[:space:]' < "$body_file") || return 1
+  [[ "$compact" == \{*\} ]] || return 1
+  [[ "$compact" =~ \"home_dir\":\"/[^\"\\]+\" ]] || return 1
+  [[ "$compact" =~ \"version\":\"[^\"\\]+\" ]] || return 1
+  [[ "$compact" =~ \"detail\":\{ ]] || return 1
+  [[ "$compact" =~ \"system\":\{ ]] || return 1
+  [[ "$compact" =~ \"runtime\":\{ ]] || return 1
+  [[ "$compact" =~ \"utils\":\[ ]]
+}
+
+aio_raw_health_checks_pass() {
+  local address base_url ping_body sandbox_body result=1
+
+  address=$(container_private_ipv4 coze-sandbox-aio) || return 1
+  base_url="http://$address:8080"
+  ping_body=$(mktemp "${TMPDIR:-/tmp}/coze-aio-ping.XXXXXX") || return 1
+  sandbox_body=$(mktemp "${TMPDIR:-/tmp}/coze-aio-sandbox.XXXXXX") || {
+    rm -f -- "$ping_body"
+    return 1
+  }
+  chmod 600 "$ping_body" "$sandbox_body" || {
+    rm -f -- "$ping_body" "$sandbox_body"
+    return 1
+  }
+
+  if aio_raw_fetch_exact_200 "$base_url/v1/ping" "$ping_body" &&
+    aio_ping_body_matches "$ping_body" &&
+    aio_raw_fetch_exact_200 "$base_url/v1/sandbox" "$sandbox_body" &&
+    aio_sandbox_body_matches "$sandbox_body"; then
+    result=0
+  fi
+  rm -f -- "$ping_body" "$sandbox_body"
+  return "$result"
+}
+
+wait_for_aio_raw_health() {
+  local timeout=${DEPLOY_HEALTH_TIMEOUT_SECONDS:-120}
+  local deadline
+
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 1
+  deadline=$((SECONDS + timeout))
+  while ((SECONDS < deadline)); do
+    if aio_raw_health_checks_pass; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 image_revision() {
   local image_ref=$1
   docker_cmd image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image_ref"
@@ -201,8 +335,66 @@ health_body_matches() {
   fi
 }
 
+runner_core_projection_matches() {
+  local body=$1
+  local aio_available=${2:-false}
+  local allow_rollback_legacy=${3:-false}
+  local compact state= generation= memory_state=
+  local state_present=false generation_present=false
+
+  compact=$(printf '%s' "$body" | tr -d '[:space:]')
+  [[ "$compact" == *'"schema":"coze.sandbox.runner_runtime_status.v1"'* ]] || return 1
+  if [[ "$compact" =~ \"core_state\":\"([^\"]+)\" ]]; then
+    state=${BASH_REMATCH[1]}
+    state_present=true
+  elif [[ "$compact" == *'"core_state":'* ]]; then
+    return 1
+  fi
+  if [[ "$compact" =~ \"aio_runtime_generation\":([0-9]+) ]]; then
+    generation=${BASH_REMATCH[1]}
+    generation_present=true
+  elif [[ "$compact" == *'"aio_runtime_generation":'* ]]; then
+    return 1
+  fi
+
+  if [ "$state_present" = false ] && [ "$generation_present" = false ]; then
+    [ "$allow_rollback_legacy" = true ] || return 1
+    [[ "$compact" =~ \"applied_configuration_version\":([1-9][0-9]*) ]] || return 1
+    [[ "$compact" =~ \"queued\":([0-9]+) ]] || return 1
+    [[ "$compact" =~ \"running\":([0-9]+) ]] || return 1
+    [[ "$compact" =~ \"memory_reserve_state\":\"([^\"]+)\" ]] || return 1
+    memory_state=${BASH_REMATCH[1]}
+    case "$memory_state" in
+      available|below_watermark|unknown) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  [ "$state_present" = true ] && [ "$generation_present" = true ] || return 1
+
+  if [ "$allow_rollback_legacy" = true ]; then
+    [ "$state" = disabled ] && [ "$generation" = 0 ]
+    return
+  fi
+
+  case "$state" in
+    disabled) [ "$generation" = 0 ] ;;
+    ready) [ "$aio_available" = true ] && [[ "$generation" =~ ^[1-9][0-9]*$ ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+runner_core_projection_checks_pass() {
+  local allow_rollback_legacy=${1:-false}
+  local body
+
+  body=$(compose_cmd exec -T coze-sandbox-runner sh -ceu \
+    'wget --no-check-certificate --quiet --tries=1 --header="Authorization: Bearer ${SANDBOX_RUNNER_AUTH_TOKEN}" --output-document=- https://127.0.0.1:9443/v1/runtime-status') || return 1
+  runner_core_projection_matches "$body" "$SANDBOX_AIO_AVAILABLE" "$allow_rollback_legacy"
+}
+
 health_checks_pass() {
   local expected_revision=${1:-}
+  local allow_rollback_legacy=${2:-false}
   local backend_body web_body base_url
 
   service_is_healthy nsqd || return 1
@@ -215,6 +407,10 @@ health_checks_pass() {
   if runner_profile_enabled; then
     service_is_healthy coze-sandbox-runner || return 1
     compose_cmd exec -T coze-sandbox-runner wget --no-check-certificate --quiet --tries=1 --spider https://127.0.0.1:9443/v1/health >/dev/null 2>&1 || return 1
+    if [ "$SANDBOX_AIO_AVAILABLE" = true ]; then
+      aio_raw_health_checks_pass || return 1
+    fi
+    runner_core_projection_checks_pass "$allow_rollback_legacy" || return 1
   fi
 
   base_url=$(web_health_base_url)
@@ -227,6 +423,7 @@ health_checks_pass() {
 
 wait_for_health() {
   local expected_revision=${1:-}
+  local allow_rollback_legacy=${2:-false}
   local timeout=${DEPLOY_HEALTH_TIMEOUT_SECONDS:-120}
   local deadline
 
@@ -237,7 +434,7 @@ wait_for_health() {
   deadline=$((SECONDS + timeout))
 
   while ((SECONDS < deadline)); do
-    if health_checks_pass "$expected_revision"; then
+    if health_checks_pass "$expected_revision" "$allow_rollback_legacy"; then
       return 0
     fi
     sleep 2
@@ -292,6 +489,9 @@ record_success() {
       printf 'SANDBOX_RUNNER_IMAGE_REF=%s\n' "$SANDBOX_RUNNER_IMAGE_REF"
       printf 'SANDBOX_RUNNER_IMAGE_ID=%s\n' "$runner_id"
       printf 'SANDBOX_RUNTIME_IMAGE_REF=%s\n' "$runtime_ref"
+      printf 'SANDBOX_AIO_IMAGE_REF=%s\n' "$SANDBOX_AIO_IMAGE_REF"
+      printf 'SANDBOX_AIO_IMAGE_ID=%s\n' "$SANDBOX_AIO_IMAGE_ID"
+      printf 'SANDBOX_AIO_STATUS=%s\n' "$SANDBOX_AIO_STATUS"
     fi
     printf 'DEPLOYED_AT_UTC=%s\n' "$deployed_at"
   } > "$tmp"; then
@@ -302,6 +502,21 @@ record_success() {
     rm -f -- "$tmp"
     return 1
   fi
+}
+
+prepare_official_aio() {
+  SANDBOX_AIO_IMAGE_ID=
+  SANDBOX_AIO_STATUS=unavailable
+  SANDBOX_AIO_AVAILABLE=false
+
+  log "pulling official AIO image $SANDBOX_AIO_IMAGE_REF"
+  docker_cmd pull "$SANDBOX_AIO_IMAGE_REF" || return 1
+  SANDBOX_AIO_IMAGE_ID=$(image_id "$SANDBOX_AIO_IMAGE_REF") || return 1
+  compose_cmd up -d --no-build coze-sandbox-aio || return 1
+  wait_for_aio_raw_health || return 1
+
+  SANDBOX_AIO_STATUS=healthy
+  SANDBOX_AIO_AVAILABLE=true
 }
 
 record_failure() {
@@ -385,6 +600,15 @@ rollback_images() {
   local rollback_tag rollback_revision=
   local restored_server_id restored_web_id restored_runner_id
 
+  if runner_profile_enabled; then
+    if ! SANDBOX_RUNNER_SESSION_ENABLED=false compose_cmd stop coze-sandbox-runner; then
+      error 'failed to disable Core capability before rollback'
+      return 1
+    fi
+    log 'Core capability disabled before application rollback'
+    log 'official latest AIO cannot be rolled back exactly; Core remains disabled and persistent AIO state is preserved'
+  fi
+
   if [ -z "$old_server_id" ] || [ -z "$old_web_id" ]; then
     error 'first deployment failed; rollback unavailable'
     return 1
@@ -407,7 +631,7 @@ rollback_images() {
   fi
 
   if runner_profile_enabled; then
-    if [ -z "$old_runtime_ref" ] || ! SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_EXECUTION_IMAGE="$old_runtime_ref" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web; then
+    if [ -z "$old_runtime_ref" ] || ! SANDBOX_RUNNER_SESSION_ENABLED=false SERVER_IMAGE_TAG="$rollback_tag" WEB_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_IMAGE_TAG="$rollback_tag" SANDBOX_RUNNER_EXECUTION_IMAGE="$old_runtime_ref" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web; then
       error 'rollback compose update failed'
       return 1
     fi
@@ -439,7 +663,7 @@ rollback_images() {
     log 'previous revision metadata unavailable; rollback health will omit revision matching'
   fi
 
-  if wait_for_health "$rollback_revision"; then
+  if wait_for_health "$rollback_revision" true; then
     log 'rollback succeeded'
     return 0
   fi
@@ -454,7 +678,7 @@ deploy_transaction() {
   local server_revision= web_revision= runner_revision= runtime_revision= candidate_revision=
   local candidate_server_id= candidate_web_id= candidate_runner_id=
   local running_server_id= running_web_id= running_runner_id=
-  local transaction_id rollback_result failure_reason
+  local transaction_id rollback_result failure_reason runner_session_enabled
 
   transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
   if ! old_server_id=$(container_image_id coze-server); then
@@ -557,10 +781,26 @@ deploy_transaction() {
     record_pre_update_failure 'candidate revision does not match the requested SHA' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
     return
   fi
+  if runner_profile_enabled && ! preflight_additive_migration; then
+    record_pre_update_failure 'required additive migration is not applied' "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision"
+    return
+  fi
 
   local candidate_started=false
   if runner_profile_enabled; then
-    if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev SANDBOX_RUNNER_IMAGE_TAG=dev SANDBOX_RUNNER_EXECUTION_IMAGE="$SANDBOX_RUNNER_EXECUTION_IMAGE" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web && wait_for_health "$candidate_revision"; then
+    runner_session_enabled=${SANDBOX_RUNNER_SESSION_ENABLED:-false}
+    case "$runner_session_enabled" in
+      true|false) ;;
+      *)
+        runner_session_enabled=false
+        log 'invalid Runner Core gate ignored; Core remains disabled'
+        ;;
+    esac
+    if ! prepare_official_aio; then
+      runner_session_enabled=false
+      log 'official AIO is unavailable; Core remains disabled while server/web and one-shot deployment continue'
+    fi
+    if SANDBOX_RUNNER_SESSION_ENABLED="$runner_session_enabled" SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev SANDBOX_RUNNER_IMAGE_TAG=dev SANDBOX_RUNNER_EXECUTION_IMAGE="$SANDBOX_RUNNER_EXECUTION_IMAGE" compose_cmd up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web && wait_for_health "$candidate_revision"; then
       candidate_started=true
     fi
   else
@@ -633,6 +873,7 @@ main() {
   # shellcheck disable=SC1090
   source "$DEPLOY_ENV_FILE"
   set +a
+  lock_official_aio_image_ref || return 1
 
   case "$DEPLOY_PROFILE" in
     local-data)

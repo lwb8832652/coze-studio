@@ -164,6 +164,12 @@ frontend_dockerfile=$CONTRACT_ROOT/frontend/Dockerfile
 sandbox_runner_dockerfile=$CONTRACT_ROOT/backend/Dockerfile.sandbox-runner
 nginx_conf=$CONTRACT_ROOT/deploy/dev/nginx/nginx.conf
 default_conf=$CONTRACT_ROOT/deploy/dev/nginx/default.conf
+compose_file=$CONTRACT_ROOT/deploy/dev/docker-compose.runner-2c4g.yml
+deploy_script=$CONTRACT_ROOT/deploy/dev/deploy.sh
+workflow_file=$CONTRACT_ROOT/.github/workflows/deploy-dev.yml
+aio_dockerfile=$CONTRACT_ROOT/deploy/sandbox-runner/Dockerfile.aio
+operations_runbook=$CONTRACT_ROOT/docs/superpowers/runbooks/sandbox-control-plane-operations.md
+local_runbook=$CONTRACT_ROOT/docs/superpowers/runbooks/local-debug-and-test.md
 
 [ -f "$backend_dockerfile" ] || fail 'backend Dockerfile is missing'
 [ -f "$backend_go_mod" ] || fail 'backend go.mod is missing'
@@ -171,6 +177,12 @@ default_conf=$CONTRACT_ROOT/deploy/dev/nginx/default.conf
 [ -f "$sandbox_runner_dockerfile" ] || fail 'sandbox runner Dockerfile is missing'
 [ -f "$nginx_conf" ] || fail 'deployment nginx.conf is missing'
 [ -f "$default_conf" ] || fail 'deployment default.conf is missing'
+[ -f "$compose_file" ] || fail 'runner compose file is missing'
+[ -f "$deploy_script" ] || fail 'dev deploy script is missing'
+[ -f "$workflow_file" ] || fail 'dev workflow is missing'
+[ -f "$operations_runbook" ] || fail 'sandbox operations runbook is missing'
+[ -f "$local_runbook" ] || fail 'local debug runbook is missing'
+[ ! -e "$aio_dockerfile" ] || fail 'official AIO must not have a derived Dockerfile'
 
 for dockerfile in "$backend_dockerfile" "$frontend_dockerfile" "$sandbox_runner_dockerfile"; do
   name=$(basename "$(dirname "$dockerfile")")
@@ -198,5 +210,21 @@ require_line "$frontend_dockerfile" '^EXPOSE[[:space:]]+80([[:space:]]|$)' 'fron
 assert_nginx_conf "$nginx_conf"
 assert_default_conf "$default_conf"
 assert_forbidden_config_content "$nginx_conf" "$default_conf"
+
+aio_image_count=$(grep -Eic -- '^[[:space:]]*image:[[:space:]]+ghcr\.io/agent-infra/sandbox' "$compose_file")
+[ "$aio_image_count" -eq 1 ] || fail 'Compose must declare exactly one official AIO image'
+require_line "$compose_file" '^[[:space:]]*image:[[:space:]]+ghcr\.io/agent-infra/sandbox:latest[[:space:]]*$' 'Compose must run the official AIO latest image directly'
+require_line "$deploy_script" 'ghcr\.io/agent-infra/sandbox:latest' 'deploy must pull the official AIO latest image'
+if grep -Eiq -- 'build-sandbox-aio|Dockerfile\.aio|coze-sandbox-aio:[[:space:]]*dev-|AIO_(IMAGE_)?(REVISION|DIGEST)|aio[_-]candidate|promot(e|ion)[^[:space:]]*aio' "$workflow_file" "$deploy_script"; then
+  fail 'official AIO must not be built, revision-pinned, promoted, or configured from a candidate image'
+fi
+if grep -Eiq -- 'ghcr\.io/agent-infra/sandbox@sha256:' "$compose_file" "$deploy_script"; then
+  fail 'official AIO image must remain unpinned'
+fi
+require_line "$operations_runbook" 'ghcr\.io/agent-infra/sandbox:latest' 'operations runbook must document the official latest AIO image'
+require_line "$operations_runbook" 'image ID.*(证据|evidence)' 'operations runbook must treat the resolved AIO image ID as evidence only'
+require_line "$operations_runbook" '逻辑路由.*不是.*(隔离|chroot)' 'operations runbook must state the logical workspace isolation boundary'
+require_line "$local_runbook" 'SANDBOX_HOST_SHELL_SESSION_ENABLED=true' 'local runbook must document the independent Host Shell gate'
+require_line "$local_runbook" '不启动本地 MySQL 容器' 'local runbook must forbid a local MySQL container for the runner profile'
 
 printf 'image contract: ok\n'

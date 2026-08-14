@@ -82,6 +82,27 @@ storage client。若页面显示需重启，请重启后端实例，让 bootstra
 `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；此模式的 HTTP gateway 只允许字面
 loopback IP，不接受 `localhost` 或非 loopback 地址。
 
+### Host Shell Core Session
+
+Host Shell 是独立的 Core Session debug adapter，不复用
+`APP_DEV_HOST_RUNTIME_ENABLED`。它只有在下列三个值精确匹配时才可用：
+
+```bash
+APP_ENV=debug
+SANDBOX_HOST_SHELL_SESSION_ENABLED=true
+SANDBOX_HOST_SHELL_GATEWAY_ADDR=127.0.0.1:8099
+```
+
+IPv6 只接受 `[::1]:8099`；不接受 `localhost`、`0.0.0.0`、公网地址、额外空白或其他
+端口。三门禁满足后，仍需在 `/system/sandbox` 为 `local_debug` Provider 配置两个
+Session feature，并显式开启 desired Host Shell。remote/Core 不可用时不会 fallback
+到 Host Shell，热关闭任一门禁会使后续操作 fail closed。
+
+Host Shell 逻辑路径仍是 `/mnt/user-data/{workspace,uploads,outputs}` 与只读
+`/mnt/skills`，本机物理目录由服务端按 space/user/thread 派生。该目录只是逻辑路由；
+进程直接以本机开发用户执行，没有容器、网络、credential、symlink 或恶意命令隔离，
+只允许可信本机 Debug。应用重启不会恢复或重放 running command，workspace 文件可保留。
+
 只有任务明确涉及 Agent Runtime 时，才额外启用 Eino ADK 相关变量；AppDev 页面
 调试不依赖这些变量。
 
@@ -101,6 +122,14 @@ loopback IP，不接受 `localhost` 或非 loopback 地址。
   不得包含 endpoint、凭据、用户、空间或执行 ID。
 - Provider 运维、密钥轮换、上线和回滚流程见
   `docs/superpowers/runbooks/sandbox-control-plane-operations.md`。
+
+`runner-2c4g` profile 直接拉取 `ghcr.io/agent-infra/sandbox:latest`，只在 Compose 私网
+暴露 raw `8080`。它不构建派生 AIO 镜像、不锁版本，也不启动本地 MySQL 容器；Runner
+继续使用 ignored env 中的 dev MySQL/Redis 配置。缺少这些配置时应明确 blocked，不能
+临时启动、清空或重建数据库。AIO image ID 只记录为本次测试证据，不参与 generation。
+
+Core Session 默认关闭，Phase 1 不切 Agent、Subagent、Plugin、MCP、AppDev 或
+Interactive 流量；Plugin 继续 one-shot。调试 AIO 失败时不得自动改用 Host Shell。
 
 ### MCP management/runtime
 

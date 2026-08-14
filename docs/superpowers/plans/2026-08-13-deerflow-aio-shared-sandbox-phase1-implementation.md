@@ -1474,6 +1474,10 @@ git commit -m "feat: add gated debug host shell sessions"
 
 **Files:**
 
+- Modify: `backend/cmd/sandbox-runner/main.go`
+- Create: `backend/cmd/sandbox-runner/main_test.go`
+- Create: `backend/internal/sandboxrunner/migration_preflight.go`
+- Create: `backend/internal/sandboxrunner/migration_preflight_test.go`
 - Modify: `deploy/dev/docker-compose.runner-2c4g.yml`
 - Modify: `deploy/dev/deploy.sh`
 - Modify: `deploy/dev/tests/compose_contract_test.sh`
@@ -1487,7 +1491,7 @@ git commit -m "feat: add gated debug host shell sessions"
 镜像、不锁 digest/version，也不要求 raw AIO JWT 或启动资源参数。AIO/Compose 生命周期
 唯一归 deploy；Runner 只监督 raw health、reserved sentinel 与 generation。
 
-- [ ] **Step 1: 写 Compose 和 image/workflow RED contracts**
+- [x] **Step 1: 写 Compose 和 image/workflow RED contracts**
 
 断言每个 deployment 恰好一个 `coze-sandbox-aio`，image 精确为 official latest。按
 Task 0/1 已证实方式启动；当前平台需要时保留 official `seccomp=unconfined` 与 ARM64
@@ -1504,10 +1508,11 @@ workflow 仍只构建仓库自有镜像，不增加 AIO build/promotion/revision
 deploy 可记录本次 official image ID/digest 作为证据，但它不是配置锁、readiness 或
 generation 来源。
 
-- [ ] **Step 2: 写 deploy/rollback RED contracts**
+- [x] **Step 2: 写 deploy/rollback RED contracts**
 
 - lifecycle 命令只在 deploy/Compose；pull/up AIO -> raw health -> up Runner；
-- migration preflight 只含 additive `20260813000100`，deploy 不 apply；
+- migration preflight 由候选 Runner 的 `migration-status` 在数据库只读事务中核验
+  additive `20260813000100` 已完整 applied，deploy 不 apply；
 - dev 使用现有 DB，不启动/清空/重建本地 DB，禁止 AutoMigrate/drop/truncate；
 - health 只有 raw 8080、Runner Core projection/sentinel generation；
 - rollback 先关闭 capability、恢复旧应用，保留 session table、scheduler columns、volume；
@@ -1515,7 +1520,7 @@ generation 来源。
 - latest 无版本锁；若无法选择节点缓存的旧 image，保持 Core disabled 并如实报告；
 - AIO 首启失败只让 Core unavailable，one-shot/server/web 正常，Runner 不尝试 restart。
 
-- [ ] **Step 3: 运行 RED contracts**
+- [x] **Step 3: 运行 RED contracts**
 
 ```bash
 bash deploy/dev/tests/compose_contract_test.sh
@@ -1524,14 +1529,18 @@ bash deploy/dev/tests/workflow_contract_test.sh
 bash deploy/dev/tests/deploy_test.sh
 ```
 
-- [ ] **Step 4: 最小更新 Compose、deploy 与 runbook**
+- [x] **Step 4: 最小更新 Compose、deploy 与 runbook**
 
 runbook 写清 official latest 直跑、未锁版本的复现/回滚限制、当次 image ID 证据；deploy
 拥有 lifecycle，Runner 仅监督；最终 workspace 层级与逻辑路由风险；Core enable/disable、
 generation、drain、volume 保留；dev secret 权限和 additive migration；HTTP 风险、
 Host Shell debug-only、Plugin/Agent/Interactive 未迁移。不添加中间代理或派生镜像。
 
-- [ ] **Step 5: 运行 GREEN contracts 与 Compose render**
+评审修复将迁移预检收敛为 Runner 启动前 CLI：DSN 只从受控 env 读取，目标版本不从
+argv 接收，查询在 `ReadOnly` transaction 内执行且只 Rollback。候选 Runner image 必须
+先 pull 并核对 revision；预检通过前不得启动 AIO 或更新任何 service。
+
+- [x] **Step 5: 运行 GREEN contracts 与 Compose render**
 
 ```bash
 bash deploy/dev/tests/compose_contract_test.sh
@@ -1544,13 +1553,13 @@ docker compose -f deploy/dev/docker-compose.runner-2c4g.yml config --quiet
 使用无真实秘密 fixture。若 official image 真实 health 与 Task 0/1 不一致，立即停止并报告
 脱敏日志，不通过派生镜像绕过。
 
-- [ ] **Step 6: 完成唯一一次 Task 11 主线审核并提交**
+- [x] **Step 6: 完成唯一一次 Task 11 主线审核并提交**
 
 综合审核只检查 official latest、deploy-only lifecycle、无公开端口/派生镜像、本地 DB
 禁止、默认关闭、additive rollback 和 secret 范围。修复后重跑全部合同，不发起第二轮审核。
 
 ```bash
-git add deploy/dev/docker-compose.runner-2c4g.yml deploy/dev/deploy.sh deploy/dev/tests/compose_contract_test.sh deploy/dev/tests/deploy_test.sh deploy/dev/tests/image_contract_test.sh docs/superpowers/runbooks/sandbox-control-plane-operations.md docs/superpowers/runbooks/local-debug-and-test.md
+git add backend/cmd/sandbox-runner/main.go backend/cmd/sandbox-runner/main_test.go backend/internal/sandboxrunner/migration_preflight.go backend/internal/sandboxrunner/migration_preflight_test.go deploy/dev/docker-compose.runner-2c4g.yml deploy/dev/deploy.sh deploy/dev/tests/compose_contract_test.sh deploy/dev/tests/deploy_test.sh deploy/dev/tests/image_contract_test.sh docs/superpowers/runbooks/sandbox-control-plane-operations.md docs/superpowers/runbooks/local-debug-and-test.md
 # 仅在真实修改时追加 .github/workflows/deploy-dev.yml
 git commit -m "feat: deploy official shared AIO runtime"
 ```

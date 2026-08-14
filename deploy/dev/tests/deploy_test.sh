@@ -44,6 +44,17 @@ assert_file_not_contains() {
   fi
 }
 
+assert_log_order() {
+  file=$1
+  first_pattern=$2
+  second_pattern=$3
+  message=$4
+  first_line=$(grep -En -- "$first_pattern" "$file" | head -n 1 | cut -d: -f1 || true)
+  second_line=$(grep -En -- "$second_pattern" "$file" | head -n 1 | cut -d: -f1 || true)
+  [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ] || \
+    fail "$message"
+}
+
 failure_record_for() {
   find "$1/deployments" -maxdepth 1 -name 'failed-*.env' -print -quit 2>/dev/null
 }
@@ -53,6 +64,7 @@ setup_transaction_case() {
   DEPLOYMENTS_DIR=$CASE_DIR/deployments
   COMMAND_LOG=$CASE_DIR/commands.log
   WAIT_COUNT_FILE=$CASE_DIR/wait-count
+  WAIT_ARGS_LOG=$CASE_DIR/wait-args.log
   SERVER_REPOSITORY=registry.example/coze-server
   WEB_REPOSITORY=registry.example/coze-web
   SERVER_IMAGE_REF=$SERVER_REPOSITORY:dev
@@ -75,6 +87,7 @@ setup_transaction_case() {
   MOCK_ROLLBACK_HEALTHY=0
   mkdir -p -- "$CASE_DIR"
   : > "$COMMAND_LOG"
+  : > "$WAIT_ARGS_LOG"
   printf '0\n' > "$WAIT_COUNT_FILE"
 
   container_image_id() {
@@ -109,6 +122,7 @@ setup_transaction_case() {
   }
 
   image_revision() {
+    printf 'revision %s\n' "$1" >> "$COMMAND_LOG"
     case "$1" in
       "$SERVER_IMAGE_REF") printf '%s\n' "$MOCK_SERVER_REVISION" ;;
       "$WEB_IMAGE_REF") printf '%s\n' "$MOCK_WEB_REVISION" ;;
@@ -148,6 +162,7 @@ setup_transaction_case() {
   }
 
   wait_for_health() {
+    printf '%s\n' "$*" >> "$WAIT_ARGS_LOG"
     count=$(<"$WAIT_COUNT_FILE")
     count=$((count + 1))
     printf '%s\n' "$count" > "$WAIT_COUNT_FILE"
@@ -161,6 +176,500 @@ setup_transaction_case() {
     return 0
   }
 }
+
+setup_runner_transaction_case() {
+  setup_transaction_case "$1"
+  RUNNER_SESSION_LOG=$CASE_DIR/runner-session.log
+  DEPLOY_PROFILE=runner-2c4g
+  SANDBOX_RUNNER_REPOSITORY=registry.example/coze-sandbox-runner
+  SANDBOX_RUNNER_IMAGE_REF=$SANDBOX_RUNNER_REPOSITORY:dev
+  SANDBOX_RUNTIME_REPOSITORY=registry.example/coze-sandbox-runtime
+  SANDBOX_RUNTIME_IMAGE_REF=$SANDBOX_RUNTIME_REPOSITORY:dev
+  SANDBOX_AIO_IMAGE_REF=ghcr.io/agent-infra/sandbox:latest
+  MOCK_OLD_RUNNER_ID=sha256:old-runner
+  MOCK_RUNNER_IMAGE_ID=sha256:candidate-runner
+  MOCK_RUNNING_RUNNER_ID=$MOCK_RUNNER_IMAGE_ID
+  MOCK_AIO_IMAGE_ID=sha256:official-aio-latest
+  MOCK_AIO_RAW_FAILURE=0
+  MOCK_MIGRATION_STATUS_FAILURE=0
+  MOCK_RUNNER_REVISION=$REV_A
+  MOCK_RUNTIME_REVISION=$REV_A
+  SANDBOX_AIO_STATUS=not-managed
+  SANDBOX_AIO_AVAILABLE=false
+  : > "$RUNNER_SESSION_LOG"
+
+  compose_cmd() {
+    printf 'compose SERVER_IMAGE_TAG=%s WEB_IMAGE_TAG=%s' \
+      "${SERVER_IMAGE_TAG-}" "${WEB_IMAGE_TAG-}" >> "$COMMAND_LOG"
+    printf ' %s' "$@" >> "$COMMAND_LOG"
+    printf '\n' >> "$COMMAND_LOG"
+    case " $* " in
+      *' coze-sandbox-runner '*)
+        printf 'session=%s args=' "${SANDBOX_RUNNER_SESSION_ENABLED-<unset>}" >> "$RUNNER_SESSION_LOG"
+        printf '%s ' "$@" >> "$RUNNER_SESSION_LOG"
+        printf '\n' >> "$RUNNER_SESSION_LOG"
+        ;;
+    esac
+    if [ "$*" = 'run --rm --no-deps coze-sandbox-runner migration-status' ]; then
+      [ "$MOCK_MIGRATION_STATUS_FAILURE" -eq 0 ]
+      return
+    fi
+    [ "$MOCK_COMPOSE_FAILURE" -eq 0 ]
+  }
+
+  container_image_id() {
+    restored=0
+    updated=0
+    if grep -Eq '^compose SERVER_IMAGE_TAG=rollback-' "$COMMAND_LOG"; then
+      restored=1
+    elif grep -Eq '^compose SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev up ' "$COMMAND_LOG"; then
+      updated=1
+    fi
+    case "$1" in
+      coze-server)
+        if [ "$restored" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RESTORED_SERVER_ID"
+        elif [ "$updated" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RUNNING_SERVER_ID"
+        else
+          printf '%s\n' "$MOCK_OLD_SERVER_ID"
+        fi
+        ;;
+      coze-web)
+        if [ "$restored" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RESTORED_WEB_ID"
+        elif [ "$updated" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RUNNING_WEB_ID"
+        else
+          printf '%s\n' "$MOCK_OLD_WEB_ID"
+        fi
+        ;;
+      coze-sandbox-runner)
+        if [ "$restored" -eq 1 ]; then
+          printf '%s\n' "$MOCK_OLD_RUNNER_ID"
+        elif [ "$updated" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RUNNING_RUNNER_ID"
+        else
+          printf '%s\n' "$MOCK_OLD_RUNNER_ID"
+        fi
+        ;;
+      coze-sandbox-aio) printf '%s\n' "$MOCK_AIO_IMAGE_ID" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  image_revision() {
+    printf 'revision %s\n' "$1" >> "$COMMAND_LOG"
+    case "$1" in
+      "$SERVER_IMAGE_REF") printf '%s\n' "$MOCK_SERVER_REVISION" ;;
+      "$WEB_IMAGE_REF") printf '%s\n' "$MOCK_WEB_REVISION" ;;
+      "$SANDBOX_RUNNER_IMAGE_REF") printf '%s\n' "$MOCK_RUNNER_REVISION" ;;
+      "$SANDBOX_RUNTIME_IMAGE_REF") printf '%s\n' "$MOCK_RUNTIME_REVISION" ;;
+      "$MOCK_OLD_SERVER_ID") printf '%s\n' "$MOCK_OLD_SERVER_REVISION" ;;
+      "$MOCK_OLD_WEB_ID") printf '%s\n' "$MOCK_OLD_WEB_REVISION" ;;
+      "$MOCK_OLD_RUNNER_ID") printf '%s\n' "$REV_C" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  image_id() {
+    case "$1" in
+      "$SERVER_IMAGE_REF") printf '%s\n' "$MOCK_SERVER_IMAGE_ID" ;;
+      "$WEB_IMAGE_REF") printf '%s\n' "$MOCK_WEB_IMAGE_ID" ;;
+      "$SANDBOX_RUNNER_IMAGE_REF") printf '%s\n' "$MOCK_RUNNER_IMAGE_ID" ;;
+      "$SANDBOX_AIO_IMAGE_REF") printf '%s\n' "$MOCK_AIO_IMAGE_ID" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  runtime_image_digest_ref() {
+    [ "$1" = "$SANDBOX_RUNTIME_IMAGE_REF" ] || return 1
+    [ "$2" = "$SANDBOX_RUNTIME_REPOSITORY" ] || return 1
+    printf '%s@sha256:%064d\n' "$SANDBOX_RUNTIME_REPOSITORY" 1
+  }
+
+  recorded_runtime_image_ref() {
+    printf '%s@sha256:%064d\n' "$SANDBOX_RUNTIME_REPOSITORY" 2
+  }
+
+  wait_for_aio_raw_health() {
+    printf 'raw-aio-health\n' >> "$COMMAND_LOG"
+    [ "$MOCK_AIO_RAW_FAILURE" -eq 0 ]
+  }
+}
+
+test_candidate_runner_session_gate_tracks_aio_availability() (
+  failed_case=$(mktemp -d "$TEST_ROOT/runner-session-aio-failed.XXXXXX")
+  setup_runner_transaction_case "$failed_case"
+  SANDBOX_RUNNER_SESSION_ENABLED=true
+  MOCK_AIO_RAW_FAILURE=1
+
+  deploy_transaction "$REV_A" >"$failed_case/output.log" 2>&1 || \
+    fail 'AIO failure blocked the fail-closed application deployment'
+  assert_file_contains "$RUNNER_SESSION_LOG" \
+    '^session=false args=up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web ' \
+    'AIO failure did not force the candidate Runner Core gate off'
+
+  healthy_case=$(mktemp -d "$TEST_ROOT/runner-session-aio-healthy.XXXXXX")
+  setup_runner_transaction_case "$healthy_case"
+  SANDBOX_RUNNER_SESSION_ENABLED=true
+
+  deploy_transaction "$REV_A" >"$healthy_case/output.log" 2>&1 || \
+    fail 'healthy AIO rejected an explicitly enabled candidate Runner'
+  assert_file_contains "$RUNNER_SESSION_LOG" \
+    '^session=true args=up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web ' \
+    'healthy AIO did not preserve the explicit Runner Core gate'
+
+  default_case=$(mktemp -d "$TEST_ROOT/runner-session-default.XXXXXX")
+  setup_runner_transaction_case "$default_case"
+  unset SANDBOX_RUNNER_SESSION_ENABLED
+
+  deploy_transaction "$REV_A" >"$default_case/output.log" 2>&1 || \
+    fail 'healthy AIO rejected the default-disabled candidate Runner'
+  assert_file_contains "$RUNNER_SESSION_LOG" \
+    '^session=false args=up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web ' \
+    'candidate Runner Core gate did not default to false'
+)
+
+test_official_aio_ref_is_exact_and_readonly_after_environment_load() (
+  (
+    SANDBOX_AIO_IMAGE_REF=ghcr.io/agent-infra/sandbox:latest
+    lock_official_aio_image_ref >/dev/null 2>&1 || \
+      fail 'the exact official AIO ref could not be locked'
+    declaration=$(declare -p SANDBOX_AIO_IMAGE_REF)
+    [[ "$declaration" == 'declare -r'* ]] || \
+      fail 'the official AIO ref was not made readonly'
+    [ "$SANDBOX_AIO_IMAGE_REF" = ghcr.io/agent-infra/sandbox:latest ] || \
+      fail 'locking changed the official latest AIO ref'
+  )
+
+  case_dir=$(mktemp -d "$TEST_ROOT/aio-ref-override.XXXXXX")
+  write_direct_case_files "$case_dir"
+  printf 'SANDBOX_AIO_IMAGE_REF=registry.invalid/private-aio:latest\n' >> "$case_dir/deploy.env"
+  : > "$case_dir/docker-compose.yml"
+  marker=$case_dir/docker-called
+
+  if DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
+    DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
+    DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1; then
+    fail 'deployment accepted an override of the official latest AIO ref'
+  fi
+  [ ! -e "$marker" ] || fail 'AIO ref override reached Docker'
+  assert_file_contains "$case_dir/output.log" 'official AIO image ref cannot be overridden' \
+    'AIO ref override did not fail closed with a safe error'
+  assert_file_not_contains "$case_dir/output.log" 'registry\.invalid|private-aio' \
+    'AIO ref override leaked the untrusted image ref'
+)
+
+test_runner_deployment_orders_official_aio_before_runner_and_records_evidence() (
+  case_dir=$(mktemp -d "$TEST_ROOT/runner-aio-order.XXXXXX")
+  setup_runner_transaction_case "$case_dir"
+
+  deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1 || \
+    fail 'runner deployment with healthy official AIO failed'
+
+  assert_log_order "$COMMAND_LOG" \
+    '^docker pull ghcr\.io/agent-infra/sandbox:latest$' \
+    '^compose .* up -d --no-build coze-sandbox-aio$' \
+    'official AIO was started before its latest image was pulled'
+  assert_log_order "$COMMAND_LOG" \
+    '^compose .* up -d --no-build coze-sandbox-aio$' \
+    '^raw-aio-health$' \
+    'official AIO raw health ran before the AIO service started'
+  assert_log_order "$COMMAND_LOG" \
+    '^raw-aio-health$' \
+    '^compose SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web$' \
+    'Runner started before official AIO raw health completed'
+
+  current=$DEPLOYMENTS_DIR/current.env
+  assert_file_contains "$current" '^SANDBOX_AIO_IMAGE_REF=ghcr\.io/agent-infra/sandbox:latest$' \
+    'deployment evidence lost the official latest AIO ref'
+  assert_file_contains "$current" '^SANDBOX_AIO_IMAGE_ID=sha256:official-aio-latest$' \
+    'deployment evidence lost the observed official AIO image ID'
+  assert_file_contains "$current" '^SANDBOX_AIO_STATUS=healthy$' \
+    'deployment evidence did not distinguish AIO health from image identity'
+)
+
+test_aio_first_start_failure_keeps_application_and_one_shot_available() (
+  case_dir=$(mktemp -d "$TEST_ROOT/runner-aio-failure.XXXXXX")
+  setup_runner_transaction_case "$case_dir"
+  MOCK_AIO_RAW_FAILURE=1
+
+  deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1 || \
+    fail 'official AIO first-start failure blocked the application deployment'
+
+  assert_file_contains "$COMMAND_LOG" \
+    '^compose SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web$' \
+    'AIO failure blocked server/web/one-shot Runner startup'
+  [ "$(grep -Ec '^compose .* up -d --no-build coze-sandbox-aio$' "$COMMAND_LOG")" -eq 1 ] || \
+    fail 'AIO first-start failure triggered a restart loop'
+  assert_file_contains "$case_dir/output.log" 'official AIO is unavailable; Core remains disabled' \
+    'AIO failure was not reported as a fail-closed Core degradation'
+  assert_file_contains "$DEPLOYMENTS_DIR/current.env" '^SANDBOX_AIO_STATUS=unavailable$' \
+    'successful application deployment hid the unavailable AIO state'
+)
+
+test_aio_raw_health_uses_only_private_8080_endpoints() (
+  case_dir=$(mktemp -d "$TEST_ROOT/aio-raw-health.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+
+  container_private_ipv4() {
+    [ "$1" = coze-sandbox-aio ] || return 1
+    printf '172.20.0.8\n'
+  }
+  curl() {
+    output_file=
+    url=${!#}
+    {
+      printf 'curl'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --output)
+          shift
+          output_file=$1
+          ;;
+      esac
+      shift
+    done
+    case "$url" in
+      */v1/ping) response_body=pong ;;
+      */v1/sandbox) response_body='{"home_dir":"/home/gem","version":"1.11.0","detail":{"system":{},"runtime":{},"utils":[]}}' ;;
+      *) return 1 ;;
+    esac
+    printf '%s' "$response_body" > "$output_file"
+    printf '200'
+  }
+
+  aio_raw_health_checks_pass || fail 'private official AIO raw health was rejected'
+  assert_file_contains "$command_log" \
+    'http://172\.20\.0\.8:8080/v1/ping$' \
+    'AIO health did not probe raw /v1/ping over the private 8080 origin'
+  assert_file_contains "$command_log" \
+    'http://172\.20\.0\.8:8080/v1/sandbox$' \
+    'AIO health did not probe raw /v1/sandbox over the private 8080 origin'
+  assert_file_not_contains "$command_log" '8090|sessiond|https?://(127\.0\.0\.1|localhost)' \
+    'AIO health used a legacy/internal or loopback endpoint'
+)
+
+test_aio_raw_health_requires_exact_bounded_response_contract() (
+  case_dir=$(mktemp -d "$TEST_ROOT/aio-raw-contract.XXXXXX")
+  command_log=$case_dir/commands.log
+  : > "$command_log"
+  TMPDIR=$case_dir
+  PING_HTTP_STATUS=200
+  PING_BODY=pong
+  SANDBOX_HTTP_STATUS=200
+  SANDBOX_BODY='{"home_dir":"/home/gem","version":"1.11.0","detail":{"system":{},"runtime":{},"utils":[]}}'
+
+  container_private_ipv4() {
+    [ "$1" = coze-sandbox-aio ] || return 1
+    printf '172.20.0.8\n'
+  }
+  curl() {
+    output_file=
+    url=${!#}
+    {
+      printf 'curl'
+      printf ' %s' "$@"
+      printf '\n'
+    } >> "$command_log"
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --output)
+          shift
+          output_file=$1
+          ;;
+      esac
+      shift
+    done
+    case "$url" in
+      */v1/ping)
+        response_status=$PING_HTTP_STATUS
+        response_body=$PING_BODY
+        ;;
+      */v1/sandbox)
+        response_status=$SANDBOX_HTTP_STATUS
+        response_body=$SANDBOX_BODY
+        ;;
+      *) return 1 ;;
+    esac
+    if [ -n "$output_file" ]; then
+      printf '%s' "$response_body" > "$output_file"
+    fi
+    printf '%s' "$response_status"
+  }
+
+  aio_raw_health_checks_pass >"$case_dir/valid.log" 2>&1 || \
+    fail 'exact bounded official AIO responses were rejected'
+
+  PING_HTTP_STATUS=302
+  PING_BODY='redirect-secret-body'
+  if aio_raw_health_checks_pass >"$case_dir/redirect.log" 2>&1; then
+    fail 'AIO raw health accepted a redirect response'
+  fi
+  assert_file_not_contains "$case_dir/redirect.log" 'redirect-secret-body' \
+    'AIO redirect body escaped into deployment output'
+
+  PING_HTTP_STATUS=200
+  PING_BODY=$'pong\n'
+  if aio_raw_health_checks_pass >"$case_dir/ping-newline.log" 2>&1; then
+    fail 'AIO raw health accepted pong with a trailing newline'
+  fi
+
+  PING_BODY=pong
+  SANDBOX_BODY='{"home_dir":"/home/gem","version":"1.11.0"}'
+  if aio_raw_health_checks_pass >"$case_dir/malformed-sandbox.log" 2>&1; then
+    fail 'AIO raw health accepted a sandbox response without detail context'
+  fi
+
+  SANDBOX_BODY='{"home_dir":"/home/gem","version":"1.11.0","detail":{"system":{},"runtime":{},"utils":[]},"secret":"bounded-secret-marker'
+  SANDBOX_BODY+=$(printf '%05000d' 0)
+  SANDBOX_BODY+='"}'
+  if aio_raw_health_checks_pass >"$case_dir/oversized.log" 2>&1; then
+    fail 'AIO raw health accepted an oversized sandbox response'
+  fi
+  assert_file_not_contains "$case_dir/oversized.log" 'bounded-secret-marker' \
+    'oversized AIO body escaped into deployment output'
+
+  assert_file_contains "$command_log" '--max-redirs 0' \
+    'AIO raw health did not explicitly disable redirects'
+  assert_file_contains "$command_log" '--max-filesize 4096' \
+    'AIO raw health did not bound response bytes at curl'
+)
+
+test_runner_core_projection_requires_consistent_generation() (
+  runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"disabled","aio_runtime_generation":0}' false || \
+    fail 'disabled Core projection with generation zero was rejected'
+  runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"ready","aio_runtime_generation":7}' true || \
+    fail 'ready Core projection with a positive generation was rejected'
+  if runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"ready","aio_runtime_generation":7}' false; then
+    fail 'ready Core projection was accepted while raw AIO was unavailable'
+  fi
+  if runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"disabled","aio_runtime_generation":7}' true; then
+    fail 'disabled Core projection was accepted with a nonzero generation'
+  fi
+  if runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"unknown","aio_runtime_generation":0}' true; then
+    fail 'unknown Core projection was accepted as healthy'
+  fi
+)
+
+test_runner_core_projection_allows_legacy_only_during_disabled_rollback() (
+  legacy='{"schema":"coze.sandbox.runner_runtime_status.v1","applied_configuration_version":1,"queued":0,"running":0,"used_weight":0,"total_weight":2,"memory_reserve_state":"available"}'
+
+  if runner_core_projection_matches "$legacy" false; then
+    fail 'candidate health accepted a legacy Runner projection without Core fields'
+  fi
+  runner_core_projection_matches "$legacy" false true || \
+    fail 'disabled rollback rejected the legacy pre-Task11 Runner projection'
+  runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"disabled","aio_runtime_generation":0}' true true || \
+    fail 'disabled rollback rejected a current Runner disabled/zero projection'
+  if runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"ready","aio_runtime_generation":7}' true true; then
+    fail 'rollback accepted a current Runner that was not disabled'
+  fi
+  if runner_core_projection_matches \
+    '{"schema":"coze.sandbox.runner_runtime_status.v1","core_state":"disabled"}' false true; then
+    fail 'rollback treated a partially upgraded Runner projection as legacy'
+  fi
+)
+
+test_runner_rollback_disables_core_first_and_preserves_aio_state() (
+  case_dir=$(mktemp -d "$TEST_ROOT/runner-safe-rollback.XXXXXX")
+  setup_runner_transaction_case "$case_dir"
+  MOCK_HEALTH_FAILURE=1
+  MOCK_ROLLBACK_HEALTHY=1
+
+  if deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'failed runner candidate unexpectedly succeeded after rollback'
+  fi
+
+  assert_log_order "$COMMAND_LOG" \
+    '^compose SERVER_IMAGE_TAG= WEB_IMAGE_TAG= stop coze-sandbox-runner$' \
+    '^compose SERVER_IMAGE_TAG=rollback-.* WEB_IMAGE_TAG=rollback-.* up -d --no-build --remove-orphans coze-server coze-sandbox-runner coze-web$' \
+    'rollback restored application images before disabling Core capability'
+  assert_file_not_contains "$COMMAND_LOG" \
+    'down([[:space:]]|$)|[[:space:]]-v([[:space:]]|$)|volume rm|/mnt/user-data|SERVER_IMAGE_TAG=rollback-.*coze-sandbox-aio' \
+    'rollback destroyed persistent state or tried to replace the unpinned AIO image'
+  assert_file_contains "$case_dir/output.log" \
+    'official latest AIO cannot be rolled back exactly; Core remains disabled' \
+    'rollback hid the exact-rollback limitation of official latest'
+  expected_wait_args=$(printf '%s\n%s true' "$REV_A" "$REV_C")
+  actual_wait_args=$(<"$WAIT_ARGS_LOG")
+  [ "$actual_wait_args" = "$expected_wait_args" ] || \
+    fail "candidate/rollback health used the wrong legacy compatibility scope: $actual_wait_args"
+)
+
+test_migration_preflight_is_exact_and_read_only() (
+  case_dir=$(mktemp -d "$TEST_ROOT/migration-preflight.XXXXXX")
+  setup_runner_transaction_case "$case_dir"
+  MYSQL_DSN='sentinel-migration-dsn-secret'
+
+  declare -F preflight_additive_migration >/dev/null || \
+    fail 'deploy is missing the additive migration preflight'
+  preflight_additive_migration >"$case_dir/output.log" 2>&1 || \
+    fail 'additive migration preflight rejected the supported migration'
+  assert_file_contains "$COMMAND_LOG" \
+    '^compose SERVER_IMAGE_TAG= WEB_IMAGE_TAG= run --rm --no-deps coze-sandbox-runner migration-status$' \
+    'migration preflight did not invoke the candidate Runner read-only status CLI'
+  assert_file_contains "$RUNNER_SESSION_LOG" \
+    '^session=false args=run --rm --no-deps coze-sandbox-runner migration-status ' \
+    'migration preflight did not force Core off in its one-shot Runner'
+  assert_file_contains "$case_dir/output.log" '20260813000100' \
+    'migration preflight did not identify the one required additive migration'
+  assert_file_not_contains "$COMMAND_LOG" '20260813000100|sentinel-migration-dsn-secret|MYSQL_DSN' \
+    'migration preflight put the migration ID or DSN in argv'
+  assert_file_not_contains "$case_dir/output.log" 'sentinel-migration-dsn-secret' \
+    'migration preflight leaked its dev database DSN'
+  assert_file_not_contains "$DEPLOY_SCRIPT" \
+    'migrate[[:space:]]+apply|AutoMigrate|DROP[[:space:]]+(TABLE|DATABASE)|TRUNCATE[[:space:]]+TABLE|docker[[:space:]]+volume[[:space:]]+rm|compose_cmd[[:space:]]+down' \
+    'deploy contains migration apply, destructive database, or destructive volume lifecycle'
+)
+
+test_migration_preflight_uses_validated_candidate_and_blocks_all_up_on_failure() (
+  success_case=$(mktemp -d "$TEST_ROOT/migration-order.XXXXXX")
+  setup_runner_transaction_case "$success_case"
+
+  deploy_transaction "$REV_A" >"$success_case/output.log" 2>&1 || \
+    fail 'deployment with an applied migration unexpectedly failed'
+  assert_log_order "$COMMAND_LOG" \
+    '^revision registry\.example/coze-sandbox-runner:dev$' \
+    '^compose SERVER_IMAGE_TAG= WEB_IMAGE_TAG= run --rm --no-deps coze-sandbox-runner migration-status$' \
+    'migration preflight ran before candidate Runner revision validation'
+  assert_log_order "$COMMAND_LOG" \
+    '^compose SERVER_IMAGE_TAG= WEB_IMAGE_TAG= run --rm --no-deps coze-sandbox-runner migration-status$' \
+    '^docker pull ghcr\.io/agent-infra/sandbox:latest$' \
+    'AIO pull/up began before the migration status preflight passed'
+
+  failure_case=$(mktemp -d "$TEST_ROOT/migration-failure.XXXXXX")
+  setup_runner_transaction_case "$failure_case"
+  MOCK_MIGRATION_STATUS_FAILURE=1
+
+  if deploy_transaction "$REV_A" >"$failure_case/output.log" 2>&1; then
+    fail 'deployment succeeded after migration status verification failed'
+  fi
+  assert_file_contains "$COMMAND_LOG" \
+    '^compose SERVER_IMAGE_TAG= WEB_IMAGE_TAG= run --rm --no-deps coze-sandbox-runner migration-status$' \
+    'migration failure path skipped the read-only Runner CLI'
+  assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
+    'migration status failure reached an AIO or application compose up'
+  assert_file_not_contains "$COMMAND_LOG" '^docker pull ghcr\.io/agent-infra/sandbox:latest$' \
+    'migration status failure pulled official AIO before blocking deployment'
+  assert_file_contains "$failure_case/output.log" 'required additive migration is not applied' \
+    'migration status failure was not reported with a safe reason'
+  assert_file_not_contains "$failure_case/output.log" 'MYSQL_DSN|@tcp|sentinel' \
+    'migration status failure leaked database connection details'
+)
 
 test_mismatched_candidate_revisions_stop_before_up() (
   case_dir=$(mktemp -d "$TEST_ROOT/mismatch.XXXXXX")
@@ -860,6 +1369,17 @@ run_test() {
   printf 'ok %d - %s\n' "$passed" "$name"
 }
 
+run_test 'official AIO starts before Runner and records evidence' test_runner_deployment_orders_official_aio_before_runner_and_records_evidence
+run_test 'candidate Runner gate follows AIO availability' test_candidate_runner_session_gate_tracks_aio_availability
+run_test 'official AIO ref is exact and readonly' test_official_aio_ref_is_exact_and_readonly_after_environment_load
+run_test 'official AIO failure preserves application and one-shot' test_aio_first_start_failure_keeps_application_and_one_shot_available
+run_test 'official AIO health uses private raw 8080 only' test_aio_raw_health_uses_only_private_8080_endpoints
+run_test 'official AIO health requires exact bounded responses' test_aio_raw_health_requires_exact_bounded_response_contract
+run_test 'Runner Core projection fences generation' test_runner_core_projection_requires_consistent_generation
+run_test 'Runner legacy projection is rollback-only' test_runner_core_projection_allows_legacy_only_during_disabled_rollback
+run_test 'Runner rollback disables Core and preserves AIO state' test_runner_rollback_disables_core_first_and_preserves_aio_state
+run_test 'migration preflight is exact and read-only' test_migration_preflight_is_exact_and_read_only
+run_test 'migration preflight uses candidate Runner and blocks service up' test_migration_preflight_uses_validated_candidate_and_blocks_all_up_on_failure
 run_test 'candidate revisions must match' test_mismatched_candidate_revisions_stop_before_up
 run_test 'requested revision must match' test_requested_revision_mismatch_stops_before_up
 run_test 'candidate revision labels must be full SHA values' test_invalid_candidate_revision_stops_before_up

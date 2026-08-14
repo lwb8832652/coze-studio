@@ -288,11 +288,50 @@ require_text "$custom_web_config" 'published: "18888"' 'WEB_PORT must override t
 runner_source=$(<"$RUNNER_COMPOSE_FILE")
 runner_config=$(render_runner_config)
 runner_services=$(printf '%s\n' "$runner_source" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
-require_exact_text "$runner_services" $'nsqd\ncoze-server\ncoze-sandbox-runner\ncoze-web' 'runner-2c4g must run only nsqd, server, sandbox runner, and web'
+require_exact_text "$runner_services" $'nsqd\ncoze-server\ncoze-sandbox-aio\ncoze-sandbox-runner\ncoze-web' 'runner-2c4g must run exactly one official AIO alongside nsqd, server, sandbox runner, and web'
 if printf '%s\n' "$runner_source" | grep -Eiq '^  (oceanbase|mysql|redis|elasticsearch|minio|object-storage):'; then
   fail 'runner-2c4g must not start local data service containers'
 fi
+runner_aio_source=$(service_block "$runner_source" coze-sandbox-aio)
+runner_aio_config=$(service_block "$runner_config" coze-sandbox-aio)
 runner_config_block=$(service_block "$runner_config" coze-sandbox-runner)
+
+require_text "$runner_aio_config" '^    image: ghcr\.io/agent-infra/sandbox:latest$' 'AIO must run the official latest image directly'
+require_text "$runner_aio_config" '^      OPENSSL_armcap: "0"$' 'AIO must retain the verified ARM64 OpenSSL compatibility setting'
+require_text "$runner_aio_config" '^      WORKSPACE: /mnt/user-data$' 'AIO must use the persistent user-data root as its workspace'
+runner_aio_expose=$(printf '%s\n' "$runner_aio_config" | awk '
+  $0 == "    expose:" {in_expose=1; next}
+  in_expose && /^    [^[:space:]]/ {exit}
+  in_expose && /^      - / {sub(/^      - /, ""); gsub(/^"|"$/, ""); print}
+')
+require_exact_text "$runner_aio_expose" '8080' 'AIO must expose only raw port 8080 inside the Compose network'
+if printf '%s\n' "$runner_aio_config" | grep -Eq -- '^    ports:$'; then
+  fail 'AIO must not publish a host port'
+fi
+if printf '%s\n' "$runner_aio_source" | grep -Eq -- '^    (command|entrypoint|privileged|network_mode|mem_limit|cpus|pids_limit):'; then
+  fail 'AIO must use the official default startup without host networking, privilege, or resource overrides'
+fi
+if printf '%s\n' "$runner_aio_source" | grep -Eiq -- '(JWT|DISABLE_|docker\.sock)'; then
+  fail 'AIO must not require JWT, DISABLE flags, or a Docker socket'
+fi
+if printf '%s\n' "$runner_source" | grep -Eq -- '8090'; then
+  fail 'runner-2c4g must not retain the retired AIO port 8090'
+fi
+require_text "$runner_aio_config" '^      - seccomp=unconfined$' 'AIO must retain the verified seccomp compatibility setting'
+require_text "$runner_aio_config" '^      - type: volume$' 'AIO persistent paths must use named volumes'
+require_text "$runner_aio_config" '^        source: sandbox-aio-user-data$' 'AIO user data must use the sandbox-aio-user-data volume'
+require_text "$runner_aio_config" '^        target: /mnt/user-data$' 'AIO user data must mount at /mnt/user-data'
+require_text "$runner_aio_config" '^        source: sandbox-aio-skills$' 'AIO skills must use the sandbox-aio-skills volume'
+require_text "$runner_aio_config" '^        target: /mnt/skills$' 'AIO skills must mount at /mnt/skills'
+skills_mount=$(printf '%s\n' "$runner_aio_config" | awk '
+  $0 == "        source: sandbox-aio-skills" {in_skills=1}
+  in_skills {print}
+  in_skills && $0 == "        read_only: true" {exit}
+')
+require_text "$skills_mount" '^        source: sandbox-aio-skills$' 'AIO skills mount must be present'
+require_text "$skills_mount" '^        target: /mnt/skills$' 'AIO skills volume must target /mnt/skills'
+require_text "$skills_mount" '^        read_only: true$' 'AIO skills mount must be read-only'
+
 require_text "$runner_config_block" 'image: registry\.example\.aliyuncs\.com/example/coze-sandbox-runner:dev' 'runner service must use the sandbox runner image'
 require_text "$runner_config_block" '^    mem_limit: "201326592"$' 'runner memory must be limited to 192 MiB'
 require_text "$runner_config_block" '^    cpus: 0\.2$' 'runner CPU must be limited to 0.20'
@@ -305,6 +344,19 @@ if printf '%s\n' "$runner_source" | grep -Fq '/var/run/docker.sock'; then
 fi
 require_text "$runner_config_block" 'SANDBOX_RUNNER_ROOTLESS_ENDPOINT: unix:///app/runtime/docker\.sock' 'runner must address its dedicated rootless socket'
 require_text "$runner_config_block" 'SANDBOX_RUNNER_EXECUTION_IMAGE: registry\.example\.aliyuncs\.com/example/coze-sandbox-runtime@sha256:' 'runner must receive an immutable execution runtime image digest'
+require_text "$runner_source" '^      SANDBOX_RUNNER_SESSION_ENABLED: "\$\{SANDBOX_RUNNER_SESSION_ENABLED:-false\}"$' 'runner Session backend must default closed while allowing deploy to opt in explicitly'
+require_text "$runner_config_block" '^      SANDBOX_RUNNER_SESSION_ENABLED: "false"$' 'runner Core sessions must default to disabled'
+require_text "$runner_config_block" '^      SANDBOX_RUNNER_AIO_UPSTREAM_URL: http://coze-sandbox-aio:8080$' 'runner must supervise AIO through its private service URL'
+if printf '%s\n' "$runner_source" | grep -Eq -- 'SANDBOX_HOST_SHELL_SESSION_ENABLED:[[:space:]]*"?true"?'; then
+  fail 'remote deployment must not enable debug Host Shell sessions'
+fi
 require_text "$runner_config_block" 'https://127\.0\.0\.1:9443/v1/health' 'runner healthcheck must verify the private TLS endpoint'
+
+runner_volumes=$(printf '%s\n' "$runner_config" | awk '
+  /^volumes:$/ {in_volumes=1; next}
+  in_volumes && /^[^[:space:]]/ {exit}
+  in_volumes && /^  [^[:space:]]/ {sub(/^  /, ""); sub(/:$/, ""); print}
+')
+require_exact_text "$runner_volumes" $'nsq-data\nsandbox-aio-skills\nsandbox-aio-user-data' 'runner-2c4g must persist only NSQ, AIO skills, and AIO user data as named volumes'
 
 printf 'compose contract: ok\n'
