@@ -18,31 +18,34 @@ const (
 	sessionRuntimeReasonRecoveryPending       = "SESSION_RECOVERY_PENDING"
 	sessionRuntimeReasonProjectionUnavailable = "SESSION_RUNTIME_STATUS_UNAVAILABLE"
 	sessionRuntimeReasonBackendDisabled       = "SESSION_BACKEND_DISABLED"
+	sessionRuntimeReasonMemoryBelowWatermark  = "CORE_MEMORY_BELOW_WATERMARK"
+	sessionRuntimeReasonMemoryReserveUnknown  = "CORE_MEMORY_RESERVE_UNKNOWN"
 )
 
 // SessionRuntimeStatusProjection is an aggregate-only private Runner wire
 // contract. Transport encryption is intentionally absent: only the caller's
 // validated endpoint policy can state whether this particular hop used TLS.
 type SessionRuntimeStatusProjection struct {
-	Schema               string `json:"schema"`
-	Available            bool   `json:"available"`
-	AppliedConfigVersion uint64 `json:"applied_config_version"`
-	RuntimeGeneration    uint64 `json:"runtime_generation"`
-	CoreEnabled          bool   `json:"core_enabled"`
-	InteractiveEnabled   bool   `json:"interactive_enabled"`
-	HostShellEnabled     bool   `json:"host_shell_enabled"`
-	HostShellAvailable   bool   `json:"host_shell_available"`
-	RawAIOReady          bool   `json:"raw_aio_ready"`
-	GenerationState      string `json:"generation_state"`
-	QueueDepth           int    `json:"queue_depth"`
-	Running              int    `json:"running"`
-	UsedWeight           int    `json:"used_weight"`
-	TotalWeight          int    `json:"total_weight"`
-	ActiveSessions       int    `json:"active_sessions"`
-	IdleSessions         int    `json:"idle_sessions"`
-	ActiveShells         int    `json:"active_shells"`
-	IdleShells           int    `json:"idle_shells"`
-	ReasonCode           string `json:"reason_code,omitempty"`
+	Schema                 string `json:"schema"`
+	Available              bool   `json:"available"`
+	AppliedConfigVersion   uint64 `json:"applied_config_version"`
+	RuntimeGeneration      uint64 `json:"runtime_generation"`
+	CoreEnabled            bool   `json:"core_enabled"`
+	InteractiveEnabled     bool   `json:"interactive_enabled"`
+	HostShellEnabled       bool   `json:"host_shell_enabled"`
+	HostShellAvailable     bool   `json:"host_shell_available"`
+	CoreMemoryReserveState string `json:"core_memory_reserve_state"`
+	RawAIOReady            bool   `json:"raw_aio_ready"`
+	GenerationState        string `json:"generation_state"`
+	QueueDepth             int    `json:"queue_depth"`
+	Running                int    `json:"running"`
+	UsedWeight             int    `json:"used_weight"`
+	TotalWeight            int    `json:"total_weight"`
+	ActiveSessions         int    `json:"active_sessions"`
+	IdleSessions           int    `json:"idle_sessions"`
+	ActiveShells           int    `json:"active_shells"`
+	IdleShells             int    `json:"idle_shells"`
+	ReasonCode             string `json:"reason_code,omitempty"`
 }
 
 type RuntimeSessionAggregateRepository interface {
@@ -69,7 +72,8 @@ func (source sessionRuntimeStatusSource) SessionRuntimeStatus(ctx context.Contex
 		Schema: sessionRuntimeStatusSchemaV1, AppliedConfigVersion: settings.Version,
 		CoreEnabled: settings.CoreEnabled, InteractiveEnabled: settings.InteractiveEnabled,
 		HostShellEnabled: settings.HostShellEnabled, HostShellAvailable: false,
-		GenerationState: string(aio.LifecycleStateUnknown), TotalWeight: coreSessionTotalWeight,
+		CoreMemoryReserveState: source.scheduler.CoreMemoryReserveState(ctx),
+		GenerationState:        string(aio.LifecycleStateUnknown), TotalWeight: coreSessionTotalWeight,
 	}
 	operationSource, ok := source.scheduler.store.(SessionOperationAggregateSource)
 	if !ok {
@@ -141,9 +145,13 @@ func (source sessionRuntimeStatusSource) SessionRuntimeStatus(ctx context.Contex
 		}
 		return status, nil
 	}
-	if status.RawAIOReady {
+	if status.RawAIOReady && status.CoreMemoryReserveState == memoryReserveAvailable {
 		status.Available = true
 		status.ReasonCode = ""
+	} else if status.RawAIOReady && status.CoreMemoryReserveState == memoryReserveBelowWatermark {
+		status.ReasonCode = sessionRuntimeReasonMemoryBelowWatermark
+	} else if status.RawAIOReady {
+		status.ReasonCode = sessionRuntimeReasonMemoryReserveUnknown
 	}
 	return status, nil
 }

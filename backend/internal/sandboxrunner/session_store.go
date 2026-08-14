@@ -33,7 +33,7 @@ const (
 	// upper bound plus a small fixed JSON envelope allowance.
 	maxSessionResultEnvelopeBytes  = (maxSessionInlineResultBytes+16+2)/3*4 + 1024
 	maxSessionOperationReasonBytes = 64
-	maxSessionOperationQueueDepth  = 4096
+	maxSessionOperationQueueDepth  = 64
 	maxSessionLeaseTTL             = 10 * time.Minute
 	maxSessionRecordTTL            = 24 * time.Hour
 )

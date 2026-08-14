@@ -532,7 +532,7 @@ func (d *recordingSessionHTTPDependencies) SessionRuntimeStatus(context.Context,
 	d.runtimeStatusCalls++
 	return SessionRuntimeStatusProjection{
 		Schema: sessionRuntimeStatusSchemaV1, Available: false, AppliedConfigVersion: 1,
-		GenerationState: "unknown", TotalWeight: coreSessionTotalWeight,
+		GenerationState: "unknown", TotalWeight: coreSessionTotalWeight, CoreMemoryReserveState: memoryReserveUnknown,
 		ReasonCode: sessionRuntimeReasonAIOUnavailable,
 	}, nil
 }

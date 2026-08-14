@@ -681,7 +681,7 @@ func (adapter *SessionAdapter) Download(ctx context.Context, input infrasandbox.
 	data, readErr := io.ReadAll(io.LimitReader(reader, request.MaxBytes+1))
 	adapter.businessShellMu.Unlock()
 	if readErr != nil {
-		return nil, &UpstreamError{reasonCode: ReasonUpstreamUnavailable}
+		return nil, sanitizeUpstreamError(ctx, readErr)
 	}
 	if int64(len(data)) > request.MaxBytes {
 		return nil, &UpstreamError{reasonCode: ReasonAdapterResultTooLarge}

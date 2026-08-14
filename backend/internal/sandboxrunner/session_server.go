@@ -608,6 +608,7 @@ func (handler *SessionHTTPHandler) writeRuntimeStatusProjection(writer http.Resp
 
 func validSessionRuntimeStatusProjection(status SessionRuntimeStatusProjection) bool {
 	if status.Schema != sessionRuntimeStatusSchemaV1 || status.AppliedConfigVersion == 0 || status.InteractiveEnabled ||
+		(status.CoreMemoryReserveState != memoryReserveAvailable && status.CoreMemoryReserveState != memoryReserveBelowWatermark && status.CoreMemoryReserveState != memoryReserveUnknown) ||
 		status.QueueDepth < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight != coreSessionTotalWeight ||
 		status.ActiveSessions < 0 || status.IdleSessions < 0 || status.ActiveShells < 0 || status.IdleShells < 0 ||
 		status.UsedWeight > status.TotalWeight || status.Running > status.ActiveSessions || status.ActiveShells != status.Running ||

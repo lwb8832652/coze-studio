@@ -119,6 +119,99 @@ Runner 直接使用 dev 环境已配置的 MySQL 与 Redis；Compose 不启动�
 权限与 Atlas status 后，才可执行一次 forward apply；禁止 AutoMigrate、drop、truncate
 或 schema reset。
 
+### Core E2E 与 2C4G 资源闸门
+
+真实验证只允许在没有实时流量的隔离 deployment 运行。受控环境文件必须是当前用户
+拥有的绝对路径普通文件，权限为 `0600`；它复用既有 dev MySQL、Redis、Runner 和签名
+配置，不启动本地数据库容器。真实门禁必须从专用 worktree 运行。脚本会核对整个
+worktree 的 tracked 和 untracked 状态为空、`HEAD` 等于配置的 exact code SHA，并确认
+当前脚本已提交在该 SHA；任一条件不满足都不能开始真实验证。运行前还必须同时给出
+以下精确确认：
+
+```text
+SANDBOX_AIO_CORE_E2E_ISOLATED_DEPLOYMENT=ISOLATED_TEST_DEPLOYMENT_WITH_NO_LIVE_TRAFFIC
+SANDBOX_RUNTIME_SESSION_DEV_MYSQL_ROLLBACK_ONLY=ROLLBACK_ONLY_ON_EXISTING_DEV_DATABASE
+SANDBOX_AIO_CORE_E2E_EXACT_CLEANUP=EXACT_PREFIX_ONLY_ON_EXISTING_DEV_DEPENDENCIES
+SANDBOX_AIO_CORE_E2E_DEV_DB_FIXTURES=EXACT_COMMIT_AND_CLEANUP_ON_ISOLATED_DEV_DATABASE
+```
+
+E2E deployment ID 必须是唯一的 `aio-e2e-*` 前缀并与 Runner 已启动时的 deployment
+完全一致。由于 `scheduler_settings` 中的 AIO generation 字段在一个 schema 内具有永久
+singleton owner，本轮还必须使用已迁移、专供该隔离 deployment 的 dev schema，并只读
+确认 `aio_runtime_deployment_id` 精确匹配；不得清空、改写或复用其他 deployment 的
+generation owner。Core settings 必须由受权流程预先
+启用并已被 Runner applied，测试不得临时改写全局 Session settings。
+
+脚本只接受 fixed Compose 选中的 Runner。`COMPOSE_PROJECT_NAME`、Compose project label、
+Runner 内的 deployment 和上述 E2E deployment 必须相等；
+`SANDBOX_AIO_CORE_E2E_RUNNER_URL` 必须精确指向该 Runner 容器的私网 IPv4 与 `9443`
+端口。Runner image 的完整 SHA256 image ID 必须有效，OCI
+`org.opencontainers.image.revision` 必须精确等于 exact code SHA；外部证据同时记录完整
+image ID 和 revision。选中的 Runner 与 AIO 必须只接入同一个 Compose 私网，AIO 必须有
+`coze-sandbox-aio` alias，Runner upstream 必须是
+`http://coze-sandbox-aio:8080`。脚本还要把 `coze-server` 绑定到同一个 Compose project，
+并在资源闸门前后确认 AIO、Runner 和 `coze-server` 的固定容器、健康状态、OOM 状态和
+restart count 没有漂移。
+
+Provider、Session、operation、Redis namespace 和 workspace fixture 都要在创建时记录。
+清理先尝试清空所有 Session 的经过认证的逻辑 workspace；任一 workspace 清理失败时，
+清理流程不得 Destroy 任何 Session，也不得删除 Session 或 Provider 的数据库 provenance
+记录。失败记录必须原样保留，供仓库内固定的 `TestAIOCoreE2ECleanupOnly` 按相同配置重试。
+只有已持久化为 destroyed 且主键、deployment、provider 与本轮记录完全一致的 Session
+记录才允许直接删除。Phase 1 的 Destroy 合同会保留 workspace 根，且没有受认证的物理
+目录删除 API，因此测试只能清空本轮逻辑 workspace 内容；空的派生目录可能保留，不能
+为追求目录消失而增加任意物理删除入口。禁止 `LIKE` 范围删除、无主键 `DELETE`、
+`flushdb`、drop/truncate、schema reset、`down -v` 或 volume rm。
+
+资源脚本取得最后一份已签名且完全 drain 的 aggregate snapshot 后，必须关闭后续签名
+状态读取，再执行固定 cleanup-only。cleanup-only 按记录的数据库主键和 Redis namespace
+使用 cursor scan 到 `0`，并重新确认零残留；只有这一步完成后才能写入
+`CLEAN_EXACT_PREFIX_CURSOR_RESCAN_ZERO`。中断、清理失败或 cursor 未归零时必须保留
+`BLOCKED_EXACT_PREFIX_CLEANUP_REQUIRED`，不能把 deployment 标为 clean。
+
+先运行无外部依赖的合同自测，再运行真实门禁：
+
+```bash
+bash deploy/sandbox-runner/tests/aio_core_e2e_test.sh --self-test
+bash deploy/sandbox-runner/tests/aio_core_e2e_test.sh
+bash deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh --self-test
+bash deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh --duration 2m
+bash deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh --duration 30m
+```
+
+Core E2E 只通过 deploy helper stop/start/recreate official AIO，并始终保留 named volume；
+Runner 内部不执行 Docker lifecycle。2C4G 脚本必须在 Docker runtime 真实提供 2 CPU、
+4 GiB 内存时运行，不能通过给 official AIO 临时添加 Compose 资源参数伪造同构环境。
+缺受控配置、隔离确认、准确环境规格或健康依赖时，脚本返回 `BLOCKED` 且不执行压力或
+共享数据变更；`BLOCKED` 不是通过证据，Core 必须继续 disabled。
+
+真实 Core E2E 必须从运行时观察并通过以下边界，不能用单元测试代替：占满两份 Core
+weight 后，同 Shell 串行操作与第三个 Session 操作进入 queued；queued cancel 达到
+`canceled` 且 marker 从未执行；运行中的 File download 在 HTTP context cancel 后达到
+`canceled`，随后同一 Session 仍可执行；32 MiB 文件分块写入后的 read/download 与原始
+SHA256 相同；`max_bytes=32 MiB+1` 和超过 1 MiB 的原始请求均被拒绝。正常容量排队只证明
+当前总 weight 边界，不证明 Redis 的 4096 queue hard limit。
+
+`/v1/session-runtime-status` 的 Core memory state 只能是 `available`、
+`below_watermark` 或 `unknown`。Core scheduler 只在 `available` 时 dequeue；低于水位或
+采样失败时保留 queued，不启动新操作。2C4G 门禁使用 1536 MiB（1.5 GiB）host available
+reserve。当前合同没有安全方式在共享 dev 依赖上制造真实低水位，也不允许用 4096 个
+真实排队操作冲击 Redis；没有专用故障注入环境时，这两项验收必须分别记录 `BLOCKED`，
+不能用正常 2C4G workload 或单元测试伪报通过。
+
+30 分钟证据只写仓库外权限受控目录，并绑定 exact code SHA 与当次 official latest
+image ID。只记录聚合 CPU、RSS、PID/fd、host available、queue、weight、Session/Shell 数
+和 drain 状态，不得记录身份、命令、路径、DSN、token 或响应正文。资源判定使用三段
+证据：运行前 drained baseline 的最大值、整个 workload 的显式绝对上限和 cleanup 后
+drain window 相对 baseline 的固定增量上限；不使用末四个点的趋势代替这些边界。验收还
+要求 1.5 GiB reserve 始终满足、Runner RSS 不超过 192 MiB、无 OOM 或 restart、
+queue/weight/Session/Shell 全部 drain。结果仍只证明两个正常 Core workload 的共享运行
+水位，不证明恶意命令或租户硬隔离。Shared AIO 继续是共享 failure domain。
+
+截至 2026-08-14，本轮只完成了合同自测和本地相关回归。当前环境没有上述专用、已迁移
+且 owner 匹配的 dev schema 与受控配置，Docker runtime 为 4 CPU/8 GiB；真实 Core E2E、
+2 分钟和 30 分钟 2C4G 门禁均未运行，状态为 `BLOCKED`，没有通过证据。
+
 ## 首次上线顺序
 
 1. 应用并校验 Atlas 迁移，但暂不开放 Sandbox 前端入口。

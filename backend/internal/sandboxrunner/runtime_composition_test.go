@@ -50,6 +50,32 @@ func TestNewRuntimeComposesSignedConfigurationAndRunnerProtocol(t *testing.T) {
 	require.Equal(t, uint64(2), runtime.lifecycle.settings.Version)
 }
 
+func TestNewRuntimeAppliesSchedulerMemoryReserveToCoreGate(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 1
+	signer, err := infrasandbox.NewSchedulerConfigSigner("key-1", map[string][]byte{"key-1": []byte("0123456789abcdef0123456789abcdef")}, time.Minute)
+	require.NoError(t, err)
+	gate := &mutableCoreSettingsGate{enabled: true}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	runtime, err := NewRuntime(config, RuntimeDependencies{
+		Store: newRuntimeStore(clock.now), Driver: &lifecycleDriverFake{stopped: true},
+		Resources: fixedMemorySampler(4096), InitialSettings: settings,
+		ConfigurationSigner: signer, Now: clock.now, CoreRedisReadiness: alwaysReadyCache{},
+		CoreLifecycle: &recordingCoreLifecycle{}, Session: http.NotFoundHandler(),
+		CoreSettings: gate, CoreRecovery: &recordingCoreOperationRecovery{},
+	})
+	require.NoError(t, err)
+	next := settings
+	next.Version = 2
+	next.HostMemoryReserveMB = 2048
+	envelope, err := signer.Sign(next)
+	require.NoError(t, err)
+	require.NoError(t, runtime.configStore.ApplyConfiguration(context.Background(), envelope))
+	require.Equal(t, 2048, gate.appliedMemoryReserveMB)
+}
+
 func TestNewRuntimeRejectsMissingExecutionDependencies(t *testing.T) {
 	settings := domainsandbox.DefaultSchedulerSettings()
 	settings.Version = 1
@@ -224,6 +250,40 @@ func TestNewProcessRuntimeWiresOneSessionHandlerFromSharedCoreDependencies(t *te
 	require.NoError(t, err)
 	require.NotZero(t, status.Version)
 	require.Equal(t, coreRuntimeUnknown, runtime.server.runtimeStatus.(runtimeStatusSource).coreStatus(context.Background()).State)
+}
+
+func TestNewProcessRuntimeSharesHostMemoryAdmissionWithCore(t *testing.T) {
+	clock := newSchedulerClock(time.Date(2026, time.August, 14, 9, 0, 0, 0, time.UTC))
+	sessionStore, _ := newSessionRedisStoreFixture(t)
+	sessionSettings := domainsandbox.DefaultSessionRuntimeSettings()
+	sessionSettings.Version = 1
+	repository := &processRuntimeSessionRepository{
+		dispatcherRepository: &dispatcherRepository{events: &dispatcherEventLog{}},
+		settings:             sessionSettings,
+	}
+	closer := &recordingCloser{}
+	upstream := &processRuntimeAIOUpstreamFake{lifecycleUpstreamFake: &lifecycleUpstreamFake{}}
+	config := validRuntimeConfig()
+	config.SessionBackendEnabled = true
+	runtime, err := newProcessRuntime(context.Background(), config, processRuntimeFactories{
+		newStore: func(context.Context, Config) (RuntimeStore, cache.ReadinessChecker, error) {
+			return runtimeStoreBundle{RuntimeStore: newRuntimeStore(clock.now), session: sessionStore}, alwaysReadyCache{}, nil
+		},
+		newDriver: func(Config) (sandboxruntime.Driver, error) { return &lifecycleDriverFake{stopped: true}, nil },
+		newGenerationRepository: func() (domainsandbox.AIOGenerationRepository, io.Closer, error) {
+			return repository, closer, nil
+		},
+		newAIOUpstream: func(Config) (aio.LifecycleUpstream, error) { return upstream, nil },
+		newCoreLifecycle: func(aio.LifecycleConfig) (CoreLifecycle, error) {
+			return &recordingCoreLifecycle{}, nil
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, runtime.Close()) })
+	core, ok := runtime.coreSettings.(*CoreSessionScheduler)
+	require.True(t, ok)
+	require.Same(t, runtime.scheduler.watermark.Sampler, core.watermark.Sampler)
+	require.Equal(t, domainsandbox.DefaultSchedulerSettings().HostMemoryReserveMB, core.watermark.ReserveMB)
 }
 
 func TestProcessRuntimeKeepsOneShotAvailableWhenCoreDependenciesFail(t *testing.T) {
@@ -620,6 +680,19 @@ func (*generationRepositoryFake) CompareAndReplaceAIOSentinel(context.Context, d
 	return domainsandbox.AIOGenerationState{}, false, errors.New("not used")
 }
 
+type processRuntimeSessionRepository struct {
+	*dispatcherRepository
+	generationRepositoryFake
+	settings domainsandbox.SessionRuntimeSettings
+}
+
+func (repository *processRuntimeSessionRepository) GetSessionSettings(context.Context) (domainsandbox.SessionRuntimeSettings, error) {
+	return repository.settings, nil
+}
+func (*processRuntimeSessionRepository) UpdateSessionSettingsCAS(context.Context, domainsandbox.UpdateSessionSettingsInput) (domainsandbox.SessionRuntimeSettings, error) {
+	return domainsandbox.SessionRuntimeSettings{}, errors.New("not used")
+}
+
 type lifecycleUpstreamFake struct{}
 
 func (*lifecycleUpstreamFake) Health(context.Context) error { return nil }
@@ -640,6 +713,40 @@ func (*lifecycleUpstreamFake) View(context.Context, *sandboxapi.ShellViewRequest
 }
 func (*lifecycleUpstreamFake) Cleanup(context.Context, string) error { return nil }
 
+type processRuntimeAIOUpstreamFake struct{ *lifecycleUpstreamFake }
+
+func (*processRuntimeAIOUpstreamFake) Exec(context.Context, *sandboxapi.ShellExecRequest) (*sandboxapi.ResponseShellCommandResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Wait(context.Context, *sandboxapi.ShellWaitRequest) (*sandboxapi.ResponseShellWaitResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Kill(context.Context, *sandboxapi.ShellKillProcessRequest) (*sandboxapi.ResponseShellKillResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Read(context.Context, *sandboxapi.FileReadRequest) (*sandboxapi.ResponseFileReadResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Write(context.Context, *sandboxapi.FileWriteRequest) (*sandboxapi.ResponseFileWriteResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) List(context.Context, *sandboxapi.FileListRequest) (*sandboxapi.ResponseFileListResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Glob(context.Context, *sandboxapi.FileGlobRequest) (*sandboxapi.ResponseFileGlobResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Grep(context.Context, *sandboxapi.FileGrepRequest) (*sandboxapi.ResponseFileGrepResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Replace(context.Context, *sandboxapi.FileReplaceRequest) (*sandboxapi.ResponseFileReplaceResult, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) Download(context.Context, string) (io.Reader, error) {
+	return nil, errors.New("not used")
+}
+func (*processRuntimeAIOUpstreamFake) ShellLockIdentity() string { return "test-aio-upstream" }
+
 type alwaysReadyCache struct{}
 
 func (alwaysReadyCache) CheckReadiness(context.Context) error { return nil }
@@ -648,6 +755,13 @@ type mutableCacheReadiness struct{ err error }
 
 func (readiness *mutableCacheReadiness) CheckReadiness(context.Context) error { return readiness.err }
 
-type mutableCoreSettingsGate struct{ enabled bool }
+type mutableCoreSettingsGate struct {
+	enabled                bool
+	appliedMemoryReserveMB int
+}
 
 func (gate *mutableCoreSettingsGate) CoreEnabled() bool { return gate.enabled }
+func (gate *mutableCoreSettingsGate) ApplySchedulerSettings(_ context.Context, settings domainsandbox.SchedulerSettings) error {
+	gate.appliedMemoryReserveMB = settings.HostMemoryReserveMB
+	return nil
+}

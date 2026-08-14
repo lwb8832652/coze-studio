@@ -454,7 +454,7 @@ func TestRemoteSessionProviderGetsAndAppliesExactRunnerConfiguration(t *testing.
 func TestRemoteSessionProviderRuntimeStatusUsesSignedStrictSafeProjectionAndEndpointTransport(t *testing.T) {
 	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
 	keyring := remoteSessionTestKeyring(t, now)
-	valid := `{"schema":"coze.sandbox.session_runtime_status.v1","available":true,"applied_config_version":4,"runtime_generation":7,"core_enabled":true,"interactive_enabled":false,"host_shell_enabled":false,"host_shell_available":false,"raw_aio_ready":true,"generation_state":"ready","queue_depth":2,"running":1,"used_weight":1,"total_weight":2,"active_sessions":3,"idle_sessions":4,"active_shells":1,"idle_shells":2}`
+	valid := `{"schema":"coze.sandbox.session_runtime_status.v1","available":true,"applied_config_version":4,"runtime_generation":7,"core_enabled":true,"interactive_enabled":false,"host_shell_enabled":false,"host_shell_available":false,"core_memory_reserve_state":"available","raw_aio_ready":true,"generation_state":"ready","queue_depth":2,"running":1,"used_weight":1,"total_weight":2,"active_sessions":3,"idle_sessions":4,"active_shells":1,"idle_shells":2}`
 	newProvider := func(t *testing.T, endpoint, body string) *RemoteSessionProvider {
 		t.Helper()
 		config := validRemoteProviderConfig()
@@ -491,11 +491,13 @@ func TestRemoteSessionProviderRuntimeStatusUsesSignedStrictSafeProjectionAndEndp
 	}
 
 	for name, body := range map[string]string{
-		"endpoint":  strings.TrimSuffix(valid, "}") + `,"endpoint":"https://secret.invalid"}`,
-		"transport": strings.TrimSuffix(valid, "}") + `,"transport_encrypted":true}`,
-		"sentinel":  strings.TrimSuffix(valid, "}") + `,"sentinel_id":"secret-sentinel"}`,
-		"duplicate": strings.Replace(valid, `"queue_depth":2`, `"queue_depth":2,"queue_depth":2`, 1),
-		"reason":    strings.Replace(valid, `"available":true`, `"available":false`, 1),
+		"endpoint":       strings.TrimSuffix(valid, "}") + `,"endpoint":"https://secret.invalid"}`,
+		"transport":      strings.TrimSuffix(valid, "}") + `,"transport_encrypted":true}`,
+		"sentinel":       strings.TrimSuffix(valid, "}") + `,"sentinel_id":"secret-sentinel"}`,
+		"duplicate":      strings.Replace(valid, `"queue_depth":2`, `"queue_depth":2,"queue_depth":2`, 1),
+		"reason":         strings.Replace(valid, `"available":true`, `"available":false`, 1),
+		"memory":         strings.Replace(valid, `"core_memory_reserve_state":"available"`, `"core_memory_reserve_state":"secret"`, 1),
+		"missing memory": strings.Replace(valid, `,"core_memory_reserve_state":"available"`, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := newProvider(t, "https://sandbox.example.test/", body).SessionRuntimeStatus(context.Background()); !errors.Is(err, domainsandbox.ErrProviderUnhealthy) {

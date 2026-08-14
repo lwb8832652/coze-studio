@@ -686,29 +686,31 @@ type remoteSessionConfigurationProjection struct {
 }
 
 type remoteSessionRuntimeStatusProjection struct {
-	Schema               string `json:"schema"`
-	Available            bool   `json:"available"`
-	AppliedConfigVersion uint64 `json:"applied_config_version"`
-	RuntimeGeneration    uint64 `json:"runtime_generation"`
-	CoreEnabled          bool   `json:"core_enabled"`
-	InteractiveEnabled   bool   `json:"interactive_enabled"`
-	HostShellEnabled     bool   `json:"host_shell_enabled"`
-	HostShellAvailable   bool   `json:"host_shell_available"`
-	RawAIOReady          bool   `json:"raw_aio_ready"`
-	GenerationState      string `json:"generation_state"`
-	QueueDepth           int    `json:"queue_depth"`
-	Running              int    `json:"running"`
-	UsedWeight           int    `json:"used_weight"`
-	TotalWeight          int    `json:"total_weight"`
-	ActiveSessions       int    `json:"active_sessions"`
-	IdleSessions         int    `json:"idle_sessions"`
-	ActiveShells         int    `json:"active_shells"`
-	IdleShells           int    `json:"idle_shells"`
-	ReasonCode           string `json:"reason_code,omitempty"`
+	Schema                 string                    `json:"schema"`
+	Available              bool                      `json:"available"`
+	AppliedConfigVersion   uint64                    `json:"applied_config_version"`
+	RuntimeGeneration      uint64                    `json:"runtime_generation"`
+	CoreEnabled            bool                      `json:"core_enabled"`
+	InteractiveEnabled     bool                      `json:"interactive_enabled"`
+	HostShellEnabled       bool                      `json:"host_shell_enabled"`
+	HostShellAvailable     bool                      `json:"host_shell_available"`
+	CoreMemoryReserveState RuntimeMemoryReserveState `json:"core_memory_reserve_state"`
+	RawAIOReady            bool                      `json:"raw_aio_ready"`
+	GenerationState        string                    `json:"generation_state"`
+	QueueDepth             int                       `json:"queue_depth"`
+	Running                int                       `json:"running"`
+	UsedWeight             int                       `json:"used_weight"`
+	TotalWeight            int                       `json:"total_weight"`
+	ActiveSessions         int                       `json:"active_sessions"`
+	IdleSessions           int                       `json:"idle_sessions"`
+	ActiveShells           int                       `json:"active_shells"`
+	IdleShells             int                       `json:"idle_shells"`
+	ReasonCode             string                    `json:"reason_code,omitempty"`
 }
 
 func validRemoteSessionRuntimeStatus(status remoteSessionRuntimeStatusProjection) bool {
 	if status.Schema != remoteSessionRuntimeStatusSchema || status.AppliedConfigVersion == 0 || status.InteractiveEnabled ||
+		(status.CoreMemoryReserveState != RuntimeMemoryReserveAvailable && status.CoreMemoryReserveState != RuntimeMemoryReserveBelowWatermark && status.CoreMemoryReserveState != RuntimeMemoryReserveUnknown) ||
 		status.QueueDepth < 0 || status.Running < 0 || status.UsedWeight < 0 || status.TotalWeight != 2 ||
 		status.ActiveSessions < 0 || status.IdleSessions < 0 || status.ActiveShells < 0 || status.IdleShells < 0 ||
 		status.UsedWeight > status.TotalWeight || status.Running > status.ActiveSessions || status.ActiveShells != status.Running ||

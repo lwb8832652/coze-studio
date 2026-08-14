@@ -22,6 +22,8 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 COMPOSE_FILE=$REPO_ROOT/deploy/dev/docker-compose.yml
 RUNNER_COMPOSE_FILE=$REPO_ROOT/deploy/dev/docker-compose.runner-2c4g.yml
 ENV_FILE=$REPO_ROOT/deploy/dev/.env.example
+SOAK_TEST=$REPO_ROOT/deploy/sandbox-runner/tests/aio_2c4g_soak_test.sh
+CORE_E2E_TEST=$REPO_ROOT/deploy/sandbox-runner/tests/aio_core_e2e_test.sh
 
 fail() {
   printf 'compose contract failure: %s\n' "$1" >&2
@@ -32,7 +34,7 @@ require_text() {
   text=$1
   pattern=$2
   message=$3
-  printf '%s\n' "$text" | grep -Eq -- "$pattern" || fail "$message"
+  grep -Eq -- "$pattern" <<<"$text" || fail "$message"
 }
 
 require_exact_text() {
@@ -183,7 +185,7 @@ nsqd_expose=$(printf '%s\n' "$nsqd_config" | awk '
   in_expose && /^      - / {sub(/^      - /, ""); gsub(/^"|"$/, ""); print}
 ')
 require_exact_text "$nsqd_expose" $'4150\n4151' 'nsqd must expose only its TCP and HTTP ports internally'
-if printf '%s\n' "$nsqd_config" | grep -Eq -- '^    ports:$'; then
+if grep -Eq -- '^    ports:$' <<<"$nsqd_config"; then
   fail 'nsqd must not publish a host port'
 fi
 require_text "$nsqd_config" '^      - type: volume$' 'nsqd data must use a named volume'
@@ -225,7 +227,7 @@ require_text "$server_config" '^        condition: service_healthy$' 'coze-serve
 require_text "$server_config" '^        restart: true$' 'coze-server must restart when nsqd is explicitly restarted'
 require_text "$server_config" '^    expose:$' 'coze-server must declare exposed ports'
 require_text "$server_config" '^      - "8888"$' 'coze-server must expose port 8888'
-if printf '%s\n' "$server_config" | grep -Eq -- '^    ports:$'; then
+if grep -Eq -- '^    ports:$' <<<"$server_config"; then
   fail 'coze-server must not publish a host port'
 fi
 require_text "$server_config" 'source: .*/deploy/dev/app\.env' 'coze-server must mount the server-local app.env'
@@ -265,7 +267,7 @@ networks=$(printf '%s\n' "$config" | awk '
 ')
 require_exact_text "$networks" 'coze-dev' 'coze-dev must be the only top-level network'
 require_text "$config" 'driver: bridge' 'the deployment network must be a bridge network'
-if printf '%s\n' "$config" | grep -Eq -- 'internal: true'; then
+if grep -Eq -- 'internal: true' <<<"$config"; then
   fail 'the deployment network must allow backend outbound connectivity'
 fi
 volumes=$(printf '%s\n' "$config" | awk '
@@ -289,7 +291,7 @@ runner_source=$(<"$RUNNER_COMPOSE_FILE")
 runner_config=$(render_runner_config)
 runner_services=$(printf '%s\n' "$runner_source" | awk '/^services:/{in_services=1; next} in_services && /^[^[:space:]]/{exit} in_services && /^  [^[:space:]]/{sub(/^  /, ""); sub(/:$/, ""); print}')
 require_exact_text "$runner_services" $'nsqd\ncoze-server\ncoze-sandbox-aio\ncoze-sandbox-runner\ncoze-web' 'runner-2c4g must run exactly one official AIO alongside nsqd, server, sandbox runner, and web'
-if printf '%s\n' "$runner_source" | grep -Eiq '^  (oceanbase|mysql|redis|elasticsearch|minio|object-storage):'; then
+if grep -Eiq '^  (oceanbase|mysql|redis|elasticsearch|minio|object-storage):' <<<"$runner_source"; then
   fail 'runner-2c4g must not start local data service containers'
 fi
 runner_aio_source=$(service_block "$runner_source" coze-sandbox-aio)
@@ -305,16 +307,16 @@ runner_aio_expose=$(printf '%s\n' "$runner_aio_config" | awk '
   in_expose && /^      - / {sub(/^      - /, ""); gsub(/^"|"$/, ""); print}
 ')
 require_exact_text "$runner_aio_expose" '8080' 'AIO must expose only raw port 8080 inside the Compose network'
-if printf '%s\n' "$runner_aio_config" | grep -Eq -- '^    ports:$'; then
+if grep -Eq -- '^    ports:$' <<<"$runner_aio_config"; then
   fail 'AIO must not publish a host port'
 fi
-if printf '%s\n' "$runner_aio_source" | grep -Eq -- '^    (command|entrypoint|privileged|network_mode|mem_limit|cpus|pids_limit):'; then
+if grep -Eq -- '^    (command|entrypoint|privileged|network_mode|mem_limit|cpus|pids_limit):' <<<"$runner_aio_source"; then
   fail 'AIO must use the official default startup without host networking, privilege, or resource overrides'
 fi
-if printf '%s\n' "$runner_aio_source" | grep -Eiq -- '(JWT|DISABLE_|docker\.sock)'; then
+if grep -Eiq -- '(JWT|DISABLE_|docker\.sock)' <<<"$runner_aio_source"; then
   fail 'AIO must not require JWT, DISABLE flags, or a Docker socket'
 fi
-if printf '%s\n' "$runner_source" | grep -Eq -- '8090'; then
+if grep -Eq -- '8090' <<<"$runner_source"; then
   fail 'runner-2c4g must not retain the retired AIO port 8090'
 fi
 require_text "$runner_aio_config" '^      - seccomp=unconfined$' 'AIO must retain the verified seccomp compatibility setting'
@@ -339,7 +341,7 @@ require_text "$runner_config_block" '^    pids_limit: 64$' 'runner process count
 require_text "$runner_config_block" 'no-new-privileges:true' 'runner must enable no-new-privileges'
 require_text "$runner_config_block" 'read_only: true' 'runner root filesystem must be read-only'
 require_text "$runner_config_block" 'target: /app/runtime/docker\.sock' 'runner must mount only its dedicated rootless socket path'
-if printf '%s\n' "$runner_source" | grep -Fq '/var/run/docker.sock'; then
+if grep -Fq '/var/run/docker.sock' <<<"$runner_source"; then
   fail 'runner-2c4g must never mount the host Docker socket'
 fi
 require_text "$runner_config_block" 'SANDBOX_RUNNER_ROOTLESS_ENDPOINT: unix:///app/runtime/docker\.sock' 'runner must address its dedicated rootless socket'
@@ -347,7 +349,7 @@ require_text "$runner_config_block" 'SANDBOX_RUNNER_EXECUTION_IMAGE: registry\.e
 require_text "$runner_source" '^      SANDBOX_RUNNER_SESSION_ENABLED: "\$\{SANDBOX_RUNNER_SESSION_ENABLED:-false\}"$' 'runner Session backend must default closed while allowing deploy to opt in explicitly'
 require_text "$runner_config_block" '^      SANDBOX_RUNNER_SESSION_ENABLED: "false"$' 'runner Core sessions must default to disabled'
 require_text "$runner_config_block" '^      SANDBOX_RUNNER_AIO_UPSTREAM_URL: http://coze-sandbox-aio:8080$' 'runner must supervise AIO through its private service URL'
-if printf '%s\n' "$runner_source" | grep -Eq -- 'SANDBOX_HOST_SHELL_SESSION_ENABLED:[[:space:]]*"?true"?'; then
+if grep -Eq -- 'SANDBOX_HOST_SHELL_SESSION_ENABLED:[[:space:]]*"?true"?' <<<"$runner_source"; then
   fail 'remote deployment must not enable debug Host Shell sessions'
 fi
 require_text "$runner_config_block" 'https://127\.0\.0\.1:9443/v1/health' 'runner healthcheck must verify the private TLS endpoint'
@@ -358,5 +360,87 @@ runner_volumes=$(printf '%s\n' "$runner_config" | awk '
   in_volumes && /^  [^[:space:]]/ {sub(/^  /, ""); sub(/:$/, ""); print}
 ')
 require_exact_text "$runner_volumes" $'nsq-data\nsandbox-aio-skills\nsandbox-aio-user-data' 'runner-2c4g must persist only NSQ, AIO skills, and AIO user data as named volumes'
+
+[ -f "$CORE_E2E_TEST" ] || fail 'AIO Core E2E harness is missing'
+[ -x "$CORE_E2E_TEST" ] || fail 'AIO Core E2E harness must be executable'
+bash -n "$CORE_E2E_TEST" || fail 'AIO Core E2E harness must have valid Bash syntax'
+core_e2e_source=$(<"$CORE_E2E_TEST")
+require_text "$core_e2e_source" '--self-test' 'AIO Core E2E harness must provide a dependency-free self-test'
+require_text "$core_e2e_source" 'SANDBOX_AIO_CORE_E2E_ISOLATED_DEPLOYMENT.*ISOLATED_TEST_DEPLOYMENT_WITH_NO_LIVE_TRAFFIC' 'AIO Core E2E harness must require the exact isolated no-live-traffic declaration'
+require_text "$core_e2e_source" 'SANDBOX_AIO_CORE_E2E_CODE_SHA' 'AIO Core E2E harness must bind the configured code revision'
+require_text "$core_e2e_source" 'rev-parse HEAD' 'AIO Core E2E harness must compare its code revision with HEAD'
+require_text "$core_e2e_source" '--porcelain=v1 --untracked-files=all' 'AIO Core E2E harness must reject tracked and untracked worktree changes'
+require_text "$core_e2e_source" 'org.opencontainers.image.revision' 'AIO Core E2E harness must bind the running Runner OCI revision'
+require_text "$core_e2e_source" 'RUNNER_IMAGE_ID=' 'AIO Core E2E evidence must record the full Runner image ID'
+require_text "$core_e2e_source" 'RUNNER_IMAGE_REVISION=' 'AIO Core E2E evidence must record the Runner OCI revision'
+require_text "$core_e2e_source" 'COMPOSE_PROJECT_NAME.*SANDBOX_RUNNER_DEPLOYMENT_ID' 'AIO Core E2E harness must bind its Compose project to the isolated deployment'
+require_text "$core_e2e_source" 'SANDBOX_AIO_CORE_E2E_EXACT_CLEANUP.*EXACT_PREFIX_ONLY_ON_EXISTING_DEV_DEPENDENCIES' 'AIO Core E2E harness must require exact prefix-only cleanup'
+require_text "$core_e2e_source" 'SANDBOX_AIO_CORE_E2E_DEV_DB_FIXTURES.*EXACT_COMMIT_AND_CLEANUP_ON_ISOLATED_DEV_DATABASE' 'AIO Core E2E harness must require exact isolated dev fixture commit and cleanup'
+require_text "$core_e2e_source" 'SANDBOX_RUNTIME_SESSION_DEV_MYSQL_ROLLBACK_ONLY.*ROLLBACK_ONLY_ON_EXISTING_DEV_DATABASE' 'AIO Core E2E harness must restrict database cleanup to rollback-only fixture handling'
+require_text "$core_e2e_source" 'duplicate key' 'AIO Core E2E controlled environment parsing must reject duplicate keys'
+require_text "$core_e2e_source" 'GIT_\*' 'AIO Core E2E controlled environment parsing must reject Git redirection variables'
+require_text "$core_e2e_source" 'GOWORK=off' 'AIO Core E2E fixed Go test must ignore workspace redirection'
+for control_verb in stop-aio start-aio recreate-aio-preserve-volumes restart-runner; do
+  require_text "$core_e2e_source" "$control_verb" "AIO Core E2E harness must retain fixed helper verb: $control_verb"
+done
+"$CORE_E2E_TEST" --self-test >/dev/null || fail 'AIO Core E2E harness self-test failed'
+if grep -Eiq -- '(down[[:space:]]+-v|volume[[:space:]]+rm)' <<<"$core_e2e_source"; then
+  fail 'AIO Core E2E harness must preserve deployment volumes'
+fi
+
+[ -f "$SOAK_TEST" ] || fail 'AIO 2C4G soak resource gate is missing'
+[ -x "$SOAK_TEST" ] || fail 'AIO 2C4G soak resource gate must be executable'
+bash -n "$SOAK_TEST" || fail 'AIO 2C4G soak resource gate must have valid Bash syntax'
+soak_source=$(<"$SOAK_TEST")
+require_text "$soak_source" '--self-test' 'soak resource gate must provide a dependency-free self-test'
+require_text "$soak_source" '2m.*30m|30m.*2m' 'soak resource gate must accept only the 2m and 30m durations'
+require_text "$soak_source" 'BLOCKED' 'missing exact environment prerequisites must report BLOCKED'
+require_text "$soak_source" 'SANDBOX_AIO_CORE_E2E_ISOLATED_DEPLOYMENT.*ISOLATED_TEST_DEPLOYMENT_WITH_NO_LIVE_TRAFFIC' 'soak resource gate must require the exact isolated no-live-traffic declaration'
+require_text "$soak_source" 'SANDBOX_AIO_CORE_E2E_CODE_SHA' 'soak resource gate must bind its configured code revision'
+require_text "$soak_source" 'rev-parse HEAD' 'soak resource gate must compare its code revision with HEAD'
+require_text "$soak_source" '--porcelain=v1 --untracked-files=all' 'soak resource gate must reject tracked and untracked worktree changes'
+require_text "$soak_source" 'org.opencontainers.image.revision' 'soak resource gate must bind the running Runner OCI revision'
+require_text "$soak_source" 'runner_image_id' 'soak evidence must include the full Runner image ID'
+require_text "$soak_source" 'runner_image_revision' 'soak evidence must include the Runner OCI revision'
+require_text "$soak_source" 'COMPOSE_PROJECT_NAME.*SANDBOX_RUNNER_DEPLOYMENT_ID' 'soak resource gate must bind its Compose project to the isolated deployment'
+require_text "$soak_source" 'SANDBOX_AIO_CORE_E2E_EXACT_CLEANUP.*EXACT_PREFIX_ONLY_ON_EXISTING_DEV_DEPENDENCIES' 'soak resource gate must require exact prefix-only cleanup'
+require_text "$soak_source" 'SANDBOX_AIO_CORE_E2E_DEV_DB_FIXTURES.*EXACT_COMMIT_AND_CLEANUP_ON_ISOLATED_DEV_DATABASE' 'soak resource gate must require exact isolated dev fixture commit and cleanup'
+require_text "$soak_source" 'SANDBOX_RUNTIME_SESSION_DEV_MYSQL_ROLLBACK_ONLY.*ROLLBACK_ONLY_ON_EXISTING_DEV_DATABASE' 'soak resource gate must restrict database cleanup to rollback-only fixture handling'
+require_text "$soak_source" '\^TestAIOCoreE2ESoakWorkload\$' 'soak resource gate must call only the fixed workload Go test'
+require_text "$soak_source" '\^TestAIOCoreE2ESoakSnapshot\$' 'soak resource gate must call only the fixed snapshot Go test'
+require_text "$soak_source" '\^TestAIOCoreE2ECleanupOnly\$' 'soak resource gate must finish with the fixed cleanup-only Go test'
+require_text "$soak_source" 'AIO_CORE_E2E_SNAPSHOT queue=' 'soak resource gate must parse the fixed aggregate snapshot record'
+require_text "$soak_source" 'SANDBOX_AIO_CORE_E2E_SOAK_DURATION="\$duration"' 'soak resource gate must pass only its validated duration to the fixed workload Go test'
+require_text "$soak_source" 'duplicate key' 'soak controlled environment parsing must reject duplicate keys'
+require_text "$soak_source" 'GIT_\*' 'soak controlled environment parsing must reject Git redirection variables'
+require_text "$soak_source" 'GOWORK=off' 'soak fixed Go tests must ignore workspace redirection'
+require_text "$soak_source" 'go test .* -run "\$workload_test_regex"' 'soak resource gate must execute the fixed workload Go test directly'
+require_text "$soak_source" 'go test .* -run "\$snapshot_test_regex"' 'soak resource gate must execute the fixed snapshot Go test directly'
+require_text "$soak_source" 'evidence directory must be outside the repository' 'soak evidence must be written outside the repository'
+require_text "$soak_source" 'kill -INT "\$workload_pid"' 'soak interruption must first request bounded graceful workload termination'
+require_text "$soak_source" 'BLOCKED_EXACT_PREFIX_CLEANUP_REQUIRED' 'interrupted soak evidence must block on exact-prefix residual cleanup'
+require_text "$soak_source" 'signed_requests_closed' 'soak resource gate must close signed status reads before cleanup-only verification'
+require_text "$soak_source" 'coze-server' 'soak resource gate must include the selected server in its health and resource gates'
+require_text "$soak_source" 'host_memory_available' 'soak evidence must record aggregate host reserve samples'
+require_text "$soak_source" 'baseline' 'soak resource gate must collect an idle resource baseline'
+require_text "$soak_source" 'drain' 'soak resource gate must collect a post-drain steady-state window'
+require_text "$soak_source" 'max_' 'soak resource gate must enforce explicit maximum resource thresholds'
+if grep -Fq 'SANDBOX_SOAK_COMPOSE_PROJECT' <<<"$soak_source"; then
+  fail 'soak resource gate must not select containers through an independent Compose project variable'
+fi
+if grep -Fq 'SANDBOX_SOAK_WORKLOAD_HELPER' <<<"$soak_source"; then
+  fail 'soak resource gate must not trust an external workload helper'
+fi
+if grep -Eiq -- "printf[[:space:]]+['\"](identity|command|path|dsn|token)[[:space:]]*\\\\t" <<<"$soak_source"; then
+  fail 'soak evidence must not record identity, command, path, DSN, or token fields'
+fi
+"$SOAK_TEST" --self-test >/dev/null || fail 'AIO 2C4G soak resource gate self-test failed'
+if grep -Eiq -- '(down[[:space:]]+-v|volume[[:space:]]+rm|flush(all|db)|drop[[:space:]]+(database|schema|table)|truncate|atlas[^[:cntrl:]]*apply|migrate[^[:cntrl:]]*apply)' <<<"$soak_source"; then
+  fail 'soak resource gate must not mutate shared databases or delete deployment volumes'
+fi
+soak_host_port_source=$(printf '%s\n' "$soak_source" | sed 's#http://coze-sandbox-aio:8080##g')
+if grep -Eq -- '(^|[^0-9])8080:8080([^0-9]|$)|(^|[^0-9]):8080([^0-9]|$)' <<<"$soak_host_port_source"; then
+  fail 'soak resource gate must not publish the AIO port on the host'
+fi
 
 printf 'compose contract: ok\n'

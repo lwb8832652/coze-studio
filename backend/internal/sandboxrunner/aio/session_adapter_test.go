@@ -6,6 +6,7 @@ package aio
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -431,6 +432,90 @@ func TestSessionAdapterFailsClosedOnInvalidResponsesAndReadOnlySkills(t *testing
 	require.Equal(t, ReasonAdapterResultTooLarge, ReasonCode(err))
 }
 
+func TestSessionAdapterDownloadPreservesReadInterruptionWithoutKillingShell(t *testing.T) {
+	readFailure := errors.New("download read failed")
+	tests := []struct {
+		name       string
+		context    func(*testing.T, chan struct{}) context.Context
+		readError  func(context.Context) error
+		reasonCode string
+	}{
+		{
+			name: "cancelled request",
+			context: func(t *testing.T, entered chan struct{}) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				go func() {
+					<-entered
+					cancel()
+				}()
+				return ctx
+			},
+			readError: func(ctx context.Context) error {
+				<-ctx.Done()
+				return fmt.Errorf("wrapped cancellation: %w", ctx.Err())
+			},
+			reasonCode: ReasonUpstreamCancelled,
+		},
+		{
+			name: "request deadline",
+			context: func(t *testing.T, _ chan struct{}) context.Context {
+				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+				t.Cleanup(cancel)
+				return ctx
+			},
+			readError: func(ctx context.Context) error {
+				<-ctx.Done()
+				return fmt.Errorf("wrapped deadline: %w", ctx.Err())
+			},
+			reasonCode: ReasonUpstreamTimeout,
+		},
+		{
+			name: "unrelated read failure",
+			context: func(_ *testing.T, _ chan struct{}) context.Context {
+				return context.Background()
+			},
+			readError:  func(context.Context) error { return readFailure },
+			reasonCode: ReasonUpstreamUnavailable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			client := newRecordingSessionUpstream()
+			adapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-01", client,
+				WithSessionClock(func() time.Time { return now }))
+			require.NoError(t, err)
+
+			entered := make(chan struct{})
+			ctx := test.context(t, entered)
+			client.downloadBody = readErrorFunc(func(_ []byte) (int, error) {
+				close(entered)
+				return 0, test.readError(ctx)
+			})
+			_, err = adapter.Download(ctx, infrasandbox.DownloadRequest{
+				Path: "/mnt/user-data/workspace/a.txt", MaxBytes: 20,
+			})
+			require.Equal(t, test.reasonCode, ReasonCode(err))
+			require.Empty(t, client.killIDs)
+
+			stream, err := adapter.Exec(context.Background(), infrasandbox.ExecRequest{
+				OperationID: "after-download", Command: "pwd", CWD: "/mnt/user-data/workspace",
+				Deadline: now.Add(time.Minute), MaxOutputBytes: 20,
+			})
+			require.NoError(t, err)
+			require.NoError(t, stream.Close())
+			content, err := adapter.Read(context.Background(), infrasandbox.ReadRequest{
+				Path: "/mnt/user-data/workspace/a.txt", MaxBytes: 20,
+			})
+			require.NoError(t, err)
+			require.Equal(t, []byte("read-body"), content.Data)
+			require.Empty(t, client.killIDs)
+		})
+	}
+}
+
 func TestSessionAdapterRejectsOversizedStructuredResultsInsteadOfTruncating(t *testing.T) {
 	client := newRecordingSessionUpstream()
 	adapter, err := NewSessionAdapter(sessionAdapterTestRef(), "opaque-shell-01", client)
@@ -703,6 +788,10 @@ func value[T any](pointer *T) T {
 	}
 	return *pointer
 }
+
+type readErrorFunc func([]byte) (int, error)
+
+func (read readErrorFunc) Read(buffer []byte) (int, error) { return read(buffer) }
 
 var _ infrasandbox.SandboxSession = (*SessionAdapter)(nil)
 var _ SessionUpstreamClient = (*recordingSessionUpstream)(nil)

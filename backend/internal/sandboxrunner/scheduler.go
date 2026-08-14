@@ -466,6 +466,10 @@ func (scheduler *RunnerScheduler) MemoryReserveState(ctx context.Context) string
 	scheduler.mu.Lock()
 	watermark := scheduler.watermark
 	scheduler.mu.Unlock()
+	return resourceWatermarkState(ctx, watermark)
+}
+
+func resourceWatermarkState(ctx context.Context, watermark ResourceWatermark) string {
 	if watermark.Sampler == nil || watermark.ReserveMB < 1 {
 		return memoryReserveUnknown
 	}
@@ -532,28 +536,40 @@ var _ Scheduler = (*RunnerScheduler)(nil)
 
 const coreSessionTotalWeight = 2
 
+const (
+	coreHostMemoryReserveMinMB = 1536
+	coreHostMemoryReserveMaxMB = 32768
+)
+
 // CoreSessionScheduler is intentionally independent from RunnerScheduler's
 // one-shot queue and recovery model. Cross-replica capacity accounting and
 // queued cancellation are linearized by SessionOperationStore in Redis; this
 // type only applies the current Core policy snapshot.
 type CoreSessionSchedulerConfig struct {
-	Store    SessionOperationStore
-	Settings domainsandbox.SessionRuntimeSettings
+	Store               SessionOperationStore
+	Settings            domainsandbox.SessionRuntimeSettings
+	Resources           ResourceSampler
+	HostMemoryReserveMB int
 }
 
 type CoreSessionScheduler struct {
 	store SessionOperationStore
 
-	mu       sync.RWMutex
-	settings domainsandbox.SessionRuntimeSettings
+	mu        sync.RWMutex
+	settings  domainsandbox.SessionRuntimeSettings
+	watermark ResourceWatermark
 }
 
 func NewCoreSessionScheduler(config CoreSessionSchedulerConfig) (*CoreSessionScheduler, error) {
 	settings, err := domainsandbox.NormalizeSessionRuntimeSettings(config.Settings)
-	if err != nil || config.Store == nil {
+	if err != nil || config.Store == nil || config.Resources == nil ||
+		config.HostMemoryReserveMB < coreHostMemoryReserveMinMB || config.HostMemoryReserveMB > coreHostMemoryReserveMaxMB {
 		return nil, ErrConfiguration
 	}
-	return &CoreSessionScheduler{store: config.Store, settings: settings}, nil
+	return &CoreSessionScheduler{
+		store: config.Store, settings: settings,
+		watermark: ResourceWatermark{Sampler: config.Resources, ReserveMB: config.HostMemoryReserveMB},
+	}, nil
 }
 
 func (scheduler *CoreSessionScheduler) ApplySessionSettings(settings domainsandbox.SessionRuntimeSettings) error {
@@ -575,6 +591,22 @@ func (scheduler *CoreSessionScheduler) AppliedSessionSettings() domainsandbox.Se
 		return domainsandbox.SessionRuntimeSettings{}
 	}
 	return scheduler.sessionSettings()
+}
+
+// ApplySchedulerSettings updates only the host-memory admission reserve used
+// for future Core dequeues. Running operations keep their existing lifecycle.
+func (scheduler *CoreSessionScheduler) ApplySchedulerSettings(_ context.Context, settings domainsandbox.SchedulerSettings) error {
+	if scheduler == nil {
+		return ErrConfiguration
+	}
+	normalized, err := domainsandbox.NormalizeSchedulerSettings(settings)
+	if err != nil || normalized.Version == 0 {
+		return ErrConfiguration
+	}
+	scheduler.mu.Lock()
+	scheduler.watermark.ReserveMB = normalized.HostMemoryReserveMB
+	scheduler.mu.Unlock()
+	return nil
 }
 
 // CoreEnabled reports the currently applied database-backed Core admission
@@ -614,7 +646,23 @@ func (scheduler *CoreSessionScheduler) TryStart(ctx context.Context, sessionID, 
 	if !settings.CoreEnabled {
 		return SessionOperationRecord{}, false, ErrUnavailable
 	}
+	if scheduler.CoreMemoryReserveState(ctx) != memoryReserveAvailable {
+		record, err := scheduler.store.Get(ctx, sessionID, operationID)
+		return record, false, err
+	}
 	return scheduler.store.ClaimQueued(ctx, sessionID, operationID, coreSessionTotalWeight, settings.PerUserActiveLimit)
+}
+
+// CoreMemoryReserveState reports the same aggregate host-memory admission
+// state used by TryStart without exposing raw host totals or readings.
+func (scheduler *CoreSessionScheduler) CoreMemoryReserveState(ctx context.Context) string {
+	if scheduler == nil || ctx == nil {
+		return memoryReserveUnknown
+	}
+	scheduler.mu.RLock()
+	watermark := scheduler.watermark
+	scheduler.mu.RUnlock()
+	return resourceWatermarkState(ctx, watermark)
 }
 
 func (scheduler *CoreSessionScheduler) Finish(ctx context.Context, sessionID, operationID string, completion SessionOperationCompletion) (SessionOperationRecord, error) {

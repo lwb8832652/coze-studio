@@ -155,8 +155,12 @@ func NewRuntime(config Config, dependencies RuntimeDependencies) (*Runtime, erro
 	if err != nil {
 		return nil, ErrConfiguration
 	}
+	coreSettingsApplier, coreSettingsApplyOK := dependencies.CoreSettings.(SchedulerSettingsApplier)
+	if config.SessionBackendEnabled && dependencies.CoreSettings != nil && !coreSettingsApplyOK {
+		return nil, ErrConfiguration
+	}
 	storeSettings, _ := dependencies.Store.(SchedulerSettingsApplier)
-	configurationApplier := runtimeSettingsApplier{scheduler: scheduler, lifecycle: lifecycle, store: storeSettings}
+	configurationApplier := runtimeSettingsApplier{scheduler: scheduler, lifecycle: lifecycle, core: coreSettingsApplier, store: storeSettings}
 	configStore, err := NewConfigurationStoreWithApplier(dependencies.ConfigurationSigner, settings, configurationApplier)
 	if err != nil {
 		return nil, ErrConfiguration
@@ -299,7 +303,10 @@ func newProcessRuntime(ctx context.Context, config Config, factories processRunt
 					Enabled: true, DeploymentID: config.DeploymentID, Repository: repository, Upstream: upstream,
 				})
 				if settingsErr == nil && lifecycleErr == nil {
-					coreScheduler, schedulerErr := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: sessionStore, Settings: initialSessionSettings})
+					coreScheduler, schedulerErr := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+						Store: sessionStore, Settings: initialSessionSettings,
+						Resources: dependencies.Resources, HostMemoryReserveMB: settings.HostMemoryReserveMB,
+					})
 					adapterFactory, adapterErr := NewAIOSessionAdapterFactory(sessionUpstream, time.Now, nil)
 					ids, idsErr := NewRandomSessionIDSource(nil)
 					verifier, verifierErr := NewSessionContextIdentityVerifier(config.ContextVerifyKeys, sessionStore, time.Now)
@@ -572,6 +579,7 @@ func (function resultFinisherFunc) FinishResult(ctx context.Context, result infr
 type runtimeSettingsApplier struct {
 	scheduler *RunnerScheduler
 	lifecycle *Lifecycle
+	core      SchedulerSettingsApplier
 	store     SchedulerSettingsApplier
 }
 
@@ -628,6 +636,11 @@ func (applier runtimeSettingsApplier) ApplySchedulerSettings(ctx context.Context
 	}
 	if err := applier.lifecycle.ApplySchedulerSettings(ctx, settings); err != nil {
 		return err
+	}
+	if applier.core != nil {
+		if err := applier.core.ApplySchedulerSettings(ctx, settings); err != nil {
+			return err
+		}
 	}
 	if applier.store != nil {
 		return applier.store.ApplySchedulerSettings(ctx, settings)

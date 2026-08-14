@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -131,6 +132,84 @@ func TestSessionOperationStoreConcurrentAcceptHasOneRecordAndOneActiveEntry(t *t
 	}
 	if recordKeys != 1 {
 		t.Fatalf("record key count = %d, want 1", recordKeys)
+	}
+}
+
+func TestRedisSessionStoreRejectsQueueDepthAboveFrozen2C4GBound(t *testing.T) {
+	store, _ := newSessionRedisStoreFixture(t)
+	_, err := NewRedisSessionStore(store.client, RedisSessionStoreConfig{
+		DeploymentID: "deployment-a", ActiveKeyID: "queue-key",
+		Keys:      map[string]string{"queue-key": "0123456789abcdef0123456789abcdef"},
+		RecordTTL: 2 * time.Minute, LeaseTTL: 2 * time.Second, MaxQueueDepth: 65,
+	})
+	if !errors.Is(err, ErrConfiguration) {
+		t.Fatalf("NewRedisSessionStore(MaxQueueDepth=65) = %v, want ErrConfiguration", err)
+	}
+}
+
+func TestSessionOperationStoreCountsRunningInsideFrozen64ActiveBound(t *testing.T) {
+	store, server := newSessionRedisStoreFixtureWithQueueDepth(t, 64)
+	ctx := context.Background()
+	running := []SessionOperationInput{
+		sessionOperationInput(store.now(), "bound-running-one", 701),
+		sessionOperationInput(store.now(), "bound-running-two", 702),
+	}
+	for _, input := range running {
+		if _, _, err := store.Accept(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.MarkQueued(ctx, input.SessionID, input.OperationID); err != nil {
+			t.Fatal(err)
+		}
+		if _, started, err := store.ClaimQueued(ctx, input.SessionID, input.OperationID, 2, 1); err != nil || !started {
+			t.Fatalf("ClaimQueued(%q) = %t, %v", input.OperationID, started, err)
+		}
+	}
+	queued := make([]SessionOperationInput, 0, 62)
+	for index := 0; index < 62; index++ {
+		input := sessionOperationInput(store.now(), fmt.Sprintf("bound-queued-%02d", index), int64(800+index))
+		if _, _, err := store.Accept(ctx, input); err != nil {
+			t.Fatalf("Accept(%d) = %v", index, err)
+		}
+		if _, err := store.MarkQueued(ctx, input.SessionID, input.OperationID); err != nil {
+			t.Fatalf("MarkQueued(%d) = %v", index, err)
+		}
+		queued = append(queued, input)
+	}
+	active, err := server.List(store.activeOperationsKey())
+	if err != nil || len(active) != 64 {
+		t.Fatalf("active index at capacity = %d, %v; want 64", len(active), err)
+	}
+	aggregate, err := store.SessionOperationAggregate(ctx)
+	if err != nil || aggregate != (SessionOperationAggregate{QueueDepth: 62, Running: 2, UsedWeight: 2}) {
+		t.Fatalf("SessionOperationAggregate() = %#v, %v", aggregate, err)
+	}
+	recordKeysBefore := sessionOperationRecordKeyCount(server)
+	overflow := sessionOperationInput(store.now(), "bound-overflow", 999)
+	if record, replayed, err := store.Accept(ctx, overflow); !errors.Is(err, ErrUnavailable) || replayed ||
+		record.SessionID != "" || record.OperationID != "" || record.State != "" || len(record.Result) != 0 {
+		t.Fatalf("overflow Accept() = %#v, %t, %v", record, replayed, err)
+	}
+	if _, err := server.Get(store.operationLookupKey(overflow.SessionID, overflow.OperationID)); err == nil {
+		t.Fatal("overflow Accept() published an operation lookup")
+	}
+	if recordKeysAfter := sessionOperationRecordKeyCount(server); recordKeysAfter != recordKeysBefore {
+		t.Fatalf("overflow Accept() record keys = %d, want unchanged %d", recordKeysAfter, recordKeysBefore)
+	}
+	for index, input := range queued {
+		if record, changed, err := store.CancelQueued(ctx, input.SessionID, input.OperationID); err != nil || !changed || record.State != SessionOperationCanceled {
+			t.Fatalf("CancelQueued(%d) = %#v, %t, %v", index, record, changed, err)
+		}
+		active, err = server.List(store.activeOperationsKey())
+		wantActive := 63 - index
+		if err != nil || len(active) != wantActive {
+			t.Fatalf("active after cancel %d = %d, %v; want %d", index, len(active), err, wantActive)
+		}
+	}
+	for _, input := range running {
+		if _, err := store.Complete(ctx, input.SessionID, input.OperationID, successfulSessionOperationCompletion()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -811,7 +890,9 @@ func TestCoreSessionSchedulerExposesOperationLookupAndCancellation(t *testing.T)
 	store, _ := newSessionRedisStoreFixture(t)
 	settings := domainsandbox.DefaultSessionRuntimeSettings()
 	settings.CoreEnabled = true
-	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings})
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: 1536,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,11 +909,149 @@ func TestCoreSessionSchedulerExposesOperationLookupAndCancellation(t *testing.T)
 	}
 }
 
+func TestCoreSessionSchedulerRejectsMissingResourceAdmission(t *testing.T) {
+	store, _ := newSessionRedisStoreFixture(t)
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.CoreEnabled = true
+	if _, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings}); !errors.Is(err, ErrConfiguration) {
+		t.Fatalf("NewCoreSessionScheduler(without resource admission) = %v, want ErrConfiguration", err)
+	}
+	for _, reserveMB := range []int{0, 1535, 32769} {
+		if _, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+			Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: reserveMB,
+		}); !errors.Is(err, ErrConfiguration) {
+			t.Fatalf("NewCoreSessionScheduler(reserve=%d) = %v, want ErrConfiguration", reserveMB, err)
+		}
+	}
+}
+
+func TestCoreSessionSchedulerMemoryAdmissionKeepsQueueClosedUntilExactReserve(t *testing.T) {
+	tests := []struct {
+		name      string
+		available int
+		sampleErr error
+		wantStart bool
+	}{
+		{name: "below watermark", available: 1535},
+		{name: "sampler error", sampleErr: errors.New("host memory unavailable")},
+		{name: "at watermark", available: 1536, wantStart: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, _ := newSessionRedisStoreFixture(t)
+			settings := domainsandbox.DefaultSessionRuntimeSettings()
+			settings.CoreEnabled = true
+			sampler := resourceSamplerFunc(func(context.Context) (int, error) {
+				return test.available, test.sampleErr
+			})
+			scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+				Store: store, Settings: settings, Resources: sampler, HostMemoryReserveMB: 1536,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			input := sessionOperationInput(store.now(), "memory-"+strings.ReplaceAll(test.name, " ", "-"), 241)
+			if record, err := scheduler.Accept(ctx, input); err != nil || record.State != SessionOperationQueued {
+				t.Fatalf("Accept() = %#v, %v", record, err)
+			}
+			record, started, err := scheduler.TryStart(ctx, input.SessionID, input.OperationID)
+			if err != nil || started != test.wantStart {
+				t.Fatalf("TryStart() = %#v, %t, %v; want started=%t", record, started, err, test.wantStart)
+			}
+			wantState := SessionOperationQueued
+			if test.wantStart {
+				wantState = SessionOperationRunning
+			}
+			if record.State != wantState {
+				t.Fatalf("TryStart() state = %q, want %q", record.State, wantState)
+			}
+		})
+	}
+}
+
+func TestCoreSessionSchedulerMemoryAdmissionDoesNotInterruptRunningSession(t *testing.T) {
+	store, _ := newSessionRedisStoreFixture(t)
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.CoreEnabled = true
+	available := 1536
+	sampler := resourceSamplerFunc(func(context.Context) (int, error) { return available, nil })
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: sampler, HostMemoryReserveMB: 1536,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	running := sessionOperationInput(store.now(), "memory-running", 251)
+	queued := sessionOperationInput(store.now(), "memory-queued", 252)
+	for _, input := range []SessionOperationInput{running, queued} {
+		if _, err := scheduler.Accept(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, started, err := scheduler.TryStart(ctx, running.SessionID, running.OperationID); err != nil || !started {
+		t.Fatalf("first TryStart() = %t, %v", started, err)
+	}
+	available = 1535
+	if record, started, err := scheduler.TryStart(ctx, queued.SessionID, queued.OperationID); err != nil || started || record.State != SessionOperationQueued {
+		t.Fatalf("queued TryStart(below watermark) = %#v, %t, %v", record, started, err)
+	}
+	if record, err := scheduler.Get(ctx, running.SessionID, running.OperationID); err != nil || record.State != SessionOperationRunning {
+		t.Fatalf("running Get(below watermark) = %#v, %v", record, err)
+	}
+	if _, err := scheduler.Finish(ctx, running.SessionID, running.OperationID, successfulSessionOperationCompletion()); err != nil {
+		t.Fatalf("Finish(running below watermark) = %v", err)
+	}
+}
+
+func TestCoreSessionSchedulerAppliesSchedulerMemoryReserveUpdates(t *testing.T) {
+	store, _ := newSessionRedisStoreFixture(t)
+	sessionSettings := domainsandbox.DefaultSessionRuntimeSettings()
+	sessionSettings.CoreEnabled = true
+	available := 2048
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: sessionSettings,
+		Resources:           resourceSamplerFunc(func(context.Context) (int, error) { return available, nil }),
+		HostMemoryReserveMB: 1536,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applier, ok := any(scheduler).(SchedulerSettingsApplier)
+	if !ok {
+		t.Fatal("CoreSessionScheduler does not apply SchedulerSettings memory reserve updates")
+	}
+	settings := domainsandbox.DefaultSchedulerSettings()
+	settings.Version = 2
+	settings.HostMemoryReserveMB = 2049
+	if err := applier.ApplySchedulerSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	input := sessionOperationInput(store.now(), "memory-settings-update", 261)
+	if _, err := scheduler.Accept(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if record, started, err := scheduler.TryStart(context.Background(), input.SessionID, input.OperationID); err != nil || started || record.State != SessionOperationQueued {
+		t.Fatalf("TryStart(after raised reserve) = %#v, %t, %v", record, started, err)
+	}
+	settings.Version = 3
+	settings.HostMemoryReserveMB = available
+	if err := applier.ApplySchedulerSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, started, err := scheduler.TryStart(context.Background(), input.SessionID, input.OperationID); err != nil || !started {
+		t.Fatalf("TryStart(after reserve recovery) = %t, %v", started, err)
+	}
+}
+
 func TestCoreSessionSchedulerEnforcesGlobalWeightAndPerUserActiveLimit(t *testing.T) {
 	store, _ := newSessionRedisStoreFixture(t)
 	settings := domainsandbox.DefaultSessionRuntimeSettings()
 	settings.CoreEnabled = true
-	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings})
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: 1536,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -915,7 +1134,9 @@ func TestSessionOperationStoreRotatesUserBlockedHeadWithoutBreakingFIFO(t *testi
 func TestCoreSessionSchedulerMayStartDisabledAndFailsClosedUntilApplied(t *testing.T) {
 	store, _ := newSessionRedisStoreFixture(t)
 	settings := domainsandbox.DefaultSessionRuntimeSettings()
-	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings})
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: 1536,
+	})
 	if err != nil {
 		t.Fatalf("NewCoreSessionScheduler(disabled) = %v", err)
 	}
@@ -1046,6 +1267,32 @@ func newSessionRedisStoreFixture(t *testing.T) (*RedisSessionStore, *miniredis.M
 	t.Helper()
 	server := miniredis.RunT(t)
 	return newSessionRedisStoreFixtureWithServer(t, server)
+}
+
+func newSessionRedisStoreFixtureWithQueueDepth(t *testing.T, maxQueueDepth int) (*RedisSessionStore, *miniredis.Miniredis) {
+	t.Helper()
+	server := miniredis.RunT(t)
+	store, err := NewRedisSessionStore(redisimpl.NewWithAddrAndPassword(server.Addr(), ""), RedisSessionStoreConfig{
+		DeploymentID: "deployment-a", ActiveKeyID: "queue-key",
+		Keys:      map[string]string{"queue-key": "0123456789abcdef0123456789abcdef"},
+		RecordTTL: 2 * time.Minute, LeaseTTL: 2 * time.Second, MaxQueueDepth: maxQueueDepth,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixedNow := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return fixedNow }
+	return store, server
+}
+
+func sessionOperationRecordKeyCount(server *miniredis.Miniredis) int {
+	count := 0
+	for _, key := range server.Keys() {
+		if strings.Contains(key, ":record:") {
+			count++
+		}
+	}
+	return count
 }
 
 func newSessionRedisStoreFixtureWithServer(t *testing.T, server *miniredis.Miniredis) (*RedisSessionStore, *miniredis.Miniredis) {

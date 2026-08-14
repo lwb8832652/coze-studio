@@ -6,6 +6,7 @@ package sandboxrunner
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -59,7 +60,9 @@ func TestSessionRuntimeStatusSourceProjectsRealReadyAggregates(t *testing.T) {
 	}
 	settings := domainsandbox.DefaultSessionRuntimeSettings()
 	settings.Version, settings.CoreEnabled, settings.HostShellEnabled = 4, true, true
-	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings})
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: 1536,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +81,8 @@ func TestSessionRuntimeStatusSourceProjectsRealReadyAggregates(t *testing.T) {
 	want := SessionRuntimeStatusProjection{
 		Schema: sessionRuntimeStatusSchemaV1, Available: true, AppliedConfigVersion: 4,
 		RuntimeGeneration: 7, CoreEnabled: true, HostShellEnabled: true,
-		RawAIOReady: true, GenerationState: "ready", Running: 1, UsedWeight: 1,
+		CoreMemoryReserveState: memoryReserveAvailable,
+		RawAIOReady:            true, GenerationState: "ready", Running: 1, UsedWeight: 1,
 		TotalWeight: coreSessionTotalWeight, ActiveSessions: 3, IdleSessions: 3,
 		ActiveShells: 1, IdleShells: 2,
 	}
@@ -91,7 +95,9 @@ func TestSessionRuntimeStatusSourceReturnsSafeUnavailableForAIOAndRecoveryUncert
 	store, _ := newSessionRedisStoreFixture(t)
 	settings := domainsandbox.DefaultSessionRuntimeSettings()
 	settings.Version = 2
-	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{Store: store, Settings: settings})
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings, Resources: fixedMemorySampler(4096), HostMemoryReserveMB: 1536,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +136,60 @@ func TestSessionRuntimeStatusSourceReturnsSafeUnavailableForAIOAndRecoveryUncert
 	status, err = source.SessionRuntimeStatus(context.Background(), deploymentOnlySessionClaims())
 	if err != nil || status.Available || status.ReasonCode != sessionRuntimeReasonProjectionUnavailable || status.ActiveShells != 0 || status.IdleShells != 0 {
 		t.Fatalf("inconsistent SessionRuntimeStatus() = %#v, %v", status, err)
+	}
+}
+
+func TestSessionRuntimeStatusSourceProjectsCoreMemoryReserveAdmission(t *testing.T) {
+	store, _ := newSessionRedisStoreFixture(t)
+	settings := domainsandbox.DefaultSessionRuntimeSettings()
+	settings.Version, settings.CoreEnabled = 1, true
+	available := 1536
+	var sampleErr error
+	scheduler, err := NewCoreSessionScheduler(CoreSessionSchedulerConfig{
+		Store: store, Settings: settings,
+		Resources:           resourceSamplerFunc(func(context.Context) (int, error) { return available, sampleErr }),
+		HostMemoryReserveMB: 1536,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := sessionRuntimeStatusSource{
+		deploymentID: "runner-dev-a",
+		lifecycle: &recordingCoreLifecycle{snapshot: aio.LifecycleSnapshot{
+			Enabled: true, Ready: true, State: aio.LifecycleStateReady, Generation: 1,
+		}},
+		scheduler: scheduler, repository: &sessionAggregateRepositoryFake{},
+	}
+	for _, test := range []struct {
+		name       string
+		available  int
+		sampleErr  error
+		wantState  string
+		wantReady  bool
+		wantReason string
+	}{
+		{name: "available", available: 1536, wantState: memoryReserveAvailable, wantReady: true},
+		{name: "below watermark", available: 1535, wantState: memoryReserveBelowWatermark, wantReason: "CORE_MEMORY_BELOW_WATERMARK"},
+		{name: "unknown", available: 1536, sampleErr: errors.New("memory sample failed"), wantState: memoryReserveUnknown, wantReason: "CORE_MEMORY_RESERVE_UNKNOWN"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			available, sampleErr = test.available, test.sampleErr
+			status, err := source.SessionRuntimeStatus(context.Background(), deploymentOnlySessionClaims())
+			if err != nil || status.Available != test.wantReady || status.ReasonCode != test.wantReason {
+				t.Fatalf("SessionRuntimeStatus() = %#v, %v", status, err)
+			}
+			encoded, err := json.Marshal(status)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var projection map[string]any
+			if err := json.Unmarshal(encoded, &projection); err != nil {
+				t.Fatal(err)
+			}
+			if got := projection["core_memory_reserve_state"]; got != test.wantState {
+				t.Fatalf("core_memory_reserve_state = %#v, want %q", got, test.wantState)
+			}
+		})
 	}
 }
 
