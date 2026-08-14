@@ -625,9 +625,9 @@ test_migration_preflight_is_exact_and_read_only() (
   assert_file_contains "$RUNNER_SESSION_LOG" \
     '^session=false args=run --rm --no-deps coze-sandbox-runner migration-status ' \
     'migration preflight did not force Core off in its one-shot Runner'
-  assert_file_contains "$case_dir/output.log" '20260813000100' \
+  assert_file_contains "$case_dir/output.log" '20260814000100' \
     'migration preflight did not identify the one required additive migration'
-  assert_file_not_contains "$COMMAND_LOG" '20260813000100|sentinel-migration-dsn-secret|MYSQL_DSN' \
+  assert_file_not_contains "$COMMAND_LOG" '20260814000100|sentinel-migration-dsn-secret|MYSQL_DSN' \
     'migration preflight put the migration ID or DSN in argv'
   assert_file_not_contains "$case_dir/output.log" 'sentinel-migration-dsn-secret' \
     'migration preflight leaked its dev database DSN'

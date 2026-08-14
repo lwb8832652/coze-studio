@@ -2482,10 +2482,15 @@ func checkAIOCoreE2EDevSchema(ctx context.Context, db *sql.DB, databaseName stri
 	if err := tx.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&actualDatabase); err != nil || actualDatabase != databaseName {
 		return errAIOCoreE2ERuntime
 	}
+	var description string
 	var applied, total int
 	var migrationError sql.NullString
-	if err := tx.QueryRowContext(ctx, requiredMigrationQuery, requiredMigrationVersion).Scan(&applied, &total, &migrationError); err != nil ||
-		total <= 0 || applied != total || migrationError.Valid && migrationError.String != "" {
+	if err := tx.QueryRowContext(ctx, requiredMigrationQuery, requiredMigrationVersion).Scan(&description, &applied, &total, &migrationError); err != nil ||
+		description != requiredMigrationDescription || total <= 0 || applied != total || migrationError.Valid && migrationError.String != "" {
+		return errAIOCoreE2ERuntime
+	}
+	var requiredColumns int
+	if err := tx.QueryRowContext(ctx, requiredMigrationSchemaQuery, databaseName).Scan(&requiredColumns); err != nil || requiredColumns != requiredMigrationSchemaColumnCount {
 		return errAIOCoreE2ERuntime
 	}
 	var tableCount int

@@ -33,7 +33,7 @@ func TestRunMigrationStatusDispatchesOnlyExactCommand(t *testing.T) {
 	require.Equal(t, 1, called)
 	require.Contains(t, output.String(), "sandbox runner migration status is applied")
 	require.NotContains(t, output.String(), "do-not-log-this")
-	require.NotContains(t, output.String(), "20260813000100")
+	require.NotContains(t, output.String(), "20260814000100")
 }
 
 func TestRunMigrationStatusReturnsStableFailureWithoutLeakingCause(t *testing.T) {
@@ -47,7 +47,7 @@ func TestRunMigrationStatusReturnsStableFailureWithoutLeakingCause(t *testing.T)
 	require.Contains(t, output.String(), "sandbox runner migration status is unavailable")
 	require.NotContains(t, output.String(), "database-secret-cause")
 	require.NotContains(t, output.String(), "dsn-secret")
-	require.NotContains(t, output.String(), "20260813000100")
+	require.NotContains(t, output.String(), "20260814000100")
 }
 
 func TestRunRejectsEveryOtherArgumentShapeWithoutCallingMigrationCheck(t *testing.T) {

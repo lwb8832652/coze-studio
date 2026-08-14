@@ -553,7 +553,7 @@ caac563a1aa28d2be347e3dca25024e438c4051d feat: add sandbox session runtime setti
 
 **Files:**
 
-- Create: `docker/atlas/migrations/20260813000100_sandbox_shared_aio_core.sql`
+- Create: `docker/atlas/migrations/20260814000100_sandbox_shared_aio_core.sql`
 - Modify: `docker/atlas/migrations/atlas.sum`
 - Modify: `docker/atlas/opencoze_latest_schema.hcl`
 - Modify: `backend/domain/sandbox/session.go`
@@ -711,7 +711,7 @@ Scheduler 列不被 Session 更新污染、dev 数据保护和错误脱敏。修
 不发起第二轮审核。
 
 ```bash
-git add docker/atlas/migrations/20260813000100_sandbox_shared_aio_core.sql docker/atlas/migrations/atlas.sum docker/atlas/opencoze_latest_schema.hcl backend/domain/sandbox/repository.go backend/domain/sandbox/session.go backend/domain/sandbox/session_test.go backend/infra/sandbox/mysql_models.go backend/infra/sandbox/mysql_runtime_session_migration_test.go backend/infra/sandbox/mysql_runtime_session_repository.go backend/infra/sandbox/mysql_runtime_session_repository_test.go backend/infra/sandbox/mysql_runtime_session_integration_test.go
+git add docker/atlas/migrations/20260814000100_sandbox_shared_aio_core.sql docker/atlas/migrations/atlas.sum docker/atlas/opencoze_latest_schema.hcl backend/domain/sandbox/repository.go backend/domain/sandbox/session.go backend/domain/sandbox/session_test.go backend/infra/sandbox/mysql_models.go backend/infra/sandbox/mysql_runtime_session_migration_test.go backend/infra/sandbox/mysql_runtime_session_repository.go backend/infra/sandbox/mysql_runtime_session_repository_test.go backend/infra/sandbox/mysql_runtime_session_integration_test.go
 git commit -m "feat: persist shared AIO runtime sessions"
 ```
 
@@ -1512,7 +1512,8 @@ generation 来源。
 
 - lifecycle 命令只在 deploy/Compose；pull/up AIO -> raw health -> up Runner；
 - migration preflight 由候选 Runner 的 `migration-status` 在数据库只读事务中核验
-  additive `20260813000100` 已完整 applied，deploy 不 apply；
+  additive `20260814000100_sandbox_shared_aio_core` 已完整 applied 且真实表/列存在，deploy
+  不 apply；
 - dev 使用现有 DB，不启动/清空/重建本地 DB，禁止 AutoMigrate/drop/truncate；
 - health 只有 raw 8080、Runner Core projection/sentinel generation；
 - rollback 先关闭 capability、恢复旧应用，保留 session table、scheduler columns、volume；
@@ -1723,7 +1724,7 @@ bash deploy/dev/tests/publish_dev_test.sh
 ```
 
 Atlas 只 validate/hash；本 Task 不 apply、不启动 DB、不清空。dev DB 只做已授权 status/结构
-只读确认。确认 migration 仅 additive `20260813000100`、一张 runtime session 表和 scheduler
+只读确认。确认 migration 仅 additive `20260814000100`、一张 runtime session 表和 scheduler
 columns；Compose official latest、无 public AIO port、Runner 无 Docker lifecycle。
 
 - [ ] **Step 3: 用 in-app browser 验收系统页**
@@ -1796,7 +1797,7 @@ git rev-parse HEAD
 git rev-parse origin/dev
 ```
 
-确认 migration 只有 additive `20260813000100`、一张 runtime session 表与 scheduler
+确认 migration 只有 additive `20260814000100`、一张 runtime session 表与 scheduler
 columns；official AIO 直接 latest；无派生镜像、中间代理、UID/GID、`thread_key`、
 Docker lifecycle in Runner；用户 recovery design 不在 commit/diff；无 secret/evidence；
 无 agentthread 修改，业务流量未切。

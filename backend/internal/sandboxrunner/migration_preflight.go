@@ -13,9 +13,24 @@ import (
 )
 
 const (
-	requiredMigrationVersion  = "20260813000100"
-	requiredMigrationQuery    = "SELECT applied, total, error FROM atlas_schema_revisions WHERE version = ?"
-	migrationPreflightTimeout = 10 * time.Second
+	requiredMigrationVersion     = "20260814000100"
+	requiredMigrationDescription = "sandbox_shared_aio_core"
+	requiredMigrationQuery       = "SELECT description, applied, total, error FROM atlas_schema_revisions WHERE version = ?"
+	requiredMigrationSchemaQuery = `SELECT COUNT(*) FROM information_schema.columns
+WHERE table_schema = ? AND (
+  (table_name = 'sandbox_scheduler_settings' AND column_name IN (
+    'session_settings_json', 'session_settings_version', 'session_settings_updated_by',
+    'session_settings_updated_at', 'aio_runtime_generation', 'aio_runtime_deployment_id',
+    'aio_runtime_sentinel_id'
+  )) OR
+  (table_name = 'sandbox_runtime_sessions' AND column_name IN (
+    'session_id', 'deployment_id', 'provider_id', 'space_id', 'user_id', 'thread_id',
+    'profile', 'state', 'runtime_generation', 'upstream_shell_id', 'recovery_reason',
+    'version', 'last_activity_at', 'expires_at', 'created_at', 'updated_at'
+  ))
+)`
+	requiredMigrationSchemaColumnCount = 23
+	migrationPreflightTimeout          = 10 * time.Second
 )
 
 var ErrMigrationPreflight = errors.New("required database migration is unavailable")
@@ -68,11 +83,12 @@ func checkRequiredMigration(ctx context.Context, getenv func(string) string, ope
 		return ErrMigrationPreflight
 	}
 	var (
+		description    string
 		applied        int
 		total          int
 		migrationError sql.NullString
 	)
-	if err := rows.Scan(&applied, &total, &migrationError); err != nil {
+	if err := rows.Scan(&description, &applied, &total, &migrationError); err != nil {
 		return ErrMigrationPreflight
 	}
 	if rows.Next() || rows.Err() != nil {
@@ -81,7 +97,11 @@ func checkRequiredMigration(ctx context.Context, getenv func(string) string, ope
 	if err := rows.Close(); err != nil {
 		return ErrMigrationPreflight
 	}
-	if total <= 0 || applied != total || migrationError.Valid && migrationError.String != "" {
+	if description != requiredMigrationDescription || total <= 0 || applied != total || migrationError.Valid && migrationError.String != "" {
+		return ErrMigrationPreflight
+	}
+	var requiredColumns int
+	if err := tx.QueryRowContext(boundedCtx, requiredMigrationSchemaQuery, config.DBName).Scan(&requiredColumns); err != nil || requiredColumns != requiredMigrationSchemaColumnCount {
 		return ErrMigrationPreflight
 	}
 	if err := tx.Rollback(); err != nil {

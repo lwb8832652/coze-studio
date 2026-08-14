@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const sharedAIOMigrationName = "20260813000100_sandbox_shared_aio_core.sql"
+const sharedAIOMigrationName = "20260814000100_sandbox_shared_aio_core.sql"
 
 func TestSharedAIOMigrationIsAdditiveAndDefinesExactRuntimeContract(t *testing.T) {
 	repoRoot := sharedAIORepoRoot(t)
