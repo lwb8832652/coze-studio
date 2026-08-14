@@ -114,28 +114,40 @@ type AdaptiveBootstrapSourceRunReader interface {
 }
 
 type AdaptiveBootstrapCoordinatorOptions struct {
-	AttemptReader   AdaptiveBootstrapAttemptReader
-	Repository      AdaptiveBootstrapRepository
-	SourceRunReader AdaptiveBootstrapSourceRunReader
-	IDGen           AdaptiveBootstrapIDGenerator
-	Now             func() int64
+	AttemptReader       AdaptiveBootstrapAttemptReader
+	Repository          AdaptiveBootstrapRepository
+	SourceRunReader     AdaptiveBootstrapSourceRunReader
+	IDGen               AdaptiveBootstrapIDGenerator
+	EligibilityResolver AdaptiveEligibilityResolver
+	BaselineProducer    AdaptiveDecisionProducer
+	AdaptiveProducer    AdaptiveDecisionProducer
+	Now                 func() int64
 }
 
 type adaptiveBootstrapCoordinator struct {
-	attemptReader   AdaptiveBootstrapAttemptReader
-	repository      AdaptiveBootstrapRepository
-	sourceRunReader AdaptiveBootstrapSourceRunReader
-	idGen           AdaptiveBootstrapIDGenerator
-	now             func() int64
+	attemptReader       AdaptiveBootstrapAttemptReader
+	repository          AdaptiveBootstrapRepository
+	sourceRunReader     AdaptiveBootstrapSourceRunReader
+	idGen               AdaptiveBootstrapIDGenerator
+	eligibilityResolver AdaptiveEligibilityResolver
+	baselineProducer    AdaptiveDecisionProducer
+	adaptiveProducer    AdaptiveDecisionProducer
+	now                 func() int64
 }
 
 func NewAdaptiveBootstrapCoordinator(options AdaptiveBootstrapCoordinatorOptions) AdaptiveBootstrapCoordinator {
+	if options.EligibilityResolver == nil {
+		options.EligibilityResolver = baselineAdaptiveEligibilityResolver{}
+	}
+	if options.BaselineProducer == nil {
+		options.BaselineProducer = BaselineAdaptiveDecisionProducer{}
+	}
 	return &adaptiveBootstrapCoordinator{
-		attemptReader:   options.AttemptReader,
-		repository:      options.Repository,
-		sourceRunReader: options.SourceRunReader,
-		idGen:           options.IDGen,
-		now:             options.Now,
+		attemptReader: options.AttemptReader, repository: options.Repository,
+		sourceRunReader: options.SourceRunReader, idGen: options.IDGen,
+		eligibilityResolver: options.EligibilityResolver,
+		baselineProducer:    options.BaselineProducer, adaptiveProducer: options.AdaptiveProducer,
+		now: options.Now,
 	}
 }
 
@@ -194,20 +206,17 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(
 
 	operationKey := adaptiveBootstrapStableKey("operation", run, attempt)
 	decisionID := adaptiveBootstrapStableKey("decision", run, attempt)
-	admission := baselineAdaptiveAdmission()
-	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
-		Admission:           admission,
-		DecisionID:          decisionID,
-		DecisionRevision:    1,
-		ExecutionRunID:      run.RunID,
-		JournalRunID:        attempt.JournalRunID,
-		AttemptID:           attempt.AttemptID,
-		ExecutionGeneration: run.ExecutionGeneration,
-		PlanScopeRunID:      run.RunID,
-		CreatedAt:           attempt.CreatedAt,
+	admission, err := c.eligibilityResolver.Resolve(ctx, AdaptiveEligibilityRequest{SpaceID: run.SpaceID})
+	if err != nil {
+		return nil, fmt.Errorf("resolve adaptive eligibility: %w", err)
+	}
+	decision, err := c.produceDecision(ctx, admission, adaptiveDecisionAuthority{
+		DecisionID: decisionID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("produce baseline adaptive decision: %w", err)
+		return nil, fmt.Errorf("produce adaptive decision: %w", err)
 	}
 	ids, err := c.idGen.GenMultiIDs(ctx, 3)
 	if err != nil {
@@ -309,9 +318,9 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 			return nil, err
 		}
 	}
-	decision, err := (BaselineDecisionProducer{}).Produce(BaselineDecisionRequest{
-		Admission: admission, DecisionID: adaptiveBootstrapStableKey("decision", run, attempt),
-		DecisionRevision: 1, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+	decision, err := c.produceDecision(ctx, admission, adaptiveDecisionAuthority{
+		DecisionID:     adaptiveBootstrapStableKey("decision", run, attempt),
+		ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
 		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
 		PlanScopeRunID: planScopeRunID, CreatedAt: attempt.CreatedAt,
 	})
@@ -405,7 +414,7 @@ func typedAdaptiveAdmissionFromSource(
 		source.Authority.ExecutionRunID != sourceRunID || source.Authority.JournalRunID <= 0 ||
 		source.Authority.JournalRunID != expectedJournalRunID ||
 		source.Authority.AttemptID != expectedSourceAttemptID ||
-		source.Authority.ExecutionGeneration == 0 || source.Admission.FeatureGateEnabled ||
+		source.Authority.ExecutionGeneration == 0 ||
 		(source.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) {
@@ -435,7 +444,7 @@ func typedAdaptiveAdmissionFromSource(
 	sourceGeneration := source.Authority.ExecutionGeneration
 	return domainentity.AdaptiveAdmissionSnapshot{
 		Schema:                    domainentity.AdaptiveAdmissionSchemaV1,
-		FeatureGateEnabled:        false,
+		FeatureGateEnabled:        source.Admission.FeatureGateEnabled,
 		Source:                    domainentity.AdaptiveAdmissionSourceTypedInheritance,
 		SourceRunID:               &sourceRunID,
 		SourceExecutionGeneration: &sourceGeneration,
@@ -453,7 +462,7 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 	if result == nil || run == nil || input == nil || attempt == nil ||
 		(result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
 			result.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) ||
-		result.Admission.FeatureGateEnabled || result.Admission.SourceRunID == nil ||
+		result.Admission.SourceRunID == nil ||
 		*result.Admission.SourceRunID != input.SourceRunID ||
 		result.Authority.ThreadID != run.ThreadID || result.Authority.ExecutionRunID != run.RunID ||
 		result.Authority.JournalRunID != attempt.JournalRunID || result.Authority.AttemptID != attempt.AttemptID ||
@@ -493,7 +502,7 @@ func adaptiveBootstrapFactsFromDurableResult(
 		return nil, fmt.Errorf("adaptive bootstrap durable facts do not match the current run claim")
 	}
 	if result.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh ||
-		result.Admission.FeatureGateEnabled || result.Decision.DecisionRevision != 1 ||
+		result.Decision.DecisionRevision != 1 ||
 		result.Authority.ExecutionGeneration != run.ExecutionGeneration ||
 		result.Decision.ExecutionGeneration != run.ExecutionGeneration {
 		return nil, fmt.Errorf("adaptive bootstrap replay generation does not match the current run claim")
@@ -519,14 +528,7 @@ func cloneAdaptiveBootstrapFacts(facts *AdaptiveBootstrapFacts) *AdaptiveBootstr
 		return nil
 	}
 	clone := *facts
-	if facts.Admission.SourceRunID != nil {
-		value := *facts.Admission.SourceRunID
-		clone.Admission.SourceRunID = &value
-	}
-	if facts.Admission.SourceExecutionGeneration != nil {
-		value := *facts.Admission.SourceExecutionGeneration
-		clone.Admission.SourceExecutionGeneration = &value
-	}
+	clone.Admission = cloneAdaptiveAdmissionSnapshot(facts.Admission)
 	if facts.Decision.Deliverables != nil {
 		clone.Decision.Deliverables = append([]string{}, facts.Decision.Deliverables...)
 	}
@@ -547,6 +549,21 @@ func cloneAdaptiveBootstrapFacts(facts *AdaptiveBootstrapFacts) *AdaptiveBootstr
 	return &clone
 }
 
+func cloneAdaptiveAdmissionSnapshot(
+	admission domainentity.AdaptiveAdmissionSnapshot,
+) domainentity.AdaptiveAdmissionSnapshot {
+	clone := admission
+	if admission.SourceRunID != nil {
+		value := *admission.SourceRunID
+		clone.SourceRunID = &value
+	}
+	if admission.SourceExecutionGeneration != nil {
+		value := *admission.SourceExecutionGeneration
+		clone.SourceExecutionGeneration = &value
+	}
+	return clone
+}
+
 func baselineAdaptiveAdmission() domainentity.AdaptiveAdmissionSnapshot {
 	return domainentity.AdaptiveAdmissionSnapshot{
 		Schema:             domainentity.AdaptiveAdmissionSchemaV1,
@@ -561,6 +578,87 @@ func baselineAdaptiveAdmission() domainentity.AdaptiveAdmissionSnapshot {
 			MaxConsecutiveNoProgress: 3, MaxActiveDurationSeconds: 1200,
 		},
 	}
+}
+
+type baselineAdaptiveEligibilityResolver struct{}
+
+func (baselineAdaptiveEligibilityResolver) Resolve(
+	context.Context,
+	AdaptiveEligibilityRequest,
+) (domainentity.AdaptiveAdmissionSnapshot, error) {
+	return baselineAdaptiveAdmission(), nil
+}
+
+func (c *adaptiveBootstrapCoordinator) produceDecision(
+	ctx context.Context,
+	admission domainentity.AdaptiveAdmissionSnapshot,
+	authority adaptiveDecisionAuthority,
+) (domainentity.ExecutionDecision, error) {
+	producer := c.baselineProducer
+	if admission.FeatureGateEnabled {
+		producer = c.adaptiveProducer
+	}
+	if producer == nil {
+		return domainentity.ExecutionDecision{}, ErrAdaptiveProducerUnavailable
+	}
+	candidate, err := producer.Produce(ctx, AdaptiveDecisionRequest{
+		Admission: cloneAdaptiveAdmissionSnapshot(admission),
+	})
+	if err != nil {
+		return domainentity.ExecutionDecision{}, err
+	}
+	decision := domainentity.ExecutionDecision{
+		Schema:     domainentity.ExecutionDecisionSchemaV1,
+		DecisionID: authority.DecisionID, DecisionRevision: 1,
+		ExecutionRunID: authority.ExecutionRunID, JournalRunID: authority.JournalRunID,
+		AttemptID: authority.AttemptID, ExecutionGeneration: authority.ExecutionGeneration,
+		GoalSummary: candidate.GoalSummary, Deliverables: candidate.Deliverables,
+		AcceptanceChecks: candidate.AcceptanceChecks, Decision: candidate.Decision,
+		ExecutionShape: candidate.ExecutionShape, ClarificationQuestion: candidate.ClarificationQuestion,
+		SafeSummary: candidate.SafeSummary, CreatedAt: authority.CreatedAt,
+	}
+	expectedPlanScopeRunID := int64(0)
+	if candidate.Decision == domainentity.ExecutionDecisionExecute &&
+		candidate.ExecutionShape == domainentity.ExecutionShapeMultiStep {
+		planScopeRunID := authority.PlanScopeRunID
+		decision.PlanScopeRunID = &planScopeRunID
+		expectedPlanScopeRunID = authority.PlanScopeRunID
+	}
+	if candidate.Deliverables != nil {
+		decision.Deliverables = append([]string{}, candidate.Deliverables...)
+	}
+	if candidate.AcceptanceChecks != nil {
+		decision.AcceptanceChecks = append(
+			[]domainentity.AdaptiveAcceptanceCheck{},
+			candidate.AcceptanceChecks...,
+		)
+	}
+	if candidate.ClarificationQuestion != nil {
+		value := *candidate.ClarificationQuestion
+		decision.ClarificationQuestion = &value
+	}
+	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
+		admission,
+		decision,
+		adaptivecontract.BootstrapIdentity{
+			ExecutionRunID: authority.ExecutionRunID, JournalRunID: authority.JournalRunID,
+			AttemptID: authority.AttemptID, ExecutionGeneration: authority.ExecutionGeneration,
+			ExpectedPlanScopeRunID: expectedPlanScopeRunID,
+		},
+	); err != nil {
+		return domainentity.ExecutionDecision{}, err
+	}
+	return decision, nil
+}
+
+type adaptiveDecisionAuthority struct {
+	DecisionID          string
+	ExecutionRunID      int64
+	JournalRunID        int64
+	AttemptID           string
+	ExecutionGeneration uint64
+	PlanScopeRunID      int64
+	CreatedAt           int64
 }
 
 func adaptiveBootstrapFreshAttempt(run *RunSummary, attempt *domainentity.RunAttempt) bool {

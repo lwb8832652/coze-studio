@@ -108,6 +108,233 @@ func TestAdaptiveBootstrapCoordinatorCommitsFreshRootADKRun(t *testing.T) {
 	require.Equal(t, req.Decision.DecisionID, otherRepo.commitRequests[0].Decision.DecisionID)
 }
 
+func TestAdaptiveBootstrapCoordinatorUsesGateOnEligibilityAndProducerBeforeIDs(t *testing.T) {
+	attempt := freshAdaptiveBootstrapAttemptForTest()
+	run := freshAdaptiveBootstrapRunForTest()
+	run.SpaceID = 77
+	resolver := &adaptiveEligibilityResolverStub{admission: baselineAdaptiveAdmission()}
+	resolver.admission.FeatureGateEnabled = true
+	producer := &adaptiveDecisionProducerStub{candidate: adaptiveDecisionCandidateForTest(true)}
+	repo := &adaptiveBootstrapRepositoryStub{readErr: repository.ErrAdaptiveExecutionBootstrapNotFound}
+	ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: readerForAdaptiveAttempt(attempt), Repository: repo, IDGen: ids,
+		EligibilityResolver: resolver, AdaptiveProducer: producer, Now: func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.Bootstrap(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, []AdaptiveEligibilityRequest{{SpaceID: 77}}, resolver.requests)
+	require.Len(t, producer.requests, 1)
+	require.True(t, producer.requests[0].Admission.FeatureGateEnabled)
+	require.Equal(t, []int{3}, ids.counts)
+	require.Len(t, repo.commitRequests, 1)
+	require.True(t, repo.commitRequests[0].Admission.FeatureGateEnabled)
+	require.True(t, facts.Admission.FeatureGateEnabled)
+	require.Equal(t, run.RunID, facts.Decision.ExecutionRunID)
+	require.Equal(t, uint64(1), facts.Decision.DecisionRevision)
+	require.Equal(t, attempt.CreatedAt, facts.Decision.CreatedAt)
+}
+
+func TestAdaptiveBootstrapCoordinatorMaterializesServerAuthorityAfterCandidate(t *testing.T) {
+	attempt := freshAdaptiveBootstrapAttemptForTest()
+	run := freshAdaptiveBootstrapRunForTest()
+	run.SpaceID = 77
+	producer := &adaptiveDecisionProducerStub{candidate: adaptiveDecisionCandidateForTest(true)}
+	repo := &adaptiveBootstrapRepositoryStub{readErr: repository.ErrAdaptiveExecutionBootstrapNotFound}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: readerForAdaptiveAttempt(attempt), Repository: repo,
+		IDGen:               &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}},
+		EligibilityResolver: gateOnEligibilityResolverForTest(), AdaptiveProducer: producer,
+		Now: func() int64 { return 999 },
+	})
+
+	_, err := coordinator.Bootstrap(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Len(t, repo.commitRequests, 1)
+	decision := repo.commitRequests[0].Decision
+	require.Equal(t, entity.ExecutionDecisionSchemaV1, decision.Schema)
+	require.Equal(t, adaptiveBootstrapStableKeyForTest("decision", run, attempt), decision.DecisionID)
+	require.Equal(t, uint64(1), decision.DecisionRevision)
+	require.Equal(t, run.RunID, decision.ExecutionRunID)
+	require.Equal(t, attempt.JournalRunID, decision.JournalRunID)
+	require.Equal(t, attempt.AttemptID, decision.AttemptID)
+	require.Equal(t, run.ExecutionGeneration, decision.ExecutionGeneration)
+	require.Equal(t, run.RunID, *decision.PlanScopeRunID)
+	require.Equal(t, attempt.CreatedAt, decision.CreatedAt)
+}
+
+func TestAdaptiveBootstrapCoordinatorMaterializesCandidateForms(t *testing.T) {
+	question := "Which result should be produced?"
+	for _, test := range []struct {
+		name          string
+		candidate     AdaptiveDecisionCandidate
+		wantPlanScope bool
+	}{
+		{name: "clarification", candidate: AdaptiveDecisionCandidate{
+			GoalSummary: "Clarify the requested outcome.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionClarification, ExecutionShape: entity.ExecutionShapeEmpty,
+			ClarificationQuestion: &question, SafeSummary: "Ask one safe clarification question.",
+		}},
+		{name: "direct", candidate: AdaptiveDecisionCandidate{
+			GoalSummary: "Answer the request directly.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionDirect, ExecutionShape: entity.ExecutionShapeEmpty,
+			SafeSummary: "Use the direct execution path.",
+		}},
+		{name: "single step", candidate: AdaptiveDecisionCandidate{
+			GoalSummary: "Execute one bounded step.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionExecute, ExecutionShape: entity.ExecutionShapeSingleStep,
+			SafeSummary: "Use the single-step execution path.",
+		}},
+		{name: "multi step", wantPlanScope: true, candidate: AdaptiveDecisionCandidate{
+			GoalSummary: "Execute bounded steps.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionExecute, ExecutionShape: entity.ExecutionShapeMultiStep,
+			SafeSummary: "Use the multi-step execution path.",
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinator := &adaptiveBootstrapCoordinator{
+				adaptiveProducer: &adaptiveDecisionProducerStub{candidate: test.candidate},
+			}
+			admission := baselineAdaptiveAdmission()
+			admission.FeatureGateEnabled = true
+			decision, err := coordinator.produceDecision(context.Background(), admission, adaptiveDecisionAuthority{
+				DecisionID: "decision-1", ExecutionRunID: 20, JournalRunID: 30,
+				AttemptID: "attempt-1", ExecutionGeneration: 4, PlanScopeRunID: 20, CreatedAt: 700,
+			})
+
+			require.NoError(t, err)
+			if test.wantPlanScope {
+				require.Equal(t, int64(20), *decision.PlanScopeRunID)
+			} else {
+				require.Nil(t, decision.PlanScopeRunID)
+			}
+			require.Equal(t, test.candidate.ClarificationQuestion, decision.ClarificationQuestion)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorRejectsInvalidCandidateForm(t *testing.T) {
+	question := "Should not be present."
+	for _, candidate := range []AdaptiveDecisionCandidate{
+		{
+			GoalSummary: "Invalid direct candidate.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionDirect, ExecutionShape: entity.ExecutionShapeSingleStep,
+			SafeSummary: "Reject this invalid candidate.",
+		},
+		{
+			GoalSummary: "Invalid execute candidate.", Deliverables: []string{},
+			AcceptanceChecks: []entity.AdaptiveAcceptanceCheck{},
+			Decision:         entity.ExecutionDecisionExecute, ExecutionShape: entity.ExecutionShapeMultiStep,
+			ClarificationQuestion: &question, SafeSummary: "Reject this invalid candidate.",
+		},
+	} {
+		coordinator := &adaptiveBootstrapCoordinator{
+			adaptiveProducer: &adaptiveDecisionProducerStub{candidate: candidate},
+		}
+		admission := baselineAdaptiveAdmission()
+		admission.FeatureGateEnabled = true
+
+		_, err := coordinator.produceDecision(context.Background(), admission, adaptiveDecisionAuthority{
+			DecisionID: "decision-1", ExecutionRunID: 20, JournalRunID: 30,
+			AttemptID: "attempt-1", ExecutionGeneration: 4, PlanScopeRunID: 20, CreatedAt: 700,
+		})
+
+		require.ErrorIs(t, err, ErrExecutionDecisionInvalid)
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorIsolatesAdmissionLineageFromProducer(t *testing.T) {
+	sourceRunID := int64(20)
+	sourceGeneration := uint64(3)
+	admission := baselineAdaptiveAdmission()
+	admission.FeatureGateEnabled = true
+	admission.Source = entity.AdaptiveAdmissionSourceTypedInheritance
+	admission.SourceRunID = &sourceRunID
+	admission.SourceExecutionGeneration = &sourceGeneration
+	producer := &adaptiveDecisionProducerStub{
+		candidate: adaptiveDecisionCandidateForTest(true),
+		mutateAdmission: func(candidate entity.AdaptiveAdmissionSnapshot) {
+			*candidate.SourceRunID = 999
+			*candidate.SourceExecutionGeneration = 999
+		},
+	}
+	coordinator := &adaptiveBootstrapCoordinator{adaptiveProducer: producer}
+
+	_, err := coordinator.produceDecision(context.Background(), admission, adaptiveDecisionAuthority{
+		DecisionID: "decision-1", ExecutionRunID: 21, JournalRunID: 20,
+		AttemptID: "attempt-2", ExecutionGeneration: 4, PlanScopeRunID: 20, CreatedAt: 700,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(20), sourceRunID)
+	require.Equal(t, uint64(3), sourceGeneration)
+}
+
+func TestAdaptiveBootstrapCoordinatorFailsClosedBeforeIDsForEligibilityOrProducer(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		resolver AdaptiveEligibilityResolver
+		producer AdaptiveDecisionProducer
+	}{
+		{name: "eligibility error", resolver: &adaptiveEligibilityResolverStub{err: errors.New("eligibility failed")}},
+		{name: "missing producer", resolver: gateOnEligibilityResolverForTest()},
+		{name: "producer error", resolver: gateOnEligibilityResolverForTest(), producer: &adaptiveDecisionProducerStub{err: errors.New("produce failed")}},
+		{name: "invalid candidate", resolver: gateOnEligibilityResolverForTest(), producer: &adaptiveDecisionProducerStub{candidate: AdaptiveDecisionCandidate{Decision: entity.ExecutionDecisionExecute, ExecutionShape: entity.ExecutionShapeEmpty}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &adaptiveBootstrapRepositoryStub{readErr: repository.ErrAdaptiveExecutionBootstrapNotFound}
+			ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+			coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+				AttemptReader: readerForAdaptiveAttempt(freshAdaptiveBootstrapAttemptForTest()),
+				Repository:    repo, IDGen: ids, EligibilityResolver: test.resolver,
+				AdaptiveProducer: test.producer, Now: func() int64 { return 999 },
+			})
+
+			facts, err := coordinator.Bootstrap(context.Background(), freshAdaptiveBootstrapRunForTest())
+
+			require.Error(t, err)
+			require.Nil(t, facts)
+			require.Empty(t, ids.counts)
+			require.Empty(t, repo.commitRequests)
+		})
+	}
+}
+
+func TestAdaptiveBootstrapCoordinatorTypedResumeInheritsGateOnWithoutRecomputingEligibility(t *testing.T) {
+	run, input, attempt := adaptiveBootstrapRecoveryResumeForTest()
+	source := adaptiveBootstrapSourceResultForTest(t, entity.AdaptiveAdmissionSourceFresh)
+	source.Admission.FeatureGateEnabled = true
+	source.Decision = adaptiveDecisionForBootstrapTest(source.Admission, source.Decision)
+	resolver := &adaptiveEligibilityResolverStub{err: errors.New("must not be called")}
+	producer := &adaptiveDecisionProducerStub{candidate: adaptiveDecisionCandidateForTest(true)}
+	repo := &adaptiveBootstrapRepositoryStub{
+		readResults: []*repository.CommitAdaptiveExecutionBootstrapResult{nil, source},
+		readErrs:    []error{repository.ErrAdaptiveExecutionBootstrapNotFound, nil},
+	}
+	ids := &adaptiveBootstrapIDGeneratorStub{ids: []int64{101, 102, 103}}
+	coordinator := NewAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorOptions{
+		AttemptReader: readerForAdaptiveAttempt(attempt), Repository: repo, IDGen: ids,
+		EligibilityResolver: resolver, AdaptiveProducer: producer, Now: func() int64 { return 999 },
+	})
+
+	facts, err := coordinator.BootstrapResume(context.Background(), run, input)
+
+	require.NoError(t, err)
+	require.Empty(t, resolver.requests)
+	require.Len(t, producer.requests, 1)
+	require.True(t, producer.requests[0].Admission.FeatureGateEnabled)
+	require.True(t, repo.commitRequests[0].Admission.FeatureGateEnabled)
+	require.True(t, facts.Admission.FeatureGateEnabled)
+}
+
 func TestAdaptiveBootstrapCoordinatorReplaysBeforeAllocatingIDs(t *testing.T) {
 	reader := &adaptiveBootstrapAttemptReaderStub{attempt: freshAdaptiveBootstrapAttemptForTest()}
 	run := freshAdaptiveBootstrapRunForTest()
@@ -978,6 +1205,86 @@ func adaptiveBootstrapStableKeyForTest(
 	}, "\x00")
 	digest := sha256.Sum256([]byte(input))
 	return "adaptive-" + kind + ":" + hex.EncodeToString(digest[:])
+}
+
+func readerForAdaptiveAttempt(attempt *entity.RunAttempt) AdaptiveBootstrapAttemptReader {
+	return &adaptiveBootstrapAttemptReaderStub{attempt: attempt}
+}
+
+type adaptiveEligibilityResolverStub struct {
+	admission entity.AdaptiveAdmissionSnapshot
+	err       error
+	requests  []AdaptiveEligibilityRequest
+}
+
+func (s *adaptiveEligibilityResolverStub) Resolve(
+	_ context.Context,
+	request AdaptiveEligibilityRequest,
+) (entity.AdaptiveAdmissionSnapshot, error) {
+	s.requests = append(s.requests, request)
+	return s.admission, s.err
+}
+
+func gateOnEligibilityResolverForTest() AdaptiveEligibilityResolver {
+	admission := baselineAdaptiveAdmission()
+	admission.FeatureGateEnabled = true
+	return &adaptiveEligibilityResolverStub{admission: admission}
+}
+
+type adaptiveDecisionProducerStub struct {
+	candidate       AdaptiveDecisionCandidate
+	err             error
+	requests        []AdaptiveDecisionRequest
+	mutateAdmission func(entity.AdaptiveAdmissionSnapshot)
+}
+
+func (s *adaptiveDecisionProducerStub) Produce(
+	_ context.Context,
+	request AdaptiveDecisionRequest,
+) (AdaptiveDecisionCandidate, error) {
+	s.requests = append(s.requests, request)
+	if s.mutateAdmission != nil {
+		s.mutateAdmission(request.Admission)
+	}
+	return s.candidate, s.err
+}
+
+func adaptiveDecisionCandidateForTest(gateOn bool) AdaptiveDecisionCandidate {
+	admission := baselineAdaptiveAdmission()
+	admission.FeatureGateEnabled = gateOn
+	request := AdaptiveDecisionRequest{Admission: admission}
+	producer := AdaptiveDecisionProducer(BaselineAdaptiveDecisionProducer{})
+	if gateOn {
+		producer = DeterministicAdaptiveDecisionProducer{}
+	}
+	candidate, err := producer.Produce(context.Background(), request)
+	if err != nil {
+		panic(err)
+	}
+	return candidate
+}
+
+func adaptiveDecisionForBootstrapTest(
+	admission entity.AdaptiveAdmissionSnapshot,
+	authority entity.ExecutionDecision,
+) entity.ExecutionDecision {
+	candidate, err := (DeterministicAdaptiveDecisionProducer{}).Produce(
+		context.Background(), AdaptiveDecisionRequest{Admission: admission},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return entity.ExecutionDecision{
+		Schema:     entity.ExecutionDecisionSchemaV1,
+		DecisionID: authority.DecisionID, DecisionRevision: authority.DecisionRevision,
+		ExecutionRunID: authority.ExecutionRunID, JournalRunID: authority.JournalRunID,
+		AttemptID: authority.AttemptID, ExecutionGeneration: authority.ExecutionGeneration,
+		PlanScopeRunID: authority.PlanScopeRunID,
+		GoalSummary:    candidate.GoalSummary, Deliverables: candidate.Deliverables,
+		AcceptanceChecks: candidate.AcceptanceChecks, Decision: candidate.Decision,
+		ExecutionShape: candidate.ExecutionShape, ClarificationQuestion: candidate.ClarificationQuestion,
+		SafeSummary: candidate.SafeSummary, CreatedAt: authority.CreatedAt,
+	}
 }
 
 type adaptiveBootstrapAttemptReaderStub struct {

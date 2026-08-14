@@ -264,13 +264,26 @@ func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
 		wantErr   error
 	}{
 		{
-			name: "multi step overrides retired plan false", config: `{"mode":"pro","is_plan_mode":false}`,
+			name: "gate on multi step overrides retired plan false", config: `{"mode":"pro","is_plan_mode":false}`,
 			withFacts: true, wantPlan: true,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
+			},
 		},
 		{
-			name: "direct overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
+			name: "gate on single step overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
 			withFacts: true, wantPlan: false,
 			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
+				facts.Decision.ExecutionShape = entity.ExecutionShapeSingleStep
+				facts.Decision.PlanScopeRunID = nil
+			},
+		},
+		{
+			name: "gate on direct overrides retired plan true", config: `{"mode":"ultra","is_plan_mode":true}`,
+			withFacts: true, wantPlan: false,
+			facts: func(facts *AdaptiveBootstrapFacts) {
+				facts.Admission.FeatureGateEnabled = true
 				facts.Decision.Decision = entity.ExecutionDecisionDirect
 				facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
 				facts.Decision.PlanScopeRunID = nil

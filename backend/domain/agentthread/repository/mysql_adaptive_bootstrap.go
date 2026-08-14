@@ -516,7 +516,6 @@ func lockAndValidateAdaptiveBootstrapTypedSource(
 	if source == nil || source.Authority.ExecutionGeneration != sourceRun.ExecutionGeneration ||
 		source.Decision.PlanScopeRunID == nil || req.Decision.PlanScopeRunID == nil ||
 		*req.Decision.PlanScopeRunID != *source.Decision.PlanScopeRunID ||
-		source.Admission.FeatureGateEnabled ||
 		(source.Admission.Source != entity.AdaptiveAdmissionSourceFresh &&
 			source.Admission.Source != entity.AdaptiveAdmissionSourceTypedInheritance &&
 			source.Admission.Source != entity.AdaptiveAdmissionSourceLegacyDecoder) ||

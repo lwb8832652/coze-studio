@@ -182,6 +182,62 @@ func TestAdaptiveExecutionBootstrapMySQLIntegrationTypedRecoveryRace(t *testing.
 	require.Equal(t, results[0].result.Authority, durable.Authority)
 }
 
+func TestAdaptiveExecutionBootstrapMySQLIntegrationGateOnFreshReplayAndTypedResume(t *testing.T) {
+	db, repoA, repoB := adaptiveExecutionMySQLIntegrationRepositories(t)
+	seedAdaptiveExecutionMySQLState(t, db)
+
+	fresh := newAdaptiveExecutionBootstrapRequestForTest()
+	fresh.Admission.FeatureGateEnabled = true
+	planScope := fresh.ExecutionRunID
+	fresh.Decision.Decision = entity.ExecutionDecisionExecute
+	fresh.Decision.ExecutionShape = entity.ExecutionShapeMultiStep
+	fresh.Decision.PlanScopeRunID = &planScope
+
+	committed, err := repoA.CommitAdaptiveExecutionBootstrap(context.Background(), fresh)
+	require.NoError(t, err)
+	require.False(t, committed.Replayed)
+	require.True(t, committed.Admission.FeatureGateEnabled)
+	committedCounts := assertTypedRecoveryMySQLFacts(t, db, fresh)
+
+	durable, err := repoB.ReadAdaptiveExecutionBootstrap(context.Background(), ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: fresh.ThreadID, ExecutionRunID: fresh.ExecutionRunID,
+		JournalRunID: fresh.JournalRunID, AttemptID: fresh.AttemptID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, committed.Admission, durable.Admission)
+	require.Equal(t, committed.Decision, durable.Decision)
+	require.Equal(t, committed.Authority, durable.Authority)
+
+	replayed, err := repoB.CommitAdaptiveExecutionBootstrap(context.Background(), fresh)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Equal(t, committed.Admission, replayed.Admission)
+	require.Equal(t, committed.Decision, replayed.Decision)
+	require.Equal(t, committed.Authority, replayed.Authority)
+	require.Equal(t, committedCounts, adaptiveBootstrapMySQLFactCounts(t, db, fresh))
+
+	fixture := seedAdaptiveBootstrapRecoveryMySQLTarget(t, db, committed)
+	target, err := repoB.CommitAdaptiveExecutionBootstrap(context.Background(), fixture.TargetRequest)
+	require.NoError(t, err)
+	require.False(t, target.Replayed)
+	require.Equal(t, entity.AdaptiveAdmissionSourceTypedInheritance, target.Admission.Source)
+	require.True(t, target.Admission.FeatureGateEnabled)
+	require.Equal(t, committed.Admission.Schema, target.Admission.Schema)
+	require.Equal(t, committed.Admission.FeatureGateEnabled, target.Admission.FeatureGateEnabled)
+	require.Equal(t, committed.Admission.Capabilities, target.Admission.Capabilities)
+	require.Equal(t, committed.Admission.Limits, target.Admission.Limits)
+	assertTypedRecoveryMySQLFacts(t, db, fixture.TargetRequest)
+
+	targetDurable, err := repoA.ReadAdaptiveExecutionBootstrap(context.Background(), ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: fixture.TargetRequest.ThreadID, ExecutionRunID: fixture.TargetRequest.ExecutionRunID,
+		JournalRunID: fixture.TargetRequest.JournalRunID, AttemptID: fixture.TargetRequest.AttemptID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, target.Admission, targetDurable.Admission)
+	require.Equal(t, target.Decision, targetDurable.Decision)
+	require.Equal(t, target.Authority, targetDurable.Authority)
+}
+
 func TestAdaptiveExecutionBootstrapMySQLIntegrationLegacyDecoderRecovery(t *testing.T) {
 	db, repoA, _ := adaptiveExecutionMySQLIntegrationRepositories(t)
 	seedAdaptiveExecutionMySQLState(t, db)
@@ -261,11 +317,28 @@ func seedAdaptiveBootstrapRecoveryMySQLFixture(
 ) adaptiveBootstrapRecoveryFixture {
 	t.Helper()
 	repo := &threadRepository{db: db}
+	sourceRequest := newAdaptiveExecutionBootstrapRequestForTest()
+	planScope := sourceRequest.ExecutionRunID
+	sourceRequest.Decision.Decision = entity.ExecutionDecisionExecute
+	sourceRequest.Decision.ExecutionShape = entity.ExecutionShapeMultiStep
+	sourceRequest.Decision.PlanScopeRunID = &planScope
 	source, err := repo.CommitAdaptiveExecutionBootstrap(
 		context.Background(),
-		newAdaptiveExecutionBootstrapRequestForTest(),
+		sourceRequest,
 	)
 	require.NoError(t, err)
+	return seedAdaptiveBootstrapRecoveryMySQLTarget(t, db, source)
+}
+
+func seedAdaptiveBootstrapRecoveryMySQLTarget(
+	t *testing.T,
+	db *gorm.DB,
+	source *CommitAdaptiveExecutionBootstrapResult,
+) adaptiveBootstrapRecoveryFixture {
+	t.Helper()
+	require.NotNil(t, source)
+	require.NotNil(t, source.Decision.PlanScopeRunID)
+	repo := &threadRepository{db: db}
 
 	terminalID := int64(7901)
 	terminal, won, err := repo.FinalizeJournalAttempt(context.Background(), FinalizeJournalAttemptRequest{
@@ -332,9 +405,9 @@ func seedAdaptiveBootstrapRecoveryMySQLFixture(
 	target.Admission.SourceRunID = &sourceRunID
 	target.Admission.SourceExecutionGeneration = &sourceGeneration
 	target.Admission.SourceConfigDigest, target.Admission.DecoderVersion = "", ""
-	planScope := int64(21)
 	target.Decision = newAdaptiveBootstrapDecisionForTest(
-		t, target.Admission, "decision-target", 21, 30, "attempt-2", 4, planScope, 800,
+		t, target.Admission, "decision-target", 21, 30, "attempt-2", 4,
+		*source.Decision.PlanScopeRunID, 800,
 	)
 	return adaptiveBootstrapRecoveryFixture{
 		SourceResult: source, TargetRequest: target, SourceAttemptID: sourceAttemptID,

@@ -600,9 +600,18 @@ type adaptiveBootstrapRecoveryFixture struct {
 }
 
 func seedAdaptiveBootstrapRecoveryTargetForTest(t *testing.T, db *gorm.DB) adaptiveBootstrapRecoveryFixture {
+	return seedAdaptiveBootstrapRecoveryTargetWithGateForTest(t, db, false)
+}
+
+func seedAdaptiveBootstrapRecoveryTargetWithGateForTest(
+	t *testing.T,
+	db *gorm.DB,
+	gateEnabled bool,
+) adaptiveBootstrapRecoveryFixture {
 	t.Helper()
 	repo := NewAdaptiveExecutionRepository(db)
 	sourceRequest := newAdaptiveExecutionBootstrapRequestForTest()
+	sourceRequest.Admission.FeatureGateEnabled = gateEnabled
 	sourcePlanScope := sourceRequest.ExecutionRunID
 	sourceRequest.Decision.Decision = entity.ExecutionDecisionExecute
 	sourceRequest.Decision.ExecutionShape = entity.ExecutionShapeMultiStep
@@ -714,6 +723,42 @@ func TestAdaptiveExecutionBootstrapCommitsTypedInheritanceAndReadsBack(t *testin
 	require.NoError(t, err)
 	require.Equal(t, result.Admission, read.Admission)
 	require.Equal(t, result.Decision, read.Decision)
+}
+
+func TestAdaptiveExecutionBootstrapTypedInheritancePreservesGateOn(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	fixture := seedAdaptiveBootstrapRecoveryTargetWithGateForTest(t, db, true)
+	repo := NewAdaptiveExecutionRepository(db)
+
+	result, err := repo.CommitAdaptiveExecutionBootstrap(
+		context.Background(), fixture.TargetRequest,
+	)
+
+	require.NoError(t, err)
+	require.True(t, fixture.SourceResult.Admission.FeatureGateEnabled)
+	require.True(t, result.Admission.FeatureGateEnabled)
+	read, err := repo.ReadAdaptiveExecutionBootstrap(context.Background(), ReadAdaptiveExecutionBootstrapRequest{
+		ThreadID: 10, ExecutionRunID: 21, JournalRunID: 30, AttemptID: "attempt-2",
+	})
+	require.NoError(t, err)
+	require.Equal(t, result.Admission, read.Admission)
+	require.Equal(t, result.Decision, read.Decision)
+}
+
+func TestAdaptiveExecutionBootstrapRejectsTypedGateOnToOffDriftWithoutWrites(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	fixture := seedAdaptiveBootstrapRecoveryTargetWithGateForTest(t, db, true)
+	fixture.TargetRequest.Admission.FeatureGateEnabled = false
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	_, err := NewAdaptiveExecutionRepository(db).CommitAdaptiveExecutionBootstrap(
+		context.Background(), fixture.TargetRequest,
+	)
+
+	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
 }
 
 func TestAdaptiveExecutionBootstrapRejectsTypedRecoveryPlanScopeDriftWithoutWrites(t *testing.T) {
