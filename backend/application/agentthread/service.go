@@ -122,6 +122,7 @@ type ApplicationService struct {
 	JournalRecoveryRepository               JournalRecoveryRepository
 	JournalRecoveryIDGenerator              idgen.IDGenerator
 	JournalSideEffectRepository             ADKSideEffectRepository
+	AdaptiveBootstrapByRunReader            domainrepo.AdaptiveExecutionBootstrapByRunRepository
 }
 
 type ArtifactObjectStorage interface {
@@ -1509,7 +1510,14 @@ func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*G
 		return nil, fmt.Errorf("agent thread service returned empty run")
 	}
 
-	return &GetRunResponse{Run: DomainRunToSummary(run)}, nil
+	summary := DomainRunToSummary(run)
+	if req.IncludeAdaptiveExecution {
+		if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+			return nil, err
+		}
+	}
+
+	return &GetRunResponse{Run: summary}, nil
 }
 
 // GetRunByIdempotencyKey performs an authorized, read-only lookup for API
@@ -1554,7 +1562,13 @@ func (s *ApplicationService) GetRunByIdempotencyKey(
 	); err != nil {
 		return nil, err
 	}
-	return &GetRunByIdempotencyKeyResponse{Run: DomainRunToSummary(run)}, nil
+	summary := DomainRunToSummary(run)
+	if req.IncludeAdaptiveExecution {
+		if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+			return nil, err
+		}
+	}
+	return &GetRunByIdempotencyKeyResponse{Run: summary}, nil
 }
 
 func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
@@ -1593,7 +1607,13 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 		Total: total,
 	}
 	for _, run := range runs {
-		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+		summary := DomainRunToSummary(run)
+		if req.IncludeAdaptiveExecution {
+			if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+				return nil, err
+			}
+		}
+		resp.Runs = append(resp.Runs, summary)
 	}
 
 	return resp, nil

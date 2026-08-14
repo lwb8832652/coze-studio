@@ -352,6 +352,165 @@ func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {
 	}
 }
 
+func TestADKAgentFactoryDirectDecisionSkipsEveryToolProvider(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("direct answer", nil)}
+	toolCalls := 0
+	var got ADKMiddlewareBuildInput
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, errors.New("direct decision must not resolve tools")
+		}),
+		ADKMiddlewareFactoryFunc(func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			got = input
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.Zero(t, toolCalls)
+	require.True(t, got.DisableToolExposure)
+	require.Empty(t, got.StaticTools)
+	require.Empty(t, got.DynamicTools)
+	require.Empty(t, got.SubagentToolNames)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("answer directly")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, chatModel.calls)
+	require.Empty(t, chatModel.options.Tools)
+}
+
+func TestADKAgentFactoryDirectDecisionRejectsModelToolCall(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			ID:   "call-1",
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      "unexpected_tool",
+				Arguments: `{}`,
+			},
+		}},
+	}}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("answer without tools")},
+	})
+
+	require.NotEmpty(t, events)
+	require.ErrorIs(t, events[len(events)-1].Err, errADKDirectDecisionToolCall)
+	require.Equal(t, 1, chatModel.calls)
+}
+
+func TestADKAgentFactoryInheritedDirectDecisionKeepsTheSameConsumer(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Admission.Source = entity.AdaptiveAdmissionSourceTypedInheritance
+	facts.Admission.SourceRunID = int64Pointer(19)
+	facts.Admission.SourceExecutionGeneration = uint64Pointer(3)
+	facts.Decision.Decision = entity.ExecutionDecisionDirect
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("resumed direct answer", nil)}
+	toolCalls := 0
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, errors.New("inherited direct decision must not resolve tools")
+		}),
+		nil,
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.Zero(t, toolCalls)
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("resume directly")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, chatModel.calls)
+	require.Empty(t, chatModel.options.Tools)
+}
+
+func TestADKAgentFactoryClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionClarification
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	question := "Which repository should be changed?"
+	facts.Decision.ClarificationQuestion = &question
+	modelCalls := 0
+	toolCalls := 0
+	middlewareCalls := 0
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			modelCalls++
+			return &recordingChatModel{resp: schema.AssistantMessage("must not run", nil)}, true, nil
+		},
+		ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+			toolCalls++
+			return nil, nil
+		}),
+		ADKMiddlewareFactoryFunc(func(
+			context.Context,
+			ADKMiddlewareBuildInput,
+		) (ADKMiddlewareBundle, error) {
+			middlewareCalls++
+			return ADKMiddlewareBundle{}, nil
+		}),
+	)
+
+	agent, err := factory.Build(withAdaptiveBootstrapFacts(context.Background(), facts), run)
+
+	require.ErrorIs(t, err, ErrAdaptiveDecisionConsumerUnavailable)
+	require.Nil(t, agent)
+	require.Zero(t, modelCalls)
+	require.Zero(t, toolCalls)
+	require.Zero(t, middlewareCalls)
+}
+
 func TestADKAgentFactoryAcceptsInheritedAdaptivePlanScope(t *testing.T) {
 	run := freshAdaptiveBootstrapRunForTest()
 	run.PlanScopeRunID = 19

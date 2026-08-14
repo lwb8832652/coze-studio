@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { WorkbenchAdaptiveExecution } from '../workbench/thread-client';
+
 export enum TaskThreadDetailStatus {
   Created = 1,
   Queued = 2,
@@ -47,6 +49,7 @@ export interface TaskThreadDetailModel {
   error?: string;
   created_at: number;
   updated_at: number;
+  adaptive_execution?: WorkbenchAdaptiveExecution;
 }
 
 export const isTaskThreadDetailReadOnly = ({

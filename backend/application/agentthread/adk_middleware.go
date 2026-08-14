@@ -94,16 +94,17 @@ type ADKModelCapabilities struct {
 }
 
 type ADKMiddlewareBuildInput struct {
-	Run               *RunSummary
-	RuntimeConfig     DeerFlowRuntimeConfig
-	Model             model.BaseChatModel
-	StaticTools       []tool.BaseTool
-	DynamicTools      []tool.BaseTool
-	SubagentToolNames []string
-	ModelCapabilities ADKModelCapabilities
-	OffloadBackend    *ADKOffloadBackend
-	PlanBackend       plantask.Backend
-	ReductionConfig   ADKToolResultReductionConfig
+	Run                 *RunSummary
+	RuntimeConfig       DeerFlowRuntimeConfig
+	Model               model.BaseChatModel
+	DisableToolExposure bool
+	StaticTools         []tool.BaseTool
+	DynamicTools        []tool.BaseTool
+	SubagentToolNames   []string
+	ModelCapabilities   ADKModelCapabilities
+	OffloadBackend      *ADKOffloadBackend
+	PlanBackend         plantask.Backend
+	ReductionConfig     ADKToolResultReductionConfig
 }
 
 type ADKMiddlewareBuilder func(
@@ -165,6 +166,12 @@ func (a *ADKMiddlewareAssembler) Build(
 		}
 		input.RuntimeConfig = runtimeConfig
 	}
+	if input.DisableToolExposure &&
+		(len(input.StaticTools) > 0 || len(input.DynamicTools) > 0 || len(input.SubagentToolNames) > 0) {
+		return ADKMiddlewareBundle{}, fmt.Errorf(
+			"eino adk tool exposure is disabled for the current execution decision",
+		)
+	}
 	if err := validateADKToolPartitions(ctx, input.StaticTools, input.DynamicTools); err != nil {
 		return ADKMiddlewareBundle{}, err
 	}
@@ -179,7 +186,7 @@ func (a *ADKMiddlewareAssembler) Build(
 	if err != nil {
 		return ADKMiddlewareBundle{}, err
 	}
-	if a.offloadBackendFactory != nil {
+	if a.offloadBackendFactory != nil && !input.DisableToolExposure {
 		input.OffloadBackend, err = a.offloadBackendFactory.Build(
 			ctx,
 			input.Run,
@@ -197,7 +204,8 @@ func (a *ADKMiddlewareAssembler) Build(
 			)
 		}
 	}
-	if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {
+	if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() &&
+		!input.DisableToolExposure {
 		input.PlanBackend, err = a.planBackendFactory.Build(ctx, input.Run)
 		if err != nil {
 			return ADKMiddlewareBundle{}, fmt.Errorf(
@@ -225,6 +233,9 @@ func (a *ADKMiddlewareAssembler) Build(
 		HandlerNames: make([]ADKMiddlewareName, 0, len(adkMiddlewareOrder)),
 	}
 	for _, name := range adkMiddlewareOrder {
+		if input.DisableToolExposure && adkMiddlewareExposesTools(name) {
+			continue
+		}
 		builder := a.builders[name]
 		if builder == nil {
 			return ADKMiddlewareBundle{}, fmt.Errorf("eino adk middleware %s is not configured", name)
@@ -244,6 +255,18 @@ func (a *ADKMiddlewareAssembler) Build(
 	}
 
 	return bundle, nil
+}
+
+func adkMiddlewareExposesTools(name ADKMiddlewareName) bool {
+	switch name {
+	case ADKMiddlewareSkill,
+		ADKMiddlewareToolSearch,
+		ADKMiddlewarePlanTask,
+		ADKMiddlewareFilesystem:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateADKToolPartitions(

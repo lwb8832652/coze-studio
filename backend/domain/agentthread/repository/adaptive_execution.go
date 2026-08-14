@@ -424,6 +424,17 @@ type AdaptiveExecutionRepository interface {
 	) (*CommitAdaptiveExecutionBootstrapResult, error)
 }
 
+// AdaptiveExecutionBootstrapByRunRepository exposes the immutable bootstrap
+// pair to read-side consumers that only hold the public execution-run identity.
+// It is deliberately separate from AdaptiveExecutionRepository so runtime
+// writers and their mocks do not acquire a broader contract.
+type AdaptiveExecutionBootstrapByRunRepository interface {
+	ReadAdaptiveExecutionBootstrapByRun(
+		ctx context.Context,
+		req ReadAdaptiveExecutionBootstrapByRunRequest,
+	) (*CommitAdaptiveExecutionBootstrapResult, error)
+}
+
 // AdaptiveDecisionModelOperationRepository owns the durable claim/result
 // handshake around one model-backed adaptive decision. It is intentionally
 // narrower than AdaptiveExecutionRepository so existing runtime mocks do not
@@ -554,6 +565,11 @@ type ReadAdaptiveExecutionBootstrapRequest struct {
 	ExecutionRunID int64
 	JournalRunID   int64
 	AttemptID      string
+}
+
+type ReadAdaptiveExecutionBootstrapByRunRequest struct {
+	ThreadID       int64
+	ExecutionRunID int64
 }
 
 // AdaptiveExecutionBootstrapAuthority contains only immutable identifiers and

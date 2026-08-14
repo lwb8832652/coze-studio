@@ -56,7 +56,9 @@ Thread
   后续 C3h2b 已补齐 enrolled Human Resume，C3h2c 又补齐 enrolled Resume 的 legacy exact-miss
   fallback。后续 ordinary MVP 已补齐 always-on fresh Attempt enrollment 和 disabled/无 Attempt
   recovery；ordinary 的真实 dev MySQL gate 仍 `NOT_VERIFIED`。随后 P1D 已把 production gate-on
-  seam 切换到真实 `ModelAdaptiveDecisionProducer`，但剩余退出门未闭合，P1D 尚未 PASS。
+  seam 切换到真实 `ModelAdaptiveDecisionProducer`，又接入 durable decision runtime consumer、
+  `coze.adaptive_execution_public.v1` 安全投影与 TaskDetail 最新顶层 Run 四态标签；clarification Human
+  consumer、holdout、progress/verification 等退出门仍未闭合，P1D 尚未 PASS。
 - C3h2b 已让 enrolled Human Resume 先做不可变 authority 的 full aggregate replay，并在首次写入时
   以单个 Thread-first 事务完成 source resolved、source Attempt `interrupted`/active-slot 释放和
   pending target Attempt 创建。target 继承 source Attempt/checkpoint lineage，继续复用 C3h2a 在
@@ -112,8 +114,20 @@ Thread
   billing；claim-only、failed、漂移和未知状态 fail closed。这不承诺 provider exactly-once。bootstrap
   target exact replay 始终优先；typed Resume 复制 source durable candidate、补齐 target authority，绝不
   调模型。MySQL single-winner/exact replay 测试已存在，但无安全 disposable DSN，仍 `NOT_VERIFIED`。
-  holdout、公共 DTO/TaskDetail、progress/verification 等退出门仍待后续；P1D 保持进行中且不得标记
-  PASS，P1M 状态不变。
+  durable `direct` 复用同一 ADK 文本路径，但 ToolProvider 零调用、Plan/Subagent 关闭，middleware 不
+  构造 offload/plan backend，也跳过 Skill、Filesystem、PlanTask、ToolSearch 工具注入；模型若仍返回
+  tool call，会在工具执行前 fail closed。`single_step` 保留受控 tools 但 Plan/Subagent 关闭，
+  `multi_step` 保留 Plan 但 Subagent 关闭；不把本轮写成 single 动作上限或 multi Plan-before-tool 的新
+  证据。typed Resume 沿用同一 durable decision consumer。`clarification` 在 Execute/Resume bootstrap
+  后、任何 runtime store/factory/event 前返回 `ErrAdaptiveDecisionConsumerUnavailable`，P2 Human
+  Interaction consumer 尚未交付。
+- 公共 read side 用独立的 `AdaptiveExecutionBootstrapByRunRepository` 按 execution Run strict 读取完整
+  durable pair；canonical Get/List/Search 的显式 public hydration 只发布 optional
+  `CanonicalRun.coze.adaptive_execution`，v1 字段固定为 `schema`、`enabled`、`mode`、`safe_summary`、
+  `clarification_question`。历史缺失省略，partial/corrupt fail closed；前端 adapter 严格校验 schema、
+  四种 mode 和字段类型。TaskDetail 只取最新 primary top-level Run，`enabled=false` 隐藏，enabled 时
+  展示“直接回答/单步执行/多步执行/需要澄清”。holdout、progress/verification 与其它退出门仍待后续；
+  P1D 保持进行中且不得标记 PASS，P1M 状态不变。
 - `auto` 在同一次 Agent 执行中按任务事实决定直答、Todo 规划或 Subagent
   协作，不增加独立意图识别模型调用。简单问题和单步操作不得为了 Journal
   强制创建计划或子代理。

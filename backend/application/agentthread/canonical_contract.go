@@ -198,7 +198,11 @@ func (s *ApplicationService) SearchRuns(
 	}
 	resp := &SearchRunsResponse{Runs: make([]*RunSummary, 0, len(runs)), Total: total}
 	for _, run := range runs {
-		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+		summary := DomainRunToSummary(run)
+		if err := s.hydratePublicAdaptiveExecution(ctx, summary); err != nil {
+			return nil, err
+		}
+		resp.Runs = append(resp.Runs, summary)
 	}
 	return resp, nil
 }

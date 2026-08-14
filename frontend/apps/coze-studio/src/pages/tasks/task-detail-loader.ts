@@ -199,6 +199,9 @@ const mapTaskThreadToDetailModel = (
       result_type: 'answer',
       execution_type: executionType,
     }),
+    ...(latestRun?.adaptive_execution
+      ? { adaptive_execution: latestRun.adaptive_execution }
+      : {}),
     created_at: thread.created_at,
     updated_at: thread.updated_at,
   };

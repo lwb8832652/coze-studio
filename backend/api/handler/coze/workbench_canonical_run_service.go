@@ -931,8 +931,9 @@ func replayCanonicalRunBundle(
 		ctx,
 		&appagentthread.GetRunByIdempotencyKeyRequest{
 			ThreadID: threadID, IdempotencyKey: submission.IdempotencyKey,
-			IdempotencyOperation:   submission.IdempotencyOperation,
-			IdempotencyFingerprint: submission.IdempotencyFingerprint,
+			IdempotencyOperation:     submission.IdempotencyOperation,
+			IdempotencyFingerprint:   submission.IdempotencyFingerprint,
+			IncludeAdaptiveExecution: true,
 		},
 	)
 	if err != nil {
@@ -1359,7 +1360,9 @@ func getCanonicalAuthorizedRun(
 	ctx context.Context,
 	threadID, runID int64,
 ) (*appagentthread.RunSummary, error) {
-	response, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
+	response, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{
+		RunID: runID, IncludeAdaptiveExecution: true,
+	})
 	if err != nil {
 		return nil, err
 	}

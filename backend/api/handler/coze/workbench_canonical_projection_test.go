@@ -127,6 +127,45 @@ func TestCanonicalRunProjectionRedactsInternalFields(t *testing.T) {
 	require.NotContains(t, encoded, canonicalProjectionSensitiveSentinel)
 }
 
+func TestCanonicalRunProjectionPublishesOnlySafeAdaptiveExecution(t *testing.T) {
+	question := "Which repository should be changed?"
+	projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, SpaceID: 1001, CreatorID: 42,
+		RunKind: appagentthread.RunKindTask, Status: appagentthread.RunStatusRunning,
+		CreatedAt: 1785052800000, UpdatedAt: 1785052801000,
+		AdaptiveExecution: &appagentthread.PublicAdaptiveExecutionSummary{
+			Schema:  appagentthread.PublicAdaptiveExecutionSchemaV1,
+			Enabled: true, Mode: appagentthread.PublicAdaptiveExecutionModeClarification,
+			SafeSummary: "Need one safe clarification.", ClarificationQuestion: &question,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, projected.Coze.AdaptiveExecution)
+	require.Equal(t, appagentthread.PublicAdaptiveExecutionSchemaV1, projected.Coze.AdaptiveExecution.Schema)
+	require.True(t, projected.Coze.AdaptiveExecution.Enabled)
+	require.Equal(t, "clarification", projected.Coze.AdaptiveExecution.Mode)
+	require.Equal(t, "Need one safe clarification.", projected.Coze.AdaptiveExecution.SafeSummary)
+	require.Equal(t, &question, projected.Coze.AdaptiveExecution.ClarificationQuestion)
+	encoded := canonicalProjectionJSON(t, projected)
+	for _, forbidden := range []string{
+		"decision_id", "attempt_id", "generation", "plan_scope", "provider", "operation_key", "tool_payload",
+	} {
+		require.NotContains(t, encoded, forbidden)
+	}
+}
+
+func TestCanonicalRunProjectionOmitsMissingAdaptiveExecution(t *testing.T) {
+	projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, RunKind: appagentthread.RunKindTask,
+		Status: appagentthread.RunStatusPending, CreatedAt: 1785052800000, UpdatedAt: 1785052801000,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, projected.Coze.AdaptiveExecution)
+	require.NotContains(t, canonicalProjectionJSON(t, projected), "adaptive_execution")
+}
+
 func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *testing.T) {
 	for _, internal := range []string{"default", "singleagent:42", ""} {
 		projected, err := projectCanonicalRun(&appagentthread.RunSummary{

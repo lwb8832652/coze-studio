@@ -47,24 +47,25 @@ type PublicRuntimeError struct {
 }
 
 type PublicRun struct {
-	RunID             int64               `json:"run_id"`
-	ThreadID          int64               `json:"thread_id"`
-	ParentRunID       int64               `json:"parent_run_id,omitempty"`
-	SpaceID           int64               `json:"space_id"`
-	CreatorID         int64               `json:"creator_id"`
-	AssistantID       string              `json:"assistant_id,omitempty"`
-	RunKind           RunKind             `json:"run_kind"`
-	Status            RunStatus           `json:"status"`
-	Metadata          string              `json:"metadata"`
-	StreamMode        string              `json:"stream_mode,omitempty"`
-	MultitaskStrategy string              `json:"multitask_strategy,omitempty"`
-	OnDisconnect      string              `json:"on_disconnect,omitempty"`
-	Durability        string              `json:"durability,omitempty"`
-	Error             *PublicRuntimeError `json:"error,omitempty"`
-	StartedAt         int64               `json:"started_at,omitempty"`
-	EndedAt           int64               `json:"ended_at,omitempty"`
-	CreatedAt         int64               `json:"created_at"`
-	UpdatedAt         int64               `json:"updated_at"`
+	RunID             int64                           `json:"run_id"`
+	ThreadID          int64                           `json:"thread_id"`
+	ParentRunID       int64                           `json:"parent_run_id,omitempty"`
+	SpaceID           int64                           `json:"space_id"`
+	CreatorID         int64                           `json:"creator_id"`
+	AssistantID       string                          `json:"assistant_id,omitempty"`
+	RunKind           RunKind                         `json:"run_kind"`
+	Status            RunStatus                       `json:"status"`
+	Metadata          string                          `json:"metadata"`
+	StreamMode        string                          `json:"stream_mode,omitempty"`
+	MultitaskStrategy string                          `json:"multitask_strategy,omitempty"`
+	OnDisconnect      string                          `json:"on_disconnect,omitempty"`
+	Durability        string                          `json:"durability,omitempty"`
+	Error             *PublicRuntimeError             `json:"error,omitempty"`
+	StartedAt         int64                           `json:"started_at,omitempty"`
+	EndedAt           int64                           `json:"ended_at,omitempty"`
+	CreatedAt         int64                           `json:"created_at"`
+	UpdatedAt         int64                           `json:"updated_at"`
+	AdaptiveExecution *PublicAdaptiveExecutionSummary `json:"adaptive_execution,omitempty"`
 }
 
 type PublicMessageMetadata struct {
@@ -197,6 +198,7 @@ func ProjectPublicRun(run *RunSummary) *PublicRun {
 		EndedAt:           run.EndedAt,
 		CreatedAt:         run.CreatedAt,
 		UpdatedAt:         run.UpdatedAt,
+		AdaptiveExecution: clonePublicAdaptiveExecution(run.AdaptiveExecution),
 	}
 }
 

@@ -1363,6 +1363,17 @@ describe('TaskDetailPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
+    mockTopLevelRun({
+      ...createMockRunningRun('thread-1', 'run-1'),
+      adaptive_execution: {
+        schema: 'coze.adaptive_execution_public.v1',
+        enabled: true,
+        mode: 'direct',
+        safe_summary: '直接回答，无需调用工具。',
+        clarification_question: null,
+      },
+    });
+
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
@@ -1383,6 +1394,10 @@ describe('TaskDetailPage', () => {
       page_size: 100,
     });
     expect(container.textContent).toContain('生成周报');
+    expect(
+      container.querySelector('[data-testid="adaptive-execution-mode"]')
+        ?.textContent,
+    ).toBe('直接回答');
     expect(container.textContent).toContain('NewX AI · Agent');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');

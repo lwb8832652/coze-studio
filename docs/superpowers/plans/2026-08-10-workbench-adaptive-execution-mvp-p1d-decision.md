@@ -8,7 +8,10 @@
 
 **Tech Stack:** Go、Eino ADK、GORM/MySQL、现有 `adaptivecontract` canonical codec、`go test`、Workbench execution graph verifier。
 
-**Status:** `in_progress`；真实 model producer 的 production wiring 与 Task 5 的 contract/TDD/durable replay 部分已交付，但 MySQL exact gate 未在安全 disposable DSN 上验证，holdout、公共 DTO/TaskDetail、progress/verification 等 P1D 退出门仍未闭合，因此 `P1D NOT PASS`。
+**Status:** `in_progress`；真实 model producer、durable runtime consumer、安全 public v1 投影与
+TaskDetail 最新顶层 Run 四态标签已交付，但 clarification Human Interaction consumer 尚未接入，MySQL
+exact gate 未在安全 disposable DSN 上验证，holdout、progress/verification 等 P1D 退出门仍未闭合，因此
+`P1D NOT PASS`。
 
 ---
 
@@ -20,20 +23,34 @@
 - `backend/application/agentthread/adaptive_decision_producer.go`、`adaptive_decision_model_contract.go`、`adaptive_decision_model_producer.go`：统一 producer interface、authoritative semantic projection、model tool/output contract 与真实 gate-on producer。
 - `backend/application/agentthread/adaptive_bootstrap_coordinator.go`：fresh read-first 后 resolver → producer → strict validate → IDs → atomic commit；Resume 继承 typed gate，不重算。
 - `backend/application/agentthread/adk_agent_factory.go`：把已有 decision 合同收口成 direct/single-step/multi-step runtime capability；不另建 executor。
+- `backend/application/agentthread/adk_middleware.go`、`adk_adaptive_decision_guard.go`、`adk_executor.go`：
+  direct 禁止全部工具暴露并拦截模型违规 tool call；clarification 在 bootstrap 后、runtime dependency 前
+  fail closed；typed Resume 复用同一 consumer。
+- `backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go`、
+  `backend/application/agentthread/adaptive_decision_public.go` 与 canonical projection：按 execution Run
+  strict 读取 durable pair，只发布 public v1 五字段。
+- Workbench canonical adapter 与 TaskDetail loader/header：strict decode optional v1，并在最新 primary
+  top-level Run `enabled=true` 时展示四态标签。
 - `backend/application/application.go`：构造 env resolver、baseline producer、`ModelAdaptiveDecisionProducer`、共享 usage collector 与 durable operation repository，并显式注入 30 秒 model timeout。
 - `backend/domain/agentthread/repository/mysql_adaptive_decision_model.go`：以 internal/unsequenced claim/result events 实现 narrow durable operation；single winner，raw key/token 不落库。
 - 对应 `*_test.go`、已有 disposable MySQL bootstrap integration test、两份 Workbench authority context 与 execution graph JSON。
 
 **Out of scope**
 
-- progress、repair/replan、verification、UI、IDL、migration、公共 DTO、holdout、acceptance-check registry、Journal enrollment 改造、Subagent 开启。
+- progress、repair/replan、verification、IDL、migration、holdout、acceptance-check registry、Journal
+  enrollment 改造、Subagent 开启，以及 clarification 的 P2 Human Interaction consumer。
 - 不允许从 `Run.Config`、`Run.Context` 或 Journal 内容推断 gate/decision；模型只能读取审核后的 `Run.Input` semantic projection，不允许把 env 或 producer candidate 作为 durable identity 权威。
 
 **本轮交付状态**
 
 - 本轮已交付 server-owned eligibility 与真实 model-backed gate-on 运行闭环，但不能据此宣称 `P1D PASS`。
 - 禁止以关键字、正则、prompt/body/message 扫描或 legacy config/Journals 启发式替代真实 producer。
-- 剩余 exit gate 必须完成安全 disposable MySQL exact 验证、holdout、公共 DTO/TaskDetail 与其余既定验收；通过前 P1D 保持 `in_progress`。
+- runtime consumer 已交付：direct 继续走同一 ADK text path 但没有任何工具暴露，single-step 保留受控
+  tools 但 Plan/Subagent off，multi-step Plan on/Subagent off；clarification 暂时 fail closed。
+- public v1 与 TaskDetail 四态标签已交付；历史缺失省略、partial/corrupt fail closed，`enabled=false`
+  隐藏。
+- 剩余 exit gate 必须完成安全 disposable MySQL exact 验证、clarification Human consumer、holdout、
+  progress/verification 与其余既定验收；通过前 P1D 保持 `in_progress`。
 
 **Frozen interfaces**
 
@@ -224,7 +241,18 @@ type AdaptiveDecisionCandidate struct {
 - typed Resume 原样继承 gate/capability/limits，实时 env 变化不影响 lineage；legacy 永远 gate-off。
 - producer candidate 的 server identity 全被 coordinator 覆盖并 strict validate；任何 dependency/candidate/repository 错误均在 runtime 前 fail closed。
 - gate-on 使用真实 model producer；只有唯一 forced tool 的 closed typed candidate 才能进入 materialize。一次 provider Generate attempt 是本阶段的有限预算，timeout、provider/model、usage 或 codec 错误全部 fail closed，禁止 deterministic/正文启发式 fallback。
-- Factory 已冻结 direct 不开 Plan、single-step 不开 Plan、multi-step 使用已有 Plan；typed Resume 继承 durable candidate，不重新调用模型。本计划仍不包含 holdout、公共 DTO/TaskDetail、progress/verification、UI、IDL 或 migration，因此不代表 P1D PASS。
+- durable `direct` 复用同一 ADK text path，但 ToolProvider 不调用、Plan/Subagent 关闭，middleware 不构造
+  offload/plan backend，也跳过 Skill/Filesystem/PlanTask/ToolSearch；模型返回任意 tool call 在工具执行前
+  fail closed。single-step 保留受控 tools 但 Plan/Subagent off，multi-step Plan on/Subagent off；本轮不
+  宣称 single 动作上限或 multi Plan-before-tool 新证据。typed Resume 继承 durable candidate，不重新
+  调用模型，并应用同一 consumer。
+- clarification 在 Execute/Resume bootstrap 后、任何 runtime store/factory/event 前返回
+  `ErrAdaptiveDecisionConsumerUnavailable`；P2 Human Interaction consumer 尚未交付。
+- public query 用窄 by-execution-run reader strict 读取 durable pair；Get/List/Search 共用 optional
+  `CanonicalRun.coze.adaptive_execution` v1 五字段投影。前端 strict adapter 与 TaskDetail 最新 primary
+  top-level Run 四态标签已接入，历史缺失省略，partial/corrupt fail closed，`enabled=false` 隐藏。
+- 本计划仍不包含 holdout、progress/verification、clarification Human consumer、IDL 或 migration，
+  因此不代表 P1D PASS。
 
 ### Task 5: Real model producer exit gate（部分交付，P1D 仍未 PASS）
 
@@ -237,5 +265,21 @@ type AdaptiveDecisionCandidate struct {
 
   Evidence：Go focused/package tests 已由实现与验证任务通过；MySQL
   `TestAdaptiveDecisionModelOperationMySQLIntegrationClaimSingleWinnerAndReplay` 已存在，但当前没有满足
-  安全命名约束的 disposable DSN，状态为 `NOT_VERIFIED`。80 holdout、公共 DTO/TaskDetail、
-  progress/verification 与完整 P1D verification 仍是剩余 exit gate；P1M 状态不因本 Task 改变。
+  安全命名约束的 disposable DSN，状态为 `NOT_VERIFIED`。80 holdout、progress/verification、
+  clarification Human consumer 与完整 P1D verification 仍是剩余 exit gate；P1M 状态不因本 Task 改变。
+
+### Task 6: Durable decision consumer and safe public projection（已交付，P1D 仍未 PASS）
+
+- [x] **Step 1: direct runtime consumer。** durable direct 禁止 ToolProvider、dynamic/subagent tools、Plan、
+  offload/plan backend 与 Skill/Filesystem/PlanTask/ToolSearch；模型违规 tool call 在工具执行前 fail
+  closed。single-step 保留受控 tools 但 Plan/Subagent off，multi-step Plan on/Subagent off。
+- [x] **Step 2: clarification fail-closed boundary。** Execute/Resume 在 durable bootstrap 后、任何
+  runtime store/factory/event 前返回 `ErrAdaptiveDecisionConsumerUnavailable`；typed Resume 沿用同一
+  durable decision。P2 Human Interaction consumer 明确未交付。
+- [x] **Step 3: safe public v1。** 新窄 by-execution-run repository reader strict 读取 durable pair；
+  canonical Get/List/Search 只在 public query 显式 hydration，并经 `ProjectPublicRun` 发布 optional
+  `coze.adaptive_execution_public.v1` 五字段。历史缺失省略，partial/corrupt fail closed。
+- [x] **Step 4: strict frontend and TaskDetail。** adapter 校验 schema、四种 mode 和字段类型；TaskDetail
+  只展示最新 primary top-level Run 的四态标签，`enabled=false` 隐藏，不新增 route/page。
+- [ ] **Step 5: remaining exit gates。** disposable MySQL、clarification Human consumer、multi-step
+  Plan-before-tool、holdout、progress/verification 与完整 P1D 门禁未完成，继续 `P1D NOT PASS`。

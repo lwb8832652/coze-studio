@@ -96,6 +96,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.JournalRecoveryRepository = repo
 	SVC.JournalRecoveryIDGenerator = c.IDGen
 	SVC.JournalSideEffectRepository = repo
+	adaptiveBootstrapByRunReader, _ := repo.(repository.AdaptiveExecutionBootstrapByRunRepository)
+	SVC.AdaptiveBootstrapByRunReader = adaptiveBootstrapByRunReader
 	SVC.JournalUserSettingsStore = kvstore.New[JournalUserSettingsRecord](c.DB)
 	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
 	SVC.GuardrailAuditRepository = guardrailAuditRepo

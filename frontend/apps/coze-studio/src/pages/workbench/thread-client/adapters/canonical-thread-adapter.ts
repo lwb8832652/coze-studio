@@ -31,6 +31,7 @@ import type {
   WorkbenchArtifactScanRetryResult,
   WorkbenchArtifactScanReviewResult,
   WorkbenchArtifactSignedURL,
+  WorkbenchAdaptiveExecution,
   WorkbenchGuardrailAuditEvent,
   WorkbenchGuardrailAuditExport,
   WorkbenchJournalAttempt,
@@ -305,6 +306,51 @@ const asStringArray = (value: unknown, label: string): string[] =>
     asString(item, `${label}[${index}]`),
   );
 
+const adaptiveExecutionModes = new Set<WorkbenchAdaptiveExecution['mode']>([
+  'direct',
+  'single_step',
+  'multi_step',
+  'clarification',
+]);
+const adaptiveExecutionSchema: WorkbenchAdaptiveExecution['schema'] =
+  'coze.adaptive_execution_public.v1';
+
+const adaptAdaptiveExecution = (
+  value: unknown,
+  label: string,
+): WorkbenchAdaptiveExecution => {
+  const decision = asRecord(value, label);
+  const schema = asString(
+    required(decision, 'schema', label),
+    `${label}.schema`,
+  );
+  if (schema !== adaptiveExecutionSchema) {
+    responseFailure(`${label}.schema`, adaptiveExecutionSchema);
+  }
+  const mode = asString(required(decision, 'mode', label), `${label}.mode`);
+  if (!adaptiveExecutionModes.has(mode as WorkbenchAdaptiveExecution['mode'])) {
+    responseFailure(`${label}.mode`, 'a reviewed public execution mode');
+  }
+
+  return {
+    schema: adaptiveExecutionSchema,
+    enabled: asBoolean(
+      required(decision, 'enabled', label),
+      `${label}.enabled`,
+    ),
+    mode: mode as WorkbenchAdaptiveExecution['mode'],
+    safe_summary: asString(
+      required(decision, 'safe_summary', label),
+      `${label}.safe_summary`,
+    ),
+    clarification_question:
+      nullableString(
+        required(decision, 'clarification_question', label),
+        `${label}.clarification_question`,
+      ) ?? null,
+  };
+};
+
 const assertExpectedID = (
   actual: string,
   expected: string | undefined,
@@ -416,6 +462,15 @@ export const adaptCanonicalRun = (
     required(coze, 'ended_at', `${label}.coze`),
     `${label}.coze.ended_at`,
   );
+  const adaptiveExecution = Object.prototype.hasOwnProperty.call(
+    coze,
+    'adaptive_execution',
+  )
+    ? adaptAdaptiveExecution(
+        coze.adaptive_execution,
+        `${label}.coze.adaptive_execution`,
+      )
+    : undefined;
 
   if (Object.prototype.hasOwnProperty.call(coze, 'submission_message')) {
     adaptCanonicalMessage(coze.submission_message, {
@@ -467,6 +522,9 @@ export const adaptCanonicalRun = (
       : { terminal_reason: terminalReason }),
     ...(startedAt === undefined ? {} : { started_at: startedAt }),
     ...(endedAt === undefined ? {} : { ended_at: endedAt }),
+    ...(adaptiveExecution === undefined
+      ? {}
+      : { adaptive_execution: adaptiveExecution }),
     created_at: asEpochMilliseconds(
       required(run, 'created_at', label),
       `${label}.created_at`,

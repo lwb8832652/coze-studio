@@ -160,6 +160,9 @@ func (e *ADKExecutor) Execute(
 		if err != nil {
 			return nil, fmt.Errorf("bootstrap adaptive execution: %w", err)
 		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, fmt.Errorf("select adaptive execution consumer: %w", err)
+		}
 		ctx = withAdaptiveBootstrapFacts(ctx, facts)
 	}
 	executionCtx, cancelExecution := context.WithCancel(ctx)
@@ -233,6 +236,9 @@ func (e *ADKExecutor) Resume(
 		facts, bootstrapErr := e.adaptiveBootstrapCoordinator.BootstrapResume(executionCtx, run, input)
 		if bootstrapErr != nil {
 			return nil, bootstrapErr
+		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, fmt.Errorf("select adaptive execution consumer: %w", err)
 		}
 		if facts != nil && facts.Decision.PlanScopeRunID != nil {
 			agentRun.PlanScopeRunID = *facts.Decision.PlanScopeRunID

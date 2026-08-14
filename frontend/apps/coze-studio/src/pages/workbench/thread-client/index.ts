@@ -16,6 +16,8 @@
 
 export type {
   HumanInteractionResponse,
+  WorkbenchAdaptiveExecution,
+  WorkbenchAdaptiveExecutionMode,
   WorkbenchArtifact,
   WorkbenchArtifactContent,
   WorkbenchArtifactRestoreResult,

@@ -493,7 +493,7 @@
     },
     {
       "id": "application.adaptive_mode_free_contract_boundary",
-      "label": "P1M/P1D mode-free bootstrap, model-backed gate-on selection, recovery and atomic rolling Plan boundary",
+      "label": "P1M/P1D mode-free bootstrap, model-backed selection, durable decision consumer, safe public projection, recovery and atomic rolling Plan boundary",
       "layer": "application",
       "kind": "conditional_runtime_boundary",
       "production_status": "current",
@@ -518,6 +518,11 @@
           "path": "backend/application/agentthread/adaptive_admission.go",
           "symbol": "ValidateAdaptiveAdmissionSnapshot",
           "locator": "func ValidateAdaptiveAdmissionSnapshot(snapshot entity.AdaptiveAdmissionSnapshot) error {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_admission.go",
+          "symbol": "validateAdaptiveDecisionRuntimeConsumer",
+          "locator": "func validateAdaptiveDecisionRuntimeConsumer(facts *AdaptiveBootstrapFacts) error {"
         },
         {
           "path": "backend/application/agentthread/adaptive_baseline_decision.go",
@@ -548,6 +553,41 @@
           "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
           "symbol": "(*threadRepository).CommitAdaptiveExecutionBootstrap",
           "locator": "func (r *threadRepository) CommitAdaptiveExecutionBootstrap("
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap.go",
+          "symbol": "(*threadRepository).ReadAdaptiveExecutionBootstrapByRun",
+          "locator": "func (r *threadRepository) ReadAdaptiveExecutionBootstrapByRun("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public.go",
+          "symbol": "ProjectPublicAdaptiveExecution",
+          "locator": "func ProjectPublicAdaptiveExecution("
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public.go",
+          "symbol": "(*ApplicationService).hydratePublicAdaptiveExecution",
+          "locator": "func (s *ApplicationService) hydratePublicAdaptiveExecution("
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_projection.go",
+          "symbol": "projectCanonicalAdaptiveExecution",
+          "locator": "func projectCanonicalAdaptiveExecution("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/adapters/canonical-thread-adapter.ts",
+          "symbol": "adaptAdaptiveExecution",
+          "locator": "const adaptAdaptiveExecution = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-loader.ts",
+          "symbol": "mapTaskThreadToDetailModel",
+          "locator": "const mapTaskThreadToDetailModel = ("
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-detail-header.tsx",
+          "symbol": "TaskDetailHeader",
+          "locator": "export const TaskDetailHeader = ({"
         },
         {
           "path": "backend/domain/agentthread/repository/mysql.go",
@@ -588,6 +628,16 @@
           "path": "backend/application/agentthread/adk_agent_factory.go",
           "symbol": "(*ApplicationADKAgentFactory).Build",
           "locator": "if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "symbol": "adkMiddlewareExposesTools",
+          "locator": "func adkMiddlewareExposesTools(name ADKMiddlewareName) bool {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_adaptive_decision_guard.go",
+          "symbol": "(*adkDirectDecisionGuard).AfterModelRewriteState",
+          "locator": "func (g *adkDirectDecisionGuard) AfterModelRewriteState("
         },
         {
           "path": "backend/application/agentthread/adk_subagent_tool_provider.go",
@@ -807,6 +857,62 @@
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryUsesAdaptiveFactsForPlanCapability(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryDirectDecisionSkipsEveryToolProvider(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryDirectDecisionRejectsModelToolCall(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryInheritedDirectDecisionKeepsTheSameConsumer(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareDirectDecisionDisablesEveryToolInjection(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorResumeClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapByRunReaderReturnsValidatedPair(t *testing.T) {"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_adaptive_bootstrap_test.go",
+          "locator": "func TestAdaptiveExecutionBootstrapByRunReaderRejectsPartialOrDriftedFacts(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public_test.go",
+          "locator": "func TestGetListAndSearchRunsHydrateDurableAdaptiveExecution(t *testing.T) {"
+        },
+        {
+          "path": "backend/application/agentthread/adaptive_decision_public_test.go",
+          "locator": "func TestRunHydrationOmitsMissingAndFailsClosedOnConflict(t *testing.T) {"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_projection_test.go",
+          "locator": "func TestCanonicalRunProjectionPublishesOnlySafeAdaptiveExecution(t *testing.T) {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts",
+          "locator": "it('strictly decodes the optional public adaptive execution decision', () => {"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-loader.test.ts",
+          "locator": "expect(detail.task?.adaptive_execution).toEqual({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
+          "locator": "data-testid=\"adaptive-execution-mode\""
         },
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
@@ -2819,7 +2925,7 @@
         },
         {
           "path": "backend/application/agentthread/adk_middleware.go",
-          "locator": "if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {"
+          "locator": "if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() &&"
         },
         {
           "path": "backend/application/agentthread/adk_plan_backend.go",

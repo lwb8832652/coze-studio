@@ -203,6 +203,13 @@ describe('fetchTaskDetail', () => {
                     status: 'running',
                     metadata: '{}',
                     run_kind: 'task',
+                    adaptive_execution: {
+                      schema: 'coze.adaptive_execution_public.v1',
+                      enabled: true,
+                      mode: 'multi_step',
+                      safe_summary: '任务需要分步执行。',
+                      clarification_question: null,
+                    },
                     created_at: 1767225600000,
                     updated_at: 1767225660000,
                   },
@@ -216,6 +223,13 @@ describe('fetchTaskDetail', () => {
     const detail = await fetchTaskDetail({ id: '1001', spaceId: '9001' });
 
     expect(detail.latestTaskRunID).toBe('2001');
+    expect(detail.task?.adaptive_execution).toEqual({
+      schema: 'coze.adaptive_execution_public.v1',
+      enabled: true,
+      mode: 'multi_step',
+      safe_summary: '任务需要分步执行。',
+      clarification_question: null,
+    });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: '1001',
       run_id: '2001',

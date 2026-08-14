@@ -141,6 +141,94 @@ func TestAdaptiveExecutionBootstrapReaderDistinguishesMissingFromPartialFacts(t 
 	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
 }
 
+func TestAdaptiveExecutionBootstrapByRunReaderReturnsValidatedPair(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	committed, err := repo.CommitAdaptiveExecutionBootstrap(
+		context.Background(),
+		newAdaptiveExecutionBootstrapRequestForTest(),
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&runPO{}).Where("id = ?", int64(20)).Updates(map[string]any{
+		"status": string(entity.RunStatusSucceeded), "lease_expires_at": int64(1),
+	}).Error)
+	require.NoError(t, db.Model(&runAttemptPO{}).
+		Where("execution_run_id = ?", int64(20)).
+		Updates(map[string]any{"status": string(entity.RunAttemptStatusCompleted), "active_slot": nil}).Error)
+	before := snapshotAdaptiveExecutionDBForTest(t, db)
+
+	byRun, ok := repo.(AdaptiveExecutionBootstrapByRunRepository)
+	require.True(t, ok)
+	read, err := byRun.ReadAdaptiveExecutionBootstrapByRun(
+		context.Background(),
+		ReadAdaptiveExecutionBootstrapByRunRequest{ThreadID: 10, ExecutionRunID: 20},
+	)
+	require.NoError(t, err)
+	require.Equal(t, committed.Admission, read.Admission)
+	require.Equal(t, committed.Decision, read.Decision)
+	require.Equal(t, committed.Authority, read.Authority)
+	require.Equal(t, before, snapshotAdaptiveExecutionDBForTest(t, db))
+}
+
+func TestAdaptiveExecutionBootstrapByRunReaderReturnsNotFoundBeforeBootstrap(t *testing.T) {
+	db := newAdaptiveExecutionRepositoryTestDB(t)
+	seedAdaptiveExecutionInitialState(t, db)
+	repo := NewAdaptiveExecutionRepository(db)
+	byRun, ok := repo.(AdaptiveExecutionBootstrapByRunRepository)
+	require.True(t, ok)
+
+	_, err := byRun.ReadAdaptiveExecutionBootstrapByRun(
+		context.Background(),
+		ReadAdaptiveExecutionBootstrapByRunRequest{ThreadID: 10, ExecutionRunID: 20},
+	)
+	require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapNotFound)
+}
+
+func TestAdaptiveExecutionBootstrapByRunReaderRejectsPartialOrDriftedFacts(t *testing.T) {
+	t.Run("partial", func(t *testing.T) {
+		db := newAdaptiveExecutionRepositoryTestDB(t)
+		seedAdaptiveExecutionInitialState(t, db)
+		repo := NewAdaptiveExecutionRepository(db)
+		committed, err := repo.CommitAdaptiveExecutionBootstrap(
+			context.Background(),
+			newAdaptiveExecutionBootstrapRequestForTest(),
+		)
+		require.NoError(t, err)
+		require.NoError(t, db.Where("id = ?", committed.Authority.CheckpointID).Delete(&checkpointPO{}).Error)
+		byRun, ok := repo.(AdaptiveExecutionBootstrapByRunRepository)
+		require.True(t, ok)
+
+		_, err = byRun.ReadAdaptiveExecutionBootstrapByRun(
+			context.Background(),
+			ReadAdaptiveExecutionBootstrapByRunRequest{ThreadID: 10, ExecutionRunID: 20},
+		)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+	})
+
+	t.Run("attempt identity drift", func(t *testing.T) {
+		db := newAdaptiveExecutionRepositoryTestDB(t)
+		seedAdaptiveExecutionInitialState(t, db)
+		repo := NewAdaptiveExecutionRepository(db)
+		_, err := repo.CommitAdaptiveExecutionBootstrap(
+			context.Background(),
+			newAdaptiveExecutionBootstrapRequestForTest(),
+		)
+		require.NoError(t, err)
+		require.NoError(t, db.Model(&runAttemptPO{}).
+			Where("execution_run_id = ?", int64(20)).
+			Update("thread_id", int64(11)).Error)
+		byRun, ok := repo.(AdaptiveExecutionBootstrapByRunRepository)
+		require.True(t, ok)
+
+		_, err = byRun.ReadAdaptiveExecutionBootstrapByRun(
+			context.Background(),
+			ReadAdaptiveExecutionBootstrapByRunRequest{ThreadID: 10, ExecutionRunID: 20},
+		)
+		require.ErrorIs(t, err, ErrAdaptiveExecutionBootstrapConflict)
+	})
+}
+
 func TestAdaptiveExecutionBootstrapReaderTreatsMissingAttemptWithFactsAsConflict(t *testing.T) {
 	read := ReadAdaptiveExecutionBootstrapRequest{
 		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30, AttemptID: "attempt-1",

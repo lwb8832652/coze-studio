@@ -654,6 +654,44 @@ func TestADKExecutorResumeStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testin
 	require.Zero(t, storeCalls)
 }
 
+func TestADKExecutorResumeClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionClarification
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	question := "Which repository should be changed?"
+	facts.Decision.ClarificationQuestion = &question
+	factoryCalls, storeCalls := 0, 0
+	eventSink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			factoryCalls++
+			return nil, errors.New("factory must not run")
+		}),
+		eventSink,
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			storeCalls++
+			return nil, errors.New("store must not run")
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(&recordingAdaptiveBootstrapCoordinator{resumeFacts: facts}),
+	)
+	input := &HarnessResumeInput{
+		Runtime: RuntimeModeEinoADK, RuntimeKey: "coze-run-19", SourceRunID: 19,
+		ADKCheckpoint: &ADKCheckpointEnvelope{RuntimeKey: "coze-run-19"},
+	}
+
+	result, err := executor.Resume(context.Background(), run, input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveDecisionConsumerUnavailable)
+	require.Zero(t, factoryCalls)
+	require.Zero(t, storeCalls)
+	require.Empty(t, eventSink.eventTypes())
+}
+
 func TestADKExecutorBootstrapsBeforeBuildingRuntime(t *testing.T) {
 	order := make([]string, 0, 3)
 	run := freshAdaptiveBootstrapRunForTest()
@@ -718,6 +756,42 @@ func TestADKExecutorStopsBeforeBuildingRuntimeWhenBootstrapFails(t *testing.T) {
 	require.ErrorIs(t, err, bootstrapErr)
 	require.Zero(t, factoryCalls)
 	require.Zero(t, storeCalls)
+}
+
+func TestADKExecutorClarificationFailsClosedBeforeRuntimeDependencies(t *testing.T) {
+	run := freshAdaptiveBootstrapRunForTest()
+	facts := adaptiveBootstrapFactsForRunTest(t, run)
+	facts.Admission.FeatureGateEnabled = true
+	facts.Decision.Decision = entity.ExecutionDecisionClarification
+	facts.Decision.ExecutionShape = entity.ExecutionShapeEmpty
+	facts.Decision.PlanScopeRunID = nil
+	question := "Which repository should be changed?"
+	facts.Decision.ClarificationQuestion = &question
+	factoryCalls, storeCalls := 0, 0
+	eventSink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			factoryCalls++
+			return nil, errors.New("factory must not run")
+		}),
+		eventSink,
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			storeCalls++
+			return nil, errors.New("store must not run")
+		},
+		nil,
+		WithADKAdaptiveBootstrapCoordinator(AdaptiveBootstrapCoordinatorFunc(func(context.Context, *RunSummary) (*AdaptiveBootstrapFacts, error) {
+			return facts, nil
+		})),
+	)
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrAdaptiveDecisionConsumerUnavailable)
+	require.Zero(t, factoryCalls)
+	require.Zero(t, storeCalls)
+	require.Empty(t, eventSink.eventTypes())
 }
 
 func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) {

@@ -192,6 +192,80 @@ func (r *threadRepository) ReadAdaptiveExecutionBootstrap(
 	return result, nil
 }
 
+func (r *threadRepository) ReadAdaptiveExecutionBootstrapByRun(
+	ctx context.Context,
+	req ReadAdaptiveExecutionBootstrapByRunRequest,
+) (*CommitAdaptiveExecutionBootstrapResult, error) {
+	if err := validateReadAdaptiveExecutionBootstrapByRunRequest(req); err != nil {
+		return nil, err
+	}
+	if r == nil || r.db == nil {
+		return nil, bootstrapInvalidf("repository database is missing")
+	}
+
+	var result *CommitAdaptiveExecutionBootstrapResult
+	read := func(tx *gorm.DB) error {
+		var attempts []runAttemptPO
+		if err := tx.Where("execution_run_id = ?", req.ExecutionRunID).
+			Order("id ASC").Limit(2).Find(&attempts).Error; err != nil {
+			return err
+		}
+		if len(attempts) == 0 {
+			var eventCount int64
+			if err := tx.Model(&runEventPO{}).Where(
+				"run_id = ? AND event_type IN ? AND sequence IS NULL AND visibility = ?",
+				req.ExecutionRunID,
+				[]string{adaptiveBootstrapAdmissionEventType, adaptiveBootstrapDecisionEventType},
+				string(entity.JournalVisibilityInternal),
+			).Count(&eventCount).Error; err != nil {
+				return err
+			}
+			var checkpointCount int64
+			if err := tx.Model(&checkpointPO{}).Where(
+				"run_id = ? AND runtime_type = ? AND checkpoint_ns = ?",
+				req.ExecutionRunID,
+				adaptiveBootstrapRuntimeType,
+				adaptiveBootstrapCheckpointNS,
+			).Count(&checkpointCount).Error; err != nil {
+				return err
+			}
+			if eventCount != 0 || checkpointCount != 0 {
+				return bootstrapConflictf("bootstrap authority remains after execution attempt removal")
+			}
+			return fmt.Errorf("%w: execution attempt is missing", ErrAdaptiveExecutionBootstrapNotFound)
+		}
+		if len(attempts) != 1 {
+			return bootstrapConflictf("execution attempt identity is ambiguous")
+		}
+		attempt := attempts[0]
+		if attempt.ThreadID != req.ThreadID || attempt.ExecutionRunID != req.ExecutionRunID ||
+			attempt.JournalRunID <= 0 || !adaptiveBootstrapExactNonEmpty(attempt.AttemptID, 64) {
+			return bootstrapConflictf("execution attempt identity drift")
+		}
+		loaded, err := loadAdaptiveExecutionBootstrapResult(tx, ReadAdaptiveExecutionBootstrapRequest{
+			ThreadID:       req.ThreadID,
+			ExecutionRunID: req.ExecutionRunID,
+			JournalRunID:   attempt.JournalRunID,
+			AttemptID:      attempt.AttemptID,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		result = loaded
+		return nil
+	}
+	db := r.db.WithContext(ctx)
+	options := adaptiveExecutionRecoveryTransactionOptions(r.db)
+	if options == nil {
+		if err := db.Transaction(read); err != nil {
+			return nil, err
+		}
+	} else if err := db.Transaction(read, options); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func normalizeAdaptiveExecutionBootstrapRequest(
 	req CommitAdaptiveExecutionBootstrapRequest,
 ) (*adaptiveExecutionBootstrapNormalizedRequest, error) {
@@ -266,6 +340,13 @@ func validateReadAdaptiveExecutionBootstrapRequest(req ReadAdaptiveExecutionBoot
 	if req.ThreadID <= 0 || req.ExecutionRunID <= 0 || req.JournalRunID <= 0 ||
 		!adaptiveBootstrapExactNonEmpty(req.AttemptID, 64) {
 		return bootstrapInvalidf("read bootstrap identity is invalid")
+	}
+	return nil
+}
+
+func validateReadAdaptiveExecutionBootstrapByRunRequest(req ReadAdaptiveExecutionBootstrapByRunRequest) error {
+	if req.ThreadID <= 0 || req.ExecutionRunID <= 0 {
+		return bootstrapInvalidf("read bootstrap by run identity is invalid")
 	}
 	return nil
 }

@@ -210,6 +210,7 @@ func (f *ApplicationADKAgentFactory) Build(
 		return nil, err
 	}
 	adaptiveSubagentPolicy := applyADKChildRuntimeSafetyPolicy(run, &runtimeConfig)
+	directDecision := false
 	if facts, ok := adaptiveBootstrapFactsFromContext(ctx); ok {
 		ctx = withoutAdaptiveBootstrapFacts(ctx)
 		if err := ValidateExecutionDecisionAgainstAdmission(facts.Admission, facts.Decision); err != nil {
@@ -225,12 +226,16 @@ func (f *ApplicationADKAgentFactory) Build(
 			(facts.Decision.PlanScopeRunID != nil && *facts.Decision.PlanScopeRunID != expectedPlanScopeRunID) {
 			return nil, fmt.Errorf("adaptive bootstrap plan capability does not match the current run")
 		}
+		if err := validateAdaptiveDecisionRuntimeConsumer(facts); err != nil {
+			return nil, err
+		}
+		directDecision = facts.Decision.Decision == domainentity.ExecutionDecisionDirect
 		runtimeConfig.PlanModeExplicit = true
 		runtimeConfig.IsPlanMode = facts.Admission.Capabilities.PlanAllowed &&
 			facts.Decision.Decision == domainentity.ExecutionDecisionExecute &&
 			facts.Decision.ExecutionShape == domainentity.ExecutionShapeMultiStep
 		runtimeConfig.SubagentExplicit = true
-		runtimeConfig.SubagentEnabled = facts.Admission.Capabilities.SubagentsAllowed
+		runtimeConfig.SubagentEnabled = !directDecision && facts.Admission.Capabilities.SubagentsAllowed
 		adaptiveSubagentPolicy = true
 		if !runtimeConfig.SubagentEnabled {
 			runtimeConfig.MaxConcurrentSubagents = 0
@@ -319,7 +324,7 @@ func (f *ApplicationADKAgentFactory) Build(
 	var tools []tool.BaseTool
 	var dynamicTools []tool.BaseTool
 	var subagentToolNames []string
-	if f.toolProvider != nil {
+	if f.toolProvider != nil && !directDecision {
 		toolCtx := ctx
 		if adaptiveSubagentPolicy {
 			toolCtx = withAdaptiveSubagentsAllowed(ctx, runtimeConfig.SubagentEnabled)
@@ -365,17 +370,28 @@ func (f *ApplicationADKAgentFactory) Build(
 	bundle := ADKMiddlewareBundle{}
 	if f.middlewares != nil {
 		bundle, err = f.middlewares.Build(ctx, ADKMiddlewareBuildInput{
-			Run:               run,
-			Model:             chatModel,
-			StaticTools:       tools,
-			DynamicTools:      dynamicTools,
-			SubagentToolNames: subagentToolNames,
-			ModelCapabilities: modelCapabilities,
-			RuntimeConfig:     runtimeConfig,
+			Run:                 run,
+			Model:               chatModel,
+			DisableToolExposure: directDecision,
+			StaticTools:         tools,
+			DynamicTools:        dynamicTools,
+			SubagentToolNames:   subagentToolNames,
+			ModelCapabilities:   modelCapabilities,
+			RuntimeConfig:       runtimeConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("build eino adk middlewares: %w", err)
 		}
+	}
+	if directDecision {
+		bundle.Handlers = append(
+			[]adk.ChatModelAgentMiddleware{newADKDirectDecisionGuard()},
+			bundle.Handlers...,
+		)
+		bundle.HandlerNames = append(
+			[]ADKMiddlewareName{adkMiddlewareDirectDecisionGuard},
+			bundle.HandlerNames...,
+		)
 	}
 
 	agentName := strings.TrimSpace(cfg.AgentName)

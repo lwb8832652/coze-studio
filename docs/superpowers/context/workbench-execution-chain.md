@@ -261,10 +261,27 @@ target exact replay 不调用 resolver/producer。typed Resume 从 durable immed
 capabilities、limits、完整 decision candidate 与 plan scope，补齐 target revision-1 authority，不重新计算
 rollout，也绝不调用模型；
 legacy decoder 继续只生成 gate-off snapshot。repository 在同一事务中锁定并核对 source gate/policy，
-禁止 gate-on→off 漂移。Factory 已能将合法 gate-on `direct`/`single_step` 映射为无 Plan、将
-`multi_step` 映射为有 Plan。真实 MySQL model-operation single-winner/exact replay 测试已存在，但因
-缺少安全 disposable DSN 本轮仍 `NOT_VERIFIED`。holdout、公共 DTO/TaskDetail 与 progress/verification
-等退出门均未完成，P1D 保持进行中
+禁止 gate-on→off 漂移。Factory 以 durable decision 为唯一 consumer authority：`direct` 复用同一 ADK
+text path，但不调用 ToolProvider，关闭 Plan/Subagent，并要求 Middleware 在 direct 下不构造
+offload/plan backend、跳过 Skill/Filesystem/PlanTask/ToolSearch；若模型仍返回任意 tool call，direct
+guard 在工具执行前 fail closed。`single_step` 保留受控 tools 但 Plan/Subagent 关闭，`multi_step`
+保留 Plan 但 Subagent 关闭。本轮不宣称 single-step 动作上限或 multi-step Plan-before-tool 的新证据。
+typed Resume 沿用继承的 durable decision 和同一 consumer。`clarification` 在 Execute/Resume 完成
+bootstrap 后、任何 runtime store/factory/event 前返回 `ErrAdaptiveDecisionConsumerUnavailable`；P2
+Human Interaction consumer 尚未接入。
+
+public read side 用独立的 `AdaptiveExecutionBootstrapByRunRepository` 只按 authorized execution Run
+identity strict 读取完整 admission/decision pair，不扩大 runtime writer 合同。canonical Get/List/Search
+显式 hydration 共用该 durable source，经 `ProjectPublicRun` 和 canonical projection 只发布 optional
+`CanonicalRun.coze.adaptive_execution`：schema 固定 `coze.adaptive_execution_public.v1`，字段仅为
+`schema`、`enabled`、`mode`、`safe_summary`、`clarification_question`。历史 Run 无 bootstrap 时省略；
+partial、identity drift 或 corrupt pair fail closed。前端 canonical adapter 严格校验 schema、四种 mode
+和字段类型；TaskDetail loader 取最新 primary top-level Run，`enabled=false` 隐藏，enabled 时以标签展示
+direct/single-step/multi-step/clarification 四态，不新建 route/page。
+
+真实 MySQL model-operation single-winner/exact replay 与 public by-run reader 测试已存在，但因缺少安全
+disposable DSN 本轮仍 `NOT_VERIFIED`。holdout、progress/verification、clarification Human consumer 与
+其它退出门均未完成，P1D 保持进行中
 且不得标记 PASS；historical runtime compatibility 与 package-private server-owned subagent seam 继续
 存在。P1L 仍
 deferred，whole-Thread DELETE guard 继续 hard-disabled。

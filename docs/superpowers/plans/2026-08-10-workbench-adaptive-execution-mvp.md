@@ -569,8 +569,10 @@ P1M 小步骤索引；P1M 文件必须把每项继续拆成 RED/最小实现/GRE
 production gate-on 现已由 `ModelAdaptiveDecisionProducer` 接管：authoritative `Run.Input` closed
 projection、显式 model ID、单 forced tool、closed output、独立 30 秒 timeout、共享 usage/billing、
 single-winner durable operation、一次 provider attempt、completed replay 与 typed Resume 无模型重调均
-已交付。80 holdout、公共 DTO/TaskDetail、progress/verification 和其它既定退出门仍未闭合；真实 MySQL
-model-operation exact 用例已存在，但本轮无合规 disposable DSN，保持
+已交付。durable runtime consumer 又闭合 direct 无工具路径、clarification runtime 前 fail closed，公共
+read-side 已发布 `coze.adaptive_execution_public.v1` 五个安全字段并接入 TaskDetail 最新顶层 Run 四态
+标签。clarification Human Interaction consumer、80 holdout、progress/verification 和其它既定退出门仍未
+闭合；真实 MySQL model-operation exact 与 public by-run reader 用例已存在，但本轮无合规 disposable DSN，保持
 `NOT_VERIFIED`。P1M 状态仍 `locked` / `NOT PASS`，本首包不改变该历史阶段结论。
 
 P1D 小步骤索引；每一项在 P1D 文件中继续拆成 RED/最小实现/GREEN/commit：
@@ -579,20 +581,26 @@ P1D 小步骤索引；每一项在 P1D 文件中继续拆成 RED/最小实现/GR
       30 开发集，P4 只能复核同一 hash，不能重新冻结。
 - [ ] 冻结 feature eligibility、Journal enrollment、gate-off reason 与 admission metrics，证明
       两组都持久化 admission/decision，gate 只选择 producer 和后续闭环。
-- [ ] 完成 `ExecutionDecision` 有界 codec/公共 DTO，并定义 `ProgressEvaluation`、
-      `VerificationResult` codec；后两者在本包只做零迁移持久化/恢复 fixture，不接运行循环。
+- [x] 完成 `ExecutionDecision` durable codec 与安全公共 DTO/strict frontend adapter；公共字段只含
+      schema/enabled/mode/safe_summary/clarification_question。
+- [ ] 定义 `ProgressEvaluation`、`VerificationResult` codec；本包先做零迁移持久化/恢复 fixture，
+      不接运行循环。
 - [ ] 为三种 decision 和 `single_step/multi_step` XOR 写 Go validation RED。
 - [ ] 实现服务端 acceptance-check registry，强制模型提出项为 required。
 - [x] 实现 adaptive decision producer；模型只提交候选，服务端校验后通过 P0 transaction 写 typed
       RunEvent + checkpoint refs，不能读取或重新生成 product mode。
 - [x] 在 `ADKExecutor.Execute` 接入同一 admission/decision coordinator，但保留现有
       `RuntimeSelector`；在 `ADKExecutor.Resume` 恢复同一状态，不新建 resume 实现。
-- [ ] 证明 gate-on `direct` 不创建 Plan，也不产生非验证 ToolStarted；证明 gate-on
-      `multi_step` 的 Plan persisted sequence 小于首个 ToolStarted sequence。
+- [x] 证明 gate-on `direct` 不创建 Plan、Subagent 或任何工具暴露，provider/dynamic/middleware tool
+      source 均不可达，模型违规 tool call 在工具执行前 fail closed；typed Resume 沿用同一 consumer。
+- [ ] 证明 gate-on `multi_step` 的 Plan persisted sequence 小于首个 ToolStarted sequence；本次 consumer
+      切片不新增该顺序证据，也不宣称 single-step 动作上限。
 - [ ] 证明 gate-off 仍由 baseline producer 写 fixed multi-step decision，不产生 progress/
       verification，沿既有终态规则完成且不写伪 verification passed。
-- [ ] 把 `payload_version` 从持久化 decision 传到 public list/SSE 和生成 TS 类型；在现有
-      TaskDetail 只展示 direct/planning/executing/final 最小状态，不新建 route/page。
+- [x] 把持久化 decision 经 strict by-execution-run reader 投影到 public Get/List/Search 与 canonical
+      Run，并生成前端 strict 类型；`CanonicalRun.coze.adaptive_execution` v1 只含 schema/enabled/mode/
+      safe_summary/clarification_question。现有 TaskDetail 以最新 primary top-level Run 展示四态标签，
+      `enabled=false` 隐藏，不新建 route/page。
 - [ ] 运行 Week-1 技术纵切门：三个 typed fact fixture 可读回/恢复、两组 admission/decision
       可审计、Plan 顺序正确、安全硬门为零；在现有页面完成第一轮 5～7 日效果验证。
 - [ ] 提交 P1D，记录 `P1D_BASE_SHA/P1D_RESULT/P1D_HEAD_SHA` 后才解锁 P2。

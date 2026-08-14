@@ -17,14 +17,20 @@
 package agentthread
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/adaptivecontract"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 var (
-	ErrAdaptiveAdmissionInvalid      = adaptivecontract.ErrAdaptiveAdmissionInvalid
-	ErrExecutionDecisionInvalid      = adaptivecontract.ErrExecutionDecisionInvalid
-	ErrAdaptiveDecisionBlockedPolicy = adaptivecontract.ErrAdaptiveDecisionBlockedPolicy
+	ErrAdaptiveAdmissionInvalid            = adaptivecontract.ErrAdaptiveAdmissionInvalid
+	ErrExecutionDecisionInvalid            = adaptivecontract.ErrExecutionDecisionInvalid
+	ErrAdaptiveDecisionBlockedPolicy       = adaptivecontract.ErrAdaptiveDecisionBlockedPolicy
+	ErrAdaptiveDecisionConsumerUnavailable = errors.New(
+		"adaptive decision consumer is unavailable",
+	)
 )
 
 // ValidateAdaptiveAdmissionSnapshot remains the application-facing C1 API.
@@ -43,4 +49,15 @@ func ValidateExecutionDecisionAgainstAdmission(
 	decision entity.ExecutionDecision,
 ) error {
 	return adaptivecontract.ValidateExecutionDecisionAgainstAdmission(admission, decision)
+}
+
+func validateAdaptiveDecisionRuntimeConsumer(facts *AdaptiveBootstrapFacts) error {
+	if facts == nil || facts.Decision.Decision != entity.ExecutionDecisionClarification {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: clarification requires the human-interaction runtime",
+		ErrAdaptiveDecisionConsumerUnavailable,
+	)
 }

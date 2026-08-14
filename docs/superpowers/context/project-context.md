@@ -137,8 +137,11 @@ gate 仍 `NOT_VERIFIED`。本轮 ordinary MVP 又让 fresh 顶层 Eino Run 不�
 作为 Attempt enrollment gate，并闭合 disabled/无 Attempt 的 lease recovery、bare Resume bootstrap 与
 bare rolling Plan boundary；ordinary 的真实 dev MySQL 门禁仍 `NOT_VERIFIED`。随后 P1D 已用
 `ModelAdaptiveDecisionProducer` 替换 production gate-on 的 deterministic producer；真实模型调用、
-用量计费与 durable claim/result operation 已接入，但 holdout、公共 DTO/TaskDetail、progress/
-verification 等退出门仍未闭合，因此 P1D 仍在进行中，不能标记 PASS。
+用量计费与 durable claim/result operation 已接入。随后 runtime consumer 已让 durable `direct` 继续走
+同一 ADK 文本生成链但完全不暴露工具，并让 `clarification` 在 runtime dependency 前 fail closed；
+`coze.adaptive_execution_public.v1` 的安全公共投影和 TaskDetail 顶层最新 Run 四态标签也已接入。
+Human Interaction clarification consumer、holdout、progress/verification 与其它退出门仍未闭合，因此
+P1D 仍在进行中，不能标记 PASS。
 
 P1M-B1 已把同一七字段 admission 下沉到 public `ApplicationService.CreateTaskThread` 与
 `CreateRun`，在 runtime normalization、top-level retry 来源读取和任何 mutation 前 fail
@@ -265,8 +268,26 @@ digest 而非原值。completed replay 直接复用候选并跳过 provider/bill
 未知状态均 fail closed。这不是 provider exactly-once claim：claim 后进程丢失时不会盲调 provider。
 bootstrap 仍以 target exact replay 为第一步；typed Resume 深拷贝 source durable decision candidate，
 补齐 target authority 后提交，绝不再次调用模型。相应真实 MySQL single-winner/exact replay 测试已
-存在，但本轮缺少安全 disposable DSN，运行结果保持 `NOT_VERIFIED`。holdout、公共 DTO/TaskDetail、
-progress/verification 和其它 P1D 退出门仍未交付，P1D 保持进行中且不得标记 PASS；P1M 状态不变。
+存在，但本轮缺少安全 disposable DSN，运行结果保持 `NOT_VERIFIED`。
+
+durable `direct` 的 runtime consumer 复用同一 ADK text path，但不调用 ToolProvider，关闭
+Plan/Subagent，并让 Middleware 不构造 offload/plan backend 或 Skill、Filesystem、PlanTask、
+ToolSearch 四类工具注入；若模型仍返回任意 tool call，direct guard 会在工具执行前 fail closed。
+`single_step` 保留受控工具但 Plan/Subagent 关闭，`multi_step` 保留 Plan、关闭 Subagent；本轮不据此
+宣称 single-step 动作上限或 multi-step Plan-before-tool 的新顺序证据。`clarification` 在 Execute 与
+Resume 完成 durable bootstrap 后、任何 runtime store/factory/event 前返回
+`ErrAdaptiveDecisionConsumerUnavailable`；P2 Human Interaction consumer 尚未接入。typed Resume 沿用
+继承的 durable decision，并应用同一 consumer。
+
+公共读取新增与 writer contract 隔离的窄 `AdaptiveExecutionBootstrapByRunRepository`，按 execution
+Run 严格读取完整 admission/decision pair。只有显式公共查询做 hydration；canonical Get/List/Search
+同源投影到 optional `CanonicalRun.coze.adaptive_execution`，v1 只含 `schema`、`enabled`、`mode`、
+`safe_summary`、`clarification_question`。历史 Run 缺失 bootstrap 时省略该字段，partial/corrupt
+aggregate fail closed。前端 canonical adapter 严格校验 schema、四种 mode 和字段类型，TaskDetail 只在
+`enabled=true` 时展示最新 primary top-level Run 的“直接回答/单步执行/多步执行/需要澄清”标签。
+
+holdout、progress/verification、clarification Human consumer 和其它 P1D 退出门仍未交付，P1D 保持
+进行中且不得标记 PASS；P1M 状态不变。
 historical runtime compatibility 与 package-private server-owned subagent seam 仍存在。P1L
 继续 deferred，whole-Thread DELETE guard 仍 hard-disabled。
 
