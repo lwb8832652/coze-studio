@@ -30,6 +30,150 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestAdaptiveDecisionModelOperationMySQLIntegrationClaimSingleWinnerAndReplay(t *testing.T) {
+	db, baseRepoA, baseRepoB := adaptiveExecutionMySQLIntegrationRepositories(t)
+	seedAdaptiveExecutionMySQLState(t, db)
+	repoA := NewAdaptiveDecisionModelOperationRepository(baseRepoA.db)
+	repoB := NewAdaptiveDecisionModelOperationRepository(baseRepoB.db)
+
+	requestA := PrepareAdaptiveDecisionModelOperationRequest{
+		ThreadID: 10, ExecutionRunID: 20, JournalRunID: 30, AttemptID: "attempt-1",
+		Generation: 3, OperationKey: "adaptive-decision-model:mysql-operation-1",
+		RequestFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		LeaseOwner:         "worker-1", LeaseToken: "lease-1",
+		ClaimEventID: 7101, ResultEventID: 7102,
+		ClaimToken: "mysql-claim-token-a", Now: 1000,
+	}
+	requestB := requestA
+	requestB.ClaimEventID = 7201
+	requestB.ResultEventID = 7202
+	requestB.ClaimToken = "mysql-claim-token-b"
+
+	type prepareOutcome struct {
+		repo    AdaptiveDecisionModelOperationRepository
+		request PrepareAdaptiveDecisionModelOperationRequest
+		result  *PrepareAdaptiveDecisionModelOperationResult
+		err     error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := make(chan struct{})
+	outcomes := make(chan prepareOutcome, 2)
+	prepare := func(
+		repo AdaptiveDecisionModelOperationRepository,
+		request PrepareAdaptiveDecisionModelOperationRequest,
+	) {
+		<-start
+		result, err := repo.PrepareAdaptiveDecisionModelOperation(ctx, request)
+		outcomes <- prepareOutcome{repo: repo, request: request, result: result, err: err}
+	}
+	go prepare(repoA, requestA)
+	go prepare(repoB, requestB)
+	close(start)
+	results := []prepareOutcome{<-outcomes, <-outcomes}
+
+	ownerIndex := -1
+	for index, outcome := range results {
+		require.NoError(t, outcome.err)
+		require.NotNil(t, outcome.result)
+		require.NotNil(t, outcome.result.Operation)
+		require.Equal(t, AdaptiveDecisionModelOperationStatusCalling, outcome.result.Operation.Status)
+		if outcome.result.Owned {
+			require.Equal(t, -1, ownerIndex)
+			ownerIndex = index
+		}
+	}
+	require.NotEqual(t, -1, ownerIndex)
+	loserIndex := 1 - ownerIndex
+	require.False(t, results[loserIndex].result.Owned)
+	require.Equal(t, results[ownerIndex].result.Operation, results[loserIndex].result.Operation)
+
+	completion := CompleteAdaptiveDecisionModelOperationRequest{
+		ThreadID: requestA.ThreadID, ExecutionRunID: requestA.ExecutionRunID,
+		JournalRunID: requestA.JournalRunID, AttemptID: requestA.AttemptID,
+		Generation: requestA.Generation, OperationKey: requestA.OperationKey,
+		RequestFingerprint: requestA.RequestFingerprint,
+		LeaseOwner:         requestA.LeaseOwner, LeaseToken: requestA.LeaseToken,
+		ClaimToken: results[ownerIndex].request.ClaimToken, Now: 1001,
+		Status:        AdaptiveDecisionModelOperationStatusCompleted,
+		ResultPayload: []byte(`{"decision":"direct","execution_shape":"direct"}`),
+	}
+	completed, err := results[ownerIndex].repo.CompleteAdaptiveDecisionModelOperation(
+		context.Background(),
+		completion,
+	)
+	require.NoError(t, err)
+	require.False(t, completed.Replayed)
+	require.Equal(t, AdaptiveDecisionModelOperationStatusCompleted, completed.Operation.Status)
+
+	read, err := results[loserIndex].repo.ReadAdaptiveDecisionModelOperation(
+		context.Background(),
+		ReadAdaptiveDecisionModelOperationRequest{
+			ThreadID: requestA.ThreadID, ExecutionRunID: requestA.ExecutionRunID,
+			JournalRunID: requestA.JournalRunID, AttemptID: requestA.AttemptID,
+			Generation: requestA.Generation, OperationKey: requestA.OperationKey,
+			RequestFingerprint: requestA.RequestFingerprint,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, completed.Operation, read)
+	replayed, err := results[loserIndex].repo.CompleteAdaptiveDecisionModelOperation(
+		context.Background(),
+		completion,
+	)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Equal(t, completed.Operation, replayed.Operation)
+
+	loadEvents := func() []runEventPO {
+		var events []runEventPO
+		require.NoError(t, db.Where(
+			"journal_run_id = ? AND attempt_id = ? AND event_type IN ?",
+			requestA.JournalRunID,
+			requestA.AttemptID,
+			[]string{adaptiveDecisionModelClaimEventType, adaptiveDecisionModelResultEventType},
+		).Order("event_type ASC").Find(&events).Error)
+		return events
+	}
+	events := loadEvents()
+	require.Len(t, events, 2)
+	claimEvents, resultEvents := 0, 0
+	for _, event := range events {
+		switch event.EventType {
+		case adaptiveDecisionModelClaimEventType:
+			claimEvents++
+		case adaptiveDecisionModelResultEventType:
+			resultEvents++
+		}
+		require.Nil(t, event.Sequence)
+		require.NotNil(t, event.Visibility)
+		require.Equal(t, string(entity.JournalVisibilityInternal), *event.Visibility)
+		require.NotNil(t, event.IdempotencyKey)
+		for _, rawSecret := range []string{
+			requestA.OperationKey,
+			requestA.ClaimToken,
+			requestB.ClaimToken,
+		} {
+			require.NotContains(t, *event.IdempotencyKey, rawSecret)
+			require.NotContains(t, string(event.Payload), rawSecret)
+		}
+	}
+	require.Equal(t, 1, claimEvents)
+	require.Equal(t, 1, resultEvents)
+
+	drifted := requestA
+	drifted.RequestFingerprint = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	drifted.ClaimEventID = 7301
+	drifted.ResultEventID = 7302
+	drifted.ClaimToken = "mysql-claim-token-drift"
+	_, err = results[loserIndex].repo.PrepareAdaptiveDecisionModelOperation(
+		context.Background(),
+		drifted,
+	)
+	require.ErrorIs(t, err, ErrAdaptiveDecisionModelOperationConflict)
+	require.Equal(t, events, loadEvents())
+}
+
 func TestOrdinaryLeaseRecoveryMySQLCheckpointAuthorityRace(t *testing.T) {
 	assertRejectedWithoutWrites := func(
 		t *testing.T,

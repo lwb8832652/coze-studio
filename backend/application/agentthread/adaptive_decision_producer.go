@@ -23,7 +23,18 @@ import (
 )
 
 type AdaptiveDecisionRequest struct {
-	Admission entity.AdaptiveAdmissionSnapshot
+	Admission     entity.AdaptiveAdmissionSnapshot
+	SemanticInput AdaptiveDecisionSemanticInput
+}
+
+type AdaptiveDecisionSemanticInput struct {
+	Messages       []AdaptiveDecisionSemanticMessage
+	HasAttachments bool
+}
+
+type AdaptiveDecisionSemanticMessage struct {
+	Role    string
+	Content string
 }
 
 type AdaptiveDecisionCandidate struct {

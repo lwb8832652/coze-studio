@@ -106,6 +106,8 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 )
 
+const adaptiveDecisionModelTimeout = 30 * time.Second
+
 type eventbusImpl struct {
 	resourceEventBus search.ResourceEventBus
 	projectEventBus  search.ProjectEventBus
@@ -333,6 +335,23 @@ func Init(ctx context.Context) (err error) {
 		primaryServices.agentThreadSVC,
 	)
 	adaptiveExecutionRepository := threadrepository.NewAdaptiveExecutionRepository(infra.DB)
+	adaptiveDecisionUsageCollector := agentthread.NewThreadUsageCollectorWithOptions(
+		primaryServices.agentThreadSVC,
+		agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
+	)
+	adaptiveDecisionModelOperations := threadrepository.NewAdaptiveDecisionModelOperationRepository(
+		infra.DB,
+	)
+	adaptiveDecisionProducer := agentthread.NewModelAdaptiveDecisionProducer(
+		agentthread.ModelAdaptiveDecisionProducerOptions{
+			Provider:            agentthread.NewEnvAdaptiveDecisionModelProvider(),
+			UsageCollector:      adaptiveDecisionUsageCollector,
+			OperationRepository: adaptiveDecisionModelOperations,
+			IDGen:               infra.IDGenSVC,
+			Now:                 func() int64 { return time.Now().UnixMilli() },
+			Timeout:             adaptiveDecisionModelTimeout,
+		},
+	)
 	adkAgentRunExecutor := agentthread.NewADKExecutor(
 		agentthread.NewApplicationADKAgentFactory(
 			nil,
@@ -413,10 +432,7 @@ func Init(ctx context.Context) (err error) {
 				),
 			)
 		},
-		agentthread.NewThreadUsageCollectorWithOptions(
-			primaryServices.agentThreadSVC,
-			agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
-		),
+		adaptiveDecisionUsageCollector,
 		agentthread.WithADKCancelRegistry(adkCancelRegistry),
 		agentthread.WithADKSubagentRetrySourceResolver(
 			agentthread.NewApplicationADKSubagentRetrySourceResolver(
@@ -432,7 +448,7 @@ func Init(ctx context.Context) (err error) {
 					IDGen:               infra.IDGenSVC,
 					EligibilityResolver: agentthread.NewEnvAdaptiveEligibilityResolver(),
 					BaselineProducer:    agentthread.BaselineAdaptiveDecisionProducer{},
-					AdaptiveProducer:    agentthread.DeterministicAdaptiveDecisionProducer{},
+					AdaptiveProducer:    adaptiveDecisionProducer,
 					Now:                 func() int64 { return time.Now().UnixMilli() },
 				},
 			),

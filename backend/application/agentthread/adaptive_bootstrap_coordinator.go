@@ -210,11 +210,25 @@ func (c *adaptiveBootstrapCoordinator) Bootstrap(
 	if err != nil {
 		return nil, fmt.Errorf("resolve adaptive eligibility: %w", err)
 	}
-	decision, err := c.produceDecision(ctx, admission, adaptiveDecisionAuthority{
-		DecisionID: decisionID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
-		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
-		PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
-	})
+	producerCtx := ctx
+	semanticInput := AdaptiveDecisionSemanticInput{}
+	if admission.FeatureGateEnabled {
+		semanticInput, err = ProjectAdaptiveDecisionSemanticInput(run.Input)
+		if err != nil {
+			return nil, fmt.Errorf("project adaptive decision semantic input: %w", err)
+		}
+		producerCtx = withAdaptiveDecisionModelInvocation(ctx, run, attempt, operationKey)
+	}
+	decision, err := c.produceDecisionWithSemanticInput(
+		producerCtx,
+		admission,
+		semanticInput,
+		adaptiveDecisionAuthority{
+			DecisionID: decisionID, ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
+			AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
+			PlanScopeRunID: run.RunID, CreatedAt: attempt.CreatedAt,
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("produce adaptive decision: %w", err)
 	}
@@ -287,6 +301,7 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 	}
 
 	var admission domainentity.AdaptiveAdmissionSnapshot
+	var inheritedCandidate *AdaptiveDecisionCandidate
 	planScopeRunID := input.SourceRunID
 	if attempt.SourceAttemptID == nil {
 		admission, err = c.legacyAdaptiveAdmissionFromSourceRun(ctx, run, input.SourceRunID)
@@ -302,13 +317,17 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 		})
 		switch {
 		case readErr == nil:
-			admission, planScopeRunID, err = typedAdaptiveAdmissionFromSource(
+			var candidate AdaptiveDecisionCandidate
+			admission, candidate, planScopeRunID, err = typedAdaptiveAdmissionFromSource(
 				run.ThreadID,
 				attempt.JournalRunID,
 				input.SourceRunID,
 				*attempt.SourceAttemptID,
 				source,
 			)
+			if err == nil {
+				inheritedCandidate = &candidate
+			}
 		case errors.Is(readErr, domainrepo.ErrAdaptiveExecutionBootstrapNotFound):
 			admission, err = c.legacyAdaptiveAdmissionFromSourceRun(ctx, run, input.SourceRunID)
 		default:
@@ -318,12 +337,18 @@ func (c *adaptiveBootstrapCoordinator) BootstrapResume(
 			return nil, err
 		}
 	}
-	decision, err := c.produceDecision(ctx, admission, adaptiveDecisionAuthority{
+	authority := adaptiveDecisionAuthority{
 		DecisionID:     adaptiveBootstrapStableKey("decision", run, attempt),
 		ExecutionRunID: run.RunID, JournalRunID: attempt.JournalRunID,
 		AttemptID: attempt.AttemptID, ExecutionGeneration: run.ExecutionGeneration,
 		PlanScopeRunID: planScopeRunID, CreatedAt: attempt.CreatedAt,
-	})
+	}
+	var decision domainentity.ExecutionDecision
+	if inheritedCandidate != nil {
+		decision, err = materializeAdaptiveDecision(admission, *inheritedCandidate, authority)
+	} else {
+		decision, err = c.produceDecision(ctx, admission, authority)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("produce recovery adaptive decision: %w", err)
 	}
@@ -407,7 +432,7 @@ func typedAdaptiveAdmissionFromSource(
 	sourceRunID int64,
 	expectedSourceAttemptID string,
 	source *domainrepo.CommitAdaptiveExecutionBootstrapResult,
-) (domainentity.AdaptiveAdmissionSnapshot, int64, error) {
+) (domainentity.AdaptiveAdmissionSnapshot, AdaptiveDecisionCandidate, int64, error) {
 	if source == nil || expectedThreadID <= 0 || expectedJournalRunID <= 0 || sourceRunID <= 0 ||
 		!adaptiveBootstrapIdentityPart(expectedSourceAttemptID, 64) ||
 		source.Authority.ThreadID != expectedThreadID ||
@@ -418,15 +443,18 @@ func typedAdaptiveAdmissionFromSource(
 		(source.Admission.Source != domainentity.AdaptiveAdmissionSourceFresh &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
 			source.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) {
-		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source facts are invalid")
+		return domainentity.AdaptiveAdmissionSnapshot{}, AdaptiveDecisionCandidate{}, 0,
+			fmt.Errorf("adaptive recovery source facts are invalid")
 	}
-	if source.Decision.PlanScopeRunID == nil || *source.Decision.PlanScopeRunID <= 0 {
-		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source plan scope is invalid")
+	planScopeRunID, err := adaptiveDecisionEffectivePlanScope(source.Decision)
+	if err != nil {
+		return domainentity.AdaptiveAdmissionSnapshot{}, AdaptiveDecisionCandidate{}, 0,
+			fmt.Errorf("adaptive recovery source plan scope is invalid")
 	}
-	planScopeRunID := *source.Decision.PlanScopeRunID
 	if source.Admission.Source == domainentity.AdaptiveAdmissionSourceFresh &&
-		planScopeRunID != source.Authority.ExecutionRunID {
-		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("adaptive recovery source plan scope is invalid")
+		planScopeRunID != 0 && planScopeRunID != source.Authority.ExecutionRunID {
+		return domainentity.AdaptiveAdmissionSnapshot{}, AdaptiveDecisionCandidate{}, 0,
+			fmt.Errorf("adaptive recovery source plan scope is invalid")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
 		source.Admission,
@@ -439,7 +467,8 @@ func typedAdaptiveAdmissionFromSource(
 			ExpectedPlanScopeRunID: planScopeRunID,
 		},
 	); err != nil {
-		return domainentity.AdaptiveAdmissionSnapshot{}, 0, fmt.Errorf("validate adaptive recovery source facts: %w", err)
+		return domainentity.AdaptiveAdmissionSnapshot{}, AdaptiveDecisionCandidate{}, 0,
+			fmt.Errorf("validate adaptive recovery source facts: %w", err)
 	}
 	sourceGeneration := source.Authority.ExecutionGeneration
 	return domainentity.AdaptiveAdmissionSnapshot{
@@ -450,7 +479,7 @@ func typedAdaptiveAdmissionFromSource(
 		SourceExecutionGeneration: &sourceGeneration,
 		Capabilities:              source.Admission.Capabilities,
 		Limits:                    source.Admission.Limits,
-	}, planScopeRunID, nil
+	}, adaptiveDecisionCandidateFromDecision(source.Decision), planScopeRunID, nil
 }
 
 func adaptiveBootstrapRecoveryFactsFromDurableResult(
@@ -459,9 +488,12 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 	attempt *domainentity.RunAttempt,
 	result *domainrepo.CommitAdaptiveExecutionBootstrapResult,
 ) (*AdaptiveBootstrapFacts, error) {
-	if result == nil || run == nil || input == nil || attempt == nil ||
-		(result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
-			result.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) ||
+	if result == nil || run == nil || input == nil || attempt == nil {
+		return nil, fmt.Errorf("adaptive recovery bootstrap facts do not match the current target")
+	}
+	expectedPlanScopeRunID, planScopeErr := adaptiveDecisionEffectivePlanScope(result.Decision)
+	if (result.Admission.Source != domainentity.AdaptiveAdmissionSourceTypedInheritance &&
+		result.Admission.Source != domainentity.AdaptiveAdmissionSourceLegacyDecoder) ||
 		result.Admission.SourceRunID == nil ||
 		*result.Admission.SourceRunID != input.SourceRunID ||
 		result.Authority.ThreadID != run.ThreadID || result.Authority.ExecutionRunID != run.RunID ||
@@ -470,8 +502,7 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 		result.Decision.ExecutionRunID != run.RunID || result.Decision.JournalRunID != attempt.JournalRunID ||
 		result.Decision.AttemptID != attempt.AttemptID ||
 		result.Decision.ExecutionGeneration != run.ExecutionGeneration || result.Decision.DecisionRevision != 1 ||
-		result.Decision.PlanScopeRunID == nil || *result.Decision.PlanScopeRunID <= 0 ||
-		result.Decision.CreatedAt != attempt.CreatedAt {
+		result.Decision.CreatedAt != attempt.CreatedAt || planScopeErr != nil {
 		return nil, fmt.Errorf("adaptive recovery bootstrap facts do not match the current target")
 	}
 	if err := adaptivecontract.ValidateAdaptiveBootstrapPair(
@@ -482,7 +513,7 @@ func adaptiveBootstrapRecoveryFactsFromDurableResult(
 			JournalRunID:           result.Authority.JournalRunID,
 			AttemptID:              result.Authority.AttemptID,
 			ExecutionGeneration:    result.Authority.ExecutionGeneration,
-			ExpectedPlanScopeRunID: *result.Decision.PlanScopeRunID,
+			ExpectedPlanScopeRunID: expectedPlanScopeRunID,
 		},
 	); err != nil {
 		return nil, fmt.Errorf("validate adaptive recovery bootstrap facts: %w", err)
@@ -594,6 +625,20 @@ func (c *adaptiveBootstrapCoordinator) produceDecision(
 	admission domainentity.AdaptiveAdmissionSnapshot,
 	authority adaptiveDecisionAuthority,
 ) (domainentity.ExecutionDecision, error) {
+	return c.produceDecisionWithSemanticInput(
+		ctx,
+		admission,
+		AdaptiveDecisionSemanticInput{},
+		authority,
+	)
+}
+
+func (c *adaptiveBootstrapCoordinator) produceDecisionWithSemanticInput(
+	ctx context.Context,
+	admission domainentity.AdaptiveAdmissionSnapshot,
+	semanticInput AdaptiveDecisionSemanticInput,
+	authority adaptiveDecisionAuthority,
+) (domainentity.ExecutionDecision, error) {
 	producer := c.baselineProducer
 	if admission.FeatureGateEnabled {
 		producer = c.adaptiveProducer
@@ -602,11 +647,30 @@ func (c *adaptiveBootstrapCoordinator) produceDecision(
 		return domainentity.ExecutionDecision{}, ErrAdaptiveProducerUnavailable
 	}
 	candidate, err := producer.Produce(ctx, AdaptiveDecisionRequest{
-		Admission: cloneAdaptiveAdmissionSnapshot(admission),
+		Admission:     cloneAdaptiveAdmissionSnapshot(admission),
+		SemanticInput: cloneAdaptiveDecisionSemanticInput(semanticInput),
 	})
 	if err != nil {
 		return domainentity.ExecutionDecision{}, err
 	}
+	return materializeAdaptiveDecision(admission, candidate, authority)
+}
+
+func cloneAdaptiveDecisionSemanticInput(
+	input AdaptiveDecisionSemanticInput,
+) AdaptiveDecisionSemanticInput {
+	clone := input
+	if input.Messages != nil {
+		clone.Messages = append([]AdaptiveDecisionSemanticMessage{}, input.Messages...)
+	}
+	return clone
+}
+
+func materializeAdaptiveDecision(
+	admission domainentity.AdaptiveAdmissionSnapshot,
+	candidate AdaptiveDecisionCandidate,
+	authority adaptiveDecisionAuthority,
+) (domainentity.ExecutionDecision, error) {
 	decision := domainentity.ExecutionDecision{
 		Schema:     domainentity.ExecutionDecisionSchemaV1,
 		DecisionID: authority.DecisionID, DecisionRevision: 1,
@@ -649,6 +713,45 @@ func (c *adaptiveBootstrapCoordinator) produceDecision(
 		return domainentity.ExecutionDecision{}, err
 	}
 	return decision, nil
+}
+
+func adaptiveDecisionCandidateFromDecision(
+	decision domainentity.ExecutionDecision,
+) AdaptiveDecisionCandidate {
+	candidate := AdaptiveDecisionCandidate{
+		GoalSummary: decision.GoalSummary, Decision: decision.Decision,
+		ExecutionShape: decision.ExecutionShape, SafeSummary: decision.SafeSummary,
+	}
+	if decision.Deliverables != nil {
+		candidate.Deliverables = append([]string{}, decision.Deliverables...)
+	}
+	if decision.AcceptanceChecks != nil {
+		candidate.AcceptanceChecks = append(
+			[]domainentity.AdaptiveAcceptanceCheck{},
+			decision.AcceptanceChecks...,
+		)
+	}
+	if decision.ClarificationQuestion != nil {
+		value := *decision.ClarificationQuestion
+		candidate.ClarificationQuestion = &value
+	}
+	return candidate
+}
+
+func adaptiveDecisionEffectivePlanScope(
+	decision domainentity.ExecutionDecision,
+) (int64, error) {
+	if decision.Decision == domainentity.ExecutionDecisionExecute &&
+		decision.ExecutionShape == domainentity.ExecutionShapeMultiStep {
+		if decision.PlanScopeRunID == nil || *decision.PlanScopeRunID <= 0 {
+			return 0, ErrExecutionDecisionInvalid
+		}
+		return *decision.PlanScopeRunID, nil
+	}
+	if decision.PlanScopeRunID != nil {
+		return 0, ErrExecutionDecisionInvalid
+	}
+	return 0, nil
 }
 
 type adaptiveDecisionAuthority struct {

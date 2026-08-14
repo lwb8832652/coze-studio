@@ -67,7 +67,9 @@ func TestDeterministicAdaptiveDecisionProducerFailsClosedForWrongGateAndPolicy(t
 }
 
 func TestAdaptiveDecisionProducerContractCannotObserveDurableAuthority(t *testing.T) {
-	require.Equal(t, []string{"Admission"}, reflectedFieldNames(reflect.TypeOf(AdaptiveDecisionRequest{})))
+	require.Equal(t, []string{"Admission", "SemanticInput"}, reflectedFieldNames(reflect.TypeOf(AdaptiveDecisionRequest{})))
+	require.Equal(t, []string{"Messages", "HasAttachments"}, reflectedFieldNames(reflect.TypeOf(AdaptiveDecisionSemanticInput{})))
+	require.Equal(t, []string{"Role", "Content"}, reflectedFieldNames(reflect.TypeOf(AdaptiveDecisionSemanticMessage{})))
 	require.Equal(t, []string{
 		"GoalSummary", "Deliverables", "AcceptanceChecks", "Decision", "ExecutionShape",
 		"ClarificationQuestion", "SafeSummary",

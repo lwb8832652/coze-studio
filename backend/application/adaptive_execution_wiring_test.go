@@ -34,7 +34,15 @@ func TestAdaptiveExecutionProductionWiringInstallsGateOnDecisionDependencies(t *
 
 	require.Regexp(t, `EligibilityResolver:\s+agentthread\.NewEnvAdaptiveEligibilityResolver\(\)`, text)
 	require.Regexp(t, `BaselineProducer:\s+agentthread\.BaselineAdaptiveDecisionProducer\{\}`, text)
-	require.Regexp(t, `AdaptiveProducer:\s+agentthread\.DeterministicAdaptiveDecisionProducer\{\}`, text)
+	require.Regexp(t, `adaptiveDecisionUsageCollector\s*:=\s*agentthread\.NewThreadUsageCollectorWithOptions`, text)
+	require.Regexp(t, `adaptiveDecisionModelOperations\s*:=\s*threadrepository\.NewAdaptiveDecisionModelOperationRepository`, text)
+	require.Regexp(t, `adaptiveDecisionProducer\s*:=\s*agentthread\.NewModelAdaptiveDecisionProducer`, text)
+	require.Regexp(t, `Provider:\s+agentthread\.NewEnvAdaptiveDecisionModelProvider\(\)`, text)
+	require.Regexp(t, `UsageCollector:\s+adaptiveDecisionUsageCollector`, text)
+	require.Regexp(t, `OperationRepository:\s+adaptiveDecisionModelOperations`, text)
+	require.Regexp(t, `Timeout:\s+adaptiveDecisionModelTimeout`, text)
+	require.Regexp(t, `AdaptiveProducer:\s+adaptiveDecisionProducer`, text)
+	require.NotContains(t, text, "AdaptiveProducer:    agentthread.DeterministicAdaptiveDecisionProducer{}")
 	require.NotContains(t, text, "EligibilityResolver: journalFeatureGate")
 	require.NotContains(t, text, "EligibilityResolver: agentthread.NewJournalFeatureGate")
 }

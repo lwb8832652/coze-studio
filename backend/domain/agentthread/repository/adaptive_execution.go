@@ -46,6 +46,9 @@ var (
 	ErrAdaptiveExecutionBootstrapInvalid        = errors.New("adaptive execution bootstrap is invalid")
 	ErrAdaptiveExecutionBootstrapNotFound       = errors.New("adaptive execution bootstrap is not found")
 	ErrAdaptiveExecutionBootstrapConflict       = errors.New("adaptive execution bootstrap conflict")
+	ErrAdaptiveDecisionModelOperationInvalid    = errors.New("adaptive decision model operation is invalid")
+	ErrAdaptiveDecisionModelOperationNotFound   = errors.New("adaptive decision model operation is not found")
+	ErrAdaptiveDecisionModelOperationConflict   = errors.New("adaptive decision model operation conflict")
 	ErrAdaptiveExecutionReservedFact            = errors.New("adaptive execution reserved fact")
 )
 
@@ -419,6 +422,107 @@ type AdaptiveExecutionRepository interface {
 		ctx context.Context,
 		req ReadAdaptiveExecutionBootstrapRequest,
 	) (*CommitAdaptiveExecutionBootstrapResult, error)
+}
+
+// AdaptiveDecisionModelOperationRepository owns the durable claim/result
+// handshake around one model-backed adaptive decision. It is intentionally
+// narrower than AdaptiveExecutionRepository so existing runtime mocks do not
+// acquire model-operation methods.
+type AdaptiveDecisionModelOperationRepository interface {
+	ReadAdaptiveDecisionModelOperation(
+		ctx context.Context,
+		req ReadAdaptiveDecisionModelOperationRequest,
+	) (*AdaptiveDecisionModelOperation, error)
+	PrepareAdaptiveDecisionModelOperation(
+		ctx context.Context,
+		req PrepareAdaptiveDecisionModelOperationRequest,
+	) (*PrepareAdaptiveDecisionModelOperationResult, error)
+	CompleteAdaptiveDecisionModelOperation(
+		ctx context.Context,
+		req CompleteAdaptiveDecisionModelOperationRequest,
+	) (*CompleteAdaptiveDecisionModelOperationResult, error)
+}
+
+type AdaptiveDecisionModelOperationStatus string
+
+const (
+	AdaptiveDecisionModelOperationStatusCalling   AdaptiveDecisionModelOperationStatus = "calling"
+	AdaptiveDecisionModelOperationStatusCompleted AdaptiveDecisionModelOperationStatus = "completed"
+	AdaptiveDecisionModelOperationStatusFailed    AdaptiveDecisionModelOperationStatus = "failed"
+)
+
+// AdaptiveDecisionModelOperation exposes only immutable authority and digests.
+// Raw operation keys, lease material, and claim tokens are never returned.
+type AdaptiveDecisionModelOperation struct {
+	Status             AdaptiveDecisionModelOperationStatus
+	ThreadID           int64
+	ExecutionRunID     int64
+	JournalRunID       int64
+	AttemptID          string
+	Generation         uint64
+	OperationKeyDigest string
+	RequestFingerprint string
+	ClaimEventID       int64
+	ResultEventID      int64
+	ClaimTokenDigest   string
+	ResultPayload      json.RawMessage
+	ResultDigest       string
+	ErrorCode          string
+	ClaimedAt          int64
+	CompletedAt        int64
+}
+
+type ReadAdaptiveDecisionModelOperationRequest struct {
+	ThreadID           int64
+	ExecutionRunID     int64
+	JournalRunID       int64
+	AttemptID          string
+	Generation         uint64
+	OperationKey       string
+	RequestFingerprint string
+}
+
+type PrepareAdaptiveDecisionModelOperationRequest struct {
+	ThreadID           int64
+	ExecutionRunID     int64
+	JournalRunID       int64
+	AttemptID          string
+	Generation         uint64
+	OperationKey       string
+	RequestFingerprint string
+	LeaseOwner         string
+	LeaseToken         string
+	ClaimEventID       int64
+	ResultEventID      int64
+	ClaimToken         string
+	Now                int64
+}
+
+type PrepareAdaptiveDecisionModelOperationResult struct {
+	Operation *AdaptiveDecisionModelOperation
+	Owned     bool
+}
+
+type CompleteAdaptiveDecisionModelOperationRequest struct {
+	ThreadID           int64
+	ExecutionRunID     int64
+	JournalRunID       int64
+	AttemptID          string
+	Generation         uint64
+	OperationKey       string
+	RequestFingerprint string
+	LeaseOwner         string
+	LeaseToken         string
+	ClaimToken         string
+	Now                int64
+	Status             AdaptiveDecisionModelOperationStatus
+	ResultPayload      json.RawMessage
+	ErrorCode          string
+}
+
+type CompleteAdaptiveDecisionModelOperationResult struct {
+	Operation *AdaptiveDecisionModelOperation
+	Replayed  bool
 }
 
 // CommitAdaptiveExecutionBootstrapRequest is intentionally repository-private
