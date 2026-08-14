@@ -36,6 +36,9 @@ Thread
 - 事件订阅调用 `subscribeRunEvents`，通过 `@coze-arch/fetch-stream` 读取 canonical
   SSE；页面源码不得绕过统一 client 直接创建浏览器流连接。
 - 执行内核为 Eino ADK，公共 API 只返回经过审核的 bounded projection。
+- 模型身份由服务端事实决定：Run config 有正 `model_type`/`model_id` 时，数据库
+  model ID/connection 拥有上游模型标识，客户端或展示用 `model_name` 不得覆盖；
+  只有 `ModelID <= 0` 的 builtin 路径才以 `model_name` 作为模型 option。
 
 ## Journal 执行体验
 

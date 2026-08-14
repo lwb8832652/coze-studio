@@ -1889,12 +1889,21 @@
           "path": "backend/application/agentthread/adk_agent_factory.go",
           "symbol": "(*ApplicationADKAgentFactory).Build",
           "locator": "func (f *ApplicationADKAgentFactory) Build("
+        },
+        {
+          "path": "backend/application/agentthread/model_executor.go",
+          "symbol": "modelExecutorOptions",
+          "locator": "if cfg.ModelID <= 0 && cfg.ModelName != \"\" {"
         }
       ],
       "evidence": [
         {
           "path": "backend/application/agentthread/adk_agent_factory_test.go",
           "locator": "func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent"
+        },
+        {
+          "path": "backend/application/agentthread/model_executor_test.go",
+          "locator": "func TestModelExecutorGeneratesAssistantMessageFromRunInput"
         }
       ]
     },

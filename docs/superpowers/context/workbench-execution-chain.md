@@ -565,6 +565,11 @@ fail closed。
 6. 最终结果由 `RunProcessor` 以 fence 条件完成 Run，并保存安全投影和 Assistant
    Message。
 
+模型身份以服务端事实为准：Run config 解析出正 `model_type`/`model_id` 时，Factory
+按数据库 model ID/connection 建立 ChatModel，上游模型标识由该连接拥有；客户端或
+展示用 `model_name` 不得再通过 `model.WithModel` 覆盖。只有无正 ID 的 builtin 路径
+（`ModelID <= 0`）才可把 `model_name` 作为模型 option。
+
 在进入 `RuntimeSelector.Execute` 前，`RunProcessor.processRun` 会从已持久化的
 Run 归属构造仅服务端可写的 `sandboxidentity.Request`（`scope=agent`、space、
 creator 和 Run ID）并写入执行 context。后续 MCP 或受控 Sandbox 调用只能消费这份

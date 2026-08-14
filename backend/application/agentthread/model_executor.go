@@ -249,7 +249,7 @@ func parseModelExecutorConfig(rawConfig string) (modelExecutorConfig, error) {
 
 func modelExecutorOptions(cfg modelExecutorConfig) []model.Option {
 	opts := make([]model.Option, 0, 4)
-	if cfg.ModelName != "" {
+	if cfg.ModelID <= 0 && cfg.ModelName != "" {
 		opts = append(opts, model.WithModel(cfg.ModelName))
 	}
 	if cfg.Temperature != nil {
