@@ -506,8 +506,9 @@ export const CodePluginWorkspace = ({
     setRunning(true);
     setDebugResult(undefined);
     try {
-      const draft = dirty ? await saveDraft(true) : undefined;
-      if (!isCurrentIdentity(debugOwner) || (dirty && !draft)) {
+      const shouldSave = dirty || revision === 0;
+      const draft = shouldSave ? await saveDraft(true) : undefined;
+      if (!isCurrentIdentity(debugOwner) || (shouldSave && !draft)) {
         return;
       }
       const debugRevision = draft?.revision ?? revision;

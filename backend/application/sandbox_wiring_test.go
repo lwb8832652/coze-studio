@@ -19,6 +19,7 @@ import (
 
 	appinfra "github.com/coze-dev/coze-studio/backend/application/base/appinfra"
 	appsandbox "github.com/coze-dev/coze-studio/backend/application/sandbox"
+	appuser "github.com/coze-dev/coze-studio/backend/application/user"
 	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
@@ -34,6 +35,19 @@ func TestSandboxRemoteProviderAllowedAuthorityPreservesCanonicalCustomPort(t *te
 
 	require.NoError(t, err)
 	require.Equal(t, "runner.example.test:8443", authority)
+}
+
+func TestPluginServiceComponentsUseApplicationCodeRunner(t *testing.T) {
+	runner := &sandboxRunnerOnly{}
+	services := &basicServices{
+		infra:    &appinfra.AppDependencies{CodeRunner: runner},
+		eventbus: &eventbusImpl{},
+		userSVC:  &appuser.UserApplicationService{},
+	}
+
+	components := services.toPluginServiceComponents()
+
+	require.Same(t, runner, components.CodeRunner)
 }
 
 func TestParseSandboxRemoteProviderAllowedPrivateCIDRs(t *testing.T) {

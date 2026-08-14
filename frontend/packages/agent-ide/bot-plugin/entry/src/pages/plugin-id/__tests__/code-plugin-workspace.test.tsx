@@ -370,6 +370,100 @@ describe('CodePluginWorkspace', () => {
     expect(debugRequest.revision).toBe(2);
   });
 
+  it('saves a clean revision-zero draft before debugging the returned revision', async () => {
+    const revisionZeroDraft = {
+      ...draft,
+      revision: 0,
+      last_debugged_revision: 0,
+      debug_ready: false,
+    } satisfies CodePluginDraftData;
+    const savedDraft = {
+      ...revisionZeroDraft,
+      revision: 1,
+    } satisfies CodePluginDraftData;
+    apiMocks.getDraft
+      .mockResolvedValueOnce({ data: revisionZeroDraft, code: 0, msg: '' })
+      .mockResolvedValueOnce({
+        data: {
+          ...savedDraft,
+          last_debugged_revision: 1,
+          debug_ready: true,
+        },
+        code: 0,
+        msg: '',
+      });
+    apiMocks.saveDraft.mockResolvedValue({
+      data: savedDraft,
+      code: 0,
+      msg: '',
+    });
+    apiMocks.debug.mockResolvedValue({
+      data: { ...successfulDebug, revision: 1 },
+      code: 0,
+      msg: '',
+    });
+
+    render(<CodePluginWorkspace pluginID="100" spaceID="200" canEdit />);
+
+    await screen.findByLabelText('mock-code-editor');
+    fireEvent.click(screen.getByRole('button', { name: '试运行' }));
+
+    await waitFor(() => expect(apiMocks.saveDraft).toHaveBeenCalledTimes(1));
+    expect(apiMocks.saveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 0 }),
+    );
+    await waitFor(() =>
+      expect(apiMocks.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ revision: 1 }),
+      ),
+    );
+  });
+
+  it('debugs a clean persisted draft without saving it again', async () => {
+    apiMocks.getDraft
+      .mockResolvedValueOnce({ data: draft, code: 0, msg: '' })
+      .mockResolvedValueOnce({ data: draft, code: 0, msg: '' });
+    apiMocks.debug.mockResolvedValue({
+      data: { ...successfulDebug, revision: 1 },
+      code: 0,
+      msg: '',
+    });
+
+    render(<CodePluginWorkspace pluginID="100" spaceID="200" canEdit />);
+
+    await screen.findByLabelText('mock-code-editor');
+    fireEvent.click(screen.getByRole('button', { name: '试运行' }));
+
+    await waitFor(() => expect(apiMocks.debug).toHaveBeenCalledTimes(1));
+    expect(apiMocks.saveDraft).not.toHaveBeenCalled();
+    expect(apiMocks.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 1 }),
+    );
+  });
+
+  it('does not debug a revision-zero draft when its automatic save fails', async () => {
+    apiMocks.getDraft.mockResolvedValueOnce({
+      data: {
+        ...draft,
+        revision: 0,
+        last_debugged_revision: 0,
+        debug_ready: false,
+      },
+      code: 0,
+      msg: '',
+    });
+    apiMocks.saveDraft.mockRejectedValue(new Error('session expired'));
+
+    render(<CodePluginWorkspace pluginID="100" spaceID="200" canEdit />);
+
+    await screen.findByLabelText('mock-code-editor');
+    fireEvent.click(screen.getByRole('button', { name: '试运行' }));
+
+    await waitFor(() => expect(apiMocks.saveDraft).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('试运行失败，请稍后重试')).toBeTruthy();
+    expect(apiMocks.debug).not.toHaveBeenCalled();
+  });
+
   it('keeps publishing disabled when the server does not confirm debug_ready', async () => {
     const onPublishReadyChange = vi.fn();
     apiMocks.getDraft

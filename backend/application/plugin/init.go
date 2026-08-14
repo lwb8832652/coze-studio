@@ -38,12 +38,13 @@ import (
 )
 
 type ServiceComponents struct {
-	IDGen    idgen.IDGenerator
-	DB       *gorm.DB
-	OSS      storage.Storage
-	CacheCli cache.Cmdable
-	EventBus search.ResourceEventBus
-	UserSVC  user.User
+	IDGen      idgen.IDGenerator
+	DB         *gorm.DB
+	OSS        storage.Storage
+	CacheCli   cache.Cmdable
+	EventBus   search.ResourceEventBus
+	UserSVC    user.User
+	CodeRunner coderunner.Runner
 }
 
 func InitService(ctx context.Context, components *ServiceComponents) (*PluginApplicationService, error) {
@@ -92,9 +93,13 @@ func InitService(ctx context.Context, components *ServiceComponents) (*PluginApp
 	PluginApplicationSVC.pluginRepo = pluginRepo
 	PluginApplicationSVC.toolRepo = toolRepo
 	PluginApplicationSVC.codeRepo = codeRepo
-	PluginApplicationSVC.codeRunner = coderunner.GetCodeRunner()
+	bindCodeRunner(PluginApplicationSVC, components)
 
 	return PluginApplicationSVC, nil
+}
+
+func bindCodeRunner(service *PluginApplicationService, components *ServiceComponents) {
+	service.codeRunner = components.CodeRunner
 }
 
 func checkIDExist(ctx context.Context, pluginService service.PluginService) error {

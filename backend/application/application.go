@@ -871,12 +871,13 @@ func initComplexServices(ctx context.Context, p *primaryServices) (*complexServi
 
 func (b *basicServices) toPluginServiceComponents() *plugin.ServiceComponents {
 	return &plugin.ServiceComponents{
-		IDGen:    b.infra.IDGenSVC,
-		DB:       b.infra.DB,
-		EventBus: b.eventbus.resourceEventBus,
-		OSS:      b.infra.OSS,
-		UserSVC:  b.userSVC.DomainSVC,
-		CacheCli: b.infra.CacheCli,
+		IDGen:      b.infra.IDGenSVC,
+		DB:         b.infra.DB,
+		EventBus:   b.eventbus.resourceEventBus,
+		OSS:        b.infra.OSS,
+		UserSVC:    b.userSVC.DomainSVC,
+		CacheCli:   b.infra.CacheCli,
+		CodeRunner: b.infra.CodeRunner,
 	}
 }
 

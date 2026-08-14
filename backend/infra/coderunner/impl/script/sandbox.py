@@ -80,7 +80,7 @@ class Sandbox:
 
         cmd.extend(self.permissions)
 
-        v8_flags = ["--experimental-wasm-stack-switching"]
+        v8_flags = []
 
         if memory_limit_mb is not None and memory_limit_mb > 0:
             v8_flags.append(f"--max-old-space-size={memory_limit_mb}")

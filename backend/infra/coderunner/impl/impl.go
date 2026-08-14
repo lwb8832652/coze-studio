@@ -49,9 +49,13 @@ var (
 
 func New(conf *config.BasicConfiguration) Runner {
 	if os.Getenv("SANDBOX_CONTROL_PLANE_ENABLED") == "true" {
-		return failedRunner{err: coderunner.ErrCodeRunnerUnavailable}
+		if os.Getenv("SANDBOX_RUNTIME_ROUTING_ENABLED") != "false" ||
+			conf == nil || conf.CodeRunnerType != config.CodeRunnerType_Sandbox {
+			return failedRunner{err: coderunner.ErrCodeRunnerUnavailable}
+		}
 	}
-	return guardLegacyRunner(newLegacyRunner(conf))
+	allowPlugin := conf != nil && conf.CodeRunnerType == config.CodeRunnerType_Sandbox
+	return guardLegacyRunner(newLegacyRunner(conf), allowPlugin)
 }
 
 func newLegacyRunner(conf *config.BasicConfiguration) Runner {
@@ -135,6 +139,7 @@ func NewUnavailable() Runner {
 
 type legacyPurposeGuardRunner struct {
 	Runner
+	allowPlugin bool
 }
 
 func (r *legacyPurposeGuardRunner) Run(
@@ -145,7 +150,9 @@ func (r *legacyPurposeGuardRunner) Run(
 		switch request.Purpose {
 		case "", coderunner.PurposeAgent:
 		case coderunner.PurposePlugin:
-			return nil, coderunner.ErrCodeRunnerUnavailable
+			if !r.allowPlugin {
+				return nil, coderunner.ErrCodeRunnerUnavailable
+			}
 		default:
 			return nil, coderunner.ErrCodeRunnerInvalidRequest
 		}
@@ -161,8 +168,8 @@ type legacyLocalExecutionPurposeGuard struct {
 	infrasandbox.LocalExecutionDelegate
 }
 
-func guardLegacyRunner(runner Runner) Runner {
-	guard := &legacyPurposeGuardRunner{Runner: runner}
+func guardLegacyRunner(runner Runner, allowPlugin bool) Runner {
+	guard := &legacyPurposeGuardRunner{Runner: runner, allowPlugin: allowPlugin}
 	delegate, ok := runner.(infrasandbox.LocalExecutionDelegate)
 	if !ok {
 		return guard
